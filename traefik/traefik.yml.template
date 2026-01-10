@@ -1,0 +1,38 @@
+# Traefik Static Configuration
+api:
+  dashboard: true
+  insecure: true
+
+# Local plugins
+experimental:
+  localPlugins:
+    sentinel:
+      moduleName: local/sentinel
+
+entryPoints:
+  web:
+    address: ":${HTTP_PORT}"
+  websecure:
+    address: ":${HTTPS_PORT}"
+  traefik:
+    address: ":${TRAEFIK_PORT}"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+log:
+  level: INFO
+  filePath: /var/log/traefik/traefik.log
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep
+        X-Forwarded-For: keep
+        X-Real-IP: keep

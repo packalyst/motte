@@ -1,0 +1,18 @@
+displayName: Sentinel
+type: middleware
+import: local/sentinel
+summary: Multi-feature access control middleware
+description: |
+  Sentinel provides comprehensive access control for Traefik:
+  - IP filtering by CIDR ranges
+  - Maintenance mode with trigger file
+  - Robots.txt generation with AI bot blocking
+  - Header validation
+  - User-agent blocking with remote lists
+  - Time-based access control with timezone support
+testData:
+  ipFilter:
+    sourceRange:
+      - "10.0.0.0/8"
+      - "192.168.0.0/16"
+  errorMode: "403"

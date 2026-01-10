@@ -1,0 +1,46 @@
+# Environment variables (SENSITIVE - contains passwords, IPs)
+.env
+
+# Data directories (contain runtime data, databases, keys)
+headscale/data/
+adguard/work/
+adguard/conf/AdGuardHome.yaml
+traefik/logs/
+
+# Docker volumes
+api_data/
+
+# Generated configs from templates
+headscale/config/config.yaml
+headscale/config/acl.json
+traefik/traefik.yml
+traefik/dynamic.yml
+traefik/dynamic/*
+!traefik/dynamic/.gitkeep
+traefik/acme.json
+
+# Screenshots
+Capture.PNG
+
+# Node modules
+ui/node_modules/
+ui/dist/
+ui/package-lock.json
+
+# Go build artifacts
+api/api
+api/*.db
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.tar.gz
+*.zip
+wireguard-backup-*
+.claude/

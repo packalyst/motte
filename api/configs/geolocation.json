@@ -1,0 +1,65 @@
+{
+  "providers": {
+    "maxmind": {
+      "id": "maxmind",
+      "name": "MaxMind GeoLite2",
+      "description": "Free geolocation database with country, city, and ASN data",
+      "signup_url": "https://www.maxmind.com/en/geolite2/signup",
+      "update_frequency": "weekly",
+      "requires_key": true,
+      "variants": [
+        {
+          "id": "GeoLite2-Country",
+          "name": "Country",
+          "description": "Country-level accuracy (~5MB)",
+          "file_code": "GeoLite2-Country"
+        }
+      ]
+    },
+    "ip2location": {
+      "id": "ip2location",
+      "name": "IP2Location LITE",
+      "description": "Free geolocation database with country and city data",
+      "signup_url": "https://www.ip2location.com/register",
+      "update_frequency": "monthly",
+      "requires_key": true,
+      "file_code_template": "{variant}LITEBIN",
+      "file_name_template": "IP2LOCATION-LITE-{variant}.BIN",
+      "variants": [
+        {
+          "id": "DB1",
+          "name": "DB1 - Country",
+          "description": "Country-level only (~3MB)",
+          "file_code": "DB1LITEBIN"
+        },
+        {
+          "id": "DB3",
+          "name": "DB3 - Country + City",
+          "description": "Country and city-level (~100MB)",
+          "file_code": "DB3LITEBIN"
+        },
+        {
+          "id": "DB5",
+          "name": "DB5 - Country + City + ISP",
+          "description": "Includes ISP/domain data (~150MB)",
+          "file_code": "DB5LITEBIN"
+        },
+        {
+          "id": "DB11",
+          "name": "DB11 - Full",
+          "description": "All data including timezone, zipcode (~200MB)",
+          "file_code": "DB11LITEBIN"
+        }
+      ]
+    },
+    "ipdeny": {
+      "id": "ipdeny",
+      "name": "IPDeny",
+      "description": "Free country-level IP zone files for blocking",
+      "signup_url": "https://www.ipdeny.com/ipblocks/",
+      "update_frequency": "daily",
+      "requires_key": false,
+      "base_url": "https://www.ipdeny.com/ipblocks/data/aggregated"
+    }
+  }
+}

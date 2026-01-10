@@ -1,0 +1,662 @@
+@import "tailwindcss";
+@plugin "@iconify/tailwind4" {
+  prefixes: tabler;
+}
+
+/* Safelist all used icons - Tailwind needs static class names */
+@source inline("icon-[tabler--activity] icon-[tabler--alert-circle] icon-[tabler--alert-triangle] icon-[tabler--arrow-left] icon-[tabler--arrow-right] icon-[tabler--arrow-up-right] icon-[tabler--arrow-down-left] icon-[tabler--arrows-right-left] icon-[tabler--ban] icon-[tabler--bolt] icon-[tabler--book] icon-[tabler--box] icon-[tabler--brand-github] icon-[tabler--calendar] icon-[tabler--chart-pie] icon-[tabler--chart-bar] icon-[tabler--chart-line] icon-[tabler--check] icon-[tabler--checks] icon-[tabler--chevron-down] icon-[tabler--chevron-left] icon-[tabler--chevron-right] icon-[tabler--chevrons-left] icon-[tabler--chevrons-right] icon-[tabler--circle-check] icon-[tabler--clock] icon-[tabler--cloud] icon-[tabler--code] icon-[tabler--copy] icon-[tabler--cpu] icon-[tabler--dashboard] icon-[tabler--device-desktop] icon-[tabler--device-floppy] icon-[tabler--device-laptop] icon-[tabler--device-mobile] icon-[tabler--device-tablet] icon-[tabler--world-share] icon-[tabler--dots] icon-[tabler--download] icon-[tabler--edit] icon-[tabler--external-link] icon-[tabler--eye] icon-[tabler--eye-off] icon-[tabler--file-text] icon-[tabler--filter] icon-[tabler--gauge] icon-[tabler--git-branch] icon-[tabler--globe] icon-[tabler--hand-off] icon-[tabler--hand-stop] icon-[tabler--info-circle] icon-[tabler--key] icon-[tabler--layers-subtract] icon-[tabler--layout] icon-[tabler--link] icon-[tabler--list] icon-[tabler--list-check] icon-[tabler--list-details] icon-[tabler--lock] icon-[tabler--lock-open] icon-[tabler--logout] icon-[tabler--menu] icon-[tabler--moon] icon-[tabler--network] icon-[tabler--pencil] icon-[tabler--play] icon-[tabler--player-pause] icon-[tabler--player-play] icon-[tabler--player-stop] icon-[tabler--plug] icon-[tabler--plug-connected] icon-[tabler--plus] icon-[tabler--refresh] icon-[tabler--route] icon-[tabler--scan] icon-[tabler--search] icon-[tabler--server] icon-[tabler--settings] icon-[tabler--shield] icon-[tabler--shield-check] icon-[tabler--shield-lock] icon-[tabler--sun] icon-[tabler--switch-horizontal] icon-[tabler--trash] icon-[tabler--user] icon-[tabler--user-off] icon-[tabler--user-plus] icon-[tabler--users] icon-[tabler--wand] icon-[tabler--world] icon-[tabler--world-off] icon-[tabler--world-www] icon-[tabler--x] icon-[tabler--circle-x] icon-[tabler--arrow-down] icon-[tabler--arrow-up] icon-[tabler--arrows-vertical] icon-[tabler--loader-2] icon-[tabler--circle] icon-[tabler--tool] icon-[tabler--calendar-time] icon-[tabler--robot] icon-[tabler--message] ");
+@import "@keenthemes/ktui/src/components/modal/modal.css";
+@import "@keenthemes/ktui/src/components/input/input.css";
+@import "@keenthemes/ktui/src/components/input/input-group.css";
+@import "@keenthemes/ktui/src/components/alert/alert.css";
+@import "@keenthemes/ktui/src/components/form/form.css";
+@import "@keenthemes/ktui/src/components/badge/badge.css";
+@import "@keenthemes/ktui/src/components/link/link.css";
+@import "@keenthemes/ktui/src/components/btn/btn.css";
+@import "@keenthemes/ktui/src/components/card/card.css";
+@import "@keenthemes/ktui/src/components/toast/toast.css";
+@import "@keenthemes/ktui/src/components/switch/switch.css";
+@import "@keenthemes/ktui/src/components/skeleton/skeleton.css";
+@import "@keenthemes/ktui/src/components/toggle-group/toggle-group.css";
+@import "@keenthemes/ktui/src/components/select/select.css";
+@import "@keenthemes/ktui/src/components/tooltip/tooltip.css";
+@import "@keenthemes/ktui/src/components/link/link.css";
+
+/* ============================================================================
+   KTUI THEME - Dark theme for Headscale Admin
+   @import "@keenthemes/ktui/dist/styles.css";
+
+   ============================================================================ */
+
+:root {
+  /* Neutrals - cool blue-gray (hue 250) */
+  --background: oklch(98% 0.01 250);
+  --foreground: oklch(15% 0.02 250);
+  --card: oklch(100% 0 0);
+  --card-foreground: oklch(15% 0.02 250);
+  --popover: oklch(100% 0 0);
+  --popover-foreground: oklch(15% 0.02 250);
+  --primary: oklch(50% 0.08 250);
+  --primary-foreground: oklch(100% 0 0);
+  --secondary: oklch(95% 0.01 250);
+  --secondary-foreground: oklch(25% 0.02 250);
+  --muted: oklch(95% 0.01 250);
+  --muted-foreground: oklch(50% 0.02 250);
+  --accent: oklch(95% 0.01 250);
+  --accent-foreground: oklch(25% 0.02 250);
+  --mono: oklch(14.1% 0.005 285.823);
+  --mono-foreground: oklch(1 0 0);
+  --border: oklch(90% 0.01 250);
+  --input: oklch(92% 0.01 250);
+  --ring: oklch(50% 0.08 250);
+  --radius: 0.5rem;
+  /* Dim color for icons and decorative elements */
+  --dim: oklch(45% 0.01 250);
+
+  /* Semantic colors - unified palette */
+  --success: oklch(52% 0.14 160);
+  --success-foreground: oklch(98% 0 0);
+  --warning: oklch(58% 0.14 70);
+  --warning-foreground: oklch(20% 0.02 70);
+  --destructive: oklch(55% 0.20 25);
+  --destructive-foreground: oklch(98% 0 0);
+  --info: oklch(52% 0.08 250);
+  --info-foreground: oklch(98% 0 0);
+}
+
+.dark {
+  /* Warm Slate - High visibility dark theme */
+  --background: oklch(16% 0.008 260);
+  --foreground: oklch(95% 0.005 260);
+  --card: oklch(20% 0.008 260);
+  --card-foreground: oklch(95% 0.005 260);
+  --popover: oklch(22% 0.008 260);
+  --popover-foreground: oklch(95% 0.005 260);
+  --primary: oklch(68% 0.14 250);
+  --primary-foreground: oklch(100% 0 0);
+  --secondary: oklch(28% 0.008 260);
+  --secondary-foreground: oklch(90% 0.005 260);
+  --muted: oklch(26% 0.008 260);
+  --muted-foreground: oklch(78% 0.01 260);
+  --accent: oklch(28% 0.008 260);
+  --accent-foreground: oklch(90% 0.005 260);
+  --mono: oklch(90% 0.005 260);
+  --mono-foreground: oklch(16% 0 0);
+  --border: oklch(38% 0.01 260);
+  --input: oklch(24% 0.008 260);
+  --ring: oklch(68% 0.14 250);
+  /* Dim color for icons - bright enough to see clearly */
+  --dim: oklch(65% 0.01 260);
+
+  /* Semantic colors - vivid for dark backgrounds */
+  --success: oklch(72% 0.18 155);
+  --success-foreground: oklch(98% 0 0);
+  --warning: oklch(80% 0.16 75);
+  --warning-foreground: oklch(15% 0.02 75);
+  --destructive: oklch(68% 0.22 25);
+  --destructive-foreground: oklch(98% 0 0);
+  --info: oklch(72% 0.12 250);
+  --info-foreground: oklch(98% 0 0);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-mono: var(--mono);
+  --color-mono-foreground: var(--mono-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-dim: var(--dim);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@custom-variant dark (&:is(.dark *));
+
+/* Base styles */
+html, body, #app {
+  @apply h-full;
+}
+
+body {
+  @apply bg-background text-foreground font-sans text-sm antialiased m-0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 1px;
+  height: 1px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full hover:bg-muted-foreground;
+}
+
+/* Hide scrollbar on mobile */
+.scrollbar-hide-mobile {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.scrollbar-hide-mobile::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
+}
+@media (min-width: 768px) {
+  .scrollbar-hide-mobile {
+    scrollbar-width: thin;
+  }
+  .scrollbar-hide-mobile::-webkit-scrollbar {
+    display: block;
+    height: 4px;
+  }
+}
+
+/* KTUI Modal overrides */
+.kt-modal-content {
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.kt-toast-progress {
+    height: 1px;
+}
+
+/* KTUI Switch - improve visibility in dark mode */
+.dark .kt-switch:not(:checked) {
+  @apply border border-border bg-muted;
+}
+
+/* KTUI Button variants */
+.kt-btn-info {
+  /*@apply bg-success/10 text-success hover:bg-success/20;*/
+  @apply bg-info/10 text-info hover:bg-info/20;
+}
+.kt-btn-success {
+  @apply bg-success text-success-foreground hover:bg-success/90;
+}
+.kt-btn-danger,.kt-badge-danger {
+  @apply bg-destructive/10 text-destructive hover:bg-destructive/20;
+}
+.kt-badge-success {
+  @apply bg-success/10 text-success;
+}
+
+/* Extra small button size */
+.kt-btn-xs {
+  @apply h-6 px-2 text-[10px] gap-1;
+}
+.kt-btn-xs[data-icon-only] {
+  @apply w-6 px-0;
+}
+
+/* Remove focus ring from clickable badges */
+button.kt-badge {
+  @apply focus:ring-0 focus:ring-offset-0 outline-none;
+}
+
+/* Small focus outline for inputs and selects */
+.kt-input:has(input:focus-visible) {
+  @apply ring-1 ring-ring/5 border-ring/50;
+}
+.kt-input input:focus-visible,
+input.kt-input:focus-visible {
+  @apply ring-0 outline-none;
+}
+/* Fix browser autofill background color */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px var(--background) inset !important;
+  -webkit-text-fill-color: var(--foreground) !important;
+  caret-color: var(--foreground);
+}
+
+@layer components {
+  .custom_btns {
+    @apply flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer;
+  }
+
+  /* Grouped buttons - joined together with dividers */
+  .btn-group {
+    @apply flex items-center rounded-lg border border-border overflow-hidden;
+  }
+  .btn-group .custom_btns {
+    @apply rounded-none border-0 h-6 w-8;
+  }
+  .btn-group .custom_btns:not(:last-child) {
+    @apply border-r border-border;
+  }
+  .btn-group .custom_btns:hover {
+    @apply bg-muted;
+  }
+
+  /* Icon button - small clickable icon */
+  .icon-btn {
+    @apply p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer;
+  }
+  .icon-btn-destructive {
+    @apply p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer;
+  }
+
+  /* Custom checkbox */
+  .kt-checkbox {
+    @apply appearance-none w-4 h-4 rounded border border-border bg-background cursor-pointer transition-all duration-150;
+    @apply hover:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/10 focus:ring-offset-0;
+  }
+  .kt-checkbox:checked {
+    @apply bg-primary border-primary;
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+    background-size: 100% 100%;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .kt-checkbox:indeterminate {
+    @apply bg-primary border-primary;
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3crect x='3' y='7' width='10' height='2' rx='1'/%3e%3c/svg%3e");
+    background-size: 100% 100%;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .kt-checkbox:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  /* Status indicator dots */
+  .status-dot {
+    @apply h-1.5 w-1.5 rounded-full;
+  }
+  .status-dot-success { @apply bg-success; }
+  .status-dot-warning { @apply bg-warning; }
+  .status-dot-error { @apply bg-destructive; }
+  .status-dot-muted { @apply bg-muted-foreground; }
+
+  /* Status icon containers (circular) */
+  .status-icon {
+    @apply w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0;
+  }
+  .status-icon-success { @apply bg-success/10 text-success; }
+  .status-icon-warning { @apply bg-warning/10 text-warning; }
+  .status-icon-error { @apply bg-destructive/10 text-destructive; }
+  .status-icon-muted { @apply bg-muted text-muted-foreground; }
+
+  /* Status text colors */
+  .status-text-success { @apply text-success; }
+  .status-text-warning { @apply text-warning; }
+  .status-text-error { @apply text-destructive; }
+
+  /* Card left border indicators */
+  .card-border-success { @apply border-l-2 border-l-success; }
+  .card-border-warning { @apply border-l-2 border-l-warning; }
+  .card-border-error { @apply border-l-2 border-l-destructive; }
+  .card-border-muted { @apply border-l-2 border-l-muted-foreground; }
+
+  /* Responsive grid layouts */
+  .grid-cards {
+    @apply grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
+  }
+
+  /* Add item card - dashed border for "add new" actions */
+  .add-item-card {
+    @apply flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/50 p-4 text-center text-xs text-muted-foreground transition hover:border-muted-foreground hover:bg-muted;
+  }
+
+  /* Header icon box */
+  .header-icon {
+    @apply w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0;
+  }
+
+  /* Empty state container */
+  .empty-state {
+    @apply flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/50 py-12 text-center;
+  }
+  .empty-state-compact {
+    @apply py-8;
+  }
+  .empty-state-lg {
+    @apply py-16 rounded-2xl;
+  }
+
+  /* Empty state icon */
+  .empty-state-icon {
+    @apply flex h-10 w-10 items-center justify-center rounded-lg bg-secondary text-muted-foreground;
+  }
+  .empty-state-icon-lg {
+    @apply h-12 w-12 rounded-full;
+  }
+
+  /* Small uppercase label */
+  .label-xs {
+    @apply text-[10px] uppercase tracking-wide text-muted-foreground;
+  }
+
+  /* Extra small text utilities */
+  .text-2xs {
+    @apply text-[10px];
+  }
+  .text-xxs {
+    @apply text-[11px];
+  }
+
+  /* Panel components - reusable card structure */
+  .kt-panel {
+    @apply bg-card border border-border rounded-lg overflow-hidden flex flex-col;
+  }
+  .kt-panel-header {
+    @apply px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between;
+  }
+  .kt-panel-title {
+    @apply flex items-center gap-2 text-sm font-semibold text-foreground;
+  }
+  .kt-panel-title > :first-child {
+    @apply text-primary;
+  }
+  .kt-panel-body {
+    @apply p-4 space-y-3 flex-1;
+  }
+  .kt-panel-footer {
+    @apply px-4 py-3 border-t border-border/50 bg-muted/20 flex items-center gap-2 mt-auto;
+  }
+
+  /* Button group - joins buttons together */
+  .kt-btn-group {
+    @apply flex;
+  }
+  .kt-btn-group > :where(.kt-btn, button) {
+    @apply rounded-none border-r-0;
+  }
+  .kt-btn-group > :where(.kt-btn, button):first-child {
+    @apply rounded-l-md;
+  }
+  .kt-btn-group > :where(.kt-btn, button):last-child {
+    @apply rounded-r-md border-r;
+  }
+
+  /* Dropdown menu */
+  .kt-dropdown {
+    @apply absolute right-0 top-full mt-1 min-w-[12rem] bg-card border border-border rounded-lg shadow-lg py-1 z-50;
+  }
+  .kt-dropdown-item {
+    @apply w-full flex items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+  .kt-dropdown-item-icon {
+    @apply text-muted-foreground;
+  }
+  .kt-dropdown-divider {
+    @apply border-t border-dashed border-border my-1;
+  }
+
+  /* Dropdown backdrop (invisible click target to close) */
+  .kt-dropdown-backdrop {
+    @apply fixed inset-0 z-40;
+  }
+
+  /* OTP Input - single digit input for 2FA codes */
+  .otp-input {
+    @apply text-center font-mono rounded-lg border-2 border-border bg-background
+           focus:border-primary focus:ring-2 focus:ring-primary/20
+           outline-none transition-all
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+}
+
+/* ============================================================================
+   DATA TABLE - Custom responsive table component
+   Structure: .data-table > .data-table-header + .data-table-content + .data-table-footer
+   ============================================================================ */
+@layer components {
+  /* Container */
+  .data-table {
+    @apply bg-card border border-border rounded-lg overflow-hidden;
+  }
+
+  /* Header - toolbar with search, filters, actions */
+  .data-table-header {
+    @apply flex flex-col sm:flex-row sm:items-center gap-3 p-3 border-b border-border bg-muted/30;
+  }
+  .data-table-header-start {
+    @apply flex flex-col sm:flex-row gap-2 flex-1;
+  }
+  .data-table-header-end {
+    @apply flex items-center gap-2 self-end sm:self-auto;
+  }
+
+  /* Content - scrollable table wrapper */
+  .data-table-content {
+    @apply overflow-x-auto;
+  }
+  .data-table-content::-webkit-scrollbar {
+    @apply h-1.5;
+  }
+  .data-table-content::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+
+  /* Table styles */
+  .data-table table {
+    @apply w-full text-sm;
+  }
+  .data-table thead {
+    @apply bg-muted/50 border-b border-border;
+  }
+  .data-table th {
+    @apply px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide whitespace-nowrap;
+  }
+  .data-table td {
+    @apply px-3 py-2.5 text-foreground align-middle;
+  }
+  .data-table tbody tr {
+    @apply border-b border-border/50 last:border-0 transition-colors hover:bg-muted/30;
+  }
+
+  /* Standalone table for use inside kt-panel */
+  .data-table-table {
+    @apply w-full text-sm;
+  }
+  .data-table-table thead {
+    @apply bg-muted/50 border-b border-border;
+  }
+  .data-table-table th {
+    @apply px-3 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide whitespace-nowrap;
+  }
+  .data-table-table td {
+    @apply px-3 py-2.5 text-foreground align-middle;
+  }
+  .data-table-table tbody tr {
+    @apply border-b border-border/50 last:border-0 transition-colors hover:bg-muted/30;
+  }
+
+  /* Footer - pagination */
+  .data-table-footer {
+    @apply flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 border-t border-border bg-muted/30;
+  }
+  .data-table-footer-info {
+    @apply text-xs text-muted-foreground text-center sm:text-left;
+  }
+  .data-table-footer-pagination {
+    @apply flex items-center justify-center gap-1;
+  }
+
+  /* Cell variants */
+  .data-table-cell-mono {
+    @apply font-mono text-xs;
+  }
+  .data-table-cell-muted {
+    @apply text-muted-foreground;
+  }
+  .data-table-cell-nowrap {
+    @apply whitespace-nowrap;
+  }
+  .data-table-cell-actions {
+    @apply text-right whitespace-nowrap;
+  }
+
+  /* Empty state */
+  .data-table-empty {
+    @apply py-12 text-center text-muted-foreground;
+  }
+
+  /* Loading state */
+  .data-table-loading {
+    @apply py-12 flex items-center justify-center;
+  }
+}
+
+/* Mobile optimizations for data-table */
+@media (max-width: 639px) {
+  .data-table-header {
+    @apply p-2.5;
+  }
+  .data-table th,
+  .data-table td,
+  .data-table-table th,
+  .data-table-table td {
+    @apply px-2 py-2;
+  }
+  .data-table-footer {
+    @apply p-2.5;
+  }
+}
+
+/* ============================================================================
+   PAGINATION - Custom responsive pagination component
+   ============================================================================ */
+@layer components {
+  /* Container */
+  .pagination {
+    @apply flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 w-full;
+  }
+
+  /* Info section - per page selector and showing text */
+  .pagination-info {
+    @apply flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs text-muted-foreground;
+  }
+  .pagination-info-text {
+    @apply hidden sm:inline;
+  }
+
+  /* Navigation */
+  .pagination-nav {
+    @apply flex items-center justify-center gap-0.5;
+  }
+
+  /* Buttons */
+  .pagination-btn {
+    @apply h-6 min-w-6 px-1 flex items-center justify-center rounded text-xs font-medium
+           text-muted-foreground bg-transparent border border-transparent
+           transition-colors cursor-pointer
+           hover:bg-muted hover:text-foreground
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent;
+  }
+
+  /* Hide select on mobile */
+  .pagination-select {
+    @apply hidden sm:block;
+  }
+  .pagination-btn-active {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground;
+  }
+  .pagination-btn-ellipsis {
+    @apply cursor-default hover:bg-transparent;
+  }
+
+  /* Page number buttons - hidden on mobile, show prev/next only */
+  .pagination-pages {
+    @apply hidden sm:flex items-center gap-0.5;
+  }
+
+  /* Mobile: simplified layout */
+  .pagination-mobile-info {
+    @apply sm:hidden text-xs text-muted-foreground;
+  }
+}
+
+/* Mobile pagination adjustments */
+@media (max-width: 639px) {
+  .pagination {
+    @apply justify-center;
+  }
+  .pagination-info {
+    @apply order-2;
+  }
+  .pagination-nav {
+    @apply order-1;
+  }
+}
+
+
+.kt-btn-group > div > :where(.kt-btn, button) {
+  border-radius: 0;
+  border-right-style: var(--tw-border-style);
+  border-right-width: 0px;
+}
+
+/* first item in the group */
+.kt-btn-group > div:first-child > :where(.kt-btn, button) {
+  border-top-left-radius: calc(var(--radius) - 2px);
+  border-bottom-left-radius: calc(var(--radius) - 2px);
+}
+
+/* last item in the group */
+.kt-btn-group > div:last-child > :where(.kt-btn, button) {
+  border-top-right-radius: calc(var(--radius) - 2px);
+  border-bottom-right-radius: calc(var(--radius) - 2px);
+  border-right-width: 1px;
+}
+
+/* Shimmer animation for progress bars */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.animate-shimmer {
+  animation: shimmer 1.5s infinite;
+}
+
+/* Input group color variants */
+.kt-input-group-warning .kt-input-addon {
+  @apply bg-warning/15 text-warning;
+}
+
+.kt-input-group-success .kt-input-addon {
+  @apply bg-success/15 text-success;
+}
+
+.kt-input-group-info .kt-input-addon {
+  @apply bg-info/15 text-info;
+}
+
+.kt-input-group-destructive .kt-input-addon {
+  @apply bg-destructive/15 text-destructive;
+}
+
+/* Prevent iOS zoom on input focus (requires font-size >= 16px) */
+@media screen and (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}

@@ -1,0 +1,237 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+    max-file: ${DOCKER_LOG_MAX_FILE:-3}
+
+services:
+  # ============================================
+  # DOCKER SOCKET PROXY - Secure Docker API Access
+  # Filters which Docker operations are allowed
+  # ============================================
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker-socket-proxy
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:2375:2375"  # Only accessible from localhost
+    environment:
+      # Read-only operations
+      - CONTAINERS=1      # List containers, inspect
+      - INFO=1            # Docker info
+      - VERSION=1         # Docker version
+      - LOGS=1            # Container logs
+      - SYSTEM=1          # System info (disk usage)
+      # Write operations (limited)
+      - POST=1            # Allow POST requests (start/stop/restart)
+      - ALLOW_START=1     # Container start
+      - ALLOW_STOP=1      # Container stop
+      - ALLOW_RESTARTS=1  # Container restart
+      # Exec enabled (needed for headscale API key generation)
+      - EXEC=1            # Exec into containers (for headscale CLI)
+      # Image operations (needed for VPN router setup)
+      - IMAGES=1          # Pull images (for vpn-router tailscale image)
+      # Explicitly disabled (dangerous operations)
+      - BUILD=0           # No building images
+      - COMMIT=0          # No committing containers
+      - CONFIGS=0         # No swarm configs
+      - NETWORKS=0        # No network operations
+      - NODES=0           # No swarm nodes
+      - PLUGINS=0         # No plugins
+      - SECRETS=0         # No secrets
+      - SERVICES=0        # No swarm services
+      - VOLUMES=0         # No volume operations
+      - TASKS=0           # No swarm tasks
+      - GRPC=0            # No gRPC
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # ============================================
+  # TRAEFIK - Reverse Proxy with API & Dashboard
+  # ============================================
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "${HTTP_PORT}:80"
+      - "${HTTPS_PORT}:443"
+      - "${TRAEFIK_PORT}:8080"
+    environment:
+      - SENTINEL_DEBUG=${SENTINEL_DEBUG:-false}
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic
+      - ./traefik/acme.json:/etc/traefik/acme.json
+      - ./traefik/logs:/var/log/traefik
+      - ./traefik/plugins-local/src:/plugins-local/src:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      vpn-network:
+        ipv4_address: ${TRAEFIK_CONTAINER_IP}
+
+  # ============================================
+  # HEADSCALE - VPN Control Server (for Tailscale clients)
+  # ============================================
+  headscale:
+    image: headscale/headscale:0.25
+    container_name: headscale
+    restart: unless-stopped
+    logging: *default-logging
+    command: serve
+    volumes:
+      - ./headscale/config:/etc/headscale
+      - ./headscale/data:/var/lib/headscale
+    ports:
+      - "${STUN_PORT}:3478/udp"
+      - "127.0.0.1:${HEADSCALE_INTERNAL_PORT}:8080"
+      # DERP direct port - bypasses Traefik to avoid TLS cert issues with IP-only setup
+      - "${DERP_HTTP_PORT:-8443}:8080"
+    cap_add:
+      - NET_ADMIN
+    networks:
+      vpn-network:
+        ipv4_address: ${HEADSCALE_CONTAINER_IP}
+
+  # ============================================
+  # UNIFIED API - All services in one container
+  # Replaces: wg-api, firewall-api
+  # Provides: /api/fw, /api/wg, /api/traefik, /api/hs, /api/adguard
+  # ============================================
+  api:
+    build: ./api
+    container_name: api
+    restart: unless-stopped
+    logging: *default-logging
+    network_mode: host
+    pid: host
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # Security
+      - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-${TRAEFIK_CONTAINER_IP}}
+      # Docker access via socket proxy (not direct socket)
+      - DOCKER_HOST=tcp://127.0.0.1:2375
+      # Core settings (hardcoded paths inside container)
+      - API_PORT=${API_PORT}
+      - DATA_DIR=/data
+      - CONFIG_PATH=/app/configs/endpoints.json
+      - TRAEFIK_CONFIG=/traefik/dynamic
+      - TRAEFIK_STATIC=/traefik/traefik.yml
+      - TRAEFIK_LOGS=${TRAEFIK_LOGS}
+      - TRAEFIK_MAIN_LOG=${TRAEFIK_MAIN_LOG}
+      # WireGuard settings
+      - WG_INTERFACE=${WG_INTERFACE}
+      - WG_PORT=${WG_PORT}
+      - SERVER_IP=${SERVER_IP}
+      - WG_IP_RANGE=${WG_IP_RANGE}
+      - WG_SERVER_IP=${WG_SERVER_IP}
+      - WG_DNS=${WG_DNS}
+      - HEADSCALE_IP_RANGE=${HEADSCALE_IP_RANGE}
+      # Traefik settings
+      - TRAEFIK_API=${TRAEFIK_API}
+      - TRAEFIK_PORT=${TRAEFIK_PORT}
+      - TRAEFIK_CONTAINER_IP=${TRAEFIK_CONTAINER_IP}
+      # AdGuard settings
+      - ADGUARD_PORT=${ADGUARD_PORT}
+      - ADGUARD_CONFIG=/adguard/AdGuardHome.yaml
+      - ADGUARD_LOGS=${ADGUARD_LOGS}
+      - KERN_LOG=${KERN_LOG}
+      - LOGS_MAX_ENTRIES=${LOGS_MAX_ENTRIES}
+      - LOGS_CLEANUP_INTERVAL=${LOGS_CLEANUP_INTERVAL}
+      - LOGS_COUNTRY_INTERVAL=${LOGS_COUNTRY_INTERVAL}
+      - LOGS_COUNTRY_BATCH=${LOGS_COUNTRY_BATCH}
+      - DNS_PORT=${DNS_PORT}
+      # Firewall settings
+      - IGNORE_NETWORKS=${IGNORE_NETWORKS}
+      - HTTP_PORT=${HTTP_PORT}
+      - HTTPS_PORT=${HTTPS_PORT}
+      # VPN Router settings
+      - VPN_ROUTER_NAME=${VPN_ROUTER_NAME:-vpn-router}
+      - VPN_ROUTER_IMAGE=${VPN_ROUTER_IMAGE:-tailscale/tailscale:latest}
+      - VPN_ROUTER_DATA=${VPN_ROUTER_DATA:-/var/lib/tailscale-vpn-router}
+      - HEADSCALE_ACL_PATH=${HEADSCALE_ACL_PATH:-/headscale/config/acl.json}
+      - NFTABLES_ACL_PATH=${NFTABLES_ACL_PATH:-/etc/nftables.d/vpn-acl.nft}
+      - HEADSCALE_BASE_DOMAIN=${HEADSCALE_BASE_DOMAIN}
+    volumes:
+      - api_data:/data
+      - /var/log:/var/log:ro
+      - ./traefik:/traefik
+      - ./adguard/conf:/adguard
+      - ./adguard/work:/adguard/work:ro
+      - ./headscale/config:/headscale/config
+      # Docker socket removed - using docker-socket-proxy instead
+      - /etc/ssh/sshd_config:/etc/ssh/sshd_config
+
+  # ============================================
+  # ADGUARD HOME - DNS Server with Query Logging
+  # ============================================
+  adguard:
+    image: adguard/adguardhome:latest
+    container_name: adguard
+    restart: unless-stopped
+    logging: *default-logging
+    network_mode: host
+    volumes:
+      - ./adguard/work:/opt/adguardhome/work
+      - ./adguard/conf:/opt/adguardhome/conf
+
+  # ============================================
+  # UI - Unified Web Dashboard
+  # ============================================
+  ui:
+    build:
+      context: ./ui
+      target: production  # Change to 'production' for smaller image (~80MB vs ~480MB)
+    container_name: ui
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      vpn-network:
+        ipv4_address: ${UI_CONTAINER_IP}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ui.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.ui.priority=1"
+      - "traefik.http.services.ui.loadbalancer.server.port=80"
+
+  # ============================================
+  # VPN ROUTER - Bridges WireGuard and Headscale networks
+  # Enables cross-network communication via subnet routing
+  # ============================================
+  vpn-router:
+    image: tailscale/tailscale:latest
+    container_name: vpn-router
+    hostname: vpn-router
+    restart: unless-stopped
+    logging: *default-logging
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./data/tailscale:/var/lib/tailscale
+    environment:
+      - TS_AUTHKEY=${VPN_ROUTER_AUTHKEY:-}
+      - TS_EXTRA_ARGS=--advertise-routes=${WG_IP_RANGE} --accept-routes --hostname=vpn-router
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    profiles:
+      - vpn-router
+
+volumes:
+  api_data:
+
+networks:
+  vpn-network:
+    name: vpn-network
+    ipam:
+      driver: default
+      config:
+        - subnet: ${DOCKER_SUBNET}
+          gateway: ${DOCKER_GATEWAY}

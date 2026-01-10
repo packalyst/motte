@@ -1,0 +1,16 @@
+# Development Override
+# Use: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Or simply: DEV_MODE=true ./start.sh
+
+services:
+  ui:
+    build:
+      context: ./ui
+      target: development
+    volumes:
+      - ./ui/src:/app/src:ro
+      - ./ui/package.json:/app/package.json:ro
+      - ./ui/vite.config.js:/app/vite.config.js:ro
+    environment:
+      - NODE_ENV=development
+    command: npm run dev -- --host 0.0.0.0

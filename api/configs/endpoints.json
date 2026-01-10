@@ -1,0 +1,242 @@
+{
+  "version": "1.0",
+  "app": {
+    "firewall": {
+      "maxAttempts": 10000,
+      "jailCheckIntervalSec": 10,
+      "cleanupIntervalMin": 5,
+      "dnsLookupTimeoutSec": 2
+    },
+    "session": {
+      "timeoutHours": 24
+    },
+    "websocket": {
+      "writeWaitSec": 10,
+      "pongWaitSec": 60,
+      "maxMessageSize": 512,
+      "sendBufferSize": 256,
+      "readBufferSize": 1024,
+      "writeBufferSize": 1024,
+      "broadcastBufferSize": 256,
+      "statusCheckIntervalSec": 10,
+      "channels": ["general_info", "nodes_updated", "docker", "docker_logs", "stats"]
+    }
+  },
+  "services": {
+    "setup": {
+      "prefix": "/api/setup",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get setup status"},
+        {"path": "/detect-headscale", "methods": ["GET"], "handler": "DetectHeadscale", "description": "Auto-detect headscale URL"},
+        {"path": "/generate-apikey", "methods": ["POST"], "handler": "GenerateAPIKey", "description": "Generate headscale API key"},
+        {"path": "/test-headscale", "methods": ["POST"], "handler": "TestHeadscale", "description": "Test headscale connection"},
+        {"path": "/complete", "methods": ["POST"], "handler": "CompleteSetup", "description": "Complete initial setup"}
+      ]
+    },
+    "auth": {
+      "prefix": "/api/auth",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/login", "methods": ["POST"], "handler": "Login", "description": "Login with username/password"},
+        {"path": "/logout", "methods": ["POST"], "handler": "Logout", "description": "Logout and invalidate session"},
+        {"path": "/me", "methods": ["GET"], "handler": "GetCurrentUser", "description": "Get current user"},
+        {"path": "/users", "methods": ["POST"], "handler": "CreateUser", "description": "Create new user"},
+        {"path": "/sessions", "methods": ["GET"], "handler": "GetSessions", "description": "List active sessions"},
+        {"path": "/sessions/{id}/revoke", "methods": ["POST"], "handler": "RevokeSession", "description": "Revoke specific session"},
+        {"path": "/sessions/revoke-others", "methods": ["POST"], "handler": "RevokeOtherSessions", "description": "Revoke all other sessions"},
+        {"path": "/change-password", "methods": ["POST"], "handler": "ChangePassword", "description": "Change password"},
+        {"path": "/2fa/status", "methods": ["GET"], "handler": "Get2FAStatus", "description": "Get 2FA status"},
+        {"path": "/2fa/setup", "methods": ["POST"], "handler": "Setup2FA", "description": "Start 2FA setup, generate secret and QR code"},
+        {"path": "/2fa/enable", "methods": ["POST"], "handler": "Enable2FA", "description": "Verify code and enable 2FA"},
+        {"path": "/2fa/disable", "methods": ["POST"], "handler": "Disable2FA", "description": "Disable 2FA (requires password and code)"}
+      ]
+    },
+    "settings": {
+      "prefix": "/api/settings",
+      "enabled": true,
+      "endpoints": [
+        {"path": "", "methods": ["GET"], "handler": "GetSettings", "description": "Get all settings"},
+        {"path": "", "methods": ["POST"], "handler": "SelectSettings", "description": "Get specific settings by keys"},
+        {"path": "", "methods": ["PUT"], "handler": "UpdateSettings", "description": "Update settings"}
+      ]
+    },
+    "firewall": {
+      "prefix": "/api/fw",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get firewall status"},
+        {"path": "/entries", "methods": ["GET"], "handler": "GetEntries", "description": "List firewall entries (IPs, ranges, countries, ports)"},
+        {"path": "/entries", "methods": ["POST"], "handler": "CreateEntry", "description": "Create firewall entry"},
+        {"path": "/entries/{id}", "methods": ["DELETE"], "handler": "DeleteEntry", "description": "Delete firewall entry"},
+        {"path": "/entries/{id}/toggle", "methods": ["POST"], "handler": "ToggleEntry", "description": "Toggle entry enabled/disabled"},
+        {"path": "/entries/bulk", "methods": ["POST"], "handler": "BulkEntries", "description": "Bulk operations on entries"},
+        {"path": "/entries/import", "methods": ["POST"], "handler": "ImportEntries", "description": "Import from blocklist"},
+        {"path": "/entries/source/{source}", "methods": ["DELETE"], "handler": "DeleteBySource", "description": "Delete all entries from source"},
+        {"path": "/entries/all", "methods": ["DELETE"], "handler": "DeleteAll", "description": "Delete all non-essential entries"},
+        {"path": "/ports", "methods": ["GET"], "handler": "GetPorts", "description": "List allowed ports"},
+        {"path": "/ports", "methods": ["POST"], "handler": "AddPort", "description": "Add allowed port"},
+        {"path": "/ports/{port}", "methods": ["DELETE"], "handler": "RemovePort", "description": "Remove allowed port"},
+        {"path": "/jails", "methods": ["GET"], "handler": "GetJails", "description": "List jails"},
+        {"path": "/jails", "methods": ["POST"], "handler": "CreateJail", "description": "Create jail"},
+        {"path": "/jails/{name}", "methods": ["GET"], "handler": "GetJail", "description": "Get jail details"},
+        {"path": "/jails/{name}", "methods": ["PUT"], "handler": "UpdateJail", "description": "Update jail"},
+        {"path": "/jails/{name}", "methods": ["DELETE"], "handler": "DeleteJail", "description": "Delete jail"},
+        {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get configuration"},
+        {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update configuration"},
+        {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply firewall rules"},
+        {"path": "/sync-status", "methods": ["GET"], "handler": "SyncStatus", "description": "Get sync status between DB and nftables"},
+        {"path": "/ssh", "methods": ["POST"], "handler": "ChangeSSHPort", "description": "Change SSH port"},
+        {"path": "/blocklists", "methods": ["GET"], "handler": "GetBlocklists", "description": "Get available blocklist sources"}
+      ]
+    },
+    "wireguard": {
+      "prefix": "/api/wg",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/peers", "methods": ["GET"], "handler": "GetPeers", "description": "List all peers"},
+        {"path": "/peers", "methods": ["POST"], "handler": "CreatePeer", "description": "Create new peer"},
+        {"path": "/peers/{id}", "methods": ["GET"], "handler": "GetPeer", "description": "Get peer details"},
+        {"path": "/peers/{id}", "methods": ["PUT"], "handler": "UpdatePeer", "description": "Update peer"},
+        {"path": "/peers/{id}", "methods": ["DELETE"], "handler": "DeletePeer", "description": "Delete peer"},
+        {"path": "/peers/{id}/enable", "methods": ["POST"], "handler": "EnablePeer", "description": "Enable peer"},
+        {"path": "/peers/{id}/disable", "methods": ["POST"], "handler": "DisablePeer", "description": "Disable peer"},
+        {"path": "/peers/{id}/config", "methods": ["GET"], "handler": "GetPeerConfig", "description": "Download peer config"},
+        {"path": "/peers/{id}/qr", "methods": ["GET"], "handler": "GetPeerQR", "description": "Get peer QR code"},
+        {"path": "/server", "methods": ["GET"], "handler": "GetServer", "description": "Get server info"}
+      ]
+    },
+    "traefik": {
+      "prefix": "/api/traefik",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/overview", "methods": ["GET"], "handler": "GetOverview", "description": "Get Traefik overview with routers, services, middlewares"},
+        {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get dynamic config"},
+        {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update dynamic config"},
+        {"path": "/vpn-only", "methods": ["GET"], "handler": "GetVPNOnly", "description": "Get VPN-only mode status"},
+        {"path": "/vpn-only", "methods": ["POST"], "handler": "SetVPNOnly", "description": "Set VPN-only mode"}
+      ]
+    },
+    "headscale": {
+      "prefix": "/api/hs",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/users", "methods": ["GET"], "handler": "GetUsers", "description": "List users"},
+        {"path": "/users", "methods": ["POST"], "handler": "CreateUser", "description": "Create user"},
+        {"path": "/users/{name}", "methods": ["DELETE"], "handler": "DeleteUser", "description": "Delete user"},
+        {"path": "/users/{name}/rename/{newName}", "methods": ["PUT"], "handler": "RenameUser", "description": "Rename user"},
+        {"path": "/nodes", "methods": ["GET"], "handler": "GetNodes", "description": "List nodes"},
+        {"path": "/nodes/{id}", "methods": ["DELETE"], "handler": "DeleteNode", "description": "Delete node"},
+        {"path": "/nodes/{id}/rename/{name}", "methods": ["POST"], "handler": "RenameNode", "description": "Rename node"},
+        {"path": "/nodes/{id}/expire", "methods": ["POST"], "handler": "ExpireNode", "description": "Expire node"},
+        {"path": "/nodes/{id}/routes", "methods": ["GET"], "handler": "GetNodeRoutes", "description": "Get node routes"},
+        {"path": "/nodes/{id}/tags", "methods": ["PUT"], "handler": "UpdateNodeTags", "description": "Update node tags"},
+        {"path": "/routes", "methods": ["GET"], "handler": "GetRoutes", "description": "List all routes"},
+        {"path": "/routes/{id}/enable", "methods": ["POST"], "handler": "EnableRoute", "description": "Enable route"},
+        {"path": "/routes/{id}/disable", "methods": ["POST"], "handler": "DisableRoute", "description": "Disable route"},
+        {"path": "/routes/{id}", "methods": ["DELETE"], "handler": "DeleteRoute", "description": "Delete route"},
+        {"path": "/preauthkeys", "methods": ["GET"], "handler": "GetPreAuthKeys", "description": "List pre-auth keys"},
+        {"path": "/preauthkeys", "methods": ["POST"], "handler": "CreatePreAuthKey", "description": "Create pre-auth key"},
+        {"path": "/preauthkeys/expire", "methods": ["POST"], "handler": "ExpirePreAuthKey", "description": "Expire pre-auth key"},
+        {"path": "/apikeys", "methods": ["GET"], "handler": "GetAPIKeys", "description": "List API keys"},
+        {"path": "/apikeys", "methods": ["POST"], "handler": "CreateAPIKey", "description": "Create API key"},
+        {"path": "/apikeys/{id}", "methods": ["DELETE"], "handler": "DeleteAPIKey", "description": "Delete API key"}
+      ]
+    },
+    "adguard": {
+      "prefix": "/api/adguard",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/overview", "methods": ["GET"], "handler": "GetOverview", "description": "Get status, stats, protection settings, and blocked services"},
+        {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update protection settings (type: protection|safeBrowsing|parental|safeSearch|blockedServices)"},
+        {"path": "/filtering", "methods": ["GET"], "handler": "GetFiltering", "description": "Get filtering status and rules"},
+        {"path": "/filtering", "methods": ["PUT"], "handler": "UpdateFiltering", "description": "Filtering actions (action: add|remove|toggle|refresh|setRules)"},
+        {"path": "/rewrites", "methods": ["GET"], "handler": "GetRewrites", "description": "Get DNS rewrites"},
+        {"path": "/rewrites", "methods": ["PUT"], "handler": "UpdateRewrites", "description": "Rewrite actions (action: add|delete)"}
+      ]
+    },
+    "docker": {
+      "prefix": "/api/docker",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/containers", "methods": ["GET"], "handler": "GetContainers", "description": "List containers"},
+        {"path": "/containers/{name}", "methods": ["GET"], "handler": "GetContainer", "description": "Get container details"},
+        {"path": "/containers/{name}/restart", "methods": ["POST"], "handler": "Restart", "description": "Restart container"},
+        {"path": "/containers/{name}/stop", "methods": ["POST"], "handler": "Stop", "description": "Stop container"},
+        {"path": "/containers/{name}/start", "methods": ["POST"], "handler": "Start", "description": "Start container"},
+        {"path": "/images/{name}/analyze", "methods": ["GET"], "handler": "AnalyzeImage", "description": "Analyze image layers and sizes"}
+      ]
+    },
+    "vpn": {
+      "prefix": "/api/vpn",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/clients", "methods": ["GET"], "handler": "GetClients", "description": "List all VPN clients (WG + HS unified)"},
+        {"path": "/clients/{id}", "methods": ["GET"], "handler": "GetClient", "description": "Get client with ACL rules"},
+        {"path": "/clients/{id}/acl", "methods": ["PUT"], "handler": "UpdateACL", "description": "Update client ACL policy"},
+        {"path": "/clients/{id}/dns", "methods": ["PUT"], "handler": "ToggleDNS", "description": "Toggle DNS rewrite for client"},
+        {"path": "/clients/{id}/scan", "methods": ["POST"], "handler": "ScanPorts", "description": "Scan open ports on client"},
+        {"path": "/clients/{id}/scan", "methods": ["DELETE"], "handler": "StopScan", "description": "Stop running scan"},
+        {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply nftables + Headscale ACL"},
+        {"path": "/router/status", "methods": ["GET"], "handler": "GetRouterStatus", "description": "Get router status"},
+        {"path": "/router/setup", "methods": ["POST"], "handler": "SetupRouter", "description": "Setup router"},
+        {"path": "/router/restart", "methods": ["POST"], "handler": "RestartRouter", "description": "Restart router"},
+        {"path": "/router", "methods": ["DELETE"], "handler": "RemoveRouter", "description": "Remove router"}
+      ]
+    },
+    "geolocation": {
+      "prefix": "/api/geo",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/settings", "methods": ["GET"], "handler": "GetSettings", "description": "Get geolocation settings"},
+        {"path": "/settings", "methods": ["PUT"], "handler": "UpdateSettings", "description": "Update geolocation settings"},
+        {"path": "/lookup", "methods": ["GET"], "handler": "LookupIP", "description": "Lookup single IP"},
+        {"path": "/lookup", "methods": ["POST"], "handler": "LookupBulk", "description": "Lookup multiple IPs"},
+        {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get service status"},
+        {"path": "/update", "methods": ["POST"], "handler": "TriggerUpdate", "description": "Trigger database update"},
+        {"path": "/countries", "methods": ["GET"], "handler": "GetCountries", "description": "Get available countries"},
+        {"path": "/zones/refresh", "methods": ["POST"], "handler": "RefreshZones", "description": "Refresh all country zones"}
+      ]
+    },
+    "domains": {
+      "prefix": "/api/domains",
+      "enabled": true,
+      "endpoints": [
+        {"path": "", "methods": ["GET"], "handler": "List", "description": "List all domain routes"},
+        {"path": "", "methods": ["POST"], "handler": "Create", "description": "Create domain route"},
+        {"path": "/{id}", "methods": ["GET"], "handler": "Get", "description": "Get domain route"},
+        {"path": "/{id}", "methods": ["PUT"], "handler": "Update", "description": "Update domain route"},
+        {"path": "/{id}", "methods": ["DELETE"], "handler": "Delete", "description": "Delete domain route"},
+        {"path": "/{id}/toggle", "methods": ["POST"], "handler": "Toggle", "description": "Toggle domain route"},
+        {"path": "/certificates", "methods": ["GET"], "handler": "GetCertificates", "description": "Get SSL certificate info"},
+        {"path": "/system-domain", "methods": ["GET"], "handler": "GetSystemDomain", "description": "Get main SSL domain info"}
+      ]
+    },
+    "logs": {
+      "prefix": "/api/logs",
+      "enabled": true,
+      "endpoints": [
+        {"path": "", "methods": ["GET"], "handler": "GetLogs", "description": "Get unified logs with filtering"},
+        {"path": "/stats", "methods": ["GET"], "handler": "GetStats", "description": "Get aggregated statistics"},
+        {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get watcher statuses"},
+        {"path": "/watcher", "methods": ["POST"], "handler": "SetWatcher", "description": "Enable/disable watcher"}
+      ]
+    }
+  },
+  "middleware": {
+    "cors": {
+      "enabled": true,
+      "allowOrigins": ["*"],
+      "allowMethods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      "allowHeaders": ["Content-Type", "Authorization"]
+    },
+    "logging": {
+      "enabled": true,
+      "format": "json"
+    },
+    "rateLimit": {
+      "enabled": true,
+      "requestsPerSecond": 100
+    }
+  }
+}

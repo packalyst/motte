@@ -1,0 +1,69 @@
+---
+# Headscale Configuration
+# Server URL - using IP for now, change to domain later
+server_url: http://${SERVER_IP}
+
+# Listen addresses
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:${HEADSCALE_METRICS_PORT}
+grpc_listen_addr: 0.0.0.0:${HEADSCALE_GRPC_PORT}
+grpc_allow_insecure: true
+
+# Database - SQLite for simplicity
+database:
+  type: sqlite3
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+# Private keys (auto-generated on first run)
+private_key_path: /var/lib/headscale/private.key
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+# IP allocation for VPN clients
+# Using 100.64.0.0/16 for Headscale (Tailscale clients)
+# WireGuard uses 100.65.0.0/16 to avoid conflicts
+prefixes:
+  v4: ${HEADSCALE_IP_RANGE}
+  v6: ${HEADSCALE_IP_RANGE_V6}
+
+# DERP - Self-hosted ONLY (no external Tailscale servers)
+derp:
+  server:
+    enabled: true
+    region_id: ${DERP_REGION_ID}
+    region_code: "${DERP_REGION_CODE}"
+    region_name: "${DERP_REGION_NAME}"
+    stun_listen_addr: 0.0.0.0:${STUN_PORT}
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: true
+    ipv4: ${SERVER_IP}
+
+  # IMPORTANT: Empty = no external DERP servers (zero 3rd party dependency)
+  urls: []
+  paths: []
+  auto_update_enabled: false
+  update_frequency: 24h
+
+# DNS configuration for clients
+# Using AdGuard (via cross-network router) for unified DNS resolution
+dns:
+  magic_dns: false
+  base_domain: ${HEADSCALE_BASE_DOMAIN}
+  nameservers:
+    global:
+      - ${WG_SERVER_IP}
+
+# Disable telemetry (privacy)
+logtail:
+  enabled: false
+
+# Disable update checking
+disable_check_updates: true
+
+# Ephemeral node settings
+ephemeral_node_inactivity_timeout: 30m
+
+# Log level
+log:
+  level: info

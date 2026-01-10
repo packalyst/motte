@@ -1,0 +1,182 @@
+# Traefik Dynamic Configuration
+http:
+  routers:
+    # UI - catch all for main host only - HTTP
+    ui:
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/`)"
+      service: ui
+      priority: 10
+      entryPoints:
+        - web
+
+    # Unified API - all /api/* routes (except /api/v1 for headscale direct) - HTTP
+    unified-api:
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
+      service: unified-api
+      priority: 100
+      middlewares:
+        - rate-limit
+        - security-headers
+      entryPoints:
+        - web
+
+    # Headscale control plane - HTTP (for Tailscale clients)
+    # Includes /derp for DERP relay connections
+    headscale-control:
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`))"
+      service: headscale
+      priority: 100
+      entryPoints:
+        - web
+
+    # Headscale control plane - HTTPS (Tailscale clients try HTTPS first)
+    headscale-control-secure:
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`))"
+      service: headscale
+      priority: 100
+      entryPoints:
+        - websecure
+      tls: {}
+
+    # Headscale API - BLOCKED for external access (UI uses /api/hs via unified API)
+    # This prevents direct API access - all admin goes through unified API with server-side auth
+    headscale-api-blocked:
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/api/v1`)"
+      service: headscale
+      priority: 100
+      middlewares:
+        - sentinel_vpn
+        - rate-limit-strict
+        - security-headers
+      entryPoints:
+        - web
+
+    # Block PWA files on non-main domains (prevent Chrome install prompt on other domains)
+    block-pwa-catchall:
+      rule: "!Host(`${SERVER_IP}`) && !Host(`${ADMIN_DOMAIN}`) && (Path(`/manifest.json`) || Path(`/sw.js`) || Path(`/icon.svg`))"
+      service: ui
+      priority: 5
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - web
+
+    block-pwa-catchall-secure:
+      rule: "!Host(`${SERVER_IP}`) && !Host(`${ADMIN_DOMAIN}`) && (Path(`/manifest.json`) || Path(`/sw.js`) || Path(`/icon.svg`))"
+      service: ui
+      priority: 5
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - websecure
+      tls: {}
+
+    # Catchall for unmatched domains - lowest priority
+    # Any domain not configured will get dropped silently
+    catchall-drop:
+      rule: "PathPrefix(`/`)"
+      service: ui
+      priority: 1
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - web
+
+    catchall-drop-secure:
+      rule: "PathPrefix(`/`)"
+      service: ui
+      priority: 1
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - websecure
+      tls: {}
+
+  services:
+    ui:
+      loadBalancer:
+        servers:
+          - url: "http://ui:80"
+
+    unified-api:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:${API_PORT}"
+
+    headscale:
+      loadBalancer:
+        servers:
+          - url: "http://headscale:8080"
+
+  middlewares:
+    # Rate limiting - requests per second average, burst
+    rate-limit:
+      rateLimit:
+        average: ${RATE_LIMIT_AVERAGE}
+        burst: ${RATE_LIMIT_BURST}
+
+    # Strict rate limiting for sensitive APIs
+    rate-limit-strict:
+      rateLimit:
+        average: ${RATE_LIMIT_STRICT_AVERAGE}
+        burst: ${RATE_LIMIT_STRICT_BURST}
+
+    # Security headers
+    security-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+
+    # VPN-only with custom error page
+    sentinel_vpn:
+      plugin:
+        sentinel:
+          ipFilter:
+            sourceRange:
+${VPN_SOURCE_RANGE}
+          errorMode: "403"
+
+    # VPN-only silent drop (closes connection silently)
+    sentinel_vpn_silent:
+      plugin:
+        sentinel:
+          ipFilter:
+            sourceRange:
+${VPN_SOURCE_RANGE}
+          errorMode: "silent"
+
+    # Redirect HTTP to HTTPS (for public domain only)
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # Drop unknown domains (silently closes connection for unconfigured hosts)
+    sentinel_drop:
+      plugin:
+        sentinel:
+          ipFilter:
+            sourceRange:
+              - "0.0.0.0/32"
+          errorMode: "silent"
+
+    # Block AI bots and crawlers via robots.txt
+    sentinel_robots:
+      plugin:
+        sentinel:
+          robots:
+            enabled: true
+            listUrl: "https://raw.githubusercontent.com/ai-robots-txt/ai.robots.txt/main/robots.json"
+            cacheTTL: 86400
+            disallow:
+              - "/"
+
+    # Block known crawlers and bots by user-agent
+    sentinel_deny_agents:
+      plugin:
+        sentinel:
+          userAgents:
+            listUrl: "https://raw.githubusercontent.com/monperrus/crawler-user-agents/master/crawler-user-agents.json"
+            cacheTTL: 86400
