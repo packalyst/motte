@@ -179,7 +179,7 @@
   const detailTabs = $derived(
     selectedNode?._type === 'wireguard'
       ? [{id:'overview',label:'Overview'},{id:'qr',label:'QR & Config'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
-      : [{id:'overview',label:'Overview'},{id:'network',label:'Network'},{id:'access',label:'Access'},{id:'security',label:'Actions'}]
+      : [{id:'overview',label:'Overview'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
   )
 
   let showCreateModal = $state(false)
@@ -190,7 +190,6 @@
     if (!showNodeModal) {
       selectedNode = null
       editingName = false
-      editingTags = false
     }
   })
 
@@ -205,9 +204,7 @@
 
   // Inline editing states
   let editingName = $state(false)
-  let editingTags = $state(false)
   let newName = $state('')
-  let newTags = $state('')
 
   // QR code - fetch with auth
   let qrUrl = $state(null)
@@ -335,11 +332,9 @@
     selectedNode = node
     activeTab = 'overview'
     editingName = false
-    editingTags = false
     tunnelMode = 'full'
     qrLoadedFor = null // Reset so QR loads fresh for new node
     newName = node._displayName
-    newTags = (node.forcedTags || []).map(t => t.replace('tag:', '')).join(', ')
     // Reset ACL state
     selectedVpnClient = null
     aclPolicy = 'selected'
@@ -378,18 +373,6 @@
     }
   }
 
-  async function saveTags() {
-    if (!selectedNode) return
-    try {
-      const tags = newTags.split(',').map(t => t.trim()).filter(Boolean).map(t => t.startsWith('tag:') ? t : `tag:${t}`)
-      await apiPut(`/api/hs/nodes/${selectedNode.id}/tags`, { tags })
-      toast('Tags updated', 'success')
-      editingTags = false
-      loader.reload()
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
-  }
 
   async function deleteNode() {
     if (!selectedNode) return
@@ -572,7 +555,25 @@
   </Toolbar>
 
   <!-- Nodes grid -->
+  {#if filteredNodes.length > 0}
   <div class="mt-4 grid-cards">
+    <!-- Add node card - always first -->
+    <div
+      onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }}
+      onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, newPeerName = '', createdPeer = null)}
+      role="button"
+      tabindex="0"
+      class="add-item-card"
+    >
+      <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
+        <Icon name="plus" size={16} />
+      </div>
+      <div class="font-medium text-foreground">Add WireGuard peer</div>
+      <p class="max-w-[200px] text-muted-foreground">
+        Create new WireGuard peers. For Tailscale, <a href="/authkeys" onclick={(e) => e.stopPropagation()} class="text-primary hover:underline">create auth keys</a>
+      </p>
+    </div>
+
     {#each filteredNodes as node (node.id)}
       {@const isKeyExpired = node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001') && new Date(node.expiry) < new Date()}
       <div
@@ -681,26 +682,8 @@
         </div>
       </div>
     {/each}
-
-    <!-- Add node card -->
-    {#if filteredNodes.length > 0}
-      <div
-        onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }}
-        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, newPeerName = '', createdPeer = null)}
-        role="button"
-        tabindex="0"
-        class="add-item-card"
-      >
-        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
-          <Icon name="plus" size={16} />
-        </div>
-        <div class="font-medium text-foreground">Add WireGuard peer</div>
-        <p class="max-w-[200px] text-muted-foreground">
-          Create new WireGuard peers. For Tailscale, <a href="/authkeys" onclick={(e) => e.stopPropagation()} class="text-primary hover:underline">create auth keys</a>
-        </p>
-      </div>
-    {/if}
   </div>
+  {/if}
 
   {#if filteredNodes.length === 0}
     <EmptyState
@@ -756,77 +739,54 @@
       <!-- Content -->
       <div class="p-4 max-h-[60vh] overflow-y-auto">
         {#if activeTab === 'overview'}
-          <!-- Info Grid -->
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <ContentBlock variant="data" label="IP Address" value={selectedNode._ip || '—'} copyable={!!selectedNode._ip} mono />
-            <ContentBlock variant="data" label="Created" value={formatDate(selectedNode.createdAt)} />
-            <ContentBlock variant="data" label="Last Seen" value={timeAgo(selectedNode.lastHandshake || selectedNode.lastSeen)} />
-            {#if selectedNode._type === 'wireguard'}
-              <ContentBlock variant="data" label="Uploaded" value={formatBytes(selectedNode.totalTx)} />
-              <ContentBlock variant="data" label="Downloaded" value={formatBytes(selectedNode.totalRx)} />
-              <ContentBlock variant="data" label="Public Key" value={selectedNode.publicKey} copyable mono class="col-span-2 sm:col-span-3" />
-            {:else}
-              <ContentBlock variant="data" label="User" value={selectedNode.user?.name || '—'} />
-              <ContentBlock variant="data" label="Key Expiry" value={selectedNode.expiry && !selectedNode.expiry.startsWith('0001') ? formatDate(selectedNode.expiry) : 'Never'} />
-              {#if selectedNode.ipAddresses?.[1]}
-                <ContentBlock variant="data" label="IPv6" value={selectedNode.ipAddresses[1]} copyable mono />
-              {/if}
-            {/if}
-          </div>
-
-          <!-- Tags (Tailscale only) -->
-          {#if selectedNode._type === 'tailscale'}
-            <div class="mt-4 pt-4 border-t border-border">
-              <div class="flex items-center justify-between mb-2">
-                <h4 class="text-xs font-medium text-foreground uppercase tracking-wide">ACL Tags</h4>
-                {#if !editingTags}
-                  <button onclick={() => editingTags = true} class="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"><Icon name="edit" size={12} /></button>
-                {/if}
+          {#if selectedNode._type === 'wireguard'}
+            <!-- WireGuard Overview -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <ContentBlock variant="data" size="sm" solid light label="IP Address" value={selectedNode._ip || '—'} copyable={!!selectedNode._ip} mono />
+              <ContentBlock variant="data" size="sm" solid light label="Created" value={formatDate(selectedNode.createdAt)} rightIcon="calendar" />
+              <ContentBlock variant="data" size="sm" solid light label="Last Seen" value={timeAgo(selectedNode.lastHandshake || selectedNode.lastSeen)} rightIcon="clock" />
+              <ContentBlock variant="data" size="sm" solid light label="Uploaded" value={formatBytes(selectedNode.totalTx)} rightIcon="upload" />
+              <ContentBlock variant="data" size="sm" solid light label="Downloaded" value={formatBytes(selectedNode.totalRx)} rightIcon="download" />
+              <ContentBlock variant="data" size="sm" solid light label="Public Key" value={selectedNode.publicKey} copyable mono />
+            </div>
+          {:else}
+            <!-- Tailscale Overview - Combined -->
+            <div class="space-y-4">
+              <!-- Main info grid - 2 cols mobile, 3 cols desktop -->
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <ContentBlock variant="data" size="sm" solid light label="User" value={selectedNode.user?.name || '—'} rightLabel="Node" rightValue={selectedNode.id} rightMono />
+                <ContentBlock variant="data" size="sm" solid light label="Created" value={formatDate(selectedNode.createdAt)} rightIcon="calendar" />
+                <ContentBlock variant="data" size="sm" solid light label="Last Seen" value={timeAgo(selectedNode.lastSeen)} rightIcon="clock" />
+                <ContentBlock variant="data" size="sm" solid light label="Key Expiry" value={selectedNode.expiry && !selectedNode.expiry.startsWith('0001') ? formatDate(selectedNode.expiry) : 'Never'} rightIcon="key" />
+                <ContentBlock variant="data" size="sm" solid light label="IPv4" value={selectedNode._ip || '—'} mono rightLabel={selectedNode.ipAddresses?.[1] ? 'IPv6' : ''} rightValue={selectedNode.ipAddresses?.[1] || ''} rightMono class="col-span-2" />
               </div>
-              {#if editingTags}
-                <div class="flex items-center gap-2">
-                  <Input bind:value={newTags} placeholder="server, trusted" class="kt-input-sm flex-1" />
-                  <button onclick={saveTags} class="p-1.5 text-success hover:bg-success/10 rounded"><Icon name="check" size={16} /></button>
-                  <button onclick={() => editingTags = false} class="p-1.5 text-muted-foreground hover:bg-accent rounded"><Icon name="x" size={16} /></button>
-                </div>
-              {:else}
-                <div class="flex flex-wrap gap-1.5">
-                  {#if selectedNode.forcedTags?.length > 0}
-                    {#each selectedNode.forcedTags as tag}<Badge variant="muted" size="sm">{tag}</Badge>{/each}
-                  {:else}
-                    <span class="text-xs text-muted-foreground">No tags</span>
-                  {/if}
+
+              <!-- Keys -->
+              <div class="grid grid-cols-2 gap-3">
+                {#if selectedNode.registerMethod}
+                  <ContentBlock variant="data" size="sm" solid light label="Auth Method" value={selectedNode.registerMethod.replace('REGISTER_METHOD_', '')} />
+                {/if}
+                {#each [['Machine Key', selectedNode.machineKey], ['Node Key', selectedNode.nodeKey], ['Disco Key', selectedNode.discoKey]].filter(([,v]) => v) as [label, key]}
+                  <ContentBlock variant="data" size="sm" solid light label={label} value={key} copyable mono />
+                {/each}
+              </div>
+
+              <!-- Routes -->
+              {#if nodeRoutes.length > 0}
+                <div class="pt-3 border-t border-border">
+                  <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">Routes</h4>
+                  <div class="flex flex-wrap gap-2">
+                    {#each nodeRoutes as route}
+                      <div class="inline-flex items-center gap-2 px-2 py-1 bg-muted/50 rounded text-xs">
+                        <code class="font-mono">{route.prefix}</code>
+                        <span class="w-1.5 h-1.5 rounded-full {route.enabled ? 'bg-success' : 'bg-muted-foreground'}"></span>
+                      </div>
+                    {/each}
+                  </div>
                 </div>
               {/if}
             </div>
-
-            <!-- Routes -->
-            {#if nodeRoutes.length > 0}
-              <div class="mt-4 pt-4 border-t border-border">
-                <h4 class="text-xs font-medium text-foreground uppercase tracking-wide mb-2">Routes</h4>
-                <div class="flex flex-wrap gap-2">
-                  {#each nodeRoutes as route}
-                    <div class="inline-flex items-center gap-2 px-2 py-1 bg-muted/50 rounded text-xs">
-                      <code class="font-mono">{route.prefix}</code>
-                      <span class="w-1.5 h-1.5 rounded-full {route.enabled ? 'bg-success' : 'bg-muted-foreground'}"></span>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
           {/if}
-
-        {:else if activeTab === 'network'}
-          <!-- Tailscale Network Tab -->
-          <div class="space-y-3">
-            <ContentBlock variant="data" label="Node ID" value={selectedNode.id} mono />
-            {#if selectedNode.registerMethod}
-              <ContentBlock variant="data" label="Registration" value={selectedNode.registerMethod.replace('REGISTER_METHOD_', '')} />
-            {/if}
-            {#each [['Machine Key', selectedNode.machineKey], ['Node Key', selectedNode.nodeKey], ['Disco Key', selectedNode.discoKey]].filter(([,v]) => v) as [label, key]}
-              <ContentBlock variant="data" label={label} value={key} copyable mono />
-            {/each}
-          </div>
 
         {:else if activeTab === 'qr'}
           <!-- WireGuard QR & Config Tab - Side by side layout -->
@@ -850,7 +810,31 @@
                 </Button>
               </div>
 
-              <div class="p-3 bg-muted/30 rounded-lg text-xs text-muted-foreground">
+              <!-- Mobile: Quick Setup with QR inline -->
+              <div class="p-3 bg-muted/30 rounded-lg text-xs text-muted-foreground md:hidden">
+                <div class="flex gap-3">
+                  <div class="flex-1">
+                    <p class="font-medium text-foreground mb-1">Quick Setup</p>
+                    <ol class="list-decimal list-inside space-y-0.5">
+                      <li>Select tunnel mode</li>
+                      <li>Scan QR or download config</li>
+                      <li>Import to WireGuard app</li>
+                    </ol>
+                  </div>
+                  <div class="w-24 h-24 bg-white rounded-lg flex items-center justify-center shrink-0">
+                    {#if qrLoading}
+                      <div class="w-5 h-5 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
+                    {:else if qrUrl}
+                      <img src={qrUrl} alt="QR Code" class="w-20 h-20" />
+                    {:else}
+                      <span class="text-muted-foreground text-[10px]">Error</span>
+                    {/if}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Desktop: Quick Setup only -->
+              <div class="p-3 bg-muted/30 rounded-lg text-xs text-muted-foreground hidden md:block">
                 <p class="font-medium text-foreground mb-1">Quick Setup</p>
                 <ol class="list-decimal list-inside space-y-0.5">
                   <li>Select tunnel mode</li>
@@ -860,8 +844,8 @@
               </div>
             </div>
 
-            <!-- Right: QR Code -->
-            <div class="flex items-center justify-center p-4 bg-white rounded-xl min-h-[200px]">
+            <!-- Right: QR Code (desktop only) -->
+            <div class="hidden md:flex items-center justify-center p-4 bg-white rounded-xl border border-border min-h-[200px]">
               {#if qrLoading}
                 <div class="w-8 h-8 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
               {:else if qrUrl}

@@ -221,6 +221,20 @@
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get watcher statuses"},
         {"path": "/watcher", "methods": ["POST"], "handler": "SetWatcher", "description": "Enable/disable watcher"}
       ]
+    },
+    "pwa": {
+      "prefix": "/api/pwa",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/vapid-key", "methods": ["GET"], "handler": "GetVAPIDKey", "description": "Get VAPID public key for push subscription"},
+        {"path": "/subscriptions", "methods": ["GET", "DELETE"], "handler": "GetSubscriptions", "description": "List or delete push subscriptions"},
+        {"path": "/subscribe", "methods": ["POST"], "handler": "Subscribe", "description": "Register push subscription"},
+        {"path": "/unsubscribe", "methods": ["POST"], "handler": "Unsubscribe", "description": "Remove push subscription"},
+        {"path": "/preferences", "methods": ["GET", "PUT"], "handler": "Preferences", "description": "Get or update notification preferences"},
+        {"path": "/locations", "methods": ["GET", "DELETE"], "handler": "Locations", "description": "Get or delete device locations"},
+        {"path": "/location", "methods": ["POST"], "handler": "StoreLocation", "description": "Store device location"},
+        {"path": "/test", "methods": ["POST"], "handler": "TestNotification", "description": "Send test notification"}
+      ]
     }
   },
   "middleware": {

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, confirm } from '../stores/app.js'
   import { lookupIPs } from '../stores/geo.js'
   import { formatDate } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
@@ -13,6 +13,7 @@
   import ContentBlock from '../components/ContentBlock.svelte'
   import OtpInput from '../components/OtpInput.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
+  import PWASettings from '../components/PWASettings.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -96,10 +97,21 @@
     }
   }
 
-  async function revokeSession(sessionId) {
+  async function revokeSession(session) {
+    const confirmed = await confirm({
+      title: 'Revoke Session',
+      message: `Revoke session from ${getBrowserName(session.userAgent)}?`,
+      description: `${session.ipAddress} · Last active ${formatDate(session.lastActive)}`,
+      confirmText: 'Revoke',
+      cancelText: 'Cancel',
+      variant: 'warning'
+    })
+
+    if (!confirmed) return
+
     try {
-      await apiPost(`/api/auth/sessions/${sessionId}/revoke`)
-      sessions = sessions.filter(s => s.id !== sessionId)
+      await apiPost(`/api/auth/sessions/${session.id}/revoke`)
+      sessions = sessions.filter(s => s.id !== session.id)
       toast('Session revoked', 'success')
     } catch (e) {
       toast('Failed to revoke session: ' + e.message, 'error')
@@ -107,6 +119,19 @@
   }
 
   async function revokeAllOtherSessions() {
+    const otherCount = sessions.filter(s => !s.current).length
+
+    const confirmed = await confirm({
+      title: 'Revoke All Other Sessions',
+      message: `Revoke ${otherCount} other session${otherCount > 1 ? 's' : ''}?`,
+      description: 'This will log out all devices except your current one.',
+      confirmText: 'Revoke All',
+      cancelText: 'Cancel',
+      variant: 'destructive'
+    })
+
+    if (!confirmed) return
+
     try {
       await apiPost('/api/auth/sessions/revoke-others')
       // Reload sessions
@@ -220,8 +245,20 @@
         </div>
         <div class="kt-panel-body">
           <div class="grid grid-cols-2 gap-3">
-            <ContentBlock variant="data" label="Username" value={user?.username || 'admin'} mono padding="sm" />
-            <ContentBlock variant="data" label="Last Login" value={formatDate(user?.lastLogin)} padding="sm" />
+            <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
+              <div>
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Username</div>
+                <code class="text-sm font-mono text-foreground">{user?.username || 'admin'}</code>
+              </div>
+              <Icon name="user" size={20} class="text-muted-foreground" />
+            </div>
+            <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
+              <div>
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Last Login</div>
+                <span class="text-sm text-foreground">{formatDate(user?.lastLogin)}</span>
+              </div>
+              <Icon name="clock" size={20} class="text-muted-foreground" />
+            </div>
           </div>
         </div>
       </div>
@@ -234,7 +271,7 @@
             Security
           </h3>
         </div>
-        <div class="kt-panel-body space-y-3">
+        <div class="kt-panel-body grid grid-cols-1 sm:grid-cols-2 gap-3">
           <ContentBlock title="Password" description="Change your account password">
             <Button size="sm" variant="secondary" icon="lock" onclick={() => showPasswordModal = true}>
               Change
@@ -258,6 +295,9 @@
         </div>
       </div>
 
+      <!-- Push Notifications -->
+      <PWASettings />
+
       <!-- Active Sessions - Full width -->
       <div class="kt-panel lg:col-span-2">
         <div class="kt-panel-header">
@@ -266,7 +306,7 @@
             Active Sessions
           </h3>
           {#if sessions.length > 1}
-            <Button size="xs" variant="ghost" icon="logout" onclick={revokeAllOtherSessions}>
+            <Button size="xs" icon="logout" onclick={revokeAllOtherSessions}>
               Revoke All Others
             </Button>
           {/if}
@@ -278,8 +318,8 @@
               <p>No active sessions found</p>
             </div>
           {:else}
-            <div class="space-y-2">
-              {#each sessions as session}
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              {#each [...sessions].sort((a, b) => b.current - a.current) as session}
                 {@const geo = geoData[session.ipAddress]}
                 {@const country = geo?.country_code}
                 <ContentBlock
@@ -301,9 +341,8 @@
                   {#if !session.current}
                     <Button
                       size="xs"
-                      variant="ghost"
                       icon="x"
-                      onclick={() => revokeSession(session.id)}
+                      onclick={() => revokeSession(session)}
                     >
                       Revoke
                     </Button>

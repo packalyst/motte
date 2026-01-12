@@ -27,6 +27,13 @@
    * - value: Value text for data variant (or use children)
    * - copyable: Enable copy button for data variant
    * - mono: Use monospace font for value in data variant
+   * - size: 'sm' | 'md' (default) - sm uses text-xs, md uses text-sm for values
+   * - rightLabel: Secondary label on right side (data variant)
+   * - rightValue: Secondary value on right side (data variant)
+   * - rightMono: Use monospace font for right value
+   * - rightIcon: Icon name to show on right side (data variant)
+   * - solid: Use solid border instead of dashed (data variant)
+   * - light: Use lighter background (bg-muted/30 instead of bg-muted/50)
    */
   let {
     variant = 'row',
@@ -46,6 +53,13 @@
     value = '',
     copyable = false,
     mono = false,
+    size = 'md',
+    rightLabel = '',
+    rightValue = '',
+    rightMono = false,
+    rightIcon = '',
+    solid = false,
+    light = false,
     class: className = '',
     children,
     descriptionSlot
@@ -59,6 +73,9 @@
 
   // Determine icon size based on variant and explicit prop
   const computedIconSize = $derived(iconSize || (variant === 'row' && icon ? 20 : variant === 'box' && icon ? 18 : 16))
+
+  // Text size class for data variant
+  const valueTextSize = $derived(size === 'sm' ? 'text-xs' : 'text-sm')
 </script>
 
 {#if variant === 'header'}
@@ -95,26 +112,46 @@
     {/if}
   </div>
 {:else if variant === 'data'}
-  <div class="{paddings[padding]} bg-muted/50 rounded-lg border border-dashed border-border {className}">
-    {#if label}
-      <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">{label}</div>
-    {/if}
-    <div class="flex items-center gap-1">
-      {#if children}
-        {@render children()}
-      {:else if value}
-        {#if mono}
-          <code class="text-sm font-mono text-foreground truncate">{value}</code>
-        {:else}
-          <span class="text-sm text-foreground">{value}</span>
+  <div class="flex items-center justify-between {paddings[padding]} {light ? 'bg-muted/30' : 'bg-muted/50'} rounded-lg border {solid ? 'border-border' : 'border-dashed border-border'} {className}">
+    <!-- Left side -->
+    <div class="min-w-0 flex-1">
+      {#if label}
+        <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">{label}</div>
+      {/if}
+      <div class="flex items-center gap-1">
+        {#if children}
+          {@render children()}
+        {:else if value}
+          {#if mono}
+            <code class="{valueTextSize} font-mono text-foreground truncate">{value}</code>
+          {:else}
+            <span class="{valueTextSize} text-foreground">{value}</span>
+          {/if}
         {/if}
-      {/if}
-      {#if copyable && value}
-        <button onclick={() => copyWithToast(value, toast)} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer">
-          <Icon name="copy" size={12} />
-        </button>
-      {/if}
+        {#if copyable && value}
+          <button onclick={() => copyWithToast(value, toast)} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer">
+            <Icon name="copy" size={12} />
+          </button>
+        {/if}
+      </div>
     </div>
+    <!-- Right side: icon, or secondary label/value -->
+    {#if rightIcon}
+      <Icon name={rightIcon} size={16} class="text-muted-foreground shrink-0" />
+    {:else if rightLabel || rightValue}
+      <div class="text-right shrink-0">
+        {#if rightLabel}
+          <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">{rightLabel}</div>
+        {/if}
+        {#if rightValue}
+          {#if rightMono}
+            <code class="{valueTextSize} font-mono text-muted-foreground">{rightValue}</code>
+          {:else}
+            <span class="{valueTextSize} text-foreground">{rightValue}</span>
+          {/if}
+        {/if}
+      </div>
+    {/if}
   </div>
 {:else if variant === 'box'}
   <div class="{paddings[padding]} bg-muted/30 rounded-lg {border ? 'border border-border' : ''} {className}">

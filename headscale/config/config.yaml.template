@@ -1,7 +1,7 @@
 ---
 # Headscale Configuration
-# Server URL - using IP for now, change to domain later
-server_url: http://${SERVER_IP}
+# Server URL - public URL for Tailscale clients
+server_url: ${HEADSCALE_PUBLIC_URL}
 
 # Listen addresses
 listen_addr: 0.0.0.0:8080
@@ -38,6 +38,7 @@ derp:
     private_key_path: /var/lib/headscale/derp_server_private.key
     automatically_add_embedded_derp_region: true
     ipv4: ${SERVER_IP}
+    hostname: ${HEADSCALE_HOSTNAME}
 
   # IMPORTANT: Empty = no external DERP servers (zero 3rd party dependency)
   urls: []

@@ -2,7 +2,6 @@ package logs
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"sync"
 	"time"
@@ -14,7 +13,7 @@ import (
 
 // Service manages all log watchers
 type Service struct {
-	db       *sql.DB
+	db       *database.DB
 	config   Config
 	watchers map[string]Watcher
 	enabled  map[string]bool
@@ -57,14 +56,14 @@ func New() (*Service, error) {
 	return s, nil
 }
 
-// RegisterWatcher registers a watcher by name
+// RegisterWatcher registers a watcher by name (disabled by default)
 func (s *Service) RegisterWatcher(name string, watcher Watcher) {
 	s.watchers[name] = watcher
-	s.enabled[name] = true
+	s.enabled[name] = false // User enables in Settings
 }
 
 // GetDB returns the database connection for watcher creation
-func (s *Service) GetDB() *sql.DB {
+func (s *Service) GetDB() *database.DB {
 	return s.db
 }
 

@@ -3,11 +3,9 @@
   import { copyWithToast } from '../stores/helpers.js'
   import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
   import { useDataLoader } from '$lib/composables/index.js'
-  import { filterByFields, sortByMultiple } from '$lib/utils/data.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
-  import Toolbar from '../components/Toolbar.svelte'
   import Select from '../components/Select.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -33,23 +31,19 @@
   let newExpiration = $state('90')
   let newKey = $state(null)
   let creating = $state(false)
-  let searchQuery = $state('')
 
-  // Filtered and sorted keys - active first, then by expiration date
-  const filteredKeys = $derived.by(() => {
-    const filtered = filterByFields(apiKeys, ['prefix'], searchQuery)
-    return sortByMultiple(filtered, [
-      { fn: (a, b) => a._expired - b._expired },
-      {
-        fn: (a, b) => {
-          const dateA = parseDate(a.expiration)
-          const dateB = parseDate(b.expiration)
-          if (!dateA || !dateB) return 0
-          return a._expired ? dateB - dateA : dateA - dateB
-        }
-      }
-    ])
-  })
+  // Sorted keys - active first, expired last
+  const sortedKeys = $derived(
+    [...apiKeys].sort((a, b) => {
+      // Expired always last
+      if (a._expired !== b._expired) return a._expired ? 1 : -1
+      // Then by expiration date
+      const dateA = parseDate(a.expiration)
+      const dateB = parseDate(b.expiration)
+      if (!dateA || !dateB) return 0
+      return a._expired ? dateB - dateA : dateA - dateB
+    })
+  )
 
   async function createKey() {
     creating = true
@@ -97,27 +91,41 @@
   <InfoCard
     icon="key"
     title="API Keys"
-    description="Generate API keys for programmatic access to Headscale. Use these keys for automation, scripts, or third-party integrations. Keys can be set to expire for enhanced security."
-  />
-
-  <!-- Toolbar -->
-  <Toolbar bind:search={searchQuery} placeholder="Search keys...">
-    <Button onclick={() => { showCreateModal = true; newKey = null }} size="sm">
+    description="Generate API keys for programmatic access to Headscale. Use these keys for automation, scripts, or third-party integrations."
+  >
+    <Button onclick={() => { showCreateModal = true; newKey = null }} size="sm" class="hidden sm:flex shrink-0">
       <Icon name="plus" size={16} />
       Create Key
     </Button>
-  </Toolbar>
+  </InfoCard>
 
   {#if loading}
     <LoadingSpinner centered size="lg" />
-  {:else if filteredKeys.length > 0}
+  {:else if sortedKeys.length > 0}
     <div class="grid-cards">
-      {#each filteredKeys as key (key.id + '-' + (key.expiration?.seconds || key.expiration))}
+      <!-- Add key card - always first -->
+      <div
+        onclick={() => { showCreateModal = true; newKey = null }}
+        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, newKey = null)}
+        role="button"
+        tabindex="0"
+        class="add-item-card"
+      >
+        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
+          <Icon name="plus" size={16} />
+        </div>
+        <div class="font-medium text-foreground">Create API key</div>
+        <p class="max-w-[200px] text-muted-foreground">
+          Generate keys for programmatic access
+        </p>
+      </div>
+
+      {#each sortedKeys as key (key.id + '-' + (key.expiration?.seconds || key.expiration))}
         {@const daysLeft = getDaysUntilExpiry(key.expiration)}
         {@const isExpiringSoon = daysLeft !== null && daysLeft > 0 && daysLeft <= 7}
         {@const statusClass = key._expired ? 'error' : isExpiringSoon ? 'warning' : 'success'}
 
-        <div class="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors shadow-sm card-border-{statusClass}">
+        <div class="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors shadow-sm card-border-{statusClass} {key._expired ? 'opacity-60' : ''}">
           <!-- Header -->
           <div class="flex items-center gap-3 p-3">
             <div class="status-icon status-icon-{statusClass}">
@@ -146,48 +154,37 @@
 
           <!-- Actions -->
           <div class="flex items-center justify-between px-2 py-1.5 border-t border-border bg-muted/30">
-            <div class="flex items-center gap-1 text-[10px]">
-              <span class="status-dot status-dot-{statusClass}"></span>
-              <span class="status-text-{statusClass} font-medium">
-                {key._expired ? 'Expired' : isExpiringSoon ? 'Expiring soon' : 'Active'}
-              </span>
+            <div class="flex items-center gap-1.5 text-[10px]">
+              {#if key._expired}
+                <span class="kt-badge kt-badge-xs kt-badge-outline kt-badge-destructive">Expired</span>
+              {:else if isExpiringSoon}
+                <span class="kt-badge kt-badge-xs kt-badge-success">Active</span>
+                <span class="kt-badge kt-badge-xs kt-badge-outline kt-badge-warning">Expiring soon</span>
+              {:else}
+                <span class="kt-badge kt-badge-xs kt-badge-success">Active</span>
+              {/if}
             </div>
-            {#if !key._expired}
-              <button
-                onclick={() => confirmExpireKey(key)}
-                class="icon-btn-destructive"
-                title="Expire key"
-              >
-                <Icon name="ban" size={14} />
-              </button>
-            {/if}
+            <div class="flex items-center gap-0.5">
+              {#if !key._expired}
+                <button
+                  onclick={() => confirmExpireKey(key)}
+                  class="icon-btn-destructive"
+                  data-kt-tooltip
+                >
+                  <Icon name="ban" size={14} />
+                  <span data-kt-tooltip-content class="kt-tooltip hidden">Expire key</span>
+                </button>
+              {:else}
+                <span class="icon-btn cursor-not-allowed" data-kt-tooltip>
+                  <Icon name="ban" size={14} />
+                  <span data-kt-tooltip-content class="kt-tooltip hidden">Key expired</span>
+                </span>
+              {/if}
+            </div>
           </div>
         </div>
       {/each}
-
-      <!-- Add key card -->
-      <div
-        onclick={() => { showCreateModal = true; newKey = null }}
-        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, newKey = null)}
-        role="button"
-        tabindex="0"
-        class="add-item-card"
-      >
-        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
-          <Icon name="plus" size={16} />
-        </div>
-        <div class="font-medium text-foreground">Create API key</div>
-        <p class="max-w-[200px] text-muted-foreground">
-          Generate keys for programmatic access
-        </p>
-      </div>
     </div>
-  {:else if apiKeys.length > 0}
-    <EmptyState
-      icon="search"
-      title="No keys found"
-      description="Try a different search term"
-    />
   {:else}
     <EmptyState
       icon="key"
@@ -203,7 +200,7 @@
 </div>
 
 <!-- Create Modal -->
-<Modal bind:open={showCreateModal} title="Create API Key" size="sm">
+<Modal bind:open={showCreateModal} title={newKey ? "Key Created" : "Create API Key"} size="sm">
   {#if newKey}
     <div class="space-y-4">
       <div class="flex items-center gap-3 pb-3 border-b border-border">
@@ -211,17 +208,14 @@
           <Icon name="check" size={20} />
         </div>
         <div>
-          <p class="font-medium text-foreground">Key Created</p>
-          <p class="text-xs text-muted-foreground">Save this key now</p>
+          <p class="font-medium text-foreground">API Key Created</p>
+          <p class="text-xs text-muted-foreground">Save this key now - you won't see it again</p>
         </div>
       </div>
 
-      <div class="kt-alert kt-alert-warning">
-        <Icon name="alert-triangle" size={16} />
-        <div>
-          <p class="text-sm">You won't be able to see this key again.</p>
-          <code class="block text-xs font-mono break-all mt-2 p-2 bg-muted rounded">{newKey}</code>
-        </div>
+      <div>
+        <label class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 block">API Key</label>
+        <code class="block text-xs font-mono break-all p-3 bg-muted rounded-lg border border-border">{newKey}</code>
       </div>
     </div>
   {:else}

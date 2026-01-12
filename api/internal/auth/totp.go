@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/base64"
+	"fmt"
 	"image/png"
 	"log"
 	"net/http"
@@ -173,11 +174,21 @@ func (s *Service) handleEnable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check TOTP rate limit
+	if limited, remaining := checkTOTPRateLimit(user.ID); limited {
+		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds", int(remaining.Seconds())), http.StatusTooManyRequests)
+		return
+	}
+
 	// Verify the code
 	if !totp.Validate(req.Code, secret) {
+		recordFailedTOTP(user.ID)
 		router.JSONError(w, "Invalid verification code", http.StatusBadRequest)
 		return
 	}
+
+	// Clear TOTP attempts on success
+	clearTOTPAttempts(user.ID)
 
 	// Enable 2FA
 	_, err = s.db.Exec("UPDATE users SET totp_enabled = 1 WHERE id = ?", user.ID)
@@ -240,6 +251,12 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check TOTP rate limit
+	if limited, remaining := checkTOTPRateLimit(user.ID); limited {
+		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds", int(remaining.Seconds())), http.StatusTooManyRequests)
+		return
+	}
+
 	// Decrypt and verify TOTP code
 	if totpSecretEnc.Valid && totpSecretEnc.String != "" {
 		secret, err := helper.Decrypt(totpSecretEnc.String)
@@ -249,10 +266,14 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !totp.Validate(req.Code, secret) {
+			recordFailedTOTP(user.ID)
 			router.JSONError(w, "Invalid 2FA code", http.StatusBadRequest)
 			return
 		}
 	}
+
+	// Clear TOTP attempts on success
+	clearTOTPAttempts(user.ID)
 
 	// Disable 2FA and clear secret
 	_, err = s.db.Exec("UPDATE users SET totp_enabled = 0, totp_secret_enc = NULL WHERE id = ?", user.ID)

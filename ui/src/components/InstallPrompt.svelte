@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { toast } from '../stores/app.js'
+  import { copyToClipboard } from '../lib/utils/clipboard.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
 
@@ -15,13 +16,16 @@
     isStandalone = window.matchMedia('(display-mode: standalone)').matches
       || window.navigator.standalone === true
 
+    // Don't show if already installed
     if (isStandalone) return
 
-    // Only show on mobile devices
-    const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-      || (navigator.maxTouchPoints > 0 && window.innerWidth < 768)
-
-    if (!isMobile) return
+    // Don't show if dismissed in the last 7 days
+    const dismissed = localStorage.getItem('pwa-install-dismissed')
+    if (dismissed) {
+      const dismissedTime = parseInt(dismissed, 10)
+      const sevenDays = 7 * 24 * 60 * 60 * 1000
+      if (Date.now() - dismissedTime < sevenDays) return
+    }
 
     // Check if iOS (includes Chrome on iOS which uses WebKit)
     isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
@@ -31,27 +35,22 @@
     const ua = navigator.userAgent
     isSafari = isIOS && /Safari/.test(ua) && !/CriOS|FxiOS|OPiOS|EdgiOS/.test(ua)
 
-    // Check if dismissed recently (24h cooldown)
-    const dismissed = localStorage.getItem('pwa-install-dismissed')
-    if (dismissed && Date.now() - parseInt(dismissed) < 24 * 60 * 60 * 1000) return
+    // Show for iOS Safari immediately
+    if (isIOS) {
+      show = true
+      return
+    }
 
     // For Chrome/Android, capture the install prompt
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault()
       deferredPrompt = e
-      // Show banner when browser says PWA is installable
-      setTimeout(() => show = true, 1500)
+      show = true
     })
-
-    // For iOS, show instructions after delay (no beforeinstallprompt on iOS)
-    if (isIOS) {
-      setTimeout(() => show = true, 2000)
-    }
   })
 
   async function install() {
     if (isIOS) {
-      // Can't programmatically install on iOS, just dismiss
       dismiss()
       return
     }
@@ -74,73 +73,119 @@
 </script>
 
 {#if show}
-  <div class="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-80 z-50 animate-slide-up">
-    <div class="bg-card border border-border rounded-xl shadow-xl overflow-hidden">
-      <!-- Header with gradient -->
-      <div class="bg-gradient-to-r from-primary/20 to-success/20 px-4 py-3 flex items-center gap-3">
-        <div class="w-10 h-10 bg-card rounded-xl flex items-center justify-center shadow-sm">
-          <Icon name="shield" size={20} class="text-success" />
-        </div>
-        <div class="flex-1">
-          <div class="font-semibold text-sm text-foreground">Install Wire Panel</div>
-          <div class="text-xs text-muted-foreground">Add to your home screen</div>
-        </div>
-        <button onclick={dismiss} class="p-1 text-muted-foreground hover:text-foreground transition-colors">
-          <Icon name="x" size={16} />
+  <!-- Backdrop with blur -->
+  <div
+    class="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-50 animate-fade-in"
+    onclick={dismiss}
+  ></div>
+
+  <!-- Modal -->
+  <div class="fixed inset-x-4 bottom-4 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[420px] z-50 animate-slide-up">
+    <div class="bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+      <!-- Header -->
+      <div class="relative bg-gradient-to-br from-primary/20 via-success/10 to-info/20 px-6 py-6">
+        <button
+          onclick={dismiss}
+          class="absolute top-4 right-4 p-2 rounded-lg bg-black/20 text-white/70 hover:text-white hover:bg-black/30 transition-colors"
+        >
+          <Icon name="x" size={18} />
         </button>
+
+        <div class="flex items-center gap-4">
+          <div class="w-16 h-16 bg-card rounded-2xl flex items-center justify-center shadow-lg">
+            <Icon name="shield-check" size={32} class="text-success" />
+          </div>
+          <div>
+            <h2 class="text-xl font-bold text-foreground">Install Wire Panel</h2>
+            <p class="text-sm text-muted-foreground">Get the full app experience</p>
+          </div>
+        </div>
       </div>
 
       <!-- Content -->
-      <div class="px-4 py-3">
+      <div class="px-6 py-5">
         {#if isIOS}
           {#if isSafari}
-            <!-- Safari on iOS - can install -->
-            <p class="text-xs text-muted-foreground mb-3">
-              To install this app on your iPhone:
+            <!-- Safari on iOS -->
+            <p class="text-sm text-muted-foreground mb-4">
+              Install this app on your iPhone for quick access and a native app experience.
             </p>
-            <div class="flex items-center gap-3 text-xs">
-              <div class="flex items-center gap-2 flex-1">
-                <div class="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
-                  <Icon name="logout" size={14} class="text-primary rotate-[-90deg]" />
+
+            <div class="space-y-3 mb-4">
+              <div class="flex items-center gap-4 p-3 rounded-xl bg-muted/50">
+                <div class="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center flex-shrink-0">
+                  <Icon name="share" size={20} class="text-primary" />
                 </div>
-                <span class="text-foreground">Tap <strong>Share</strong></span>
+                <div class="flex-1">
+                  <p class="text-sm font-medium text-foreground">1. Tap Share</p>
+                  <p class="text-xs text-muted-foreground">Find the share icon in Safari's toolbar</p>
+                </div>
               </div>
-              <Icon name="chevron-right" size={14} class="text-muted-foreground/30" />
-              <div class="flex items-center gap-2 flex-1">
-                <div class="w-7 h-7 rounded-lg bg-success/20 flex items-center justify-center flex-shrink-0">
-                  <Icon name="plus" size={14} class="text-success" />
+
+              <div class="flex items-center gap-4 p-3 rounded-xl bg-muted/50">
+                <div class="w-10 h-10 rounded-xl bg-success/20 flex items-center justify-center flex-shrink-0">
+                  <Icon name="square-plus" size={20} class="text-success" />
                 </div>
-                <span class="text-foreground"><strong>Add to Home</strong></span>
+                <div class="flex-1">
+                  <p class="text-sm font-medium text-foreground">2. Add to Home Screen</p>
+                  <p class="text-xs text-muted-foreground">Scroll down and tap "Add to Home Screen"</p>
+                </div>
               </div>
             </div>
-            <p class="text-[11px] text-muted-foreground mt-3 text-center">
-              Tap <Icon name="logout" size={10} class="inline rotate-[-90deg]" /> in Safari's toolbar, then "Add to Home Screen"
-            </p>
-          {:else}
-            <!-- Chrome/Firefox on iOS - must switch to Safari -->
-            <div class="flex items-start gap-3">
-              <div class="w-9 h-9 rounded-lg bg-warning/20 flex items-center justify-center flex-shrink-0">
-                <Icon name="alert-triangle" size={18} class="text-warning" />
-              </div>
-              <div class="text-xs">
-                <p class="text-foreground font-medium mb-1">Open in Safari to install</p>
-                <p class="text-muted-foreground">iOS only allows app installation from Safari. Copy this URL and open it in Safari.</p>
-              </div>
-            </div>
-            <Button onclick={() => { navigator.clipboard.writeText(window.location.href); toast('URL copied to clipboard', 'success') }} size="sm" variant="secondary" icon="copy" class="w-full mt-3">
-              Copy URL
+
+            <Button onclick={dismiss} variant="secondary" class="w-full">
+              Got it
             </Button>
+          {:else}
+            <!-- Chrome/Firefox on iOS -->
+            <div class="flex items-start gap-4 p-4 rounded-xl bg-warning/10 border border-warning/20 mb-4">
+              <div class="w-10 h-10 rounded-xl bg-warning/20 flex items-center justify-center flex-shrink-0">
+                <Icon name="alert-triangle" size={20} class="text-warning" />
+              </div>
+              <div>
+                <p class="text-sm font-medium text-foreground mb-1">Safari Required</p>
+                <p class="text-xs text-muted-foreground">iOS only allows app installation from Safari. Copy this URL and open it in Safari to install.</p>
+              </div>
+            </div>
+
+            <div class="flex gap-3">
+              <Button onclick={dismiss} variant="ghost" class="flex-1">
+                Maybe later
+              </Button>
+              <Button onclick={() => { copyToClipboard(window.location.href); toast('URL copied!', 'success') }} icon="copy" class="flex-1">
+                Copy URL
+              </Button>
+            </div>
           {/if}
         {:else}
-          <p class="text-xs text-muted-foreground">
-            Install for quick access, works offline, and feels like a native app.
-          </p>
-          <div class="flex gap-2 mt-3">
-            <Button onclick={dismiss} variant="ghost" size="sm" class="flex-1">
+          <!-- Android / Desktop -->
+          <div class="space-y-3 mb-5">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-success/20 flex items-center justify-center">
+                <Icon name="bolt" size={16} class="text-success" />
+              </div>
+              <p class="text-sm text-foreground">Quick access from your home screen</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-info/20 flex items-center justify-center">
+                <Icon name="wifi-off" size={16} class="text-info" />
+              </div>
+              <p class="text-sm text-foreground">Works offline with cached data</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                <Icon name="device-mobile" size={16} class="text-primary" />
+              </div>
+              <p class="text-sm text-foreground">Native app-like experience</p>
+            </div>
+          </div>
+
+          <div class="flex gap-3">
+            <Button onclick={dismiss} variant="ghost" class="flex-1">
               Not now
             </Button>
-            <Button onclick={install} size="sm" icon="download" class="flex-1">
-              Install
+            <Button onclick={install} icon="download" class="flex-1">
+              Install App
             </Button>
           </div>
         {/if}
@@ -153,14 +198,39 @@
   @keyframes slide-up {
     from {
       opacity: 0;
-      transform: translateY(20px);
+      transform: translateY(30px);
     }
     to {
       opacity: 1;
       transform: translateY(0);
     }
   }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
   .animate-slide-up {
     animation: slide-up 0.3s ease-out;
+  }
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out;
+  }
+
+  @media (min-width: 640px) {
+    .animate-slide-up {
+      animation: none;
+      animation: scale-in 0.3s ease-out;
+    }
+  }
+
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
   }
 </style>

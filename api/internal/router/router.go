@@ -96,6 +96,7 @@ func (r *Router) Build() http.Handler {
 
 	// Add API schema endpoint
 	r.mux.HandleFunc("/api/schema", r.handleAPIInfo)
+	r.mux.HandleFunc("/api/manifest.json", r.handleManifest)
 	r.mux.HandleFunc("/health", r.handleHealth)
 
 	return r.applyMiddleware(r.mux)
@@ -244,6 +245,7 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 		"/health",
 		"/api",
 		"/api/",
+		"/api/manifest.json",
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -544,6 +546,51 @@ func (r *Router) handleHealth(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding health response: %v", err)
+	}
+}
+
+// handleManifest returns a dynamic PWA manifest with domain-specific name
+func (r *Router) handleManifest(w http.ResponseWriter, req *http.Request) {
+	sslDomain := helper.GetEnvOptional("SSL_DOMAIN", "")
+	if sslDomain == "" {
+		http.NotFound(w, req)
+		return
+	}
+
+	// Build manifest with domain-specific name
+	// short_name is used by iOS for home screen icon (keep it short)
+	manifest := map[string]interface{}{
+		"name":             "Wire Panel - " + sslDomain,
+		"short_name":       sslDomain,
+		"description":      "WireGuard & Headscale Admin Panel",
+		"start_url":        "/",
+		"display":          "standalone",
+		"background_color": "#16161a",
+		"theme_color":      "#16161a",
+		"icons": []map[string]interface{}{
+			{
+				"src":     "/icon-192.png",
+				"sizes":   "192x192",
+				"type":    "image/png",
+				"purpose": "any",
+			},
+			{
+				"src":     "/icon-512.png",
+				"sizes":   "512x512",
+				"type":    "image/png",
+				"purpose": "any maskable",
+			},
+			{
+				"src":   "/icon.svg",
+				"sizes": "any",
+				"type":  "image/svg+xml",
+			},
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/manifest+json")
+	if err := json.NewEncoder(w).Encode(manifest); err != nil {
+		log.Printf("Error encoding manifest: %v", err)
 	}
 }
 

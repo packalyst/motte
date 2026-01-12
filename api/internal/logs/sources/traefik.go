@@ -2,18 +2,18 @@ package sources
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"time"
 
+	"api/internal/database"
 	"api/internal/logs"
 )
 
 // TraefikWatcher watches Traefik access logs
 type TraefikWatcher struct {
 	BaseWatcher
-	db     *sql.DB
+	db     *database.DB
 	config logs.Config
 }
 
@@ -33,7 +33,7 @@ type TraefikLogEntry struct {
 }
 
 // NewTraefikWatcher creates a new Traefik watcher
-func NewTraefikWatcher(db *sql.DB, config logs.Config) *TraefikWatcher {
+func NewTraefikWatcher(db *database.DB, config logs.Config) *TraefikWatcher {
 	return &TraefikWatcher{
 		BaseWatcher: NewBaseWatcher("traefik", logs.NewFileTailer(config.TraefikLogPath, 2*time.Second)),
 		db:          db,

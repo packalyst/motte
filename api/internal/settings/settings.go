@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"strings"
 
+	"api/internal/adguard"
 	"api/internal/config"
 	"api/internal/database"
+	"api/internal/headscale"
 	"api/internal/helper"
 	"api/internal/router"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Service provider callbacks (set by main.go to avoid import cycles)
@@ -221,12 +221,39 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update Headscale public URL (api_url is readonly, set during setup)
+	headscaleRestartRequired := false
+	nodesExpired := 0
 	if req.HeadscaleURL != nil {
+		// Test if headscale is reachable at the new URL before applying
+		if err := headscale.TestURL(*req.HeadscaleURL); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		if err := setSetting("headscale_url", *req.HeadscaleURL); err != nil {
 			router.JSONError(w, "Failed to save headscale_url: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("Updated headscale_url")
+		log.Printf("Updated headscale_url to %s", *req.HeadscaleURL)
+
+		// Update headscale config.yaml
+		configPath := helper.GetEnv("HEADSCALE_CONFIG_PATH")
+		if configPath != "" {
+			if err := headscale.UpdateConfig(configPath, *req.HeadscaleURL); err != nil {
+				log.Printf("Warning: Failed to update Headscale config: %v", err)
+			} else {
+				headscaleRestartRequired = true
+				log.Printf("Updated Headscale config, restart required")
+
+				// Expire all nodes so they show as needing re-authentication
+				if count, err := headscale.ExpireAllNodes(); err != nil {
+					log.Printf("Warning: Failed to expire nodes: %v", err)
+				} else {
+					nodesExpired = count
+					log.Printf("Expired %d nodes due to URL change", count)
+				}
+			}
+		}
 	}
 
 	// Update AdGuard settings
@@ -249,24 +276,24 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update AdGuard YAML config if needed
-	configPath := helper.GetEnvOptional("ADGUARD_CONFIG", "")
-	if configPath != "" {
+	adguardConfigPath := helper.GetEnvOptional("ADGUARD_CONFIG", "")
+	if adguardConfigPath != "" {
 		if req.AdGuardUsername != nil && req.AdGuardPassword != nil {
-			if restart, err := updateAdGuardConfig(configPath, *req.AdGuardUsername, *req.AdGuardPassword); err != nil {
+			if restart, err := adguard.UpdateCredentials(adguardConfigPath, *req.AdGuardUsername, *req.AdGuardPassword); err != nil {
 				log.Printf("Warning: Failed to update AdGuard config: %v", err)
 			} else if restart {
 				adguardRestartRequired = true
 			}
 		}
 		if req.AdGuardDashboardEnabled != nil {
-			if err := updateAdGuardDashboard(configPath, *req.AdGuardDashboardEnabled); err != nil {
+			if err := adguard.UpdateDashboard(adguardConfigPath, *req.AdGuardDashboardEnabled); err != nil {
 				log.Printf("Warning: Failed to update AdGuard dashboard: %v", err)
 			} else {
 				adguardRestartRequired = true
 			}
 		}
 		if req.AdGuardQuerylogSize != nil {
-			if err := updateAdGuardQuerylogSize(configPath, *req.AdGuardQuerylogSize); err != nil {
+			if err := adguard.UpdateQuerylogSize(adguardConfigPath, *req.AdGuardQuerylogSize); err != nil {
 				log.Printf("Warning: Failed to update AdGuard querylog size: %v", err)
 			} else {
 				adguardRestartRequired = true
@@ -301,8 +328,10 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	router.JSON(w, map[string]interface{}{
-		"status":                 "ok",
-		"adguardRestartRequired": adguardRestartRequired,
+		"status":                   "ok",
+		"adguardRestartRequired":   adguardRestartRequired,
+		"headscaleRestartRequired": headscaleRestartRequired,
+		"nodesExpired":             nodesExpired,
 	})
 }
 
@@ -419,108 +448,4 @@ func DeleteSetting(key string) error {
 
 	_, err = db.Exec("DELETE FROM settings WHERE key = ?", key)
 	return err
-}
-
-// updateAdGuardConfig updates the username and password in AdGuardHome.yaml
-// Returns true if restart is required (credentials changed)
-func updateAdGuardConfig(configPath, username, password string) (bool, error) {
-	// Read current config
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return false, err
-	}
-
-	content := string(data)
-
-	// Hash the password using bcrypt
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return false, err
-	}
-
-	// Find and replace the users section
-	// AdGuard YAML structure:
-	// users:
-	//   - name: username
-	//     password: $2b$...
-
-	newContent := updateYAMLUser(content, username, string(hashedPassword))
-
-	if newContent == content {
-		return false, nil // No changes needed
-	}
-
-	// Write back
-	if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
-		return false, err
-	}
-
-	log.Printf("Updated AdGuard config with new credentials for user: %s", username)
-	return true, nil
-}
-
-// updateYAMLUser updates the first user entry in the YAML content using proper YAML parsing
-func updateYAMLUser(content, username, hashedPassword string) string {
-	newContent, err := helper.UpdateYAMLPaths(content, []helper.YAMLUpdate{
-		{Path: "users.0.name", Value: username},
-		{Path: "users.0.password", Value: hashedPassword},
-	})
-	if err != nil {
-		log.Printf("Warning: failed to update YAML: %v", err)
-		return content
-	}
-	return newContent
-}
-
-// updateAdGuardDashboard updates the http.address in AdGuardHome.yaml
-// enabled=true: 0.0.0.0:port (accessible externally)
-// enabled=false: 127.0.0.1:port (local only)
-func updateAdGuardDashboard(configPath string, enabled bool) error {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-
-	content := string(data)
-
-	// Get current address to extract port
-	port := "8083"
-	if addr, err := helper.GetYAMLPath(content, "http.address"); err == nil {
-		if addrStr, ok := addr.(string); ok {
-			parts := strings.Split(addrStr, ":")
-			if len(parts) >= 2 {
-				port = parts[len(parts)-1]
-			}
-		}
-	}
-
-	// Update address
-	var newAddress string
-	if enabled {
-		newAddress = "0.0.0.0:" + port
-	} else {
-		newAddress = "127.0.0.1:" + port
-	}
-
-	newContent, err := helper.UpdateYAMLPath(content, "http.address", newAddress)
-	if err != nil {
-		return fmt.Errorf("failed to update YAML: %v", err)
-	}
-
-	return os.WriteFile(configPath, []byte(newContent), 0644)
-}
-
-// updateAdGuardQuerylogSize updates the querylog.size_memory in AdGuardHome.yaml
-func updateAdGuardQuerylogSize(configPath string, size int) error {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-
-	newContent, err := helper.UpdateYAMLPath(string(data), "querylog.size_memory", size)
-	if err != nil {
-		return fmt.Errorf("failed to update YAML: %v", err)
-	}
-
-	return os.WriteFile(configPath, []byte(newContent), 0644)
 }

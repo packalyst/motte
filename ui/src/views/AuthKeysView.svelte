@@ -6,7 +6,6 @@
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
-  import Toolbar from '../components/Toolbar.svelte'
   import Select from '../components/Select.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
@@ -20,7 +19,7 @@
   let showCreateModal = $state(false)
   let createForm = $state({ user: '', reusable: false, ephemeral: false, expiration: '90' })
   let creating = $state(false)
-  let searchQuery = $state('')
+  let createdKey = $state(null)
 
   // Get server URL for command display (from settings)
   let serverUrl = $state('')
@@ -57,25 +56,21 @@
     }
   }
 
-  // Filtered and sorted keys - active first, then by expiration
-  const filteredKeys = $derived(
-    authKeys
-      .filter(k =>
-        k.key?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        k.userName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        k.user?.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-      .sort((a, b) => {
-        // Active (not expired, not used) first
-        const aActive = !a._expired && !a.used
-        const bActive = !b._expired && !b.used
-        if (aActive !== bActive) return aActive ? -1 : 1
-        // Then by expiration date
-        const dateA = parseDate(a.expiration)
-        const dateB = parseDate(b.expiration)
-        if (!dateA || !dateB) return 0
-        return aActive ? dateA - dateB : dateB - dateA
-      })
+  // Sorted keys - active first, used in middle, expired last
+  const sortedKeys = $derived(
+    [...authKeys].sort((a, b) => {
+      // Expired always last
+      if (a._expired !== b._expired) return a._expired ? 1 : -1
+      // Then active (not used) before used
+      const aActive = !a._expired && !a.used
+      const bActive = !b._expired && !b.used
+      if (aActive !== bActive) return aActive ? -1 : 1
+      // Then by expiration date
+      const dateA = parseDate(a.expiration)
+      const dateB = parseDate(b.expiration)
+      if (!dateA || !dateB) return 0
+      return aActive ? dateA - dateB : dateB - dateA
+    })
   )
 
   async function createKey() {
@@ -89,15 +84,14 @@
       const days = parseInt(createForm.expiration)
       expiration.setDate(expiration.getDate() + days)
 
-      await apiPost('/api/hs/preauthkeys', {
+      const res = await apiPost('/api/hs/preauthkeys', {
         user: createForm.user,
         reusable: createForm.reusable,
         ephemeral: createForm.ephemeral,
         expiration: expiration.toISOString()
       })
+      createdKey = res.preAuthKey
       toast('Auth key created', 'success')
-      showCreateModal = false
-      createForm = { user: '', reusable: false, ephemeral: false, expiration: '90' }
       loadData()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
@@ -140,29 +134,43 @@
   <InfoCard
     icon="key"
     title="Pre-Authentication Keys"
-    description="Generate keys to automatically register devices without manual approval. Perfect for CI/CD pipelines, containerized workloads, or bulk device onboarding. Copy the command from any key to connect instantly."
-  />
-
-  <!-- Toolbar -->
-  <Toolbar bind:search={searchQuery} placeholder="Search keys...">
-    <Button onclick={() => showCreateModal = true} size="sm">
+    description="Generate keys to automatically register devices without manual approval. Perfect for CI/CD pipelines, containerized workloads, or bulk device onboarding."
+  >
+    <Button onclick={() => { showCreateModal = true; createdKey = null }} size="sm" class="hidden sm:flex shrink-0">
       <Icon name="plus" size={16} />
       Create Key
     </Button>
-  </Toolbar>
+  </InfoCard>
 
   {#if loading}
     <LoadingSpinner centered size="lg" />
-  {:else if filteredKeys.length > 0}
+  {:else if sortedKeys.length > 0}
     <div class="grid-cards">
-      {#each filteredKeys as key (key.key)}
+      <!-- Add key card - always first -->
+      <div
+        onclick={() => { showCreateModal = true; createdKey = null }}
+        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, createdKey = null)}
+        role="button"
+        tabindex="0"
+        class="add-item-card"
+      >
+        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
+          <Icon name="plus" size={16} />
+        </div>
+        <div class="font-medium text-foreground">Create auth key</div>
+        <p class="max-w-[200px] text-muted-foreground">
+          Allow devices to join automatically
+        </p>
+      </div>
+
+      {#each sortedKeys as key (key.key)}
         {@const daysLeft = getDaysUntilExpiry(key.expiration)}
         {@const isExpiringSoon = daysLeft !== null && daysLeft > 0 && daysLeft <= 7}
         {@const isUsed = key.used}
         {@const isActive = !key._expired && !isUsed}
         {@const statusClass = key._expired ? 'error' : isUsed ? 'muted' : isExpiringSoon ? 'warning' : 'success'}
 
-        <div class="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors shadow-sm card-border-{statusClass}">
+        <div class="bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors shadow-sm card-border-{statusClass} {key._expired ? 'opacity-60' : ''}">
           <!-- Header -->
           <div class="flex items-center gap-3 p-3">
             <div class="status-icon status-icon-{statusClass}">
@@ -206,64 +214,56 @@
 
           <!-- Actions -->
           <div class="flex items-center justify-between px-2 py-1.5 border-t border-border bg-muted/30">
-            <div class="flex items-center gap-1 text-[10px]">
-              <span class="status-dot status-dot-{statusClass}"></span>
-              <span class="{statusClass === 'muted' ? 'text-muted-foreground' : `status-text-${statusClass}`} font-medium">
-                {key._expired ? 'Expired' : isUsed ? 'Used' : isExpiringSoon ? 'Expiring soon' : 'Active'}
-              </span>
+            <div class="flex items-center gap-1.5 text-[10px]">
+              {#if key._expired}
+                <span class="kt-badge kt-badge-xs kt-badge-outline kt-badge-destructive">Expired</span>
+              {:else if isUsed && !key.reusable}
+                <span class="kt-badge kt-badge-xs kt-badge-outline kt-badge-secondary">Used</span>
+              {:else if isExpiringSoon}
+                <span class="kt-badge kt-badge-xs kt-badge-success">Active</span>
+                <span class="kt-badge kt-badge-xs kt-badge-outline kt-badge-warning">Expiring soon</span>
+              {:else}
+                <span class="kt-badge kt-badge-xs kt-badge-success">Active</span>
+              {/if}
             </div>
             <div class="flex items-center gap-0.5">
-              <button
-                onclick={() => copyToClipboard(`tailscale up --login-server=${serverUrl} --authkey=${key.key}`)}
-                class="icon-btn"
-                title="Copy command"
-              >
-                <Icon name="copy" size={14} />
-              </button>
+              {#if !key._expired && (!isUsed || key.reusable)}
+                <button
+                  onclick={() => copyToClipboard(`tailscale up --login-server=${serverUrl} --authkey=${key.key}`)}
+                  class="icon-btn"
+                  data-kt-tooltip
+                >
+                  <Icon name="copy" size={14} />
+                  <span data-kt-tooltip-content class="kt-tooltip hidden">Copy command</span>
+                </button>
+              {:else}
+                <span class="icon-btn cursor-not-allowed" data-kt-tooltip>
+                  <Icon name="copy-off" size={14} />
+                  <span data-kt-tooltip-content class="kt-tooltip hidden">{key._expired ? 'Key expired' : 'Key already used'}</span>
+                </span>
+              {/if}
               {#if isActive}
                 <button
                   onclick={() => confirmExpireKey(key)}
                   class="icon-btn-destructive"
-                  title="Expire key"
+                  data-kt-tooltip
                 >
                   <Icon name="ban" size={14} />
+                  <span data-kt-tooltip-content class="kt-tooltip hidden">Expire key</span>
                 </button>
               {/if}
             </div>
           </div>
         </div>
       {/each}
-
-      <!-- Add key card -->
-      <div
-        onclick={() => showCreateModal = true}
-        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true)}
-        role="button"
-        tabindex="0"
-        class="add-item-card"
-      >
-        <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
-          <Icon name="plus" size={16} />
-        </div>
-        <div class="font-medium text-foreground">Create auth key</div>
-        <p class="max-w-[200px] text-muted-foreground">
-          Allow devices to join automatically
-        </p>
-      </div>
     </div>
-  {:else if authKeys.length > 0}
-    <EmptyState
-      icon="search"
-      title="No keys found"
-      description="Try a different search term"
-    />
   {:else}
     <EmptyState
       icon="key"
       title="No auth keys"
       description="Create keys to allow devices to join automatically"
     >
-      <Button onclick={() => showCreateModal = true} size="sm">
+      <Button onclick={() => { showCreateModal = true; createdKey = null }} size="sm">
         <Icon name="plus" size={14} />
         Create Key
       </Button>
@@ -272,42 +272,78 @@
 </div>
 
 <!-- Create Modal -->
-<Modal bind:open={showCreateModal} title="Create Auth Key" size="sm">
-  <div class="space-y-4">
-    <Select label="User" bind:value={createForm.user}>
-      <option value="">Select user...</option>
-      {#each users as user}
-        <option value={user.name}>{user.name}</option>
-      {/each}
-    </Select>
-    <Select
-      label="Expiration"
-      bind:value={createForm.expiration}
-      options={[
-        { value: '1', label: '1 day' },
-        { value: '7', label: '7 days' },
-        { value: '30', label: '30 days' },
-        { value: '90', label: '90 days' },
-        { value: '365', label: '1 year' }
-      ]}
-      helperText="Key will expire on {new Date(Date.now() + parseInt(createForm.expiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}"
-    />
-    <div class="flex gap-4">
-      <Checkbox variant="chip" bind:checked={createForm.reusable} icon="refresh" label="Reusable" />
-      <Checkbox variant="chip" bind:checked={createForm.ephemeral} icon="clock" label="Ephemeral" color="warning" />
+<Modal bind:open={showCreateModal} title={createdKey ? "Key Created" : "Create Auth Key"} size="sm">
+  {#if createdKey}
+    <div class="space-y-4">
+      <div class="flex items-center gap-3 pb-3 border-b border-border">
+        <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-success/15 text-success">
+          <Icon name="check" size={20} />
+        </div>
+        <div>
+          <p class="font-medium text-foreground">Auth Key Created</p>
+          <p class="text-xs text-muted-foreground">Copy the command below to connect a device</p>
+        </div>
+      </div>
+
+      <div>
+        <label class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 block">Command</label>
+        <code class="block text-xs font-mono break-all p-3 bg-muted rounded-lg border border-border">tailscale up --login-server={serverUrl} --authkey={createdKey.key}</code>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 text-xs">
+        <div class="p-2 bg-muted/50 rounded">
+          <span class="text-muted-foreground">User:</span>
+          <span class="text-foreground ml-1">{createdKey.user}</span>
+        </div>
+        <div class="p-2 bg-muted/50 rounded">
+          <span class="text-muted-foreground">Expires:</span>
+          <span class="text-foreground ml-1">{formatExpiryDate(createdKey.expiration)}</span>
+        </div>
+      </div>
     </div>
-    <div class="text-xs text-muted-foreground bg-muted/50 p-2 rounded space-y-1">
-      <p><strong>Reusable:</strong> Key can register multiple devices (e.g., CI runners)</p>
-      <p><strong>Ephemeral:</strong> Nodes auto-removed when offline (e.g., containers)</p>
-      <p class="text-[10px] opacity-75">Both can be enabled for short-lived workloads like CI/CD pipelines</p>
+  {:else}
+    <div class="space-y-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Select label="User" bind:value={createForm.user}>
+          <option value="">Select user...</option>
+          {#each users as user}
+            <option value={user.name}>{user.name}</option>
+          {/each}
+        </Select>
+        <Select
+          label="Expiration"
+          bind:value={createForm.expiration}
+          options={[
+            { value: '1', label: '1 day' },
+            { value: '7', label: '7 days' },
+            { value: '30', label: '30 days' },
+            { value: '90', label: '90 days' },
+            { value: '365', label: '1 year' }
+          ]}
+        />
+      </div>
+      <div class="flex gap-4">
+        <Checkbox variant="chip" bind:checked={createForm.reusable} icon="refresh" label="Reusable" />
+        <Checkbox variant="chip" bind:checked={createForm.ephemeral} icon="clock" label="Ephemeral" color="warning" />
+      </div>
+      <div class="text-xs text-muted-foreground bg-muted/50 p-2 rounded space-y-1">
+        <p><strong>Reusable:</strong> Key can register multiple devices (e.g., CI runners)</p>
+        <p><strong>Ephemeral:</strong> Nodes auto-removed when offline (e.g., containers)</p>
+        <p class="text-[10px] opacity-75">Both can be enabled for short-lived workloads like CI/CD pipelines</p>
+      </div>
     </div>
-  </div>
+  {/if}
 
   {#snippet footer()}
-    <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
-    <Button onclick={createKey} disabled={creating || !createForm.user}>
-      {creating ? 'Creating...' : 'Create'}
-    </Button>
+    {#if createdKey}
+      <Button onclick={() => copyToClipboard(`tailscale up --login-server=${serverUrl} --authkey=${createdKey.key}`)} icon="copy">Copy Command</Button>
+      <Button onclick={() => { showCreateModal = false; createdKey = null; createForm = { user: '', reusable: false, ephemeral: false, expiration: '90' } }} variant="secondary">Done</Button>
+    {:else}
+      <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
+      <Button onclick={createKey} disabled={creating || !createForm.user}>
+        {creating ? 'Creating...' : 'Create'}
+      </Button>
+    {/if}
   {/snippet}
 </Modal>
 

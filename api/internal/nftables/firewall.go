@@ -12,12 +12,12 @@ import (
 
 // FirewallTable builds the inet firewall table
 type FirewallTable struct {
-	db              *sql.DB
+	db              *database.DB
 	countryProvider CountryZonesProvider
 }
 
 // NewFirewallTable creates a new firewall table builder
-func NewFirewallTable(db *sql.DB, countryProvider CountryZonesProvider) *FirewallTable {
+func NewFirewallTable(db *database.DB, countryProvider CountryZonesProvider) *FirewallTable {
 	return &FirewallTable{db: db, countryProvider: countryProvider}
 }
 

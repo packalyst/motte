@@ -37,18 +37,13 @@ func isValidSQLIdentifier(name string) bool {
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var blockedCount, portsCount, countryCount, attemptsCount, jailsCount int
 
-	// Count blocked IPs/ranges
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
-		WHERE entry_type IN ('ip', 'range') AND action = 'block' AND enabled = 1
-		AND (expires_at IS NULL OR expires_at > datetime('now'))`).Scan(&blockedCount)
-
-	// Count allowed ports
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
-		WHERE entry_type = 'port' AND action = 'allow' AND enabled = 1`).Scan(&portsCount)
-
-	// Count blocked countries
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
-		WHERE entry_type = 'country' AND enabled = 1`).Scan(&countryCount)
+	// Count firewall entries in single query using conditional aggregation
+	_ = s.db.QueryRow(`SELECT
+		SUM(CASE WHEN entry_type IN ('ip', 'range') AND action = 'block' AND enabled = 1
+		         AND (expires_at IS NULL OR expires_at > datetime('now')) THEN 1 ELSE 0 END),
+		SUM(CASE WHEN entry_type = 'port' AND action = 'allow' AND enabled = 1 THEN 1 ELSE 0 END),
+		SUM(CASE WHEN entry_type = 'country' AND enabled = 1 THEN 1 ELSE 0 END)
+		FROM firewall_entries`).Scan(&blockedCount, &portsCount, &countryCount)
 
 	// Count recent firewall log entries (last 24h)
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM logs

@@ -11,6 +11,7 @@ import (
 // Rate limiting for login attempts
 const (
 	maxLoginAttempts = 5 // Max failed attempts before lockout
+	maxTOTPAttempts  = 5 // Max failed TOTP attempts before lockout
 )
 
 // Use helper constants for lockout timing
@@ -28,6 +29,10 @@ type loginAttempt struct {
 var (
 	loginAttempts      = make(map[string]*loginAttempt)
 	loginAttemptsMutex sync.RWMutex
+
+	// TOTP rate limiting (keyed by user ID)
+	totpAttempts      = make(map[int64]*loginAttempt)
+	totpAttemptsMutex sync.RWMutex
 )
 
 func init() {
@@ -39,6 +44,8 @@ func init() {
 		for {
 			time.Sleep(1 * time.Minute)
 			now := time.Now()
+
+			// Cleanup login attempts
 			loginAttemptsMutex.Lock()
 			for ip, attempt := range loginAttempts {
 				// Remove if lockout expired
@@ -52,6 +59,19 @@ func init() {
 				}
 			}
 			loginAttemptsMutex.Unlock()
+
+			// Cleanup TOTP attempts
+			totpAttemptsMutex.Lock()
+			for userID, attempt := range totpAttempts {
+				if !attempt.lockedAt.IsZero() && now.Sub(attempt.lockedAt) > loginLockoutTime {
+					delete(totpAttempts, userID)
+					continue
+				}
+				if attempt.lockedAt.IsZero() && now.Sub(attempt.firstTry) > loginLockoutWindow {
+					delete(totpAttempts, userID)
+				}
+			}
+			totpAttemptsMutex.Unlock()
 		}
 	}()
 }
@@ -131,4 +151,81 @@ func clearLoginAttempts(ip string) {
 	loginAttemptsMutex.Lock()
 	delete(loginAttempts, ip)
 	loginAttemptsMutex.Unlock()
+}
+
+// checkTOTPRateLimit returns true if the user is rate limited for TOTP attempts
+func checkTOTPRateLimit(userID int64) (bool, time.Duration) {
+	totpAttemptsMutex.RLock()
+	attempt, exists := totpAttempts[userID]
+	totpAttemptsMutex.RUnlock()
+
+	if !exists {
+		return false, 0
+	}
+
+	now := time.Now()
+
+	// Check if currently locked out
+	if !attempt.lockedAt.IsZero() {
+		remaining := loginLockoutTime - now.Sub(attempt.lockedAt)
+		if remaining > 0 {
+			return true, remaining
+		}
+		// Lockout expired, reset
+		totpAttemptsMutex.Lock()
+		delete(totpAttempts, userID)
+		totpAttemptsMutex.Unlock()
+		return false, 0
+	}
+
+	// Check if window has expired (reset counter)
+	if now.Sub(attempt.firstTry) > loginLockoutWindow {
+		totpAttemptsMutex.Lock()
+		delete(totpAttempts, userID)
+		totpAttemptsMutex.Unlock()
+		return false, 0
+	}
+
+	return false, 0
+}
+
+// recordFailedTOTP records a failed TOTP attempt and returns true if now locked out
+func recordFailedTOTP(userID int64) bool {
+	totpAttemptsMutex.Lock()
+	defer totpAttemptsMutex.Unlock()
+
+	now := time.Now()
+	attempt, exists := totpAttempts[userID]
+
+	if !exists {
+		totpAttempts[userID] = &loginAttempt{
+			count:    1,
+			firstTry: now,
+		}
+		return false
+	}
+
+	// Reset if window expired
+	if now.Sub(attempt.firstTry) > loginLockoutWindow {
+		attempt.count = 1
+		attempt.firstTry = now
+		attempt.lockedAt = time.Time{}
+		return false
+	}
+
+	attempt.count++
+	if attempt.count >= maxTOTPAttempts {
+		attempt.lockedAt = now
+		log.Printf("TOTP rate limit: user ID %d locked out after %d failed attempts", userID, attempt.count)
+		return true
+	}
+
+	return false
+}
+
+// clearTOTPAttempts clears failed TOTP attempts for a user after success
+func clearTOTPAttempts(userID int64) {
+	totpAttemptsMutex.Lock()
+	delete(totpAttempts, userID)
+	totpAttemptsMutex.Unlock()
 }

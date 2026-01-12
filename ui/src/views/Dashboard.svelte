@@ -3,7 +3,9 @@
   import { slide } from 'svelte/transition'
   import { theme, currentView, apiGet } from '../stores/app.js'
   import { subscribe, unsubscribe, generalInfoStore } from '../stores/websocket.js'
+  import { visibilityChangeCount } from '../stores/network.js'
   import Icon from '../components/Icon.svelte'
+  import PullToRefresh from '../components/PullToRefresh.svelte'
 
   // Lazy load views - each becomes a separate chunk
   const views = {
@@ -66,6 +68,30 @@
   onDestroy(() => {
     unsubscribe('general_info')
   })
+
+  // Trigger refresh when app becomes visible (PWA foreground)
+  let lastVisibilityCount = 0
+  $effect(() => {
+    if ($visibilityChangeCount > lastVisibilityCount) {
+      lastVisibilityCount = $visibilityChangeCount
+      reloadCurrentView()
+    }
+  })
+
+  // Force reload current view
+  async function reloadCurrentView() {
+    const current = $currentView
+    if (!current) return
+    loading = true
+    currentView.set(null)
+    await new Promise(r => setTimeout(r, 50))
+    currentView.set(current)
+  }
+
+  // Pull-to-refresh handler
+  async function handlePullRefresh() {
+    await reloadCurrentView()
+  }
 
   const navItems = [
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
@@ -435,26 +461,30 @@
       </div>
     {/if}
 
-    <!-- Content area -->
-    <section class="flex-1 overflow-auto bg-background p-3 lg:p-4">
-      {#if loading}
-        <div class="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
-          <div class="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-foreground"></div>
-          <p class="text-xs">Loading...</p>
-        </div>
-      {/if}
-      <div class:hidden={loading}>
-        {#await views[$currentView]?.() then module}
-          {#if module}
-            {@const Component = module.default}
-            <Component bind:loading {onLogout} />
+    <!-- Content area with pull-to-refresh -->
+    <section class="flex-1 overflow-hidden overflow-y-auto bg-background">
+      <PullToRefresh onRefresh={handlePullRefresh}>
+        <div class="p-3 lg:p-4">
+          {#if loading}
+            <div class="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
+              <div class="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-foreground"></div>
+              <p class="text-xs">Loading...</p>
+            </div>
           {/if}
-        {:catch error}
-          <div class="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
-            <p class="text-xs">Failed to load view</p>
+          <div class:hidden={loading}>
+            {#await views[$currentView]?.() then module}
+              {#if module}
+                {@const Component = module.default}
+                <Component bind:loading {onLogout} />
+              {/if}
+            {:catch error}
+              <div class="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
+                <p class="text-xs">Failed to load view</p>
+              </div>
+            {/await}
           </div>
-        {/await}
-      </div>
+        </div>
+      </PullToRefresh>
     </section>
   </main>
 </div>

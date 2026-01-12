@@ -3,6 +3,7 @@ module api
 go 1.24
 
 require (
+	github.com/SherClockHolmes/webpush-go v1.3.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/ip2location/ip2location-go/v9 v9.7.0
 	github.com/mattn/go-sqlite3 v1.14.18

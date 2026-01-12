@@ -135,6 +135,7 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	var user *auth.User
 
 	// If token in URL (legacy), validate immediately
+	// Note: URL tokens are less secure (appear in logs) - prefer message-based auth
 	if token != "" {
 		user, err = authSvc.ValidateSession(token)
 		if err != nil {
@@ -197,6 +198,13 @@ func Broadcast(channel string, payload interface{}) {
 func BroadcastAll(channel string, payload interface{}) {
 	if serviceInstance != nil && serviceInstance.hub != nil {
 		serviceInstance.hub.BroadcastToAll(channel, payload)
+	}
+}
+
+// BroadcastToUser sends a message to all connected clients of a specific user
+func BroadcastToUser(userID int64, channel string, payload interface{}) {
+	if serviceInstance != nil && serviceInstance.hub != nil {
+		serviceInstance.hub.BroadcastToUser(userID, channel, payload)
 	}
 }
 

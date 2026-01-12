@@ -2,11 +2,11 @@ package firewall
 
 import (
 	"context"
-	"database/sql"
 	"net"
 	"sync"
 	"time"
 
+	"api/internal/database"
 	"api/internal/geolocation"
 	"api/internal/helper"
 	"api/internal/nftables"
@@ -42,7 +42,7 @@ type blockCache struct {
 
 // Service handles firewall operations
 type Service struct {
-	db           *sql.DB
+	db           *database.DB
 	dbMutex      sync.RWMutex
 	config       Config
 	dnsCache     *lruDNSCache

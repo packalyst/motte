@@ -1864,6 +1864,14 @@ fi
 
 # Headscale config
 if [ -f "headscale/config/config.yaml.template" ]; then
+    # Set public URL and hostname based on SSL configuration
+    if [ "$SSL_ENABLED" = "true" ] && [ -n "$SSL_DOMAIN" ]; then
+        export HEADSCALE_PUBLIC_URL="https://${SSL_DOMAIN}"
+        export HEADSCALE_HOSTNAME="${SSL_DOMAIN}"
+    else
+        export HEADSCALE_PUBLIC_URL="http://${SERVER_IP}"
+        export HEADSCALE_HOSTNAME="${SERVER_IP}"
+    fi
     envsubst < headscale/config/config.yaml.template > headscale/config/config.yaml
     echo "  ✓ headscale/config/config.yaml"
 fi

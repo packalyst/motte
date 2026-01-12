@@ -8,11 +8,14 @@ import (
 
 // Hub manages WebSocket connections and message broadcasting
 type Hub struct {
-	// Registered clients by user ID
+	// Registered clients
 	clients map[*Client]bool
 
 	// Channel-based subscriptions: channel -> clients
 	subscriptions map[string]map[*Client]bool
+
+	// User-specific clients: userID -> clients (for targeted broadcasts)
+	userClients map[int64]map[*Client]bool
 
 	// Inbound messages from clients
 	broadcast chan *Message
@@ -45,6 +48,7 @@ func newHub(broadcastBufferSize int) *Hub {
 	return &Hub{
 		clients:       make(map[*Client]bool),
 		subscriptions: make(map[string]map[*Client]bool),
+		userClients:   make(map[int64]map[*Client]bool),
 		broadcast:     make(chan *Message, broadcastBufferSize),
 		register:      make(chan *Client),
 		unregister:    make(chan *Client),
@@ -58,6 +62,14 @@ func (h *Hub) Run() {
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
+
+			// Add to user-specific client map
+			if client.UserID > 0 {
+				if h.userClients[client.UserID] == nil {
+					h.userClients[client.UserID] = make(map[*Client]bool)
+				}
+				h.userClients[client.UserID][client] = true
+			}
 			h.mu.Unlock()
 			log.Printf("WebSocket client connected (user: %s, total: %d)", client.Username, len(h.clients))
 
@@ -70,6 +82,14 @@ func (h *Hub) Run() {
 				// Remove from all subscriptions
 				for channel := range h.subscriptions {
 					delete(h.subscriptions[channel], client)
+				}
+
+				// Remove from user-specific client map
+				if client.UserID > 0 {
+					delete(h.userClients[client.UserID], client)
+					if len(h.userClients[client.UserID]) == 0 {
+						delete(h.userClients, client.UserID)
+					}
 				}
 			}
 			h.mu.Unlock()
@@ -128,6 +148,32 @@ func (h *Hub) BroadcastToAll(channel string, payload interface{}) {
 	defer h.mu.RUnlock()
 
 	for client := range h.clients {
+		select {
+		case client.send <- data:
+		default:
+			// Client buffer full, skip
+		}
+	}
+}
+
+// BroadcastToUser sends a message to all connected clients of a specific user
+func (h *Hub) BroadcastToUser(userID int64, channel string, payload interface{}) {
+	msg := &Message{
+		Type:    channel,
+		Payload: payload,
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("Error marshaling user broadcast message: %v", err)
+		return
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	clients := h.userClients[userID]
+	for client := range clients {
 		select {
 		case client.send <- data:
 		default:

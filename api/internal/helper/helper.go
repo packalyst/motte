@@ -209,6 +209,56 @@ func readSSHPortFromFile(path string) int {
 	return 0
 }
 
+// ParseUserAgent extracts a readable device/browser name from User-Agent string
+func ParseUserAgent(ua string) string {
+	if ua == "" {
+		return "Unknown device"
+	}
+
+	ua = strings.ToLower(ua)
+
+	// Check for mobile devices first
+	if strings.Contains(ua, "iphone") {
+		return "iPhone"
+	}
+	if strings.Contains(ua, "ipad") {
+		return "iPad"
+	}
+	if strings.Contains(ua, "android") {
+		if strings.Contains(ua, "mobile") {
+			return "Android Phone"
+		}
+		return "Android Tablet"
+	}
+
+	// Check for desktop browsers
+	if strings.Contains(ua, "firefox") {
+		return "Firefox"
+	}
+	if strings.Contains(ua, "edg/") {
+		return "Edge"
+	}
+	if strings.Contains(ua, "chrome") {
+		return "Chrome"
+	}
+	if strings.Contains(ua, "safari") {
+		return "Safari"
+	}
+
+	// Check for OS
+	if strings.Contains(ua, "windows") {
+		return "Windows"
+	}
+	if strings.Contains(ua, "mac os") {
+		return "Mac"
+	}
+	if strings.Contains(ua, "linux") {
+		return "Linux"
+	}
+
+	return "Unknown device"
+}
+
 // SetSSHPort updates the SSH port in sshd_config
 // Returns the old port that was configured
 func SetSSHPort(newPort int) (int, error) {

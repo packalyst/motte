@@ -2,20 +2,20 @@ package sources
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"api/internal/database"
 	"api/internal/logs"
 )
 
 // OutboundWatcher watches kernel VPN traffic logs
 type OutboundWatcher struct {
 	BaseWatcher
-	db       *sql.DB
+	db       *database.DB
 	config   logs.Config
 	regex    *regexp.Regexp
 	dnsCache *DNSCache
@@ -60,7 +60,7 @@ func (c *DNSCache) Set(ip, domain string) {
 }
 
 // NewOutboundWatcher creates a new outbound traffic watcher
-func NewOutboundWatcher(db *sql.DB, config logs.Config) *OutboundWatcher {
+func NewOutboundWatcher(db *database.DB, config logs.Config) *OutboundWatcher {
 	// Try kern.log first, fall back to syslog
 	logPath := config.KernLogPath
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {

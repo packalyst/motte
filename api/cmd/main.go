@@ -11,6 +11,7 @@ import (
 
 	"api/internal/adguard"
 	"api/internal/auth"
+	"api/internal/auth/pwa"
 	"api/internal/config"
 	"api/internal/database"
 	"api/internal/docker"
@@ -76,6 +77,18 @@ func main() {
 			})
 
 			log.Println("Auth service registered")
+		}
+	}
+
+	// Initialize PWA service (depends on auth)
+	if config.IsServiceEnabled("pwa") {
+		if auth.GetService() != nil {
+			if pwaSvc, err := pwa.Init(); err != nil {
+				log.Printf("Warning: Failed to initialize PWA service: %v", err)
+			} else {
+				r.RegisterService("pwa", pwaSvc.Handlers())
+				log.Println("PWA service registered")
+			}
 		}
 	}
 
@@ -182,6 +195,14 @@ func main() {
 	if config.IsServiceEnabled("adguard") {
 		adguardSvc := adguard.New()
 		r.RegisterService("adguard", adguardSvc.Handlers())
+
+		// Wire up credentials provider to get from settings
+		adguard.CredentialsProvider = func() (string, string) {
+			u, _ := settings.GetSetting("adguard_username")
+			p, _ := settings.GetSettingEncrypted("adguard_password")
+			return u, p
+		}
+
 		log.Println("AdGuard service registered")
 	}
 
@@ -240,6 +261,7 @@ func main() {
 		ws.SetNodeStatsProvider(
 			func() { vpnSvc.SyncClients() },
 			vpn.GetNodeStats,
+			vpn.GetNodeStatusList,
 		)
 	}
 
@@ -267,7 +289,7 @@ func main() {
 		// Get node stats
 		nodeStats := vpn.GetNodeStats()
 
-		// Get docker stats (if available)
+		// Get docker stats (if available, uses cache)
 		var dockerInfo *docker.DockerInfo
 		var diskUsage *docker.DiskUsage
 		if dockerSvc != nil {
@@ -325,6 +347,7 @@ func main() {
 	// Add WebSocket endpoint (needs special handling, not REST)
 	mux := http.NewServeMux()
 	mux.Handle("/api/ws", http.HandlerFunc(wsSvc.HandleWebSocket))
+
 	mux.Handle("/", handler)
 
 	// Create server with timeouts

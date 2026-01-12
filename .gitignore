@@ -44,3 +44,4 @@ Thumbs.db
 *.zip
 wireguard-backup-*
 .claude/
+headscale/config/derp.yaml

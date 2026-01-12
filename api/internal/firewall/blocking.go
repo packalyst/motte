@@ -5,11 +5,27 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"api/internal/logs/sources"
 	"api/internal/nftables"
 )
+
+// BlockNotifyFunc is called when an IP is blocked (for push notifications)
+type BlockNotifyFunc func(ip, reason string)
+
+var (
+	blockNotifyCallback BlockNotifyFunc
+	blockNotifyMu       sync.RWMutex
+)
+
+// SetBlockNotifyCallback sets the callback for block notifications
+func SetBlockNotifyCallback(fn BlockNotifyFunc) {
+	blockNotifyMu.Lock()
+	defer blockNotifyMu.Unlock()
+	blockNotifyCallback = fn
+}
 
 // blockIP blocks an IP address from a jail
 func (s *Service) blockIP(ip, jailName, reason string, banTime int) {
@@ -42,6 +58,16 @@ func (s *Service) blockIPWithOptions(ip, jailName, reason string, banTime int, i
 	if err == nil {
 		log.Printf("Blocked IP %s (jail: %s, reason: %s, isRange: %v)", ip, jailName, reason, isRange)
 		s.RequestApply()
+
+		// Send push notification for block (async)
+		go func() {
+			blockNotifyMu.RLock()
+			notifyFn := blockNotifyCallback
+			blockNotifyMu.RUnlock()
+			if notifyFn != nil {
+				notifyFn(ip, jailName+": "+reason)
+			}
+		}()
 
 		// Check for auto-escalation (only for individual IPs, not ranges)
 		if entryType == nftables.EntryTypeIP {

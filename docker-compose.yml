@@ -114,6 +114,7 @@ services:
     environment:
       # Security
       - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
+      - SSL_DOMAIN=${SSL_DOMAIN}
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-${TRAEFIK_CONTAINER_IP}}
       # Docker access via socket proxy (not direct socket)
       - DOCKER_HOST=tcp://127.0.0.1:2375

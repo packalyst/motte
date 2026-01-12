@@ -13,8 +13,10 @@ import (
 
 	"api/internal/helper"
 	"api/internal/router"
-	"api/internal/settings"
 )
+
+// CredentialsProvider is a callback to get AdGuard credentials without importing settings
+var CredentialsProvider func() (username, password string)
 
 // httpClient with timeout for AdGuard API requests
 var httpClient = &http.Client{Timeout: helper.HTTPClientTimeout}
@@ -52,17 +54,14 @@ func New() *Service {
 	return svc
 }
 
-// getCredentials fetches credentials from database, falls back to env vars
+// getCredentials fetches credentials via provider callback, falls back to env vars
 func (s *Service) getCredentials() (username, password string) {
-	// Try database first
-	if u, err := settings.GetSetting("adguard_username"); err == nil && u != "" {
-		username = u
-	}
-	if p, err := settings.GetSettingEncrypted("adguard_password"); err == nil && p != "" {
-		password = p
+	// Try provider callback first (set by main.go to get from settings)
+	if CredentialsProvider != nil {
+		username, password = CredentialsProvider()
 	}
 
-	// Fallback to env vars if not in database
+	// Fallback to env vars if not from provider
 	if username == "" {
 		username = os.Getenv("ADGUARD_USER")
 	}
@@ -106,10 +105,16 @@ func (s *Service) doRequest(method, path string, body io.Reader) (*http.Response
 func (s *Service) proxyGet(w http.ResponseWriter, path string) {
 	resp, err := s.doRequest("GET", path, nil)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
+		router.JSONError(w, err.Error(), http.StatusFailedDependency)
 		return
 	}
 	defer resp.Body.Close()
+
+	// Check for auth errors - return 424 (Failed Dependency) to avoid Cloudflare interception
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		router.JSONError(w, "AdGuard authentication failed. Check credentials in Settings.", http.StatusFailedDependency)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
@@ -118,6 +123,10 @@ func (s *Service) proxyGet(w http.ResponseWriter, path string) {
 
 // proxyError writes error response from upstream if status >= 400, returns true if error occurred
 func proxyError(w http.ResponseWriter, resp *http.Response) bool {
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		router.JSONError(w, "AdGuard authentication failed. Check credentials in Settings.", http.StatusFailedDependency)
+		return true
+	}
 	if resp.StatusCode >= 400 {
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
@@ -133,6 +142,16 @@ func (s *Service) fetchJSON(path string) (interface{}, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// Check for auth errors before decoding
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("AdGuard authentication failed. Check credentials in Settings.")
+	}
+
+	// Check for other error status codes
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("AdGuard API error: %s", resp.Status)
+	}
 
 	var result interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -197,7 +216,7 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 
 	// Check for critical errors (status is required)
 	if status.err != nil {
-		router.JSONError(w, status.err.Error(), http.StatusBadGateway)
+		router.JSONError(w, status.err.Error(), http.StatusFailedDependency)
 		return
 	}
 
@@ -259,7 +278,7 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		body := `{"protection_enabled":` + strconv.FormatBool(*req.Enabled) + `}`
 		resp, err := s.doRequest("POST", "/control/dns_config", newStringReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -281,7 +300,7 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		resp, err := s.doRequest("POST", path, nil)
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -303,7 +322,7 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		resp, err := s.doRequest("POST", path, nil)
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -320,7 +339,7 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		body := `{"enabled":` + strconv.FormatBool(*req.Enabled) + `}`
 		resp, err := s.doRequest("PUT", "/control/safesearch/settings", newStringReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -343,7 +362,7 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		body, _ := json.Marshal(payload)
 		resp, err := s.doRequest("PUT", "/control/blocked_services/update", newBytesReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -441,7 +460,7 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 		})
 		resp, err := s.doRequest("POST", "/control/filtering/remove_url", newBytesReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -466,7 +485,7 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 		})
 		resp, err := s.doRequest("POST", "/control/filtering/set_url", newBytesReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -479,7 +498,7 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 		body := `{"whitelist":false}`
 		resp, err := s.doRequest("POST", "/control/filtering/refresh", newStringReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -501,7 +520,7 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 		})
 		resp, err := s.doRequest("POST", "/control/filtering/set_rules", newBytesReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -555,7 +574,7 @@ func (s *Service) handleRewriteAction(w http.ResponseWriter, r *http.Request) {
 		body, _ := json.Marshal(map[string]string{"domain": req.Domain, "answer": req.Answer})
 		resp, err := s.doRequest("POST", "/control/rewrite/add", newBytesReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -572,7 +591,7 @@ func (s *Service) handleRewriteAction(w http.ResponseWriter, r *http.Request) {
 		body, _ := json.Marshal(map[string]string{"domain": req.Domain, "answer": req.Answer})
 		resp, err := s.doRequest("POST", "/control/rewrite/delete", newBytesReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadGateway)
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
 			return
 		}
 		defer resp.Body.Close()
@@ -617,6 +636,11 @@ func GetRewrites() ([]Rewrite, error) {
 	}
 	defer resp.Body.Close()
 
+	// Check for auth errors
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("AdGuard authentication failed. Check credentials in Settings.")
+	}
+
 	var rewrites []Rewrite
 	if err := json.NewDecoder(resp.Body).Decode(&rewrites); err != nil {
 		return nil, err
@@ -635,7 +659,12 @@ func AddRewrite(domain, answer string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+
+	// Check for auth errors
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("AdGuard authentication failed. Check credentials in Settings.")
+	}
 	return nil
 }
 
@@ -650,7 +679,12 @@ func DeleteRewrite(domain, answer string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+
+	// Check for auth errors
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("AdGuard authentication failed. Check credentials in Settings.")
+	}
 	return nil
 }
 

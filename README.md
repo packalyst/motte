@@ -22,6 +22,14 @@ This project provides a unified administration interface for a complete VPN stac
 - API key support for programmatic access
 - Rate limiting on authentication endpoints
 - Session management with device tracking and revocation
+- Device location tracking for login security
+
+### PWA (Progressive Web App)
+- Installable on mobile and desktop
+- Push notifications for security alerts and VPN status
+- Offline detection with connection status overlay
+- Device location tracking with map visualization
+- iOS and Android support
 
 ### Firewall
 - nftables-based firewall rule management
@@ -67,6 +75,7 @@ This project provides a unified administration interface for a complete VPN stac
 - Tailwind CSS 4
 - Vite 7
 - KTUI component framework
+- Leaflet maps (OpenStreetMap)
 
 ### Infrastructure
 - Docker and Docker Compose
@@ -191,6 +200,7 @@ Changes to Svelte files will reflect instantly without rebuilding.
 │   ├── cmd/               # Application entry point
 │   ├── internal/          # Core packages
 │   │   ├── auth/         # Authentication and 2FA
+│   │   │   └── pwa/      # Push notifications and location
 │   │   ├── database/     # SQLite database
 │   │   ├── firewall/     # nftables and traffic logging
 │   │   ├── geolocation/  # IP lookup and country blocking
@@ -203,10 +213,13 @@ Changes to Svelte files will reflect instantly without rebuilding.
 │   │   └── ws/           # WebSocket service
 │   └── configs/          # Endpoint configuration
 ├── ui/                    # Svelte frontend
+│   ├── public/           # Static assets and service worker
 │   └── src/
 │       ├── views/        # Page components
 │       ├── components/   # Reusable UI components
+│       ├── stores/       # Svelte stores
 │       └── lib/          # API client and utilities
+│           └── pwa/      # PWA permissions and push
 ├── headscale/            # Headscale configuration
 ├── traefik/              # Traefik configuration
 ├── adguard/              # AdGuard Home configuration
@@ -219,6 +232,7 @@ Changes to Svelte files will reflect instantly without rebuilding.
 The API is organized by service:
 
 - `/api/auth` - Authentication, sessions, 2FA
+- `/api/pwa` - Push notifications, device locations, preferences
 - `/api/wg` - WireGuard peer management
 - `/api/hs` - Headscale node management
 - `/api/vpn` - Unified VPN clients and ACL

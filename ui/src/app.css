@@ -4,7 +4,7 @@
 }
 
 /* Safelist all used icons - Tailwind needs static class names */
-@source inline("icon-[tabler--activity] icon-[tabler--alert-circle] icon-[tabler--alert-triangle] icon-[tabler--arrow-left] icon-[tabler--arrow-right] icon-[tabler--arrow-up-right] icon-[tabler--arrow-down-left] icon-[tabler--arrows-right-left] icon-[tabler--ban] icon-[tabler--bolt] icon-[tabler--book] icon-[tabler--box] icon-[tabler--brand-github] icon-[tabler--calendar] icon-[tabler--chart-pie] icon-[tabler--chart-bar] icon-[tabler--chart-line] icon-[tabler--check] icon-[tabler--checks] icon-[tabler--chevron-down] icon-[tabler--chevron-left] icon-[tabler--chevron-right] icon-[tabler--chevrons-left] icon-[tabler--chevrons-right] icon-[tabler--circle-check] icon-[tabler--clock] icon-[tabler--cloud] icon-[tabler--code] icon-[tabler--copy] icon-[tabler--cpu] icon-[tabler--dashboard] icon-[tabler--device-desktop] icon-[tabler--device-floppy] icon-[tabler--device-laptop] icon-[tabler--device-mobile] icon-[tabler--device-tablet] icon-[tabler--world-share] icon-[tabler--dots] icon-[tabler--download] icon-[tabler--edit] icon-[tabler--external-link] icon-[tabler--eye] icon-[tabler--eye-off] icon-[tabler--file-text] icon-[tabler--filter] icon-[tabler--gauge] icon-[tabler--git-branch] icon-[tabler--globe] icon-[tabler--hand-off] icon-[tabler--hand-stop] icon-[tabler--info-circle] icon-[tabler--key] icon-[tabler--layers-subtract] icon-[tabler--layout] icon-[tabler--link] icon-[tabler--list] icon-[tabler--list-check] icon-[tabler--list-details] icon-[tabler--lock] icon-[tabler--lock-open] icon-[tabler--logout] icon-[tabler--menu] icon-[tabler--moon] icon-[tabler--network] icon-[tabler--pencil] icon-[tabler--play] icon-[tabler--player-pause] icon-[tabler--player-play] icon-[tabler--player-stop] icon-[tabler--plug] icon-[tabler--plug-connected] icon-[tabler--plus] icon-[tabler--refresh] icon-[tabler--route] icon-[tabler--scan] icon-[tabler--search] icon-[tabler--server] icon-[tabler--settings] icon-[tabler--shield] icon-[tabler--shield-check] icon-[tabler--shield-lock] icon-[tabler--sun] icon-[tabler--switch-horizontal] icon-[tabler--trash] icon-[tabler--user] icon-[tabler--user-off] icon-[tabler--user-plus] icon-[tabler--users] icon-[tabler--wand] icon-[tabler--world] icon-[tabler--world-off] icon-[tabler--world-www] icon-[tabler--x] icon-[tabler--circle-x] icon-[tabler--arrow-down] icon-[tabler--arrow-up] icon-[tabler--arrows-vertical] icon-[tabler--loader-2] icon-[tabler--circle] icon-[tabler--tool] icon-[tabler--calendar-time] icon-[tabler--robot] icon-[tabler--message] ");
+@source inline("icon-[tabler--activity] icon-[tabler--alert-circle] icon-[tabler--alert-triangle] icon-[tabler--app-window] icon-[tabler--arrow-left] icon-[tabler--arrow-right] icon-[tabler--arrow-up-right] icon-[tabler--arrow-down-left] icon-[tabler--arrows-right-left] icon-[tabler--ban] icon-[tabler--bolt] icon-[tabler--book] icon-[tabler--box] icon-[tabler--brand-android] icon-[tabler--brand-apple] icon-[tabler--brand-github] icon-[tabler--browser] icon-[tabler--calendar] icon-[tabler--chart-pie] icon-[tabler--chart-bar] icon-[tabler--chart-line] icon-[tabler--check] icon-[tabler--checks] icon-[tabler--chevron-down] icon-[tabler--chevron-left] icon-[tabler--chevron-right] icon-[tabler--chevrons-left] icon-[tabler--chevrons-right] icon-[tabler--circle-check] icon-[tabler--clock] icon-[tabler--cloud] icon-[tabler--code] icon-[tabler--copy] icon-[tabler--copy-off] icon-[tabler--cpu] icon-[tabler--dashboard] icon-[tabler--device-desktop] icon-[tabler--device-floppy] icon-[tabler--device-laptop] icon-[tabler--device-mobile] icon-[tabler--device-tablet] icon-[tabler--world-share] icon-[tabler--dots] icon-[tabler--download] icon-[tabler--upload] icon-[tabler--edit] icon-[tabler--external-link] icon-[tabler--eye] icon-[tabler--eye-off] icon-[tabler--file-text] icon-[tabler--filter] icon-[tabler--gauge] icon-[tabler--git-branch] icon-[tabler--globe] icon-[tabler--hand-off] icon-[tabler--hand-stop] icon-[tabler--info-circle] icon-[tabler--key] icon-[tabler--layers-subtract] icon-[tabler--layout] icon-[tabler--link] icon-[tabler--list] icon-[tabler--list-check] icon-[tabler--list-details] icon-[tabler--lock] icon-[tabler--lock-open] icon-[tabler--logout] icon-[tabler--menu] icon-[tabler--moon] icon-[tabler--network] icon-[tabler--pencil] icon-[tabler--play] icon-[tabler--player-pause] icon-[tabler--player-play] icon-[tabler--player-stop] icon-[tabler--plug] icon-[tabler--plug-connected] icon-[tabler--plus] icon-[tabler--refresh] icon-[tabler--route] icon-[tabler--scan] icon-[tabler--search] icon-[tabler--server] icon-[tabler--settings] icon-[tabler--shield] icon-[tabler--shield-check] icon-[tabler--shield-lock] icon-[tabler--sun] icon-[tabler--switch-horizontal] icon-[tabler--trash] icon-[tabler--user] icon-[tabler--user-off] icon-[tabler--user-plus] icon-[tabler--users] icon-[tabler--wand] icon-[tabler--world] icon-[tabler--world-off] icon-[tabler--world-www] icon-[tabler--x] icon-[tabler--circle-x] icon-[tabler--arrow-down] icon-[tabler--arrow-up] icon-[tabler--arrows-vertical] icon-[tabler--loader-2] icon-[tabler--circle] icon-[tabler--tool] icon-[tabler--calendar-time] icon-[tabler--robot] icon-[tabler--message] icon-[tabler--share] icon-[tabler--square-plus] icon-[tabler--wifi-off] icon-[tabler--bell] icon-[tabler--bell-off] icon-[tabler--map-pin] icon-[tabler--map-pin-off] icon-[tabler--map] icon-[tabler--database] icon-[tabler--bell-ringing] ");
 @import "@keenthemes/ktui/src/components/modal/modal.css";
 @import "@keenthemes/ktui/src/components/input/input.css";
 @import "@keenthemes/ktui/src/components/input/input-group.css";
@@ -183,6 +183,39 @@ body {
 
 .kt-toast-progress {
     height: 1px;
+}
+
+/* Mobile toast - native notification style */
+@media screen and (max-width: 640px) {
+  /* Toast container - full width at top */
+  .kt-toast-container {
+    left: 0 !important;
+    right: 0 !important;
+    top: 0 !important;
+    bottom: auto !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Individual toast - notification style */
+  .kt-toast {
+    width: 96% !important;
+    max-width: 96% !important;
+    margin: 0 !important;
+    border-radius: 0 0 12px 12px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
+    padding: 14px 16px !important;
+    backdrop-filter: blur(10px);
+    left:2%
+  }
+
+  /* Safe area for notch/island */
+  .kt-toast:first-child {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 14px) !important;
+  }
+
+
 }
 
 /* KTUI Switch - improve visibility in dark mode */
@@ -654,9 +687,4 @@ input:-webkit-autofill:active {
   @apply bg-destructive/15 text-destructive;
 }
 
-/* Prevent iOS zoom on input focus (requires font-size >= 16px) */
-@media screen and (max-width: 768px) {
-  input, select, textarea {
-    font-size: 16px !important;
-  }
-}
+

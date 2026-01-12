@@ -1,20 +1,20 @@
 package nftables
 
 import (
-	"database/sql"
 	"fmt"
 	"strings"
 
+	"api/internal/database"
 	"api/internal/helper"
 )
 
 // VPNACLTable builds the inet vpn_acl table
 type VPNACLTable struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewVPNACLTable creates a new VPN ACL table builder
-func NewVPNACLTable(db *sql.DB) *VPNACLTable {
+func NewVPNACLTable(db *database.DB) *VPNACLTable {
 	return &VPNACLTable{db: db}
 }
 

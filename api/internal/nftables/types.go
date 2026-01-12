@@ -1,9 +1,10 @@
 package nftables
 
 import (
-	"database/sql"
 	"sync"
 	"time"
+
+	"api/internal/database"
 )
 
 // Table interface - each nftables table implements this
@@ -16,7 +17,7 @@ type Table interface {
 
 // Service manages all nftables operations
 type Service struct {
-	db     *sql.DB
+	db     *database.DB
 	tables map[string]Table
 
 	// Debouncing

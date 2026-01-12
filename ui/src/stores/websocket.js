@@ -18,6 +18,7 @@ export const nodesUpdatedStore = writable(0) // Counter that increments on nodes
 export const dockerStore = writable(null)
 export const dockerLogsStore = writable([]) // Array of log entries for live streaming
 export const statsStore = writable(null) // Overview dashboard stats
+export const pwaSubscriptionsStore = writable(null) // User-specific PWA subscriptions updates
 
 // Channel to store mapping
 const storeMap = {
@@ -25,7 +26,8 @@ const storeMap = {
   nodes_updated: nodesUpdatedStore,
   docker: dockerStore,
   docker_logs: dockerLogsStore,
-  stats: statsStore
+  stats: statsStore,
+  pwa_subscriptions: pwaSubscriptionsStore
 }
 
 // WebSocket instance

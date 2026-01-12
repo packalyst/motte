@@ -133,7 +133,7 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 
 	// Check for errors on overview (required)
 	if overview.err != nil {
-		router.JSONError(w, overview.err.Error(), http.StatusBadGateway)
+		router.JSONError(w, overview.err.Error(), http.StatusFailedDependency)
 		return
 	}
 

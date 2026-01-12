@@ -64,11 +64,24 @@ type PeerTrafficInfo struct {
 	Rx   int64  `json:"rx"`
 }
 
+// NodeStatusInfo represents a single node's status
+type NodeStatusInfo struct {
+	Name   string
+	Online bool
+}
+
+// NodeStatusChangeFunc is called when node status changes (for push notifications)
+type NodeStatusChangeFunc func(nodeName string, online bool)
+
 var (
 	// syncNodesCallback refreshes node data from Headscale/WireGuard
 	syncNodesCallback func()
 	// getNodeStatsCallback returns current node statistics
 	getNodeStatsCallback func() NodeStats
+	// getNodeStatusListCallback returns individual node status for change detection
+	getNodeStatusListCallback func() []NodeStatusInfo
+	// nodeStatusChangeCallback is called when a node goes online/offline
+	nodeStatusChangeCallback NodeStatusChangeFunc
 	// getDockerContainersCallback returns current docker containers
 	getDockerContainersCallback func() []docker.Container
 	// getOverviewStatsCallback returns combined stats for dashboard
@@ -81,6 +94,10 @@ var (
 	lastNodeStats   NodeStats
 	lastNodeStatsMu sync.RWMutex
 
+	// lastNodeStatus stores previous individual node status for change detection
+	lastNodeStatus   map[string]bool // node name -> online
+	lastNodeStatusMu sync.RWMutex
+
 	// lastDockerContainers stores previous container states for change detection
 	lastDockerContainers   []docker.Container
 	lastDockerContainersMu sync.RWMutex
@@ -92,11 +109,19 @@ var (
 
 // SetNodeStatsProvider sets the callbacks for syncing and getting node stats
 // This avoids circular imports (vpn -> ws -> vpn)
-func SetNodeStatsProvider(syncFn func(), statsFn func() NodeStats) {
+func SetNodeStatsProvider(syncFn func(), statsFn func() NodeStats, statusListFn func() []NodeStatusInfo) {
 	callbackMu.Lock()
 	defer callbackMu.Unlock()
 	syncNodesCallback = syncFn
 	getNodeStatsCallback = statsFn
+	getNodeStatusListCallback = statusListFn
+}
+
+// SetNodeStatusChangeCallback sets the callback for node status change notifications
+func SetNodeStatusChangeCallback(fn NodeStatusChangeFunc) {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	nodeStatusChangeCallback = fn
 }
 
 // SetDockerProvider sets the callback for getting docker containers
@@ -198,18 +223,27 @@ func checkAndBroadcastNodes() {
 	// Skip if no subscribers for either channel
 	hasInfoSubscribers := serviceInstance.hub.ChannelSubscriberCount("general_info") > 0
 	hasNodesSubscribers := serviceInstance.hub.ChannelSubscriberCount("nodes_updated") > 0
-	if !hasInfoSubscribers && !hasNodesSubscribers {
-		return
-	}
 
 	// Call sync to refresh data from Headscale/WireGuard
 	callbackMu.RLock()
 	syncFn := syncNodesCallback
 	statsFn := getNodeStatsCallback
+	statusListFn := getNodeStatusListCallback
+	statusChangeFn := nodeStatusChangeCallback
 	callbackMu.RUnlock()
 
 	if syncFn != nil {
 		syncFn()
+	}
+
+	// Check individual node status changes for push notifications
+	if statusListFn != nil && statusChangeFn != nil {
+		checkNodeStatusChanges(statusListFn(), statusChangeFn)
+	}
+
+	// Skip WebSocket broadcasts if no subscribers
+	if !hasInfoSubscribers && !hasNodesSubscribers {
+		return
 	}
 
 	if statsFn == nil {
@@ -245,6 +279,39 @@ func checkAndBroadcastNodes() {
 			serviceInstance.hub.Broadcast("nodes_updated", nil)
 		}
 	}
+}
+
+// checkNodeStatusChanges detects which nodes changed status and calls the callback
+func checkNodeStatusChanges(current []NodeStatusInfo, onChange NodeStatusChangeFunc) {
+	lastNodeStatusMu.Lock()
+	defer lastNodeStatusMu.Unlock()
+
+	// Initialize on first run
+	if lastNodeStatus == nil {
+		lastNodeStatus = make(map[string]bool)
+		for _, node := range current {
+			lastNodeStatus[node.Name] = node.Online
+		}
+		return
+	}
+
+	// Build current status map
+	currentStatus := make(map[string]bool)
+	for _, node := range current {
+		currentStatus[node.Name] = node.Online
+
+		// Check if status changed
+		if prev, exists := lastNodeStatus[node.Name]; exists {
+			if prev != node.Online {
+				// Status changed - notify
+				go onChange(node.Name, node.Online)
+			}
+		}
+		// Note: new nodes don't trigger notification (avoid spam on first sync)
+	}
+
+	// Update last status
+	lastNodeStatus = currentStatus
 }
 
 // checkAndBroadcastDocker checks docker status and broadcasts if changed

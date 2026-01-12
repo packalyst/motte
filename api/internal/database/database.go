@@ -1,11 +1,13 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -13,16 +15,48 @@ import (
 // ErrNotAvailable is returned when the database is not initialized
 var ErrNotAvailable = errors.New("database not available")
 
-// DB is the shared database instance
+// DefaultTimeout is the default query timeout
+const DefaultTimeout = 30 * time.Second
+
+// DB wraps sql.DB to automatically apply context timeouts to all queries
+type DB struct {
+	*sql.DB
+	timeout time.Duration
+}
+
+// Query executes a query (uses embedded sql.DB directly for SQLite compatibility)
+func (d *DB) Query(query string, args ...any) (*sql.Rows, error) {
+	return d.DB.Query(query, args...)
+}
+
+// Exec executes a statement with automatic timeout
+func (d *DB) Exec(query string, args ...any) (sql.Result, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), d.timeout)
+	defer cancel()
+	return d.DB.ExecContext(ctx, query, args...)
+}
+
+// QueryRow executes a query that returns a single row (uses embedded sql.DB directly)
+func (d *DB) QueryRow(query string, args ...any) *sql.Row {
+	return d.DB.QueryRow(query, args...)
+}
+
+// Begin starts a transaction (uses underlying sql.DB directly)
+func (d *DB) Begin() (*sql.Tx, error) {
+	return d.DB.Begin()
+}
+
+// instance is the shared database wrapper
 var (
-	instance *sql.DB
-	once     sync.Once
-	dbPath   string
+	instance   *sql.DB
+	dbWrapper  *DB
+	once       sync.Once
+	dbPath     string
 )
 
 // Init initializes the shared database connection
 // Database file persists in Docker volume - survives container restarts
-func Init(dataDir string) (*sql.DB, error) {
+func Init(dataDir string) (*DB, error) {
 	var initErr error
 
 	once.Do(func() {
@@ -42,23 +76,24 @@ func Init(dataDir string) (*sql.DB, error) {
 		}
 
 		instance = db
+		dbWrapper = &DB{DB: db, timeout: DefaultTimeout}
 		log.Printf("Database initialized at %s", dbPath)
 	})
 
-	return instance, initErr
+	return dbWrapper, initErr
 }
 
-// Get returns the shared database instance (for backwards compatibility)
+// Get returns the raw sql.DB instance (for backwards compatibility)
 func Get() *sql.DB {
 	return instance
 }
 
-// GetDB returns the shared database instance or an error if not initialized
-func GetDB() (*sql.DB, error) {
-	if instance == nil {
+// GetDB returns the wrapped database instance or an error if not initialized
+func GetDB() (*DB, error) {
+	if dbWrapper == nil {
 		return nil, ErrNotAvailable
 	}
-	return instance, nil
+	return dbWrapper, nil
 }
 
 // createSchema creates all required tables (if they don't exist)
@@ -116,6 +151,7 @@ func createSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_firewall_entries_expires ON firewall_entries(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_firewall_entries_source ON firewall_entries(source);
 	CREATE INDEX IF NOT EXISTS idx_firewall_entries_type_enabled_direction ON firewall_entries(entry_type, enabled, direction);
+	CREATE INDEX IF NOT EXISTS idx_firewall_entries_type_action_enabled ON firewall_entries(entry_type, action, enabled);
 
 	-- Country zones cache indexes
 	CREATE INDEX IF NOT EXISTS idx_country_zones_code_updated ON country_zones_cache(country_code, updated_at);
@@ -302,6 +338,58 @@ func createSchema(db *sql.DB) error {
 	// Execute logs schema
 	if _, err := db.Exec(logsSchema); err != nil {
 		return fmt.Errorf("failed to create logs schema: %v", err)
+	}
+
+	// User PWA schema (push notifications, preferences, locations)
+	userPWASchema := `
+	-- Push notification subscriptions (Web Push API)
+	CREATE TABLE IF NOT EXISTS users_push_subscriptions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		device_name TEXT DEFAULT '',
+		endpoint TEXT UNIQUE NOT NULL,
+		key_p256dh TEXT NOT NULL,
+		key_auth TEXT NOT NULL,
+		user_agent TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_used_at DATETIME,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+
+	-- Notification preferences per user (key-value design for extensibility)
+	CREATE TABLE IF NOT EXISTS users_notification_preferences (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		pref_key TEXT NOT NULL,
+		enabled BOOLEAN DEFAULT 1,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+		UNIQUE(user_id, pref_key)
+	);
+
+	-- Device locations (GPS tracking)
+	CREATE TABLE IF NOT EXISTS users_device_locations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		device_name TEXT DEFAULT '',
+		latitude REAL NOT NULL,
+		longitude REAL NOT NULL,
+		accuracy REAL,
+		altitude REAL,
+		heading REAL,
+		speed REAL,
+		recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+
+	-- Indexes for efficient queries
+	CREATE INDEX IF NOT EXISTS idx_users_push_subs_user ON users_push_subscriptions(user_id);
+	CREATE INDEX IF NOT EXISTS idx_users_device_loc_user_time ON users_device_locations(user_id, recorded_at DESC);
+	`
+
+	// Execute user PWA schema
+	if _, err := db.Exec(userPWASchema); err != nil {
+		return fmt.Errorf("failed to create user PWA schema: %v", err)
 	}
 
 	// Run migrations for existing databases

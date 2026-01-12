@@ -1,22 +1,23 @@
 package geolocation
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"api/internal/database"
 )
 
 // IPDenyProvider provides country CIDR ranges from ipdeny.com
 type IPDenyProvider struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewIPDenyProvider creates a new ipdeny provider
-func NewIPDenyProvider(db *sql.DB) *IPDenyProvider {
+func NewIPDenyProvider(db *database.DB) *IPDenyProvider {
 	return &IPDenyProvider{db: db}
 }
 

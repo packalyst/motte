@@ -97,7 +97,7 @@ export function toast(message, type = 'info') {
     window.KTToast.show({
       dismiss:false,
       cancel: {
-        label: `<span class="icon-[tabler--circle-x] text-base ${toastTextClass[type] || toastTextClass.info}"></span>`,
+        label: `<span class="icon-[tabler--circle-x] cursor-pointer text-base ${toastTextClass[type] || toastTextClass.info}"></span>`,
         onClick: function () {},
       },
       message,
@@ -106,7 +106,7 @@ export function toast(message, type = 'info') {
       progress: true,
       size: 'sm',
       pauseOnHover: true,
-      position: 'bottom-end',
+      position: 'top-end',
       icon: toastIcons[type] || toastIcons.info,
       className: toastTextClass[type] || toastTextClass.info
     })

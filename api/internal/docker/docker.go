@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"api/internal/router"
@@ -27,6 +28,14 @@ var validImageName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_./:@-]*$`)
 type Service struct {
 	host   string // tcp://host:port or unix:///path
 	client *http.Client
+
+	// Cached overview stats (disk usage is slow)
+	overviewMu        sync.RWMutex
+	cachedInfo        *DockerInfo
+	cachedDiskUsage   *DiskUsage
+	cacheTime         time.Time
+	cacheTTL          time.Duration
+	cacheRefreshing   bool
 }
 
 // Container represents a Docker container
@@ -87,8 +96,9 @@ func New() *Service {
 	}
 
 	return &Service{
-		host:   dockerHost,
-		client: client,
+		host:     dockerHost,
+		client:   client,
+		cacheTTL: 30 * time.Second, // Cache docker overview stats for 30 seconds
 	}
 }
 
@@ -1005,8 +1015,48 @@ func (s *Service) GetContainerStats(containerID, containerName string) (*Contain
 	}, nil
 }
 
-// GetOverviewStats returns docker info and disk usage for overview page
+// GetOverviewStats returns docker info and disk usage for overview page (cached)
 func (s *Service) GetOverviewStats() (*DockerInfo, *DiskUsage) {
+	s.overviewMu.RLock()
+	cacheValid := time.Since(s.cacheTime) < s.cacheTTL
+	info := s.cachedInfo
+	du := s.cachedDiskUsage
+	refreshing := s.cacheRefreshing
+	s.overviewMu.RUnlock()
+
+	// Return cached values if valid
+	if cacheValid && (info != nil || du != nil) {
+		return info, du
+	}
+
+	// If already refreshing in background, return stale cache
+	if refreshing {
+		return info, du
+	}
+
+	// Refresh cache in background
+	s.overviewMu.Lock()
+	if s.cacheRefreshing {
+		s.overviewMu.Unlock()
+		return info, du
+	}
+	s.cacheRefreshing = true
+	s.overviewMu.Unlock()
+
+	go s.refreshOverviewCache()
+
+	// Return whatever we have (may be nil on first call)
+	return info, du
+}
+
+// refreshOverviewCache fetches fresh docker stats in background
+func (s *Service) refreshOverviewCache() {
+	defer func() {
+		s.overviewMu.Lock()
+		s.cacheRefreshing = false
+		s.overviewMu.Unlock()
+	}()
+
 	var info *DockerInfo
 	var du *DiskUsage
 
@@ -1017,6 +1067,10 @@ func (s *Service) GetOverviewStats() (*DockerInfo, *DiskUsage) {
 		du = d
 	}
 
-	return info, du
+	s.overviewMu.Lock()
+	s.cachedInfo = info
+	s.cachedDiskUsage = du
+	s.cacheTime = time.Now()
+	s.overviewMu.Unlock()
 }
 

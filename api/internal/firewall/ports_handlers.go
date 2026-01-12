@@ -189,7 +189,9 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 	// Update sshd_config
 	_, err = helper.SetSSHPort(req.Port)
 	if err != nil {
-		s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(req.Port))
+		if _, delErr := s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(req.Port)); delErr != nil {
+			log.Printf("Warning: failed to rollback SSH port entry: %v", delErr)
+		}
 		s.ApplyRules()
 		router.JSONError(w, "failed to update sshd_config: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -201,7 +203,9 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 		cmd = exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "systemctl", "restart", "ssh")
 		if _, err2 := cmd.CombinedOutput(); err2 != nil {
 			helper.SetSSHPort(oldPort)
-			s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(req.Port))
+			if _, delErr := s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(req.Port)); delErr != nil {
+				log.Printf("Warning: failed to rollback SSH port entry: %v", delErr)
+			}
 			s.ApplyRules()
 			router.JSONError(w, "failed to restart SSH", http.StatusInternalServerError)
 			return
@@ -210,13 +214,17 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 
 	// Remove old SSH port from firewall
 	if oldPort != req.Port {
-		s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(oldPort))
+		if _, err := s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(oldPort)); err != nil {
+			log.Printf("Warning: failed to delete old SSH port entry: %v", err)
+		}
 		s.config.EssentialPorts = helper.BuildEssentialPorts()
 		s.ApplyRules()
 	}
 
 	// Update sshd jail
-	s.db.Exec("UPDATE jails SET port = ? WHERE name = 'sshd'", strconv.Itoa(req.Port))
+	if _, err := s.db.Exec("UPDATE jails SET port = ? WHERE name = 'sshd'", strconv.Itoa(req.Port)); err != nil {
+		log.Printf("Warning: failed to update sshd jail port: %v", err)
+	}
 
 	router.JSON(w, map[string]interface{}{
 		"status":  "success",

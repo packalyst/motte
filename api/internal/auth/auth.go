@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -21,6 +22,21 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// LoginNotifyFunc is called after successful login (for push notifications)
+type LoginNotifyFunc func(userID int64, ipAddress, deviceName, userAgent string)
+
+var (
+	loginNotifyCallback LoginNotifyFunc
+	loginNotifyMu       sync.RWMutex
+)
+
+// SetLoginNotifyCallback sets the callback for login notifications (called by PWA service)
+func SetLoginNotifyCallback(fn LoginNotifyFunc) {
+	loginNotifyMu.Lock()
+	defer loginNotifyMu.Unlock()
+	loginNotifyCallback = fn
+}
+
 // Error types
 var (
 	ErrInvalidCredentials = errors.New("invalid username or password")
@@ -32,7 +48,7 @@ var (
 
 // Service handles authentication
 type Service struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // User represents a user account
@@ -212,6 +228,11 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 			return nil, ErrTOTPRequired
 		}
 
+		// Check TOTP rate limit
+		if limited, remaining := checkTOTPRateLimit(user.ID); limited {
+			return nil, fmt.Errorf("too many failed 2FA attempts, try again in %d seconds", int(remaining.Seconds()))
+		}
+
 		// Decrypt and verify TOTP code
 		if totpSecretEnc.Valid && totpSecretEnc.String != "" {
 			secret, err := helper.Decrypt(totpSecretEnc.String)
@@ -220,8 +241,12 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 			}
 
 			if !totp.Validate(totpCode, secret) {
+				recordFailedTOTP(user.ID)
 				return nil, errors.New("invalid 2FA code")
 			}
+
+			// Clear TOTP attempts on success
+			clearTOTPAttempts(user.ID)
 		}
 	}
 
@@ -243,6 +268,17 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 
 	// Update last login
 	s.db.Exec("UPDATE users SET last_login = ? WHERE id = ?", time.Now(), user.ID)
+
+	// Send push notification for new login (async, don't block login)
+	go func() {
+		loginNotifyMu.RLock()
+		notifyFn := loginNotifyCallback
+		loginNotifyMu.RUnlock()
+		if notifyFn != nil {
+			deviceName := helper.ParseUserAgent(userAgent)
+			notifyFn(user.ID, ipAddress, deviceName, userAgent)
+		}
+	}()
 
 	return &LoginResponse{
 		Token:     sessionID,

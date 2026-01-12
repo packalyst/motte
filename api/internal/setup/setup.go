@@ -466,7 +466,7 @@ func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(testReq)
 	if err != nil {
-		router.JSONError(w, "Connection failed: "+err.Error(), http.StatusBadGateway)
+		router.JSONError(w, "Connection failed: "+err.Error(), http.StatusFailedDependency)
 		return
 	}
 	defer resp.Body.Close()
@@ -477,7 +477,7 @@ func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if resp.StatusCode >= 400 {
-		router.JSONError(w, fmt.Sprintf("Headscale returned error: %d", resp.StatusCode), http.StatusBadGateway)
+		router.JSONError(w, fmt.Sprintf("Headscale returned error: %d", resp.StatusCode), http.StatusFailedDependency)
 		return
 	}
 

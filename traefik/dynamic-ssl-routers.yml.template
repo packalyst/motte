@@ -42,7 +42,7 @@
 
     # Headscale control plane - HTTPS
     headscale-control-secure:
-      rule: "Host(`${SSL_DOMAIN}`) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`))"
+      rule: "Host(`${SSL_DOMAIN}`) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`) || PathPrefix(`/register`) || PathPrefix(`/apple`) || PathPrefix(`/windows`))"
       service: headscale
       priority: 100
       entryPoints:

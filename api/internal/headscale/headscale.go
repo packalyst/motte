@@ -108,6 +108,35 @@ func DeleteNode(nodeID string) error {
 	return nil
 }
 
+// ExpireNode expires a Headscale node by ID
+func ExpireNode(nodeID string) error {
+	resp, err := helper.HeadscalePost("/node/"+nodeID+"/expire", "")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	log.Printf("Expired Headscale node %s", nodeID)
+	return nil
+}
+
+// ExpireAllNodes expires all Headscale nodes, returns count of expired nodes
+func ExpireAllNodes() (int, error) {
+	nodes, err := GetNodes()
+	if err != nil {
+		return 0, err
+	}
+
+	expired := 0
+	for _, node := range nodes {
+		if err := ExpireNode(node.ID); err != nil {
+			log.Printf("Warning: failed to expire node %s: %v", node.ID, err)
+			continue
+		}
+		expired++
+	}
+	return expired, nil
+}
+
 // CreatePreAuthKey creates a pre-auth key for a user
 func CreatePreAuthKey(user string, reusable, ephemeral bool, expiration time.Time) (string, error) {
 	body := fmt.Sprintf(`{"user": "%s", "reusable": %t, "ephemeral": %t, "expiration": "%s"}`,
@@ -202,7 +231,7 @@ type Service struct{}
 
 // New creates a new Headscale service
 func New() *Service {
-	log.Printf("Headscale service initialized (reads config from database)")
+	log.Printf("Headscale service initialized")
 	return &Service{}
 }
 
@@ -246,7 +275,7 @@ func (s *Service) proxyResponse(w http.ResponseWriter, resp *http.Response) {
 func (s *Service) proxyGet(w http.ResponseWriter, path string) {
 	resp, err := helper.HeadscaleGet(path)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
+		router.JSONError(w, err.Error(), http.StatusFailedDependency)
 		return
 	}
 	s.proxyResponse(w, resp)
@@ -256,7 +285,7 @@ func (s *Service) proxyGet(w http.ResponseWriter, path string) {
 func (s *Service) proxyPost(w http.ResponseWriter, path string, body string) {
 	resp, err := helper.HeadscalePost(path, body)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
+		router.JSONError(w, err.Error(), http.StatusFailedDependency)
 		return
 	}
 	s.proxyResponse(w, resp)
@@ -266,7 +295,7 @@ func (s *Service) proxyPost(w http.ResponseWriter, path string, body string) {
 func (s *Service) proxyDelete(w http.ResponseWriter, path string) {
 	resp, err := helper.HeadscaleDelete(path)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadGateway)
+		router.JSONError(w, err.Error(), http.StatusFailedDependency)
 		return
 	}
 	s.proxyResponse(w, resp)

@@ -24,7 +24,7 @@ import (
 )
 
 // syncClient upserts a VPN client into the database
-func syncClient(db *sql.DB, existing map[string]int, seen map[string]bool,
+func syncClient(db *database.DB, existing map[string]int, seen map[string]bool,
 	name, ip, clientType, externalID, rawData string, added *int) {
 	seen[ip] = true
 	if id, exists := existing[ip]; exists {
@@ -76,6 +76,35 @@ func GetNodeStats() ws.NodeStats {
 	}
 
 	return stats
+}
+
+// GetNodeStatusList returns individual node status for change detection
+func GetNodeStatusList() []ws.NodeStatusInfo {
+	db, err := database.GetDB()
+	if err != nil {
+		return nil
+	}
+
+	rows, err := db.Query(`SELECT name, raw_data FROM vpn_clients`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var nodes []ws.NodeStatusInfo
+	for rows.Next() {
+		var name string
+		var rawData []byte
+		if err := rows.Scan(&name, &rawData); err != nil {
+			continue
+		}
+		nodes = append(nodes, ws.NodeStatusInfo{
+			Name:   name,
+			Online: len(rawData) > 0 && isNodeOnline(rawData),
+		})
+	}
+
+	return nodes
 }
 
 // isNodeOnline checks if the raw JSON data indicates the node is online

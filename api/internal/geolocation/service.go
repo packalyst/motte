@@ -2,7 +2,6 @@ package geolocation
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -21,7 +20,7 @@ import (
 
 // Service is the main geolocation service
 type Service struct {
-	db      *sql.DB
+	db      *database.DB
 	dataDir string
 	config  Config
 

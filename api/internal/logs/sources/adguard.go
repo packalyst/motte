@@ -2,19 +2,19 @@ package sources
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"api/internal/database"
 	"api/internal/logs"
 )
 
 // AdGuardWatcher watches AdGuard query logs
 type AdGuardWatcher struct {
 	BaseWatcher
-	db     *sql.DB
+	db     *database.DB
 	config logs.Config
 }
 
@@ -54,7 +54,7 @@ const (
 )
 
 // NewAdGuardWatcher creates a new AdGuard watcher
-func NewAdGuardWatcher(db *sql.DB, config logs.Config) *AdGuardWatcher {
+func NewAdGuardWatcher(db *database.DB, config logs.Config) *AdGuardWatcher {
 	return &AdGuardWatcher{
 		BaseWatcher: NewBaseWatcher("adguard", logs.NewFileTailer(config.AdGuardLogPath, 2*time.Second)),
 		db:          db,

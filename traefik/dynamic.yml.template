@@ -21,9 +21,9 @@ http:
         - web
 
     # Headscale control plane - HTTP (for Tailscale clients)
-    # Includes /derp for DERP relay connections
+    # Includes /derp for DERP relay connections and /register for node registration
     headscale-control:
-      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`))"
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`) || PathPrefix(`/register`) || PathPrefix(`/apple`) || PathPrefix(`/windows`))"
       service: headscale
       priority: 100
       entryPoints:
@@ -31,7 +31,7 @@ http:
 
     # Headscale control plane - HTTPS (Tailscale clients try HTTPS first)
     headscale-control-secure:
-      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`))"
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`) || PathPrefix(`/register`) || PathPrefix(`/apple`) || PathPrefix(`/windows`))"
       service: headscale
       priority: 100
       entryPoints:

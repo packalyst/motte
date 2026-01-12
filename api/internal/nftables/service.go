@@ -165,13 +165,21 @@ func (s *Service) Exec(args ...string) ([]byte, error) {
 
 // ApplyScript writes and applies an nft script
 func (s *Service) ApplyScript(script string) error {
-	tmpFile := fmt.Sprintf("/tmp/nftables-%d.nft", time.Now().UnixNano())
-	if err := os.WriteFile(tmpFile, []byte(script), 0600); err != nil {
+	// Use CreateTemp for safe atomic file creation (avoids race conditions)
+	tmpFile, err := os.CreateTemp("", "nftables-*.nft")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.WriteString(script); err != nil {
+		tmpFile.Close()
 		return fmt.Errorf("write: %w", err)
 	}
-	defer os.Remove(tmpFile)
+	tmpFile.Close()
 
-	out, err := s.Exec("-f", tmpFile)
+	out, err := s.Exec("-f", tmpPath)
 	if err != nil {
 		return fmt.Errorf("nft: %v - %s", err, string(out))
 	}

@@ -7,6 +7,7 @@
   import SetupWizard from './views/SetupWizard.svelte'
   import ConfirmModal from './components/ConfirmModal.svelte'
   import InstallPrompt from './components/InstallPrompt.svelte'
+  import OfflineOverlay from './components/OfflineOverlay.svelte'
 
   let user = $state(null)
   let checking = $state(true)
@@ -140,3 +141,6 @@
 
 <!-- PWA install prompt -->
 <InstallPrompt />
+
+<!-- Offline overlay -->
+<OfflineOverlay />
