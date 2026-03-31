@@ -654,16 +654,28 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 		}
 
 		sb.WriteString("  services:\n")
+		hasHTTPSBackend := false
 		for _, route := range routes {
 			name := helper.SanitizeDomainName(route.Domain)
 			protocol := "http"
 			if route.HTTPSBackend {
 				protocol = "https"
+				hasHTTPSBackend = true
 			}
 			sb.WriteString(fmt.Sprintf("    domain-%s-svc:\n", name))
 			sb.WriteString("      loadBalancer:\n")
+			if route.HTTPSBackend {
+				sb.WriteString("        serversTransport: insecure-skip-verify\n")
+			}
 			sb.WriteString("        servers:\n")
 			sb.WriteString(fmt.Sprintf("          - url: \"%s://%s:%d\"\n", protocol, route.TargetIP, route.TargetPort))
+			sb.WriteString("\n")
+		}
+
+		if hasHTTPSBackend {
+			sb.WriteString("  serversTransports:\n")
+			sb.WriteString("    insecure-skip-verify:\n")
+			sb.WriteString("      insecureSkipVerify: true\n")
 			sb.WriteString("\n")
 		}
 
