@@ -563,14 +563,15 @@ type SentinelConfig struct {
 
 // DomainRouteConfig represents a domain route for Traefik config generation
 type DomainRouteConfig struct {
-	Domain         string
-	TargetIP       string
-	TargetPort     int
-	HTTPSBackend   bool
-	Middlewares    []string
-	AccessMode     string          // "vpn" or "public"
-	FrontendSSL    bool            // use websecure entrypoint with TLS
-	SentinelConfig *SentinelConfig // per-domain sentinel middleware config
+	Domain          string
+	TargetIP        string
+	TargetPort      int
+	HTTPSBackend    bool
+	SkipCertVerify  bool            // skip TLS verification for HTTPS backends
+	Middlewares     []string
+	AccessMode      string          // "vpn" or "public"
+	FrontendSSL     bool            // use websecure entrypoint with TLS
+	SentinelConfig  *SentinelConfig // per-domain sentinel middleware config
 }
 
 // GenerateDomainRoutes writes domain routes to Traefik's dynamic config directory
@@ -654,25 +655,25 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 		}
 
 		sb.WriteString("  services:\n")
-		hasHTTPSBackend := false
+		hasSkipCertVerify := false
 		for _, route := range routes {
 			name := helper.SanitizeDomainName(route.Domain)
 			protocol := "http"
 			if route.HTTPSBackend {
 				protocol = "https"
-				hasHTTPSBackend = true
 			}
 			sb.WriteString(fmt.Sprintf("    domain-%s-svc:\n", name))
 			sb.WriteString("      loadBalancer:\n")
-			if route.HTTPSBackend {
+			if route.HTTPSBackend && route.SkipCertVerify {
 				sb.WriteString("        serversTransport: insecure-skip-verify\n")
+				hasSkipCertVerify = true
 			}
 			sb.WriteString("        servers:\n")
 			sb.WriteString(fmt.Sprintf("          - url: \"%s://%s:%d\"\n", protocol, route.TargetIP, route.TargetPort))
 			sb.WriteString("\n")
 		}
 
-		if hasHTTPSBackend {
+		if hasSkipCertVerify {
 			sb.WriteString("  serversTransports:\n")
 			sb.WriteString("    insecure-skip-verify:\n")
 			sb.WriteString("      insecureSkipVerify: true\n")

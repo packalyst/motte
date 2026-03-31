@@ -644,6 +644,14 @@
       />
     </div>
 
+    {#if formData.httpsBackend}
+      <Checkbox
+        variant="switch"
+        label="Trust backend certificate (skip TLS verification)"
+        bind:checked={formData.skipCertVerify}
+      />
+    {/if}
+
     <Input
       label="Description (optional)"
       placeholder="Wiki.js on Raspberry Pi"

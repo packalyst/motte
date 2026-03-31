@@ -428,6 +428,14 @@ func runMigrations(db *sql.DB) {
 			log.Printf("Migration: added sentinel_config column to domain_routes")
 		}
 	}
+
+	// Add skip_cert_verify column to domain_routes if missing (skip TLS verification for HTTPS backends)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('domain_routes') WHERE name = 'skip_cert_verify'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE domain_routes ADD COLUMN skip_cert_verify BOOLEAN DEFAULT 0`); err == nil {
+			log.Printf("Migration: added skip_cert_verify column to domain_routes")
+		}
+	}
 }
 
 // Close closes the database connection
