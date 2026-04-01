@@ -626,7 +626,7 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 
 			// HTTP router (web entrypoint) - always created
 			sb.WriteString(fmt.Sprintf("    domain-%s:\n", name))
-			sb.WriteString(fmt.Sprintf("      rule: \"%s\"\n", rule))
+			sb.WriteString(fmt.Sprintf("      rule: '%s'\n", rule))
 			sb.WriteString(fmt.Sprintf("      service: domain-%s-svc\n", name))
 			sb.WriteString(fmt.Sprintf("      priority: %s\n", priority))
 			sb.WriteString("      entryPoints:\n")
@@ -642,7 +642,7 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 			// HTTPS router (websecure entrypoint) - only if FrontendSSL is enabled
 			if route.FrontendSSL {
 				sb.WriteString(fmt.Sprintf("    domain-%s-secure:\n", name))
-				sb.WriteString(fmt.Sprintf("      rule: \"%s\"\n", rule))
+				sb.WriteString(fmt.Sprintf("      rule: '%s'\n", rule))
 				sb.WriteString(fmt.Sprintf("      service: domain-%s-svc\n", name))
 				sb.WriteString(fmt.Sprintf("      priority: %s\n", priority))
 				sb.WriteString("      entryPoints:\n")
