@@ -1718,6 +1718,7 @@ if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
             echo -e "${YELLOW}Wildcard SSL (*.${SSL_DOMAIN}):${NC}"
             echo -e "  Enables wildcard domain routes (e.g., *.app.${SSL_DOMAIN})"
             echo -e "  Requires a Cloudflare API token with ${CYAN}Zone:DNS:Edit${NC} permission"
+            echo -e "  ${YELLOW}Tip:${NC} Use ${CYAN}All zones${NC} permission to support wildcards on multiple domains"
             echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             echo ""
 

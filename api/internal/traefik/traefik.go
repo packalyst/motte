@@ -655,14 +655,11 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 				}
 				// TLS configuration
 				if isWildcard {
-					// Wildcard: use DNS challenge resolver
-					baseDomain := helper.WildcardBaseDomain(route.Domain)
+					// Wildcard: use DNS challenge resolver (only wildcard, no base domain to avoid conflict)
 					sb.WriteString("      tls:\n")
 					sb.WriteString("        certResolver: letsencrypt-wildcard\n")
 					sb.WriteString("        domains:\n")
-					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", baseDomain))
-					sb.WriteString("            sans:\n")
-					sb.WriteString(fmt.Sprintf("              - \"%s\"\n", route.Domain))
+					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", route.Domain))
 				} else if route.AccessMode == "public" {
 					// Public mode: use Let's Encrypt HTTP challenge
 					sb.WriteString("      tls:\n")
