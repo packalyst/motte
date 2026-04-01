@@ -610,11 +610,25 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 				}{mwName, route.SentinelConfig})
 			}
 
+			// Build rule based on domain type (wildcard vs exact)
+			isWildcard := helper.IsWildcardDomain(route.Domain)
+			var rule string
+			var priority string
+			if isWildcard {
+				baseDomain := helper.WildcardBaseDomain(route.Domain)
+				escapedDomain := strings.ReplaceAll(baseDomain, ".", "\\.")
+				rule = fmt.Sprintf("HostRegexp(`^.+\\.%s$`)", escapedDomain)
+				priority = "40"
+			} else {
+				rule = fmt.Sprintf("Host(`%s`)", route.Domain)
+				priority = "50"
+			}
+
 			// HTTP router (web entrypoint) - always created
 			sb.WriteString(fmt.Sprintf("    domain-%s:\n", name))
-			sb.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", route.Domain))
+			sb.WriteString(fmt.Sprintf("      rule: \"%s\"\n", rule))
 			sb.WriteString(fmt.Sprintf("      service: domain-%s-svc\n", name))
-			sb.WriteString("      priority: 50\n")
+			sb.WriteString(fmt.Sprintf("      priority: %s\n", priority))
 			sb.WriteString("      entryPoints:\n")
 			sb.WriteString("        - web\n")
 			if len(middlewares) > 0 {
@@ -628,9 +642,9 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 			// HTTPS router (websecure entrypoint) - only if FrontendSSL is enabled
 			if route.FrontendSSL {
 				sb.WriteString(fmt.Sprintf("    domain-%s-secure:\n", name))
-				sb.WriteString(fmt.Sprintf("      rule: \"Host(`%s`)\"\n", route.Domain))
+				sb.WriteString(fmt.Sprintf("      rule: \"%s\"\n", rule))
 				sb.WriteString(fmt.Sprintf("      service: domain-%s-svc\n", name))
-				sb.WriteString("      priority: 50\n")
+				sb.WriteString(fmt.Sprintf("      priority: %s\n", priority))
 				sb.WriteString("      entryPoints:\n")
 				sb.WriteString("        - websecure\n")
 				if len(middlewares) > 0 {
@@ -639,9 +653,18 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 						sb.WriteString(fmt.Sprintf("        - %s\n", mw))
 					}
 				}
-				// TLS configuration based on access mode
-				if route.AccessMode == "public" {
-					// Public mode: use Let's Encrypt
+				// TLS configuration
+				if isWildcard {
+					// Wildcard: use DNS challenge resolver
+					baseDomain := helper.WildcardBaseDomain(route.Domain)
+					sb.WriteString("      tls:\n")
+					sb.WriteString("        certResolver: letsencrypt-wildcard\n")
+					sb.WriteString("        domains:\n")
+					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", baseDomain))
+					sb.WriteString("            sans:\n")
+					sb.WriteString(fmt.Sprintf("              - \"%s\"\n", route.Domain))
+				} else if route.AccessMode == "public" {
+					// Public mode: use Let's Encrypt HTTP challenge
 					sb.WriteString("      tls:\n")
 					sb.WriteString("        certResolver: letsencrypt\n")
 					sb.WriteString("        domains:\n")

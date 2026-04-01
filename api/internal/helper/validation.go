@@ -71,7 +71,7 @@ func ValidatePortString(portStr string) (int, error) {
 }
 
 // ValidateDomain validates a domain name
-// Allows formats like: wiki.local, my-app.home, sub.domain.local
+// Allows formats like: wiki.local, my-app.home, sub.domain.local, *.domain.tld
 func ValidateDomain(domain string) error {
 	if domain == "" {
 		return &ValidationError{Field: "domain", Message: "domain is required"}
@@ -79,18 +79,27 @@ func ValidateDomain(domain string) error {
 
 	domain = strings.TrimSpace(domain)
 
+	// Handle wildcard domains (*.example.com)
+	baseDomain := domain
+	if strings.HasPrefix(domain, "*.") {
+		baseDomain = domain[2:] // strip *. for validation
+		if baseDomain == "" {
+			return &ValidationError{Field: "domain", Message: "wildcard domain must have a base domain (e.g., *.example.com)"}
+		}
+	}
+
 	// Check length
-	if len(domain) > 253 {
+	if len(baseDomain) > 253 {
 		return &ValidationError{Field: "domain", Message: "domain name too long (max 253 characters)"}
 	}
 
 	// Check overall pattern
-	if !domainRegex.MatchString(domain) {
+	if !domainRegex.MatchString(baseDomain) {
 		return &ValidationError{Field: "domain", Message: "invalid domain format (use alphanumeric, hyphens, dots)"}
 	}
 
 	// Validate each label (require at least one dot, e.g., "wiki.local")
-	labels := strings.Split(domain, ".")
+	labels := strings.Split(baseDomain, ".")
 	if len(labels) < 2 {
 		return &ValidationError{Field: "domain", Message: "domain must include a TLD (e.g., wiki.local)"}
 	}
@@ -107,6 +116,19 @@ func ValidateDomain(domain string) error {
 	}
 
 	return nil
+}
+
+// IsWildcardDomain checks if a domain starts with *.
+func IsWildcardDomain(domain string) bool {
+	return strings.HasPrefix(domain, "*.")
+}
+
+// WildcardBaseDomain returns the base domain without the *. prefix
+func WildcardBaseDomain(domain string) string {
+	if strings.HasPrefix(domain, "*.") {
+		return domain[2:]
+	}
+	return domain
 }
 
 // ValidateCIDR validates a CIDR notation (e.g., 192.168.1.0/24)
@@ -190,6 +212,13 @@ func ValidateIPList(ips []string) error {
 
 // SanitizeDomainName creates a safe identifier from a domain name
 func SanitizeDomainName(domain string) string {
+	// Handle wildcard prefix
+	prefix := ""
+	if strings.HasPrefix(domain, "*.") {
+		prefix = "wildcard-"
+		domain = domain[2:]
+	}
+
 	// Replace dots and other special chars with hyphens
 	safe := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
@@ -207,7 +236,7 @@ func SanitizeDomainName(domain string) string {
 	safe = strings.Trim(safe, "-")
 
 	// Lowercase
-	return strings.ToLower(safe)
+	return strings.ToLower(prefix + safe)
 }
 
 // ValidateURL validates a URL for safe usage (prevents SSRF)

@@ -1711,6 +1711,63 @@ if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
             else
                 echo -e "${GREEN}✓ Certificates will be auto-renewed${NC}"
             fi
+
+            # Cloudflare DNS challenge for wildcard certificates
+            echo ""
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${YELLOW}Wildcard SSL (*.${SSL_DOMAIN}):${NC}"
+            echo -e "  Enables wildcard domain routes (e.g., *.app.${SSL_DOMAIN})"
+            echo -e "  Requires a Cloudflare API token with ${CYAN}Zone:DNS:Edit${NC} permission"
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo ""
+
+            CURRENT_CF_EMAIL="${CF_API_EMAIL:-}"
+            CURRENT_CF_TOKEN="${CF_DNS_API_TOKEN:-}"
+
+            if prompt_yes_no "Enable wildcard SSL via Cloudflare DNS challenge?" "n"; then
+                CF_WILDCARD_ENABLED="true"
+
+                # Cloudflare Email
+                if [ -n "$CURRENT_CF_EMAIL" ]; then
+                    echo -e "  Current Cloudflare email: ${CYAN}${CURRENT_CF_EMAIL}${NC}"
+                    read -p "  Enter Cloudflare email (or press Enter to keep current): " CF_EMAIL_INPUT
+                    CF_API_EMAIL="${CF_EMAIL_INPUT:-$CURRENT_CF_EMAIL}"
+                else
+                    while true; do
+                        read -p "  Enter Cloudflare account email: " CF_API_EMAIL
+                        if [ -n "$CF_API_EMAIL" ]; then
+                            break
+                        fi
+                        echo -e "  ${RED}Email cannot be empty${NC}"
+                    done
+                fi
+
+                # Cloudflare API Token
+                if [ -n "$CURRENT_CF_TOKEN" ]; then
+                    MASKED_TOKEN="${CURRENT_CF_TOKEN:0:4}****${CURRENT_CF_TOKEN: -4}"
+                    echo -e "  Current API token: ${CYAN}${MASKED_TOKEN}${NC}"
+                    read -p "  Enter new API token (or press Enter to keep current): " CF_TOKEN_INPUT
+                    CF_DNS_API_TOKEN="${CF_TOKEN_INPUT:-$CURRENT_CF_TOKEN}"
+                else
+                    while true; do
+                        read -p "  Enter Cloudflare API token (Zone:DNS:Edit): " CF_DNS_API_TOKEN
+                        if [ -n "$CF_DNS_API_TOKEN" ]; then
+                            break
+                        fi
+                        echo -e "  ${RED}API token cannot be empty${NC}"
+                    done
+                fi
+
+                update_env_value "CF_WILDCARD_ENABLED" "true"
+                update_env_value "CF_API_EMAIL" "$CF_API_EMAIL"
+                update_env_value "CF_DNS_API_TOKEN" "$CF_DNS_API_TOKEN"
+
+                echo -e "${GREEN}✓ Wildcard SSL enabled via Cloudflare DNS challenge${NC}"
+            else
+                CF_WILDCARD_ENABLED="false"
+                update_env_value "CF_WILDCARD_ENABLED" "false"
+                echo -e "${YELLOW}✓ Wildcard SSL disabled - only single-domain certs available${NC}"
+            fi
         fi
     else
         update_env_value "SSL_ENABLED" "false"
@@ -1912,6 +1969,23 @@ certificatesResolvers:
       storage: /etc/traefik/acme.json
       httpChallenge:
         entryPoint: web
+EOF
+
+    # Add wildcard resolver if Cloudflare DNS challenge is enabled
+    if [ "${CF_WILDCARD_ENABLED:-false}" = "true" ]; then
+        cat >> traefik/traefik.yml << 'EOF'
+  letsencrypt-wildcard:
+    acme:
+      email: ${CF_API_EMAIL}
+      storage: /etc/traefik/acme.json
+      dnsChallenge:
+        provider: cloudflare
+EOF
+        # Substitute variables in the wildcard section
+        sed -i "s|\${CF_API_EMAIL}|${CF_API_EMAIL}|g" traefik/traefik.yml
+    fi
+
+    cat >> traefik/traefik.yml << 'EOF'
 
 log:
   level: INFO

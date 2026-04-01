@@ -609,7 +609,7 @@
   <div class="space-y-4">
     <Input
       label="Domain"
-      placeholder="wiki.local"
+      placeholder="wiki.local or *.app.domain.com"
       bind:value={formData.domain}
       prefixIcon="world-www"
       suffixCheckbox={{ icon: "lock", label: "SSL", color: "warning" }}
