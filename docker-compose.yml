@@ -221,7 +221,7 @@ services:
       - ./data/tailscale:/var/lib/tailscale
     environment:
       - TS_AUTHKEY=${VPN_ROUTER_AUTHKEY:-}
-      - TS_EXTRA_ARGS=--advertise-routes=${WG_IP_RANGE} --accept-routes --advertise-exit-node --hostname=vpn-router
+      - TS_EXTRA_ARGS=--advertise-routes=${WG_IP_RANGE} --accept-routes --hostname=vpn-router
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
     profiles:

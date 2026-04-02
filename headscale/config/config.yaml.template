@@ -49,7 +49,7 @@ derp:
 # DNS configuration for clients
 # Using AdGuard (via cross-network router) for unified DNS resolution
 dns:
-  magic_dns: true
+  magic_dns: false
   base_domain: ${HEADSCALE_BASE_DOMAIN}
   nameservers:
     global:
