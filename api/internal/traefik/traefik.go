@@ -617,7 +617,7 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 			if isWildcard {
 				baseDomain := helper.WildcardBaseDomain(route.Domain)
 				escapedDomain := strings.ReplaceAll(baseDomain, ".", "\\.")
-				rule = fmt.Sprintf("HostRegexp(`^.+\\.%s$`)", escapedDomain)
+				rule = fmt.Sprintf("HostRegexp(`^(.+\\.)?%s$`)", escapedDomain)
 				priority = "40"
 			} else {
 				rule = fmt.Sprintf("Host(`%s`)", route.Domain)
