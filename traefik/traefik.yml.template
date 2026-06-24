@@ -12,8 +12,20 @@ experimental:
 entryPoints:
   web:
     address: ":${HTTP_PORT}"
+    http:
+      sanitizePath: false                    # ← stops the sanitizer mangling
+      encodedcharacters:                     # ← explicitly allow encoded chars (defensive)
+        allowencodedslash: true
+        allowencodedbackslash: true
+        allowencodednullcharacter: true
   websecure:
     address: ":${HTTPS_PORT}"
+    http:
+      sanitizePath: false                    # ← same
+      encodedcharacters:
+        allowencodedslash: true
+        allowencodedbackslash: true
+        allowencodednullcharacter: true
   traefik:
     address: ":${TRAEFIK_PORT}"
 
