@@ -48,10 +48,10 @@ func (d *DB) Begin() (*sql.Tx, error) {
 
 // instance is the shared database wrapper
 var (
-	instance   *sql.DB
-	dbWrapper  *DB
-	once       sync.Once
-	dbPath     string
+	instance  *sql.DB
+	dbWrapper *DB
+	once      sync.Once
+	dbPath    string
 )
 
 // Init initializes the shared database connection
@@ -418,6 +418,14 @@ func runMigrations(db *sql.DB) {
 			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE vpn_clients ADD COLUMN %s INTEGER DEFAULT 0`, col)); err == nil {
 				log.Printf("Migration: added %s column to vpn_clients", col)
 			}
+		}
+	}
+
+	// Add block_internet column to vpn_clients if missing (per-peer WAN block)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_clients') WHERE name = 'block_internet'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE vpn_clients ADD COLUMN block_internet INTEGER DEFAULT 0`); err == nil {
+			log.Printf("Migration: added block_internet column to vpn_clients")
 		}
 	}
 

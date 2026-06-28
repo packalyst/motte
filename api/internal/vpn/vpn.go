@@ -137,17 +137,18 @@ type Service struct {
 
 // VPNClient represents a unified view of a VPN client (WireGuard or Headscale)
 type VPNClient struct {
-	ID         int             `json:"id"`
-	Name       string          `json:"name"`
-	IP         string          `json:"ip"`
-	Type       string          `json:"type"` // "wireguard" or "headscale"
-	ExternalID string          `json:"externalId,omitempty"`
-	RawData    json.RawMessage `json:"rawData,omitempty"` // Full data from source system
-	ACLPolicy  string          `json:"aclPolicy"`         // block_all, selected, allow_all
-	TotalTx    int64           `json:"totalTx"`           // Total bytes transmitted
-	TotalRx    int64           `json:"totalRx"`           // Total bytes received
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
+	ID            int             `json:"id"`
+	Name          string          `json:"name"`
+	IP            string          `json:"ip"`
+	Type          string          `json:"type"` // "wireguard" or "headscale"
+	ExternalID    string          `json:"externalId,omitempty"`
+	RawData       json.RawMessage `json:"rawData,omitempty"` // Full data from source system
+	ACLPolicy     string          `json:"aclPolicy"`         // block_all, selected, allow_all
+	TotalTx       int64           `json:"totalTx"`           // Total bytes transmitted
+	TotalRx       int64           `json:"totalRx"`           // Total bytes received
+	BlockInternet bool            `json:"blockInternet"`     // Per-peer WAN egress block
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
 	// Enriched fields (not stored in DB)
 	AllowedCount int `json:"allowedCount,omitempty"`
 }
@@ -174,8 +175,8 @@ type ACLClientView struct {
 
 // ClientACLUpdate is the request body for updating a client's ACL
 type ClientACLUpdate struct {
-	Policy        string       `json:"policy"`
-	AllowedRules  []ACLRuleReq `json:"rules"` // New format: list of rules with bi flag
+	Policy       string       `json:"policy"`
+	AllowedRules []ACLRuleReq `json:"rules"` // New format: list of rules with bi flag
 }
 
 // ACLRuleReq is a single rule in the update request
@@ -200,11 +201,11 @@ func New() *Service {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		// Clients & ACL
-		"GetClients":  s.handleGetClients,
-		"GetClient":   s.handleGetClient,
-		"UpdateACL":   s.handleUpdateACL,
-		"ApplyRules":  s.handleApplyRules,
-		"ToggleDNS":   s.handleToggleDNS,
+		"GetClients": s.handleGetClients,
+		"GetClient":  s.handleGetClient,
+		"UpdateACL":  s.handleUpdateACL,
+		"ApplyRules": s.handleApplyRules,
+		"ToggleDNS":  s.handleToggleDNS,
 		// Port Scanner
 		"ScanPorts": s.handleScanPorts,
 		"StopScan":  s.handleStopScan,
@@ -230,7 +231,8 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 	// Use LEFT JOIN with subquery to avoid N+1 query problem
 	rows, err := db.Query(`
 		SELECT c.id, c.name, c.ip, c.type, c.external_id, c.raw_data,
-		       c.acl_policy, c.total_tx, c.total_rx, c.created_at, c.updated_at,
+		       c.acl_policy, c.total_tx, c.total_rx, COALESCE(c.block_internet, 0),
+		       c.created_at, c.updated_at,
 		       COALESCE(counts.cnt, 0) as allowed_count
 		FROM vpn_clients c
 		LEFT JOIN (
@@ -250,9 +252,11 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var c VPNClient
 		var externalID, rawData sql.NullString
-		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &rawData, &c.ACLPolicy, &c.TotalTx, &c.TotalRx, &c.CreatedAt, &c.UpdatedAt, &c.AllowedCount); err != nil {
+		var blockInternetInt int
+		if err := rows.Scan(&c.ID, &c.Name, &c.IP, &c.Type, &externalID, &rawData, &c.ACLPolicy, &c.TotalTx, &c.TotalRx, &blockInternetInt, &c.CreatedAt, &c.UpdatedAt, &c.AllowedCount); err != nil {
 			continue
 		}
+		c.BlockInternet = blockInternetInt == 1
 		c.ExternalID = database.StringFromNull(externalID, "")
 		if rawData.Valid {
 			c.RawData = json.RawMessage(rawData.String)
@@ -445,12 +449,12 @@ func (s *Service) applyACLRules(tx *sql.Tx, viewerID int, desiredRules []ACLRule
 	}
 
 	type currentRule struct {
-		id       int
-		srcID    int
-		tgtID    int
-		bi       bool
-		otherID  int
-		isSrc    bool // viewer is source
+		id      int
+		srcID   int
+		tgtID   int
+		bi      bool
+		otherID int
+		isSrc   bool // viewer is source
 	}
 	var current []currentRule
 	for rows.Next() {

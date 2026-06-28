@@ -101,6 +101,8 @@
         {"path": "/peers/{id}", "methods": ["DELETE"], "handler": "DeletePeer", "description": "Delete peer"},
         {"path": "/peers/{id}/enable", "methods": ["POST"], "handler": "EnablePeer", "description": "Enable peer"},
         {"path": "/peers/{id}/disable", "methods": ["POST"], "handler": "DisablePeer", "description": "Disable peer"},
+        {"path": "/peers/{id}/block-internet", "methods": ["POST"], "handler": "BlockInternet", "description": "Block WAN egress for peer"},
+        {"path": "/peers/{id}/unblock-internet", "methods": ["POST"], "handler": "UnblockInternet", "description": "Restore WAN egress for peer"},
         {"path": "/peers/{id}/config", "methods": ["GET"], "handler": "GetPeerConfig", "description": "Download peer config"},
         {"path": "/peers/{id}/qr", "methods": ["GET"], "handler": "GetPeerQR", "description": "Get peer QR code"},
         {"path": "/server", "methods": ["GET"], "handler": "GetServer", "description": "Get server info"}

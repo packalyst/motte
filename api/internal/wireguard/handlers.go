@@ -5,12 +5,20 @@ import (
 	"net/http"
 	"time"
 
+	"api/internal/nftables"
 	"api/internal/router"
 	"api/internal/ws"
 
 	"github.com/skip2/go-qrcode"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
+
+// requestFirewallApply schedules an nftables reapply if the service is available.
+func requestFirewallApply() {
+	if nft := nftables.GetService(); nft != nil {
+		nft.RequestApply()
+	}
+}
 
 // HTTP Handlers
 
@@ -114,10 +122,41 @@ func (s *Service) handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 	s.peerStore.Delete(id)
 	s.syncConfig()
 
+	// Drop the peer's IP from any nftables sets (e.g. no_internet_peers).
+	requestFirewallApply()
+
 	// Broadcast node stats update
 	ws.BroadcastNodeStats()
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleBlockInternet(w http.ResponseWriter, r *http.Request) {
+	s.setBlockInternet(w, r, true)
+}
+
+func (s *Service) handleUnblockInternet(w http.ResponseWriter, r *http.Request) {
+	s.setBlockInternet(w, r, false)
+}
+
+func (s *Service) setBlockInternet(w http.ResponseWriter, r *http.Request, block bool) {
+	id := router.ExtractPathParam(r, "/api/wg/peers/")
+	peer := s.peerStore.Get(id)
+	if peer == nil {
+		router.JSONError(w, "peer not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.peerStore.SetBlockInternet(id, block); err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	requestFirewallApply()
+
+	peer = s.peerStore.Get(id)
+	stripSensitiveKeys(peer)
+	router.JSON(w, peer)
 }
 
 func (s *Service) handleEnablePeer(w http.ResponseWriter, r *http.Request) {

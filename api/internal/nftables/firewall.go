@@ -4,11 +4,47 @@ import (
 	"database/sql"
 	"log"
 	"net"
+	"os/exec"
 	"sort"
 	"strings"
 
 	"api/internal/database"
 )
+
+// detectWANInterface returns the interface name of the default IPv4 route.
+// Re-detected on every script render so cable swaps / wifi changes self-heal.
+// Returns "" if detection fails (e.g. no default route) — caller must skip the rule.
+func detectWANInterface() string {
+	out, err := exec.Command("ip", "-4", "route", "show", "default").Output()
+	if err != nil {
+		return ""
+	}
+	// Output shape: "default via 192.168.1.1 dev eth0 proto dhcp ..."
+	fields := strings.Fields(string(out))
+	for i, f := range fields {
+		if f == "dev" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+// loadNoInternetPeerIPs returns IPs of all VPN peers that have block_internet = 1.
+func loadNoInternetPeerIPs(db *database.DB) []string {
+	rows, err := db.Query(`SELECT ip FROM vpn_clients WHERE block_internet = 1`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ips []string
+	for rows.Next() {
+		var ip string
+		if err := rows.Scan(&ip); err == nil && ip != "" {
+			ips = append(ips, ip)
+		}
+	}
+	return ips
+}
 
 // FirewallTable builds the inet firewall table
 type FirewallTable struct {
@@ -21,9 +57,9 @@ func NewFirewallTable(db *database.DB, countryProvider CountryZonesProvider) *Fi
 	return &FirewallTable{db: db, countryProvider: countryProvider}
 }
 
-func (t *FirewallTable) Name() string     { return "wgadmin_firewall" }
-func (t *FirewallTable) Family() string   { return "inet" }
-func (t *FirewallTable) Priority() int    { return 10 }
+func (t *FirewallTable) Name() string   { return "wgadmin_firewall" }
+func (t *FirewallTable) Family() string { return "inet" }
+func (t *FirewallTable) Priority() int  { return 10 }
 
 // Build generates the nftables script
 func (t *FirewallTable) Build() (string, error) {
@@ -95,11 +131,22 @@ func (t *FirewallTable) Build() (string, error) {
 		}
 	}
 
+	// Per-peer WAN block: list of VPN peer IPs whose internet egress should be dropped.
+	noInternetPeers := loadNoInternetPeerIPs(t.db)
+	wanIface := ""
+	if len(noInternetPeers) > 0 {
+		wanIface = detectWANInterface()
+		if wanIface == "" {
+			log.Printf("nftables/firewall: %d peers flagged block_internet but WAN interface could not be detected; rule skipped", len(noInternetPeers))
+		}
+	}
+
 	return t.buildScript(
 		blockedIPsIn, blockedIPsOut,
 		blockedRangesIn, blockedRangesOut,
 		allowedTCPPorts, allowedUDPPorts,
 		countryRangesIn, countryRangesOut,
+		noInternetPeers, wanIface,
 	), nil
 }
 
@@ -223,7 +270,7 @@ func (t *FirewallTable) cleanOverlappingRanges() int {
 	return int(deleted)
 }
 
-func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn, blockedRangesOut, tcpPorts, udpPorts, countryIn, countryOut []string) string {
+func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn, blockedRangesOut, tcpPorts, udpPorts, countryIn, countryOut, noInternetPeers []string, wanIface string) string {
 	var sb strings.Builder
 
 	sb.WriteString(TableHeader("inet", "wgadmin_firewall"))
@@ -246,6 +293,9 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 	sb.WriteString(BuildSet("allowed_tcp_ports", "inet_service", nil, tcpPorts))
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("allowed_udp_ports", "inet_service", nil, udpPorts))
+	sb.WriteString("\n")
+	// Set - per-peer WAN block (drop only when traffic egresses the WAN iface)
+	sb.WriteString(BuildSet("no_internet_peers", "ipv4_addr", nil, noInternetPeers))
 	sb.WriteString("\n")
 
 	// Input chain - traffic destined TO the server (check source address)
@@ -276,7 +326,7 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 
 	// Forward chain - traffic routed THROUGH the server (VPN clients)
 	// Needs both saddr (block bad sources) and daddr (block bad destinations)
-	sb.WriteString(BuildChain("forward", "filter", "forward", -1, "accept", []string{
+	forwardRules := []string{
 		"# Allow established connections",
 		"ct state established,related accept",
 		"",
@@ -289,13 +339,25 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 		"ip daddr @blocked_ips_out drop",
 		"ip daddr @blocked_ranges_out drop",
 		"ip daddr @blocked_countries_out drop",
+	}
+	// Per-peer WAN egress block. Skip silently if WAN couldn't be detected — emitting
+	// the rule without oifname would block *all* peer traffic, including peer↔peer.
+	if wanIface != "" && len(noInternetPeers) > 0 {
+		forwardRules = append(forwardRules,
+			"",
+			"# Drop WAN-bound traffic from flagged peers (per-peer no-internet)",
+			"ip saddr @no_internet_peers oifname \""+SanitizeElement(wanIface)+"\" drop",
+		)
+	}
+	forwardRules = append(forwardRules,
 		"",
 		"# Log and allow VPN traffic",
 		`iifname "wg0" ct state new log prefix "VPN_TRAFFIC: " accept`,
 		`oifname "wg0" accept`,
 		`iifname "tailscale0" ct state new log prefix "VPN_TRAFFIC: " accept`,
 		`oifname "tailscale0" accept`,
-	}))
+	)
+	sb.WriteString(BuildChain("forward", "filter", "forward", -1, "accept", forwardRules))
 	sb.WriteString("\n")
 
 	// Output chain - traffic originating FROM the server (check destination address)

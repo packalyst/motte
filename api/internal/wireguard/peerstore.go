@@ -117,7 +117,7 @@ func (ps *PeerStore) Load() error {
 	}
 
 	rows, err := db.Query(`
-		SELECT external_id, name, ip, public_key, private_key_enc, preshared_key_enc, enabled, created_at
+		SELECT external_id, name, ip, public_key, private_key_enc, preshared_key_enc, enabled, COALESCE(block_internet, 0), created_at
 		FROM vpn_clients
 		WHERE type = 'wireguard' AND external_id IS NOT NULL
 	`)
@@ -130,21 +130,22 @@ func (ps *PeerStore) Load() error {
 	for rows.Next() {
 		var id, name, ip string
 		var publicKey, privateKeyEnc, presharedKeyEnc sql.NullString
-		var enabled int
+		var enabled, blockInternet int
 		var createdAt time.Time
 
-		if err := rows.Scan(&id, &name, &ip, &publicKey, &privateKeyEnc, &presharedKeyEnc, &enabled, &createdAt); err != nil {
+		if err := rows.Scan(&id, &name, &ip, &publicKey, &privateKeyEnc, &presharedKeyEnc, &enabled, &blockInternet, &createdAt); err != nil {
 			log.Printf("Warning: failed to scan peer row: %v", err)
 			continue
 		}
 
 		peer := &Peer{
-			ID:        id,
-			Name:      name,
-			IPAddress: ip,
-			PublicKey: publicKey.String,
-			Enabled:   enabled == 1,
-			CreatedAt: createdAt,
+			ID:            id,
+			Name:          name,
+			IPAddress:     ip,
+			PublicKey:     publicKey.String,
+			Enabled:       enabled == 1,
+			BlockInternet: blockInternet == 1,
+			CreatedAt:     createdAt,
 		}
 
 		// Decrypt sensitive keys
@@ -193,11 +194,16 @@ func (ps *PeerStore) Add(peer *Peer) {
 	if peer.Enabled {
 		enabledInt = 1
 	}
+	blockInternetInt := 0
+	if peer.BlockInternet {
+		blockInternetInt = 1
+	}
 
 	// Upsert to database
+	// block_internet preserved across UPSERT (no `excluded.block_internet` on update — set via SetBlockInternet)
 	_, err = db.Exec(`
-		INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy, public_key, private_key_enc, preshared_key_enc, enabled)
-		VALUES (?, ?, 'wireguard', ?, ?, 'selected', ?, ?, ?, ?)
+		INSERT INTO vpn_clients (name, ip, type, external_id, raw_data, acl_policy, public_key, private_key_enc, preshared_key_enc, enabled, block_internet)
+		VALUES (?, ?, 'wireguard', ?, ?, 'selected', ?, ?, ?, ?, ?)
 		ON CONFLICT(ip) DO UPDATE SET
 			name = excluded.name,
 			external_id = excluded.external_id,
@@ -207,7 +213,7 @@ func (ps *PeerStore) Add(peer *Peer) {
 			preshared_key_enc = excluded.preshared_key_enc,
 			enabled = excluded.enabled,
 			updated_at = CURRENT_TIMESTAMP
-	`, peer.Name, peer.IPAddress, peer.ID, string(rawData), peer.PublicKey, privateKeyEnc, presharedKeyEnc, enabledInt)
+	`, peer.Name, peer.IPAddress, peer.ID, string(rawData), peer.PublicKey, privateKeyEnc, presharedKeyEnc, enabledInt, blockInternetInt)
 	if err != nil {
 		log.Printf("Warning: failed to save peer %s: %v", peer.Name, err)
 		return
@@ -216,6 +222,34 @@ func (ps *PeerStore) Add(peer *Peer) {
 	// Update cache with a copy
 	peerForCache := *peer
 	ps.cache[peer.ID] = &peerForCache
+}
+
+// SetBlockInternet flips the per-peer WAN-block flag in DB and cache.
+func (ps *PeerStore) SetBlockInternet(id string, block bool) error {
+	ps.Lock()
+	defer ps.Unlock()
+
+	peer, ok := ps.cache[id]
+	if !ok {
+		return fmt.Errorf("peer not found: %s", id)
+	}
+
+	db, err := database.GetDB()
+	if err != nil {
+		return err
+	}
+
+	blockInt := 0
+	if block {
+		blockInt = 1
+	}
+	_, err = db.Exec(`UPDATE vpn_clients SET block_internet = ?, updated_at = CURRENT_TIMESTAMP WHERE ip = ? AND type = 'wireguard'`, blockInt, peer.IPAddress)
+	if err != nil {
+		return err
+	}
+
+	peer.BlockInternet = block
+	return nil
 }
 
 // Get returns a copy of a peer by ID

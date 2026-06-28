@@ -104,6 +104,7 @@ type Peer struct {
 	Enabled       bool      `json:"enabled"`
 	Online        bool      `json:"online"`
 	LastHandshake time.Time `json:"lastHandshake,omitempty"`
+	BlockInternet bool      `json:"blockInternet"`
 }
 
 // New creates a new WireGuard service
@@ -182,16 +183,18 @@ func New(dataDir string) (*Service, error) {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetPeers":      s.handleGetPeers,
-		"CreatePeer":    s.handleCreatePeer,
-		"GetPeer":       s.handleGetPeer,
-		"UpdatePeer":    s.handleUpdatePeer,
-		"DeletePeer":    s.handleDeletePeer,
-		"EnablePeer":    s.handleEnablePeer,
-		"DisablePeer":   s.handleDisablePeer,
-		"GetPeerConfig": s.handleGetPeerConfig,
-		"GetPeerQR":     s.handleGetPeerQR,
-		"GetServer":     s.handleGetServer,
+		"GetPeers":        s.handleGetPeers,
+		"CreatePeer":      s.handleCreatePeer,
+		"GetPeer":         s.handleGetPeer,
+		"UpdatePeer":      s.handleUpdatePeer,
+		"DeletePeer":      s.handleDeletePeer,
+		"EnablePeer":      s.handleEnablePeer,
+		"DisablePeer":     s.handleDisablePeer,
+		"BlockInternet":   s.handleBlockInternet,
+		"UnblockInternet": s.handleUnblockInternet,
+		"GetPeerConfig":   s.handleGetPeerConfig,
+		"GetPeerQR":       s.handleGetPeerQR,
+		"GetServer":       s.handleGetServer,
 	}
 }
 

@@ -213,7 +213,7 @@
   let mounted = true // Track component lifecycle for async cleanup
 
   // Delete/expire confirmation
-  let confirmAction = $state(null) // 'delete' | 'expire' | null
+  let confirmAction = $state(null) // 'delete' | 'expire' | 'block-internet' | 'unblock-internet' | null
   let actionLoading = $state(false)
 
   async function loadQrCode(peerId, mode) {
@@ -270,6 +270,7 @@
         lastSeen: raw.lastSeen,
         user: { name: 'WireGuard' },
         enabled: raw.enabled !== false,
+        blockInternet: client.blockInternet === true,
         publicKey: raw.publicKey,
         privateKey: raw.privateKey,
         presharedKey: raw.presharedKey,
@@ -400,6 +401,23 @@
     try {
       await apiPost(`/api/hs/nodes/${selectedNode.id}/expire`)
       toast('Node key expired', 'success')
+      confirmAction = null
+      loader.reload()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      actionLoading = false
+    }
+  }
+
+  async function toggleBlockInternet() {
+    if (!selectedNode) return
+    actionLoading = true
+    try {
+      const block = !selectedNode.blockInternet
+      await apiPost(`/api/wg/peers/${selectedNode._wgId}/${block ? 'block-internet' : 'unblock-internet'}`)
+      toast(block ? 'Internet blocked for peer' : 'Internet restored', 'success')
+      selectedNode = { ...selectedNode, blockInternet: block }
       confirmAction = null
       loader.reload()
     } catch (e) {
@@ -623,6 +641,12 @@
                 Disabled
               </span>
             {/if}
+            {#if node._type === 'wireguard' && node.blockInternet}
+              <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-destructive/10 text-destructive">
+                <Icon name="world-off" size={10} />
+                No Internet
+              </span>
+            {/if}
           </div>
         </div>
 
@@ -724,6 +748,7 @@
               <Badge variant={selectedNode._online ? 'success' : 'muted'} size="sm">{selectedNode._online ? 'Online' : 'Offline'}</Badge>
               <Badge variant={selectedNode._type === 'wireguard' ? 'info' : 'primary'} size="sm">{selectedNode._type === 'wireguard' ? 'WG' : 'TS'}</Badge>
               {#if selectedNode._type === 'wireguard' && !selectedNode.enabled}<Badge variant="warning" size="sm">Disabled</Badge>{/if}
+              {#if selectedNode._type === 'wireguard' && selectedNode.blockInternet}<Badge variant="destructive" size="sm">No Internet</Badge>{/if}
               {#if isExitNode}<Badge variant="success" size="sm">Exit</Badge>{/if}
               <button onclick={toggleDNS} class="kt-badge kt-badge-sm {hasDNS ? 'kt-badge-info' : 'kt-badge-outline kt-badge-secondary'} cursor-pointer" title="Toggle DNS rewrite">DNS</button>
             </div>
@@ -1023,6 +1048,60 @@
                 </Button>
               </div>
             </div>
+          {:else if confirmAction === 'block-internet'}
+            <!-- Block Internet Confirmation -->
+            <div class="space-y-4">
+              <div class="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-destructive/15 text-destructive shrink-0">
+                    <Icon name="world-off" size={20} />
+                  </div>
+                  <div>
+                    <p class="font-medium text-foreground">Block internet for {selectedNode._displayName}?</p>
+                    <p class="text-sm text-muted-foreground mt-0.5">Peer can still reach other VPN nodes and the server, but cannot access external sites until you unblock.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="flex justify-between">
+                <Button onclick={() => confirmAction = null} variant="secondary" disabled={actionLoading}>
+                  Cancel
+                </Button>
+                <Button onclick={toggleBlockInternet} variant="destructive" disabled={actionLoading} icon={actionLoading ? undefined : "world-off"}>
+                  {#if actionLoading}
+                    <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  {:else}
+                    Block Internet
+                  {/if}
+                </Button>
+              </div>
+            </div>
+          {:else if confirmAction === 'unblock-internet'}
+            <!-- Unblock Internet Confirmation -->
+            <div class="space-y-4">
+              <div class="p-4 bg-success/10 border border-success/20 rounded-lg">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-success/15 text-success shrink-0">
+                    <Icon name="world" size={20} />
+                  </div>
+                  <div>
+                    <p class="font-medium text-foreground">Restore internet for {selectedNode._displayName}?</p>
+                    <p class="text-sm text-muted-foreground mt-0.5">Peer will regain full WAN access.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="flex justify-between">
+                <Button onclick={() => confirmAction = null} variant="secondary" disabled={actionLoading}>
+                  Cancel
+                </Button>
+                <Button onclick={toggleBlockInternet} class="kt-btn-success" disabled={actionLoading} icon={actionLoading ? undefined : "world"}>
+                  {#if actionLoading}
+                    <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  {:else}
+                    Restore Internet
+                  {/if}
+                </Button>
+              </div>
+            </div>
           {:else}
             <!-- Normal Actions View -->
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1035,6 +1114,15 @@
                   size="lg"
                   iconBox
                   onclick={toggleWgPeer}
+                />
+                <OptionCard
+                  icon={selectedNode.blockInternet ? 'world' : 'world-off'}
+                  title={selectedNode.blockInternet ? 'Restore Internet' : 'Block Internet'}
+                  description={selectedNode.blockInternet ? 'Allow WAN access' : 'Keep VPN, drop WAN'}
+                  color={selectedNode.blockInternet ? 'success' : 'destructive'}
+                  size="lg"
+                  iconBox
+                  onclick={() => confirmAction = selectedNode.blockInternet ? 'unblock-internet' : 'block-internet'}
                 />
               {:else}
                 <OptionCard icon="clock" title="Expire Key" description="Force re-authentication" color="warning" size="lg" iconBox onclick={() => confirmAction = 'expire'} />
