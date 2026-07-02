@@ -134,9 +134,31 @@
     formData.sentinelConfig.timeAccess.days = toggleInArray(formData.sentinelConfig.timeAccess.days, day)
   }
 
-  // Certificate lookup by domain
+  // Certificate lookup by domain.
+  // Match direct (`api.example.com`), or wildcard-covered
+  // (`*.example.com` cert covers `api.example.com`),
+  // or apex-covered (`example.com` cert with wildcard SAN covers `*.example.com`).
   function getCertForDomain(domain) {
-    return certificates.find(c => c.domain === domain)
+    if (!domain) return undefined
+    // 1. direct match
+    let hit = certificates.find(c => c.domain === domain)
+    if (hit) return hit
+    // 2. `*.example.com` route matched by an `example.com` cert
+    if (domain.startsWith('*.')) {
+      const base = domain.slice(2)
+      hit = certificates.find(c => c.domain === base)
+      if (hit) return hit
+    }
+    // 3. `sub.example.com` route matched by a `*.example.com` cert
+    const parts = domain.split('.')
+    if (parts.length > 2) {
+      const wildcard = '*.' + parts.slice(1).join('.')
+      hit = certificates.find(c => c.domain === wildcard)
+      if (hit) return hit
+    }
+    // 4. any cert whose base equals ours (last-ditch, covers apex↔wildcard SAN pairs)
+    const base = domain.startsWith('*.') ? domain.slice(2) : domain
+    return certificates.find(c => c.domain === base || c.domain === '*.' + base)
   }
 
   // Filtered routes
