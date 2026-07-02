@@ -211,9 +211,17 @@ func ApplyRoutes() error {
 			rc.CertResolver = certResolver.String
 		}
 
-		// Add VPN domains to AdGuard sync list
+		// Add VPN domains to AdGuard sync list.
+		// For a wildcard route (`*.example.com`), also rewrite the apex (`example.com`)
+		// — AdGuard wildcards match one label to the left, so the apex needs its own entry.
 		if rc.AccessMode == "vpn" {
 			vpnDomains = append(vpnDomains, adguard.DomainRoute{Domain: rc.Domain})
+			if helper.IsWildcardDomain(rc.Domain) {
+				baseDomain := helper.WildcardBaseDomain(rc.Domain)
+				if baseDomain != "" {
+					vpnDomains = append(vpnDomains, adguard.DomainRoute{Domain: baseDomain})
+				}
+			}
 		}
 
 		routes = append(routes, rc)
