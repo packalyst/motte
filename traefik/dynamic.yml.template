@@ -6,6 +6,7 @@ http:
       rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/`)"
       service: ui
       priority: 10
+      middlewares: []
       entryPoints:
         - web
 
