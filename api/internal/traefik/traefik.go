@@ -686,11 +686,14 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 					sb.WriteString("        domains:\n")
 					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", route.Domain))
 				} else if isWildcard {
-					// Wildcard: use DNS challenge resolver (only wildcard, no base domain to avoid conflict)
+					// Wildcard: use DNS-01 resolver. Cover BOTH the apex and the wildcard so
+					// e.g. `example.com` + `*.example.com` end up in one Let's Encrypt cert.
+					baseDomain := helper.WildcardBaseDomain(route.Domain)
 					sb.WriteString("      tls:\n")
 					sb.WriteString("        certResolver: letsencrypt-dnschallenge\n")
 					sb.WriteString("        domains:\n")
-					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", route.Domain))
+					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", baseDomain))
+					sb.WriteString(fmt.Sprintf("            sans:\n              - \"%s\"\n", route.Domain))
 				} else if route.AccessMode == "public" {
 					// Public mode: use Let's Encrypt HTTP challenge
 					sb.WriteString("      tls:\n")
