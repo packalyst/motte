@@ -1975,7 +1975,7 @@ EOF
     # Add wildcard resolver if Cloudflare DNS challenge is enabled
     if [ "${CF_WILDCARD_ENABLED:-false}" = "true" ]; then
         cat >> traefik/traefik.yml << 'EOF'
-  letsencrypt-wildcard:
+  letsencrypt-dnschallenge:
     acme:
       email: ${CF_API_EMAIL}
       storage: /etc/traefik/acme.json

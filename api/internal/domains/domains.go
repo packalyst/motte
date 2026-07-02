@@ -151,6 +151,7 @@ type DomainRoute struct {
 	Description     string                 `json:"description"`
 	AccessMode      string                 `json:"accessMode"`      // "vpn" or "public"
 	FrontendSSL     bool                   `json:"frontendSsl"`     // use websecure entrypoint
+	CertResolver    string                 `json:"certResolver,omitempty"` // explicit resolver name; empty = auto (wildcard/public/vpn tree)
 	SentinelConfig  *traefik.SentinelConfig `json:"sentinelConfig,omitempty"`
 	CreatedAt       time.Time              `json:"createdAt"`
 	UpdatedAt       time.Time              `json:"updatedAt"`
@@ -181,7 +182,7 @@ func ApplyRoutes() error {
 
 	// Get all enabled routes with new columns
 	rows, err := db.Query(`
-		SELECT domain, target_ip, target_port, https_backend, skip_cert_verify, middlewares, access_mode, frontend_ssl, COALESCE(sentinel_config, '')
+		SELECT domain, target_ip, target_port, https_backend, skip_cert_verify, middlewares, access_mode, frontend_ssl, COALESCE(sentinel_config, ''), COALESCE(cert_resolver, '')
 		FROM domain_routes
 		WHERE enabled = 1
 		ORDER BY domain
@@ -201,10 +202,14 @@ func ApplyRoutes() error {
 		var frontendSSL sql.NullBool
 		var sentinelConfigJSON string
 
-		if err := rows.Scan(&rc.Domain, &rc.TargetIP, &rc.TargetPort, &rc.HTTPSBackend, &rc.SkipCertVerify, &middlewaresJSON, &accessMode, &frontendSSL, &sentinelConfigJSON); err != nil {
+		var certResolver sql.NullString
+		if err := rows.Scan(&rc.Domain, &rc.TargetIP, &rc.TargetPort, &rc.HTTPSBackend, &rc.SkipCertVerify, &middlewaresJSON, &accessMode, &frontendSSL, &sentinelConfigJSON, &certResolver); err != nil {
 			continue
 		}
 		rc.Middlewares, rc.AccessMode, rc.FrontendSSL, rc.SentinelConfig = parseRouteFields(middlewaresJSON, accessMode, frontendSSL, sentinelConfigJSON)
+		if certResolver.Valid {
+			rc.CertResolver = certResolver.String
+		}
 
 		// Add VPN domains to AdGuard sync list
 		if rc.AccessMode == "vpn" {
@@ -282,6 +287,7 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		SELECT d.id, d.domain, d.target_ip, d.target_port, d.vpn_client_id,
 		       d.enabled, d.https_backend, d.skip_cert_verify, d.middlewares, d.description,
 		       d.access_mode, d.frontend_ssl, COALESCE(d.sentinel_config, ''),
+		       COALESCE(d.cert_resolver, ''),
 		       d.created_at, d.updated_at, COALESCE(v.name, '') as vpn_client_name
 		FROM domain_routes d
 		LEFT JOIN vpn_clients v ON d.vpn_client_id = v.id
@@ -301,10 +307,12 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		var accessMode sql.NullString
 		var frontendSSL sql.NullBool
 		var sentinelConfigJSON string
+		var certResolver sql.NullString
 		if err := rows.Scan(
 			&route.ID, &route.Domain, &route.TargetIP, &route.TargetPort,
 			&vpnClientID, &route.Enabled, &route.HTTPSBackend, &route.SkipCertVerify, &middlewaresJSON,
 			&route.Description, &accessMode, &frontendSSL, &sentinelConfigJSON,
+			&certResolver,
 			&route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
 		); err != nil {
 			continue
@@ -314,6 +322,9 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 			route.VPNClientID = &id
 		}
 		route.Middlewares, route.AccessMode, route.FrontendSSL, route.SentinelConfig = parseRouteFields(middlewaresJSON, accessMode, frontendSSL, sentinelConfigJSON)
+		if certResolver.Valid {
+			route.CertResolver = certResolver.String
+		}
 		routes = append(routes, route)
 	}
 
@@ -342,10 +353,12 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 	var accessMode sql.NullString
 	var frontendSSL sql.NullBool
 	var sentinelConfigJSON string
+	var certResolver sql.NullString
 	err = db.QueryRow(`
 		SELECT d.id, d.domain, d.target_ip, d.target_port, d.vpn_client_id,
 		       d.enabled, d.https_backend, d.skip_cert_verify, d.middlewares, d.description,
 		       d.access_mode, d.frontend_ssl, COALESCE(d.sentinel_config, ''),
+		       COALESCE(d.cert_resolver, ''),
 		       d.created_at, d.updated_at, COALESCE(v.name, '') as vpn_client_name
 		FROM domain_routes d
 		LEFT JOIN vpn_clients v ON d.vpn_client_id = v.id
@@ -354,6 +367,7 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		&route.ID, &route.Domain, &route.TargetIP, &route.TargetPort,
 		&vpnClientID, &route.Enabled, &route.HTTPSBackend, &route.SkipCertVerify, &middlewaresJSON,
 		&route.Description, &accessMode, &frontendSSL, &sentinelConfigJSON,
+		&certResolver,
 		&route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
 	)
 	if err == sql.ErrNoRows {
@@ -369,6 +383,9 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		route.VPNClientID = &id
 	}
 	route.Middlewares, route.AccessMode, route.FrontendSSL, route.SentinelConfig = parseRouteFields(middlewaresJSON, accessMode, frontendSSL, sentinelConfigJSON)
+	if certResolver.Valid {
+		route.CertResolver = certResolver.String
+	}
 
 	router.JSON(w, route)
 }
@@ -385,6 +402,7 @@ type CreateRequest struct {
 	Description     string                  `json:"description"`
 	AccessMode      string                  `json:"accessMode"`  // "vpn" or "public", defaults to "vpn"
 	FrontendSSL     bool                    `json:"frontendSsl"` // use websecure entrypoint
+	CertResolver    string                  `json:"certResolver,omitempty"` // explicit resolver name; empty = auto
 	SentinelConfig  *traefik.SentinelConfig `json:"sentinelConfig,omitempty"`
 }
 
@@ -456,9 +474,9 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := db.Exec(`
-		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, https_backend, skip_cert_verify, middlewares, description, access_mode, frontend_ssl, sentinel_config)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.HTTPSBackend, req.SkipCertVerify, string(middlewaresJSON), req.Description, req.AccessMode, req.FrontendSSL, sentinelConfigJSON)
+		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, https_backend, skip_cert_verify, middlewares, description, access_mode, frontend_ssl, sentinel_config, cert_resolver)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.HTTPSBackend, req.SkipCertVerify, string(middlewaresJSON), req.Description, req.AccessMode, req.FrontendSSL, sentinelConfigJSON, req.CertResolver)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			router.JSONError(w, "domain already exists", http.StatusConflict)
@@ -493,6 +511,7 @@ type UpdateRequest struct {
 	Description     *string                 `json:"description,omitempty"`
 	AccessMode      *string                 `json:"accessMode,omitempty"`
 	FrontendSSL     *bool                   `json:"frontendSsl,omitempty"`
+	CertResolver    *string                 `json:"certResolver,omitempty"` // explicit resolver override; empty string = clear back to auto
 	SentinelConfig  *traefik.SentinelConfig `json:"sentinelConfig"` // No omitempty - null means clear
 }
 
@@ -660,6 +679,10 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.FrontendSSL != nil {
 		updates = append(updates, "frontend_ssl = ?")
 		args = append(args, *req.FrontendSSL)
+	}
+	if req.CertResolver != nil {
+		updates = append(updates, "cert_resolver = ?")
+		args = append(args, *req.CertResolver)
 	}
 	// SentinelConfig: handle null (clear) vs object (update) vs omitted (no change)
 	if sentinelConfigPresent {

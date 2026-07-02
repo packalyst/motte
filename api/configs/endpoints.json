@@ -116,7 +116,8 @@
         {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get dynamic config"},
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update dynamic config"},
         {"path": "/vpn-only", "methods": ["GET"], "handler": "GetVPNOnly", "description": "Get VPN-only mode status"},
-        {"path": "/vpn-only", "methods": ["POST"], "handler": "SetVPNOnly", "description": "Set VPN-only mode"}
+        {"path": "/vpn-only", "methods": ["POST"], "handler": "SetVPNOnly", "description": "Set VPN-only mode"},
+        {"path": "/resolvers", "methods": ["GET"], "handler": "GetResolvers", "description": "List cert resolvers defined in traefik.yml"}
       ]
     },
     "headscale": {

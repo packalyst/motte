@@ -203,6 +203,7 @@ func createSchema(db *sql.DB) error {
 		description TEXT,
 		access_mode TEXT DEFAULT 'vpn' CHECK(access_mode IN ('vpn', 'public')),
 		frontend_ssl BOOLEAN DEFAULT 0,
+		cert_resolver TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (vpn_client_id) REFERENCES vpn_clients(id) ON DELETE SET NULL
@@ -434,6 +435,14 @@ func runMigrations(db *sql.DB) {
 	if err == nil && count == 0 {
 		if _, err := db.Exec(`ALTER TABLE domain_routes ADD COLUMN sentinel_config TEXT DEFAULT ''`); err == nil {
 			log.Printf("Migration: added sentinel_config column to domain_routes")
+		}
+	}
+
+	// Add cert_resolver column to domain_routes if missing (optional override for TLS cert resolver name)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('domain_routes') WHERE name = 'cert_resolver'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE domain_routes ADD COLUMN cert_resolver TEXT DEFAULT ''`); err == nil {
+			log.Printf("Migration: added cert_resolver column to domain_routes")
 		}
 	}
 

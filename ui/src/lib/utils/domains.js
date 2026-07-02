@@ -65,6 +65,7 @@ export function buildRoutePayload(formData) {
     description: formData.description,
     accessMode: formData.accessMode,
     frontendSsl: formData.frontendSsl,
+    certResolver: formData.certResolver || '',
     sentinelConfig: formData.sentinelConfig
   }
 }
@@ -85,6 +86,7 @@ export function defaultRouteForm() {
     description: '',
     accessMode: 'vpn',
     frontendSsl: false,
+    certResolver: '',
     sentinelConfig: null
   }
 }
@@ -106,6 +108,7 @@ export function routeToFormData(route) {
     description: route.description || '',
     accessMode: route.accessMode || 'vpn',
     frontendSsl: route.frontendSsl || false,
+    certResolver: route.certResolver || '',
     sentinelConfig: normalizeSentinelConfig(route.sentinelConfig)
   }
 }

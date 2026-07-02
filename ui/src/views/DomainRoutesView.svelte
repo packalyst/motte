@@ -26,12 +26,14 @@
     { fn: () => apiGet('/api/domains'), key: 'routes', extract: 'routes', isArray: true },
     { fn: () => apiGet('/api/vpn/clients'), key: 'clients', isArray: true },
     { fn: () => apiGet('/api/traefik/overview'), key: 'traefik', default: {} },
-    { fn: () => apiGet('/api/domains/certificates').catch(() => ({ certificates: [] })), key: 'certs', default: { certificates: [] } }
+    { fn: () => apiGet('/api/domains/certificates').catch(() => ({ certificates: [] })), key: 'certs', default: { certificates: [] } },
+    { fn: () => apiGet('/api/traefik/resolvers').catch(() => ({ resolvers: [] })), key: 'resolvers', extract: 'resolvers', isArray: true }
   ])
 
   const routes = $derived(loader.data.routes || [])
   const vpnClients = $derived(loader.data.clients || [])
   const certificates = $derived(loader.data.certs?.certificates || [])
+  const certResolvers = $derived(loader.data.resolvers || [])
   const availableMiddlewares = $derived.by(() => {
     const mws = loader.data.traefik?.middlewares || []
     return mws
@@ -615,6 +617,18 @@
       suffixCheckbox={{ icon: "lock", label: "SSL", color: "warning" }}
       bind:suffixCheckboxChecked={formData.frontendSsl}
     />
+
+    {#if formData.frontendSsl && certResolvers.length > 0}
+      <Select
+        label="Certificate Resolver (optional)"
+        bind:value={formData.certResolver}
+      >
+        <option value="">Auto (wildcard → dnschallenge, public → HTTP-01, VPN → self-signed)</option>
+        {#each certResolvers as r}
+          <option value={r}>{r}</option>
+        {/each}
+      </Select>
+    {/if}
 
     <Select
       label="VPN Device (optional)"

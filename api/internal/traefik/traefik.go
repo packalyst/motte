@@ -10,8 +10,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"api/internal/helper"
 	"api/internal/router"
@@ -64,7 +67,28 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"UpdateConfig": s.handleUpdateConfig,
 		"GetVPNOnly":   s.handleGetVPNOnly,
 		"SetVPNOnly":   s.handleSetVPNOnly,
+		"GetResolvers": s.handleGetResolvers,
 	}
+}
+
+// handleGetResolvers returns the list of certificate resolver names defined in traefik.yml.
+// Populates the UI dropdown for per-route resolver override.
+func (s *Service) handleGetResolvers(w http.ResponseWriter, r *http.Request) {
+	names := []string{}
+	if s.staticPath != "" {
+		if data, err := os.ReadFile(s.staticPath); err == nil {
+			var static struct {
+				CertificatesResolvers map[string]interface{} `yaml:"certificatesResolvers"`
+			}
+			if err := yaml.Unmarshal(data, &static); err == nil {
+				for k := range static.CertificatesResolvers {
+					names = append(names, k)
+				}
+			}
+		}
+	}
+	sort.Strings(names)
+	router.JSON(w, map[string]interface{}{"resolvers": names})
 }
 
 func (s *Service) fetchTraefikAPI(path string) (map[string]interface{}, error) {
@@ -571,6 +595,7 @@ type DomainRouteConfig struct {
 	Middlewares     []string
 	AccessMode      string          // "vpn" or "public"
 	FrontendSSL     bool            // use websecure entrypoint with TLS
+	CertResolver    string          // explicit resolver name; empty = auto (wildcard/public/vpn tree)
 	SentinelConfig  *SentinelConfig // per-domain sentinel middleware config
 }
 
@@ -654,10 +679,16 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 					}
 				}
 				// TLS configuration
-				if isWildcard {
+				// Explicit user-selected resolver wins over the auto tree below.
+				if route.CertResolver != "" {
+					sb.WriteString("      tls:\n")
+					sb.WriteString(fmt.Sprintf("        certResolver: %s\n", route.CertResolver))
+					sb.WriteString("        domains:\n")
+					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", route.Domain))
+				} else if isWildcard {
 					// Wildcard: use DNS challenge resolver (only wildcard, no base domain to avoid conflict)
 					sb.WriteString("      tls:\n")
-					sb.WriteString("        certResolver: letsencrypt-wildcard\n")
+					sb.WriteString("        certResolver: letsencrypt-dnschallenge\n")
 					sb.WriteString("        domains:\n")
 					sb.WriteString(fmt.Sprintf("          - main: \"%s\"\n", route.Domain))
 				} else if route.AccessMode == "public" {
@@ -835,7 +866,7 @@ type CertificateInfo struct {
 }
 
 // acmeStorage represents the structure of acme.json.
-// Keyed by resolver name ("letsencrypt", "letsencrypt-wildcard", …) so we
+// Keyed by resolver name ("letsencrypt", "letsencrypt-dnschallenge", …) so we
 // surface certificates from every resolver Traefik uses, not just the default one.
 type acmeCertRecord struct {
 	Domain struct {
