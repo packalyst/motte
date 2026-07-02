@@ -834,22 +834,26 @@ type CertificateInfo struct {
 	Error     string    `json:"error,omitempty"` // error message if status is "error"
 }
 
-// acmeStorage represents the structure of acme.json
-type acmeStorage struct {
-	Letsencrypt struct {
-		Account struct {
-			Email string `json:"Email"`
-		} `json:"Account"`
-		Certificates []struct {
-			Domain struct {
-				Main string   `json:"main"`
-				SANs []string `json:"sans"`
-			} `json:"domain"`
-			Certificate string `json:"certificate"`
-			Key         string `json:"key"`
-		} `json:"Certificates"`
-	} `json:"letsencrypt"`
+// acmeStorage represents the structure of acme.json.
+// Keyed by resolver name ("letsencrypt", "letsencrypt-wildcard", …) so we
+// surface certificates from every resolver Traefik uses, not just the default one.
+type acmeCertRecord struct {
+	Domain struct {
+		Main string   `json:"main"`
+		SANs []string `json:"sans"`
+	} `json:"domain"`
+	Certificate string `json:"certificate"`
+	Key         string `json:"key"`
 }
+
+type acmeResolver struct {
+	Account struct {
+		Email string `json:"Email"`
+	} `json:"Account"`
+	Certificates []acmeCertRecord `json:"Certificates"`
+}
+
+type acmeStorage map[string]acmeResolver
 
 // GetCertificates parses acme.json and returns certificate info
 func GetCertificates() ([]CertificateInfo, error) {
@@ -875,44 +879,46 @@ func GetCertificates() ([]CertificateInfo, error) {
 	certs := []CertificateInfo{}
 	now := time.Now()
 
-	for _, cert := range storage.Letsencrypt.Certificates {
-		// Decode certificate to get expiration
-		certPEM, err := base64.StdEncoding.DecodeString(cert.Certificate)
-		if err != nil {
-			log.Printf("Warning: failed to decode certificate for %s: %v", cert.Domain.Main, err)
-			continue
-		}
+	for _, resolver := range storage {
+		for _, cert := range resolver.Certificates {
+			// Decode certificate to get expiration
+			certPEM, err := base64.StdEncoding.DecodeString(cert.Certificate)
+			if err != nil {
+				log.Printf("Warning: failed to decode certificate for %s: %v", cert.Domain.Main, err)
+				continue
+			}
 
-		block, _ := pem.Decode(certPEM)
-		if block == nil {
-			log.Printf("Warning: failed to decode PEM block for %s", cert.Domain.Main)
-			continue
-		}
+			block, _ := pem.Decode(certPEM)
+			if block == nil {
+				log.Printf("Warning: failed to decode PEM block for %s", cert.Domain.Main)
+				continue
+			}
 
-		x509Cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			log.Printf("Warning: failed to parse certificate for %s: %v", cert.Domain.Main, err)
-			continue
-		}
+			x509Cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				log.Printf("Warning: failed to parse certificate for %s: %v", cert.Domain.Main, err)
+				continue
+			}
 
-		daysLeft := int(x509Cert.NotAfter.Sub(now).Hours() / 24)
-		status := "valid"
-		if daysLeft <= 0 {
-			status = "expired"
-		} else if daysLeft <= 7 {
-			status = "critical"
-		} else if daysLeft <= 30 {
-			status = "warning"
-		}
+			daysLeft := int(x509Cert.NotAfter.Sub(now).Hours() / 24)
+			status := "valid"
+			if daysLeft <= 0 {
+				status = "expired"
+			} else if daysLeft <= 7 {
+				status = "critical"
+			} else if daysLeft <= 30 {
+				status = "warning"
+			}
 
-		certs = append(certs, CertificateInfo{
-			Domain:    cert.Domain.Main,
-			NotBefore: x509Cert.NotBefore,
-			NotAfter:  x509Cert.NotAfter,
-			Issuer:    x509Cert.Issuer.CommonName,
-			Status:    status,
-			DaysLeft:  daysLeft,
-		})
+			certs = append(certs, CertificateInfo{
+				Domain:    cert.Domain.Main,
+				NotBefore: x509Cert.NotBefore,
+				NotAfter:  x509Cert.NotAfter,
+				Issuer:    x509Cert.Issuer.CommonName,
+				Status:    status,
+				DaysLeft:  daysLeft,
+			})
+		}
 	}
 
 	return certs, nil
