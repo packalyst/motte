@@ -46,14 +46,13 @@
 
   // Reload when period changes
   $effect(() => {
-    // read `period` to establish dependency
     period
     loadAll()
   })
 
   onMount(loadAll)
 
-  // Trend arrow calc
+  // Helpers ─── used inline instead of {@const} to satisfy Svelte 5 rules
   function trend(cur, prev) {
     if (!prev || prev === 0) return null
     const pct = ((cur - prev) / prev) * 100
@@ -80,15 +79,25 @@
     return Math.round((part / total) * 100)
   }
 
-  // Country flag emoji from 2-letter code
   function flag(cc) {
     if (!cc || cc.length !== 2) return ''
     return String.fromCodePoint(...cc.toUpperCase().split('').map(c => 0x1f1a5 + c.charCodeAt(0)))
   }
 
-  // Max value in a series (for scaling bars)
   function maxOf(arr, key = 'count') {
     return arr && arr.length ? Math.max(...arr.map(x => x[key] || 0)) : 1
+  }
+
+  function totalOf(arr, key = 'count') {
+    return arr && arr.length ? arr.reduce((s, x) => s + (x[key] || 0), 0) : 1
+  }
+
+  const statusColor = {
+    '2xx': 'bg-green-500',
+    '3xx': 'bg-blue-500',
+    '4xx': 'bg-yellow-500',
+    '5xx': 'bg-red-500',
+    'other': 'bg-gray-500',
   }
 </script>
 
@@ -121,7 +130,7 @@
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {#each Object.entries(typeMeta) as [type, meta]}
         {@const d = data[type]}
-        {@const tr = d && trend(d.total_count, d.previous_total)}
+        {@const tr = d ? trend(d.total_count, d.previous_total) : null}
         <button
           class="text-left p-4 rounded-lg border hover:border-primary transition-colors bg-card"
           onclick={() => selectedType = type}
@@ -131,12 +140,13 @@
               <Icon name={meta.icon} size={20} />
               <span class="font-semibold">{meta.label}</span>
             </div>
-            <Icon name="arrow-right" size={16} class_="text-muted-foreground" />
+            <Icon name="arrow-right" size={16} />
           </div>
           <div class="text-3xl font-bold mb-1">
             {d ? fmtNumber(d.total_count) : '—'}
           </div>
           <div class="text-xs text-muted-foreground mb-2">{meta.subtitle}</div>
+
           {#if tr}
             <div class="flex items-center gap-1 text-xs {tr.dir === 'up' ? 'text-green-600' : 'text-red-600'}">
               <Icon name={tr.dir === 'up' ? 'trending-up' : 'trending-down'} size={12} />
@@ -146,7 +156,6 @@
             <div class="text-xs text-muted-foreground">no previous data</div>
           {/if}
 
-          <!-- Type-specific mini KPI -->
           {#if d && !d.error}
             <div class="mt-3 pt-3 border-t text-xs space-y-1">
               {#if type === 'inbound'}
@@ -171,6 +180,14 @@
   {:else}
     <!-- ═════════ DRILL-IN ═════════ -->
     {@const d = data[selectedType]}
+    {@const tr = d && !d.error ? trend(d.total_count, d.previous_total) : null}
+    {@const maxBucket = d?.time_series ? maxOf(d.time_series) : 1}
+    {@const maxCountry = d?.top_countries ? maxOf(d.top_countries) : 1}
+    {@const totalHTTP = d?.http_status ? totalOf(d.http_status) : 1}
+    {@const totalDNS = d?.status_counts ? totalOf(d.status_counts) : 1}
+    {@const totalProto = d?.protocols ? totalOf(d.protocols) : 1}
+    {@const maxPort = d?.top_dest_ports ? maxOf(d.top_dest_ports) : 1}
+    {@const totalQuery = d?.query_types ? totalOf(d.query_types) : 1}
 
     {#if !d}
       <div class="text-center py-8 text-muted-foreground">Loading…</div>
@@ -183,7 +200,6 @@
         <div class="p-4 rounded-lg border bg-card">
           <div class="text-xs text-muted-foreground">Total events</div>
           <div class="text-2xl font-bold">{fmtNumber(d.total_count)}</div>
-          {@const tr = trend(d.total_count, d.previous_total)}
           {#if tr}
             <div class="text-xs {tr.dir === 'up' ? 'text-green-600' : 'text-red-600'}">
               {tr.pct.toFixed(1)}% vs prev
@@ -214,9 +230,8 @@
         </div>
       </div>
 
-      <!-- Time series (SVG bar sparkline) -->
+      <!-- Time series -->
       {#if d.time_series?.length}
-        {@const maxBucket = maxOf(d.time_series)}
         <div class="p-4 rounded-lg border bg-card">
           <div class="text-sm font-semibold mb-3">Events over time ({period})</div>
           <div class="flex items-end gap-0.5 h-24">
@@ -243,14 +258,13 @@
             <div class="text-sm font-semibold mb-3">
               Top countries {selectedType === 'outbound' ? '(destination)' : ''}
             </div>
-            {@const max = maxOf(d.top_countries)}
             <div class="space-y-2">
               {#each d.top_countries as c}
                 <div class="flex items-center gap-2 text-sm">
                   <span class="w-8 shrink-0">{flag(c.country)}</span>
                   <span class="w-10 shrink-0 font-mono text-xs">{c.country}</span>
                   <div class="flex-1 h-4 bg-muted rounded overflow-hidden">
-                    <div class="h-full bg-primary" style="width: {(c.count / max) * 100}%"></div>
+                    <div class="h-full bg-primary" style="width: {(c.count / maxCountry) * 100}%"></div>
                   </div>
                   <span class="font-mono text-xs w-14 text-right">{fmtNumber(c.count)}</span>
                 </div>
@@ -259,20 +273,18 @@
           </div>
         {/if}
 
-        <!-- Type-specific main widget: HTTP status / DNS status / Protocols / Ports -->
+        <!-- Type-specific main widget -->
         {#if selectedType === 'inbound' && d.http_status?.length}
           <div class="p-4 rounded-lg border bg-card">
             <div class="text-sm font-semibold mb-3">HTTP status</div>
-            {@const total = d.http_status.reduce((s, x) => s + x.count, 0)}
             <div class="space-y-2">
               {#each d.http_status as s}
-                {@const colors = { '2xx': 'bg-green-500', '3xx': 'bg-blue-500', '4xx': 'bg-yellow-500', '5xx': 'bg-red-500', 'other': 'bg-gray-500' }}
                 <div class="flex items-center gap-2 text-sm">
                   <span class="w-10 font-mono">{s.status}</span>
                   <div class="flex-1 h-4 bg-muted rounded overflow-hidden">
-                    <div class="h-full {colors[s.status] || 'bg-primary'}" style="width: {(s.count / total) * 100}%"></div>
+                    <div class="h-full {statusColor[s.status] || 'bg-primary'}" style="width: {(s.count / totalHTTP) * 100}%"></div>
                   </div>
-                  <span class="font-mono text-xs w-14 text-right">{pct(s.count, total)}%</span>
+                  <span class="font-mono text-xs w-14 text-right">{pct(s.count, totalHTTP)}%</span>
                 </div>
               {/each}
             </div>
@@ -280,15 +292,14 @@
         {:else if selectedType === 'dns' && d.status_counts?.length}
           <div class="p-4 rounded-lg border bg-card">
             <div class="text-sm font-semibold mb-3">DNS status</div>
-            {@const total = d.status_counts.reduce((s, x) => s + x.count, 0)}
             <div class="space-y-2">
               {#each d.status_counts as s}
                 <div class="flex items-center gap-2 text-sm">
                   <span class="w-24 truncate">{s.status}</span>
                   <div class="flex-1 h-4 bg-muted rounded overflow-hidden">
-                    <div class="h-full bg-primary" style="width: {(s.count / total) * 100}%"></div>
+                    <div class="h-full bg-primary" style="width: {(s.count / totalDNS) * 100}%"></div>
                   </div>
-                  <span class="font-mono text-xs w-14 text-right">{pct(s.count, total)}%</span>
+                  <span class="font-mono text-xs w-14 text-right">{pct(s.count, totalDNS)}%</span>
                 </div>
               {/each}
             </div>
@@ -296,15 +307,14 @@
         {:else if selectedType === 'outbound' && d.protocols?.length}
           <div class="p-4 rounded-lg border bg-card">
             <div class="text-sm font-semibold mb-3">Protocols</div>
-            {@const total = d.protocols.reduce((s, x) => s + x.count, 0)}
             <div class="space-y-2">
               {#each d.protocols as p}
                 <div class="flex items-center gap-2 text-sm">
                   <span class="w-16 font-mono">{p.status}</span>
                   <div class="flex-1 h-4 bg-muted rounded overflow-hidden">
-                    <div class="h-full bg-primary" style="width: {(p.count / total) * 100}%"></div>
+                    <div class="h-full bg-primary" style="width: {(p.count / totalProto) * 100}%"></div>
                   </div>
-                  <span class="font-mono text-xs w-14 text-right">{pct(p.count, total)}%</span>
+                  <span class="font-mono text-xs w-14 text-right">{pct(p.count, totalProto)}%</span>
                 </div>
               {/each}
             </div>
@@ -312,13 +322,12 @@
         {:else if selectedType === 'fw' && d.top_dest_ports?.length}
           <div class="p-4 rounded-lg border bg-card">
             <div class="text-sm font-semibold mb-3">Top probed ports</div>
-            {@const max = maxOf(d.top_dest_ports)}
             <div class="space-y-2">
               {#each d.top_dest_ports as p}
                 <div class="flex items-center gap-2 text-sm">
                   <span class="w-12 font-mono">{p.status}</span>
                   <div class="flex-1 h-4 bg-muted rounded overflow-hidden">
-                    <div class="h-full bg-red-500" style="width: {(p.count / max) * 100}%"></div>
+                    <div class="h-full bg-red-500" style="width: {(p.count / maxPort) * 100}%"></div>
                   </div>
                   <span class="font-mono text-xs w-14 text-right">{fmtNumber(p.count)}</span>
                 </div>
@@ -382,15 +391,14 @@
         {:else if selectedType === 'dns' && d.query_types?.length}
           <div class="p-4 rounded-lg border bg-card">
             <div class="text-sm font-semibold mb-3">Query types</div>
-            {@const total = d.query_types.reduce((s, x) => s + x.count, 0)}
             <div class="space-y-2">
               {#each d.query_types as q}
                 <div class="flex items-center gap-2 text-sm">
                   <span class="w-16 font-mono">{q.status}</span>
                   <div class="flex-1 h-4 bg-muted rounded overflow-hidden">
-                    <div class="h-full bg-primary" style="width: {(q.count / total) * 100}%"></div>
+                    <div class="h-full bg-primary" style="width: {(q.count / totalQuery) * 100}%"></div>
                   </div>
-                  <span class="font-mono text-xs w-14 text-right">{pct(q.count, total)}%</span>
+                  <span class="font-mono text-xs w-14 text-right">{pct(q.count, totalQuery)}%</span>
                 </div>
               {/each}
             </div>
