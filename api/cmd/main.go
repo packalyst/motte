@@ -203,6 +203,10 @@ func main() {
 			return u, p
 		}
 
+		// First-boot bootstrap: manage.sh writes plaintext password to this
+		// file so we can encrypt it into the settings DB, then delete it.
+		bootstrapAdGuardPasswordFromFile("/adguard/.password.bootstrap")
+
 		log.Println("AdGuard service registered")
 	}
 

@@ -1787,13 +1787,15 @@ echo -e "${YELLOW}[5/5] Checking AdGuard credentials...${NC}"
 
 GENERATED_PASSWORD=""
 
-if [ -z "$ADGUARD_PASS_HASH" ] || [ "$ADGUARD_PASS_HASH" = "YOUR_BCRYPT_HASH_HERE" ]; then
-    echo -e "${YELLOW}AdGuard password not configured. Generating secure password...${NC}"
+if [ ! -f "adguard/conf/AdGuardHome.yaml" ]; then
+    echo -e "${YELLOW}First-install: generating AdGuard password...${NC}"
 
     # Generate random 16-character password
     GENERATED_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
 
-    # Generate bcrypt hash using htpasswd or python
+    # Generate bcrypt hash using htpasswd or python. Kept as a shell variable
+    # only — used for the one-time envsubst below, never persisted to .env.
+    # After first install, AdGuardHome.yaml is the source of truth for the hash.
     if command -v htpasswd &> /dev/null; then
         ADGUARD_PASS_HASH=$(htpasswd -nbB admin "$GENERATED_PASSWORD" | cut -d: -f2)
     elif command -v python3 &> /dev/null; then
@@ -1805,12 +1807,18 @@ if [ -z "$ADGUARD_PASS_HASH" ] || [ "$ADGUARD_PASS_HASH" = "YOUR_BCRYPT_HASH_HER
         echo "  Or: pip3 install bcrypt"
         exit 1
     fi
+    export ADGUARD_PASS_HASH
 
-    # Save to .env (escape $ for Docker Compose)
-    ADGUARD_PASS_HASH_ESCAPED=$(echo "$ADGUARD_PASS_HASH" | sed 's/\$/\$\$/g')
-    update_env_value "ADGUARD_PASS_HASH" "$ADGUARD_PASS_HASH_ESCAPED"
+    # Write the plaintext to a bootstrap file so wgap-api can pick it up on
+    # first boot, encrypt it into its own settings DB, then delete the file.
+    # This is the ONLY hop the plaintext ever takes to reach wgap.
+    mkdir -p adguard/conf
+    printf '%s' "$GENERATED_PASSWORD" > adguard/conf/.password.bootstrap
+    chmod 600 adguard/conf/.password.bootstrap
 
-    echo -e "${GREEN}✓ Generated secure password${NC}"
+    echo -e "${GREEN}✓ Generated AdGuard password (plaintext handed off to wgap-api via bootstrap file)${NC}"
+    echo -e "${YELLOW}  → AdGuard admin login: admin / ${GENERATED_PASSWORD}${NC}"
+    echo -e "${YELLOW}    Save this password — it will not be shown again.${NC}"
 fi
 
 if [ -z "$ADGUARD_USER" ]; then
@@ -1854,7 +1862,6 @@ REQUIRED_VARS=(
     "UPSTREAM_DNS_DOH_1"
     "UPSTREAM_DNS_DOH_2"
     "ADGUARD_USER"
-    "ADGUARD_PASS_HASH"
     "ADGUARD_PPROF_PORT"
     "IGNORE_NETWORKS"
     "ADMIN_DOMAIN"
@@ -2080,12 +2087,16 @@ if [ -f "traefik/dynamic.yml.template" ]; then
     fi
 fi
 
-# AdGuard config
-if [ -f "adguard/conf/AdGuardHome.yaml.template" ]; then
+# AdGuard config — only regenerate on first install. This file holds DNS
+# rewrites, filter states, password hash, query log settings, etc. that
+# must survive manage.sh re-runs.
+if [ -f "adguard/conf/AdGuardHome.yaml.template" ] && [ ! -f "adguard/conf/AdGuardHome.yaml" ]; then
     export ADGUARD_QUERYLOG_INTERVAL="${ADGUARD_QUERYLOG_INTERVAL:-720h}"
     export ADGUARD_STATS_INTERVAL="${ADGUARD_STATS_INTERVAL:-720h}"
     envsubst < adguard/conf/AdGuardHome.yaml.template > adguard/conf/AdGuardHome.yaml
-    echo "  ✓ adguard/conf/AdGuardHome.yaml"
+    echo "  ✓ adguard/conf/AdGuardHome.yaml (fresh)"
+else
+    echo "  · adguard/conf/AdGuardHome.yaml (preserved)"
 fi
 
 # Logrotate config for Traefik logs
