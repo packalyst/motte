@@ -169,5 +169,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetStats":   s.handleGetStats,
 		"GetStatus":  s.handleGetStatus,
 		"SetWatcher": s.handleSetWatcher,
+		"DeleteLogs": s.handleDeleteLogs,
 	}
 }

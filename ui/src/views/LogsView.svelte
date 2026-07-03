@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { toast, apiGet } from '../stores/app.js'
+  import { toast, apiGet, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import { lookupIPs } from '../stores/geo.js'
   import { createDebouncedSearch } from '../stores/helpers.js'
   import { usePaginatedState } from '$lib/composables/index.js'
@@ -84,6 +84,41 @@
     } else {
       clearInterval(refreshInterval)
       refreshInterval = null
+    }
+  }
+
+  // Delete logs matching the current filter (type/status/search).
+  // With no filters this clears ALL logs — confirm modal spells that out.
+  async function clearFilteredLogs() {
+    const params = new URLSearchParams()
+    if (pagination.filters.type)   params.set('type',   pagination.filters.type)
+    if (pagination.filters.status) params.set('status', pagination.filters.status)
+    if (pagination.search)         params.set('search', pagination.search)
+
+    const anyFilter = pagination.filters.type || pagination.filters.status || pagination.search
+    const scope = anyFilter
+      ? `${total} filtered entries`
+      : `ALL ${total} log entries`
+
+    const confirmed = await confirm({
+      title: 'Clear logs?',
+      message: `This will permanently delete ${scope}.`,
+      description: 'This action cannot be undone.',
+      confirmText: 'Clear',
+      variant: 'destructive',
+    })
+    if (!confirmed) return
+
+    setConfirmLoading(true)
+    try {
+      const qs = params.toString() ? '?' + params.toString() : ''
+      const res = await apiDelete('/api/logs' + qs)
+      toast(`Cleared ${res?.deleted ?? 0} entries`, 'success')
+      await loadData()
+    } catch (e) {
+      toast('Failed to clear logs: ' + e.message, 'error')
+    } finally {
+      setConfirmLoading(false)
     }
   }
 
@@ -172,6 +207,9 @@
         </Button>
         <Button variant="outline" size="sm" icon="refresh" onclick={loadData}>
           Refresh
+        </Button>
+        <Button variant="destructive" size="sm" icon="trash" onclick={clearFilteredLogs}>
+          Clear
         </Button>
       </div>
     </div>

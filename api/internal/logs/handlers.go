@@ -3,6 +3,7 @@ package logs
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"api/internal/database"
 	"api/internal/router"
@@ -71,10 +72,12 @@ type Bucket struct {
 	Bytes int64  `json:"bytes,omitempty"`
 }
 
-// PathStat represents URL path statistics.
+// PathStat represents URL path statistics. Includes the domain so the UI
+// can render "domain.tld/path" and tell which route the traffic came from.
 type PathStat struct {
-	Path  string `json:"path"`
-	Count int    `json:"count"`
+	Domain string `json:"domain"`
+	Path   string `json:"path"`
+	Count  int    `json:"count"`
 }
 
 // DomainStat represents domain statistics
@@ -354,19 +357,20 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Top paths
+		// Top paths — grouped by (domain, path) so identical paths on
+		// different domains stay separate rows. UI joins them as `${domain}${path}`.
 		pathRows, _ := s.db.Query(`
-			SELECT logs_path, COUNT(*) as cnt FROM logs
+			SELECT COALESCE(logs_domain, ''), logs_path, COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'inbound'
 			  AND logs_path != ''
-			GROUP BY logs_path ORDER BY cnt DESC LIMIT 10
+			GROUP BY logs_domain, logs_path ORDER BY cnt DESC LIMIT 10
 		`, interval)
 		if pathRows != nil {
 			defer pathRows.Close()
 			for pathRows.Next() {
 				var stat PathStat
-				pathRows.Scan(&stat.Path, &stat.Count)
+				pathRows.Scan(&stat.Domain, &stat.Path, &stat.Count)
 				stats.TopPaths = append(stats.TopPaths, stat)
 			}
 		}
@@ -573,4 +577,46 @@ func (s *Service) handleSetWatcher(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// handleDeleteLogs handles DELETE /api/logs.
+// Respects the same filter params as GET /api/logs so a filtered view can be
+// cleared without touching other entries:
+//
+//   ?type=inbound         → delete only inbound rows
+//   ?status=403           → delete only rows with that status
+//   ?search=api.foo.com   → delete rows matching the domain/IP substring
+//
+// No params → delete ALL rows. Returns { "deleted": N }.
+func (s *Service) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {
+	logType := r.URL.Query().Get("type")
+	status := r.URL.Query().Get("status")
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+
+	query := "DELETE FROM logs WHERE 1=1"
+	args := []interface{}{}
+
+	if logType != "" {
+		query += " AND logs_type = ?"
+		args = append(args, logType)
+	}
+	if status != "" {
+		query += " AND logs_status = ?"
+		args = append(args, status)
+	}
+	if search != "" {
+		query += " AND (logs_domain LIKE ? OR logs_src_ip LIKE ? OR logs_dest_ip LIKE ?)"
+		like := "%" + search + "%"
+		args = append(args, like, like, like)
+	}
+
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		router.JSONError(w, "failed to delete logs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	n, _ := res.RowsAffected()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int64{"deleted": n})
 }

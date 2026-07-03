@@ -434,7 +434,13 @@
             {#if selectedType === 'inbound' && d.top_paths?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Top paths</div>
-                <BarList data={d.top_paths} labelKey="path" barClass="bg-primary" format={fmtNumber} labelWidth="w-40" />
+                <BarList
+                  data={d.top_paths.map(p => ({ ...p, _label: (p.domain || '') + (p.path || '') }))}
+                  labelKey="_label"
+                  barClass="bg-primary"
+                  format={fmtNumber}
+                  labelWidth="w-64"
+                />
               </div>
             {/if}
             {#if selectedType === 'dns' && d.top_blocked?.length}

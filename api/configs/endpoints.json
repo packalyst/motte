@@ -220,6 +220,7 @@
       "enabled": true,
       "endpoints": [
         {"path": "", "methods": ["GET"], "handler": "GetLogs", "description": "Get unified logs with filtering"},
+        {"path": "", "methods": ["DELETE"], "handler": "DeleteLogs", "description": "Delete logs (respects type/status/search query filters)"},
         {"path": "/stats", "methods": ["GET"], "handler": "GetStats", "description": "Get aggregated statistics"},
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get watcher statuses"},
         {"path": "/watcher", "methods": ["POST"], "handler": "SetWatcher", "description": "Enable/disable watcher"}
