@@ -74,7 +74,7 @@
       <line x1="0" x2={W} y1={t.y} y2={t.y}
             stroke="currentColor" stroke-opacity="0.08" stroke-width="1" />
       <text x="0" y={t.y - 3} fill="currentColor" fill-opacity="0.4"
-            font-size="20" font-family="ui-monospace, monospace">{format(Math.round(t.v))}</text>
+            font-size="11" font-family="ui-monospace, monospace">{format(Math.round(t.v))}</text>
     {/each}
 
     <!-- Area + line -->
@@ -86,7 +86,7 @@
     {#each xLabels() as x}
       <text x={x.x} y={H - 4} text-anchor={x.anchor}
             fill="currentColor" fill-opacity="0.5"
-            font-size="18" font-family="ui-monospace, monospace">{x.text}</text>
+            font-size="11" font-family="ui-monospace, monospace">{x.text}</text>
     {/each}
   </svg>
 {:else}
