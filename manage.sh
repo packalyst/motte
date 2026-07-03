@@ -1938,6 +1938,24 @@ fi
 if [ "$SSL_ENABLED" = "true" ]; then
     echo -e "  ${GREEN}SSL enabled${NC} - configuring Let's Encrypt for ${SSL_DOMAIN}"
 
+    # Fetch Cloudflare's official IP ranges live so trustedIPs stays current.
+    # Any header from these sources (CF-Connecting-IP, X-Forwarded-For) is trusted;
+    # requests from anywhere else keep their raw TCP source as ClientHost.
+    CF_TRUSTED_IPS_YAML=""
+    CF_V4=$(curl -s --max-time 10 https://www.cloudflare.com/ips-v4 2>/dev/null || true)
+    CF_V6=$(curl -s --max-time 10 https://www.cloudflare.com/ips-v6 2>/dev/null || true)
+    if [ -n "$CF_V4" ] || [ -n "$CF_V6" ]; then
+        while IFS= read -r ip; do
+            ip=$(echo "$ip" | tr -d '[:space:]')
+            [ -n "$ip" ] && CF_TRUSTED_IPS_YAML+="        - \"$ip\""$'\n'
+        done <<< "$CF_V4"$'\n'"$CF_V6"
+        CF_COUNT=$(printf '%s\n%s\n' "$CF_V4" "$CF_V6" | grep -c '/' || true)
+        echo -e "  ${GREEN}✓${NC} Fetched ${CF_COUNT} Cloudflare CIDR ranges"
+    else
+        echo -e "  ${YELLOW}⚠${NC} Could not fetch Cloudflare IP list — trustedIPs will be empty"
+        CF_TRUSTED_IPS_YAML="        []"
+    fi
+
     # Generate traefik.yml with SSL configuration
     cat > traefik/traefik.yml << EOF
 # Traefik Static Configuration (SSL enabled)
@@ -1953,8 +1971,17 @@ experimental:
 entryPoints:
   web:
     address: ":${HTTP_PORT}"
+    forwardedHeaders:
+      # trustedIPs are the Cloudflare CIDRs fetched at setup time from
+      # https://www.cloudflare.com/ips-v4 and /ips-v6 (see above). Rerun
+      # manage.sh to refresh if Cloudflare publishes new ranges.
+      trustedIPs:
+${CF_TRUSTED_IPS_YAML}
   websecure:
     address: ":${HTTPS_PORT}"
+    forwardedHeaders:
+      trustedIPs:
+${CF_TRUSTED_IPS_YAML}
   traefik:
     address: ":${TRAEFIK_PORT}"
 
@@ -2002,6 +2029,7 @@ accessLog:
         User-Agent: keep
         X-Forwarded-For: keep
         X-Real-IP: keep
+        Cf-Connecting-Ip: keep
 EOF
     echo "  ✓ traefik/traefik.yml (with SSL)"
 elif [ -f "traefik/traefik.yml.template" ]; then
