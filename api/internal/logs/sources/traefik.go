@@ -53,8 +53,17 @@ func (w *TraefikWatcher) processLine(line string) {
 		return
 	}
 
-	// Only log domain routes (skip internal API, UI, etc.)
-	if !strings.HasPrefix(entry.RouterName, "domain-") {
+	// Log user domain routes + catchall drops (blocked/unmatched hosts).
+	// Skip internal API/UI/headscale traffic which is admin plumbing.
+	allowedPrefixes := []string{"domain-", "catchall"}
+	matched := false
+	for _, p := range allowedPrefixes {
+		if strings.HasPrefix(entry.RouterName, p) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return
 	}
 
