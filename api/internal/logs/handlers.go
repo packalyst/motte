@@ -31,13 +31,50 @@ type StatsQuery struct {
 	Period string `json:"period"` // hour, day, week
 }
 
-// StatsResponse represents aggregated stats
+// StatsResponse represents aggregated stats for the Analytics dashboard.
+// Some fields only populate for a specific `type=` filter (see comments).
 type StatsResponse struct {
-	TopDomains   []DomainStat  `json:"top_domains"`
-	TopClients   []ClientStat  `json:"top_clients"`
-	TopCountries []CountryStat `json:"top_countries"`
-	StatusCounts []StatusCount `json:"status_counts"`
-	TotalCount   int           `json:"total_count"`
+	// Universal (populated for every type)
+	TotalCount     int           `json:"total_count"`
+	PreviousTotal  int           `json:"previous_total"`  // same-length prior window, for trend arrows
+	UniqueVisitors int           `json:"unique_visitors"` // COUNT DISTINCT logs_src_ip
+	TotalBytes     int64         `json:"total_bytes"`
+	TimeSeries     []Bucket      `json:"time_series"`
+	TopClients     []ClientStat  `json:"top_clients"`
+	TopCountries   []CountryStat `json:"top_countries"`   // src for inbound/dns/fw, dest for outbound
+
+	// Inbound-specific (Traefik)
+	TopDomains []DomainStat  `json:"top_domains,omitempty"`
+	TopPaths   []PathStat    `json:"top_paths,omitempty"`
+	HTTPStatus []StatusCount `json:"http_status,omitempty"` // 2xx/3xx/4xx/5xx buckets
+
+	// DNS-specific (AdGuard)
+	StatusCounts []StatusCount `json:"status_counts,omitempty"` // NOERROR/NXDOMAIN/BLOCK etc
+	QueryTypes   []StatusCount `json:"query_types,omitempty"`   // A/AAAA/CNAME/MX
+	CachedCount  int           `json:"cached_count,omitempty"`
+	BlockedCount int           `json:"blocked_count,omitempty"`
+	TopBlocked   []DomainStat  `json:"top_blocked,omitempty"`
+
+	// Outbound-specific
+	Protocols  []StatusCount `json:"protocols,omitempty"` // TCP/UDP mix
+	TopDestIPs []ClientStat  `json:"top_dest_ips,omitempty"`
+
+	// Firewall-specific
+	TopDestPorts []StatusCount `json:"top_dest_ports,omitempty"` // ports being probed
+	TopRules     []StatusCount `json:"top_rules,omitempty"`      // rules that fired most
+}
+
+// Bucket represents one time-series data point.
+type Bucket struct {
+	Time  string `json:"time"`
+	Count int    `json:"count"`
+	Bytes int64  `json:"bytes,omitempty"`
+}
+
+// PathStat represents URL path statistics.
+type PathStat struct {
+	Path  string `json:"path"`
+	Count int    `json:"count"`
 }
 
 // DomainStat represents domain statistics
@@ -166,7 +203,9 @@ func (s *Service) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleGetStats handles GET /api/logs/stats
+// handleGetStats handles GET /api/logs/stats.
+// Params: type=inbound|dns|outbound|fw (or empty for all), period=hour|day|week
+// Returns aggregated statistics for the Analytics dashboard.
 func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	logType := r.URL.Query().Get("type")
 	period := r.URL.Query().Get("period")
@@ -174,14 +213,21 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		period = "day"
 	}
 
-	var interval string
+	// Current window + previous window (for trend comparison)
+	var interval, prevStart, bucketFmt string
 	switch period {
 	case "hour":
 		interval = "-1 hour"
+		prevStart = "-2 hours"
+		bucketFmt = "%Y-%m-%d %H:%M:00" // per-minute for 1h
 	case "week":
 		interval = "-7 days"
-	default:
+		prevStart = "-14 days"
+		bucketFmt = "%Y-%m-%d" // per-day for 1w
+	default: // day
 		interval = "-1 day"
+		prevStart = "-2 days"
+		bucketFmt = "%Y-%m-%d %H:00:00" // hourly for 1d
 	}
 
 	typeFilter := ""
@@ -193,26 +239,59 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 	stats := StatsResponse{}
 
-	// Top domains
-	domainRows, _ := s.db.Query(`
-		SELECT logs_domain, COUNT(*) as cnt
-		FROM logs
+	// ── UNIVERSAL (all types) ─────────────────────────────────────────
+
+	// Total count in current window
+	s.db.QueryRow(`
+		SELECT COUNT(*) FROM logs
+		WHERE logs_timestamp > datetime('now', ?)`+typeFilter, args...).Scan(&stats.TotalCount)
+
+	// Previous-period total (for % change arrow)
+	prevArgs := []interface{}{prevStart, interval}
+	prevFilter := ""
+	if logType != "" {
+		prevFilter = " AND logs_type = ?"
+		prevArgs = append(prevArgs, logType)
+	}
+	s.db.QueryRow(`
+		SELECT COUNT(*) FROM logs
 		WHERE logs_timestamp > datetime('now', ?)
-		  AND logs_domain != ''`+typeFilter+`
-		GROUP BY logs_domain
-		ORDER BY cnt DESC
-		LIMIT 10
-	`, args...)
-	if domainRows != nil {
-		defer domainRows.Close()
-		for domainRows.Next() {
-			var stat DomainStat
-			domainRows.Scan(&stat.Domain, &stat.Count)
-			stats.TopDomains = append(stats.TopDomains, stat)
+		  AND logs_timestamp <= datetime('now', ?)`+prevFilter,
+		prevArgs...,
+	).Scan(&stats.PreviousTotal)
+
+	// Unique visitors
+	s.db.QueryRow(`
+		SELECT COUNT(DISTINCT logs_src_ip) FROM logs
+		WHERE logs_timestamp > datetime('now', ?)
+		  AND logs_src_ip != ''`+typeFilter, args...).Scan(&stats.UniqueVisitors)
+
+	// Total bytes (may be 0 for types that don't track it)
+	s.db.QueryRow(`
+		SELECT COALESCE(SUM(logs_bytes), 0) FROM logs
+		WHERE logs_timestamp > datetime('now', ?)`+typeFilter, args...).Scan(&stats.TotalBytes)
+
+	// Time series — buckets sized to the period
+	tsArgs := append([]interface{}{bucketFmt}, args...)
+	tsRows, _ := s.db.Query(`
+		SELECT strftime(?, logs_timestamp) AS bucket,
+		       COUNT(*) AS cnt,
+		       COALESCE(SUM(logs_bytes), 0) AS bytes
+		FROM logs
+		WHERE logs_timestamp > datetime('now', ?)`+typeFilter+`
+		GROUP BY bucket
+		ORDER BY bucket
+	`, tsArgs...)
+	if tsRows != nil {
+		defer tsRows.Close()
+		for tsRows.Next() {
+			var b Bucket
+			tsRows.Scan(&b.Time, &b.Count, &b.Bytes)
+			stats.TimeSeries = append(stats.TimeSeries, b)
 		}
 	}
 
-	// Top clients
+	// Top clients (source IP + country)
 	clientRows, _ := s.db.Query(`
 		SELECT logs_src_ip, COALESCE(logs_src_country, ''), COUNT(*) as cnt
 		FROM logs
@@ -231,7 +310,7 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Top countries (destination for outbound, source for inbound/dns)
+	// Top countries — src for inbound/dns/fw, dest for outbound
 	countryCol := "logs_src_country"
 	if logType == "outbound" {
 		countryCol = "logs_dest_country"
@@ -255,16 +334,78 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Status counts (for DNS)
-	if logType == "dns" || logType == "" {
-		statusRows, _ := s.db.Query(`
-			SELECT logs_status, COUNT(*) as cnt
+	// ── INBOUND (Traefik) ─────────────────────────────────────────────
+
+	if logType == "inbound" || logType == "" {
+		// Top domains
+		domainRows, _ := s.db.Query(`
+			SELECT logs_domain, COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_domain != ''
+			  AND logs_type = 'inbound'
+			GROUP BY logs_domain ORDER BY cnt DESC LIMIT 10
+		`, interval)
+		if domainRows != nil {
+			defer domainRows.Close()
+			for domainRows.Next() {
+				var stat DomainStat
+				domainRows.Scan(&stat.Domain, &stat.Count)
+				stats.TopDomains = append(stats.TopDomains, stat)
+			}
+		}
+
+		// Top paths
+		pathRows, _ := s.db.Query(`
+			SELECT logs_path, COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'inbound'
+			  AND logs_path != ''
+			GROUP BY logs_path ORDER BY cnt DESC LIMIT 10
+		`, interval)
+		if pathRows != nil {
+			defer pathRows.Close()
+			for pathRows.Next() {
+				var stat PathStat
+				pathRows.Scan(&stat.Path, &stat.Count)
+				stats.TopPaths = append(stats.TopPaths, stat)
+			}
+		}
+
+		// HTTP status buckets (2xx/3xx/4xx/5xx)
+		httpRows, _ := s.db.Query(`
+			SELECT CASE
+				WHEN CAST(logs_status AS INTEGER) BETWEEN 200 AND 299 THEN '2xx'
+				WHEN CAST(logs_status AS INTEGER) BETWEEN 300 AND 399 THEN '3xx'
+				WHEN CAST(logs_status AS INTEGER) BETWEEN 400 AND 499 THEN '4xx'
+				WHEN CAST(logs_status AS INTEGER) BETWEEN 500 AND 599 THEN '5xx'
+				ELSE 'other'
+			END AS bucket, COUNT(*) as cnt
 			FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'inbound'
+			  AND logs_status != ''
+			GROUP BY bucket ORDER BY bucket
+		`, interval)
+		if httpRows != nil {
+			defer httpRows.Close()
+			for httpRows.Next() {
+				var stat StatusCount
+				httpRows.Scan(&stat.Status, &stat.Count)
+				stats.HTTPStatus = append(stats.HTTPStatus, stat)
+			}
+		}
+	}
+
+	// ── DNS (AdGuard) ─────────────────────────────────────────────────
+
+	if logType == "dns" || logType == "" {
+		// Native status counts (NOERROR/NXDOMAIN/BLOCK…)
+		statusRows, _ := s.db.Query(`
+			SELECT logs_status, COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'dns'
 			  AND logs_status != ''
-			GROUP BY logs_status
-			ORDER BY cnt DESC
+			GROUP BY logs_status ORDER BY cnt DESC
 		`, interval)
 		if statusRows != nil {
 			defer statusRows.Close()
@@ -274,14 +415,133 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 				stats.StatusCounts = append(stats.StatusCounts, stat)
 			}
 		}
+
+		// Query types (A/AAAA/CNAME/…)
+		qtRows, _ := s.db.Query(`
+			SELECT logs_query_type, COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'dns'
+			  AND logs_query_type != ''
+			GROUP BY logs_query_type ORDER BY cnt DESC LIMIT 10
+		`, interval)
+		if qtRows != nil {
+			defer qtRows.Close()
+			for qtRows.Next() {
+				var stat StatusCount
+				qtRows.Scan(&stat.Status, &stat.Count)
+				stats.QueryTypes = append(stats.QueryTypes, stat)
+			}
+		}
+
+		// Cached count
+		s.db.QueryRow(`
+			SELECT COALESCE(SUM(logs_cached), 0) FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'dns'
+		`, interval).Scan(&stats.CachedCount)
+
+		// Blocked count
+		s.db.QueryRow(`
+			SELECT COUNT(*) FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'dns'
+			  AND (logs_status LIKE '%BLOCK%' OR logs_status LIKE '%FILTER%')
+		`, interval).Scan(&stats.BlockedCount)
+
+		// Top blocked domains
+		blockedRows, _ := s.db.Query(`
+			SELECT logs_domain, COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'dns'
+			  AND logs_domain != ''
+			  AND (logs_status LIKE '%BLOCK%' OR logs_status LIKE '%FILTER%')
+			GROUP BY logs_domain ORDER BY cnt DESC LIMIT 10
+		`, interval)
+		if blockedRows != nil {
+			defer blockedRows.Close()
+			for blockedRows.Next() {
+				var stat DomainStat
+				blockedRows.Scan(&stat.Domain, &stat.Count)
+				stats.TopBlocked = append(stats.TopBlocked, stat)
+			}
+		}
 	}
 
-	// Total count
-	s.db.QueryRow(`
-		SELECT COUNT(*) FROM logs
-		WHERE logs_timestamp > datetime('now', ?)`+typeFilter,
-		args...,
-	).Scan(&stats.TotalCount)
+	// ── OUTBOUND ──────────────────────────────────────────────────────
+
+	if logType == "outbound" || logType == "" {
+		// Protocol mix
+		protoRows, _ := s.db.Query(`
+			SELECT logs_protocol, COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'outbound'
+			  AND logs_protocol != ''
+			GROUP BY logs_protocol ORDER BY cnt DESC
+		`, interval)
+		if protoRows != nil {
+			defer protoRows.Close()
+			for protoRows.Next() {
+				var stat StatusCount
+				protoRows.Scan(&stat.Status, &stat.Count)
+				stats.Protocols = append(stats.Protocols, stat)
+			}
+		}
+
+		// Top destination IPs
+		destRows, _ := s.db.Query(`
+			SELECT logs_dest_ip, COALESCE(logs_dest_country, ''), COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'outbound'
+			  AND logs_dest_ip != ''
+			GROUP BY logs_dest_ip ORDER BY cnt DESC LIMIT 10
+		`, interval)
+		if destRows != nil {
+			defer destRows.Close()
+			for destRows.Next() {
+				var stat ClientStat
+				destRows.Scan(&stat.IP, &stat.Country, &stat.Count)
+				stats.TopDestIPs = append(stats.TopDestIPs, stat)
+			}
+		}
+	}
+
+	// ── FIREWALL ──────────────────────────────────────────────────────
+
+	if logType == "fw" || logType == "" {
+		// Top destination ports being probed
+		portRows, _ := s.db.Query(`
+			SELECT CAST(logs_dest_port AS TEXT), COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'fw'
+			  AND logs_dest_port > 0
+			GROUP BY logs_dest_port ORDER BY cnt DESC LIMIT 10
+		`, interval)
+		if portRows != nil {
+			defer portRows.Close()
+			for portRows.Next() {
+				var stat StatusCount
+				portRows.Scan(&stat.Status, &stat.Count)
+				stats.TopDestPorts = append(stats.TopDestPorts, stat)
+			}
+		}
+
+		// Top firewall rules that fired
+		ruleRows, _ := s.db.Query(`
+			SELECT logs_rule, COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'fw'
+			  AND logs_rule != ''
+			GROUP BY logs_rule ORDER BY cnt DESC LIMIT 10
+		`, interval)
+		if ruleRows != nil {
+			defer ruleRows.Close()
+			for ruleRows.Next() {
+				var stat StatusCount
+				ruleRows.Scan(&stat.Status, &stat.Count)
+				stats.TopRules = append(stats.TopRules, stat)
+			}
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
