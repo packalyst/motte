@@ -219,7 +219,7 @@
 
               {#if d?.time_series?.length > 1}
                 <div class="{meta.text} h-8 px-3">
-                  <Sparkline data={d.time_series}  height={32} />
+                  <Sparkline data={d.time_series} width={100%} height={32} />
                 </div>
               {/if}
 
