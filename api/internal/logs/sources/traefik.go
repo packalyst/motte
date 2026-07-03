@@ -17,19 +17,48 @@ type TraefikWatcher struct {
 	config logs.Config
 }
 
-// TraefikLogEntry represents a Traefik access log entry
+// TraefikLogEntry represents a Traefik access log entry.
+// The request_* fields come from Traefik's JSON access log when the corresponding
+// header is kept via accessLog.fields.headers.names.<Name>: keep.
 type TraefikLogEntry struct {
-	Time                 string `json:"time"`
-	RequestHost          string `json:"RequestHost"`
-	RequestMethod        string `json:"RequestMethod"`
-	RequestPath          string `json:"RequestPath"`
-	DownstreamStatus     int    `json:"DownstreamStatus"`
-	DownstreamContentSize int   `json:"DownstreamContentSize"`
-	Duration             int64  `json:"Duration"` // nanoseconds
-	ClientHost           string `json:"ClientHost"`
-	RouterName           string `json:"RouterName"`
-	ServiceName          string `json:"ServiceName"`
-	RequestProtocol      string `json:"RequestProtocol"`
+	Time                  string `json:"time"`
+	RequestHost           string `json:"RequestHost"`
+	RequestMethod         string `json:"RequestMethod"`
+	RequestPath           string `json:"RequestPath"`
+	DownstreamStatus      int    `json:"DownstreamStatus"`
+	DownstreamContentSize int    `json:"DownstreamContentSize"`
+	Duration              int64  `json:"Duration"` // nanoseconds
+	ClientHost            string `json:"ClientHost"`
+	RouterName            string `json:"RouterName"`
+	ServiceName           string `json:"ServiceName"`
+	RequestProtocol       string `json:"RequestProtocol"`
+
+	// Trusted-proxy headers Traefik forwards when their names are kept.
+	// Priority when computing the real client IP: CF > XFF > X-Real-IP > ClientHost.
+	RequestCFConnectingIP string `json:"request_Cf-Connecting-Ip"`
+	RequestXForwardedFor  string `json:"request_X-Forwarded-For"`
+	RequestXRealIP        string `json:"request_X-Real-Ip"`
+}
+
+// realClientIP resolves the true visitor IP behind a trusted proxy.
+// Prefers CF-Connecting-IP → first X-Forwarded-For entry → X-Real-IP → raw ClientHost.
+// If Traefik's forwardedHeaders.trustedIPs isn't configured for the proxy source,
+// ClientHost already equals the proxy edge IP, so the header wins here.
+func realClientIP(e *TraefikLogEntry) string {
+	if ip := strings.TrimSpace(e.RequestCFConnectingIP); ip != "" {
+		return ip
+	}
+	if xff := strings.TrimSpace(e.RequestXForwardedFor); xff != "" {
+		// XFF is a comma-separated chain, left is closest to the client.
+		if comma := strings.Index(xff, ","); comma >= 0 {
+			return strings.TrimSpace(xff[:comma])
+		}
+		return xff
+	}
+	if ip := strings.TrimSpace(e.RequestXRealIP); ip != "" {
+		return ip
+	}
+	return e.ClientHost
 }
 
 // NewTraefikWatcher creates a new Traefik watcher
@@ -85,7 +114,7 @@ func (w *TraefikWatcher) processLine(line string) {
 	`,
 		timestamp,
 		logs.LogTypeInbound,
-		entry.ClientHost,
+		realClientIP(&entry),
 		entry.RequestHost,
 		entry.RequestProtocol,
 		entry.DownstreamStatus,
