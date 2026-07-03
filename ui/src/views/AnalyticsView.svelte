@@ -219,7 +219,7 @@
 
               {#if d?.time_series?.length > 1}
                 <div class="{meta.text} h-8 px-3">
-                  <Sparkline data={d.time_series}  height={32} />
+                  <Sparkline data={d.time_series} width={220} height={32} />
                 </div>
               {/if}
 
@@ -424,27 +424,32 @@
               </div>
             {/if}
 
+            <!-- Inbound: show BOTH top domains and top paths as independent widgets -->
             {#if selectedType === 'inbound' && d.top_domains?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Top domains</div>
                 <BarList data={d.top_domains} labelKey="domain" barClass="bg-primary" format={fmtNumber} labelWidth="w-40" />
               </div>
-            {:else if selectedType === 'inbound' && d.top_paths?.length}
+            {/if}
+            {#if selectedType === 'inbound' && d.top_paths?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Top paths</div>
                 <BarList data={d.top_paths} labelKey="path" barClass="bg-primary" format={fmtNumber} labelWidth="w-40" />
               </div>
-            {:else if selectedType === 'dns' && d.top_blocked?.length}
+            {/if}
+            {#if selectedType === 'dns' && d.top_blocked?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Top blocked domains</div>
                 <BarList data={d.top_blocked} labelKey="domain" barClass="bg-destructive" format={fmtNumber} labelWidth="w-40" />
               </div>
-            {:else if selectedType === 'dns' && d.query_types?.length}
+            {/if}
+            {#if selectedType === 'dns' && d.query_types?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Query types</div>
                 <BarList data={d.query_types} labelKey="status" barClass="bg-success" percent labelWidth="w-16" />
               </div>
-            {:else if selectedType === 'outbound' && d.top_dest_ips?.length}
+            {/if}
+            {#if selectedType === 'outbound' && d.top_dest_ips?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Top destinations</div>
                 <div class="space-y-2.5">
@@ -460,13 +465,21 @@
                   {/each}
                 </div>
               </div>
-            {:else if selectedType === 'fw' && d.top_rules?.length}
+            {/if}
+            {#if selectedType === 'fw' && d.top_rules?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Top firewall rules</div>
                 <BarList data={d.top_rules} labelKey="status" barClass="bg-destructive" format={fmtNumber} labelWidth="w-40" />
               </div>
             {/if}
           </div>
+
+          <!-- Sanity check: are we actually getting top_paths in the response? -->
+          {#if selectedType === 'inbound' && d.top_paths?.length === 0}
+            <div class="text-xs text-muted-foreground">
+              No path data collected yet — check that the backend has been rebuilt with the extended handleGetStats.
+            </div>
+          {/if}
         {/if}
       {/if}
     </div>
