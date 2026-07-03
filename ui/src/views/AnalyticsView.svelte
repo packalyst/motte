@@ -29,10 +29,31 @@
 
   function setType(t) {
     persisted.value = { ...persisted.value, selectedType: t }
+    // Push a history entry when drilling in, so the browser Back button
+    // returns to the overview instead of leaving the Analytics page.
+    if (typeof window !== 'undefined') {
+      if (t) {
+        history.pushState({ analyticsType: t }, '', window.location.href)
+      } else if (history.state?.analyticsType) {
+        history.back()
+      }
+    }
   }
   function setPeriod(p) {
     persisted.value = { ...persisted.value, period: p }
   }
+
+  // Browser Back button: pop out of drill-in → overview.
+  onMount(() => {
+    function onPop(e) {
+      const t = e.state?.analyticsType ?? null
+      if (t !== persisted.value.selectedType) {
+        persisted.value = { ...persisted.value, selectedType: t }
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  })
 
   let data = $state({
     inbound: null,
@@ -41,12 +62,12 @@
     fw: null,
   })
 
-  // Semantic app colors + safe tabler icon names
+  // Semantic app colors + verified tabler icons (all present in existing views)
   const typeMeta = {
-    inbound:  { label: 'Inbound',  icon: 'login',    color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10' },
-    dns:      { label: 'DNS',      icon: 'world',    color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10' },
-    outbound: { label: 'Outbound', icon: 'logout',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10' },
-    fw:       { label: 'Firewall', icon: 'shield',   color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10' },
+    inbound:  { label: 'Inbound',  icon: 'arrow-down', color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10' },
+    dns:      { label: 'DNS',      icon: 'globe',      color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10' },
+    outbound: { label: 'Outbound', icon: 'arrow-up',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10' },
+    fw:       { label: 'Firewall', icon: 'shield',     color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10' },
   }
 
   async function loadType(type) {
