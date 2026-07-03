@@ -8,9 +8,10 @@ WORKDIR /app
 # Copy source code
 COPY . .
 
-# Download dependencies and build
+# Download dependencies and build (build the whole ./cmd package, not just
+# main.go, so multi-file cmd packages compile correctly).
 RUN go mod tidy && \
-    CGO_ENABLED=1 go build -o /api ./cmd/main.go
+    CGO_ENABLED=1 go build -o /api ./cmd
 
 # Final stage
 FROM debian:bookworm-slim
