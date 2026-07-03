@@ -18,6 +18,7 @@
       rule: "Host(`${SSL_DOMAIN}`) && PathPrefix(`/`)"
       service: ui
       priority: 10
+      middlewares: []
       entryPoints:
         - websecure
       tls:
