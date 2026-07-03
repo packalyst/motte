@@ -224,19 +224,67 @@
               {/if}
 
               {#if d && !d.error && d.total_count > 0}
-                <div class="mt-2 border-t border-border p-3 grid grid-cols-2 gap-2 text-[11px]">
+                <div class="mt-2 border-t border-border p-3 flex items-center justify-between gap-3 text-[11px]">
                   {#if type === 'inbound'}
-                    <div><div class="text-muted-foreground">Visitors</div><div class="font-mono text-foreground">{fmtNumber(d.unique_visitors)}</div></div>
-                    <div><div class="text-muted-foreground">Bytes</div><div class="font-mono text-foreground">{fmtBytes(d.total_bytes)}</div></div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <Icon name="user" size={13} class="shrink-0 text-muted-foreground" />
+                      <div class="min-w-0">
+                        <div class="font-semibold tabular-nums text-foreground">{fmtNumber(d.unique_visitors)}</div>
+                        <div class="text-muted-foreground text-[10px]">visitors</div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <Icon name="activity" size={13} class="shrink-0 text-muted-foreground" />
+                      <div class="min-w-0">
+                        <div class="font-semibold tabular-nums text-foreground">{fmtBytes(d.total_bytes)}</div>
+                        <div class="text-muted-foreground text-[10px]">bandwidth</div>
+                      </div>
+                    </div>
                   {:else if type === 'dns'}
-                    <div><div class="text-muted-foreground">Cached</div><div class="font-mono text-foreground">{pct(d.cached_count, d.total_count)}%</div></div>
-                    <div><div class="text-muted-foreground">Blocked</div><div class="font-mono text-foreground">{pct(d.blocked_count, d.total_count)}%</div></div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <Icon name="check" size={13} class="shrink-0 text-success" />
+                      <div class="min-w-0">
+                        <div class="font-semibold tabular-nums text-foreground">{pct(d.cached_count, d.total_count)}%</div>
+                        <div class="text-muted-foreground text-[10px]">cached</div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <Icon name="ban" size={13} class="shrink-0 text-destructive" />
+                      <div class="min-w-0">
+                        <div class="font-semibold tabular-nums text-foreground">{pct(d.blocked_count, d.total_count)}%</div>
+                        <div class="text-muted-foreground text-[10px]">blocked</div>
+                      </div>
+                    </div>
                   {:else if type === 'outbound'}
-                    <div><div class="text-muted-foreground">Dests</div><div class="font-mono text-foreground">{fmtNumber(d.top_dest_ips?.length || 0)}</div></div>
-                    <div><div class="text-muted-foreground">Bytes</div><div class="font-mono text-foreground">{fmtBytes(d.total_bytes)}</div></div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <Icon name="globe" size={13} class="shrink-0 text-muted-foreground" />
+                      <div class="min-w-0">
+                        <div class="font-semibold tabular-nums text-foreground">{fmtNumber(d.top_dest_ips?.length || 0)}</div>
+                        <div class="text-muted-foreground text-[10px]">destinations</div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <Icon name="activity" size={13} class="shrink-0 text-muted-foreground" />
+                      <div class="min-w-0">
+                        <div class="font-semibold tabular-nums text-foreground">{fmtBytes(d.total_bytes)}</div>
+                        <div class="text-muted-foreground text-[10px]">bandwidth</div>
+                      </div>
+                    </div>
                   {:else if type === 'fw'}
-                    <div><div class="text-muted-foreground">Attackers</div><div class="font-mono text-foreground">{fmtNumber(d.unique_visitors)}</div></div>
-                    <div><div class="text-muted-foreground">Top port</div><div class="font-mono text-foreground">{d.top_dest_ports?.[0]?.status || '—'}</div></div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <Icon name="alert-triangle" size={13} class="shrink-0 text-destructive" />
+                      <div class="min-w-0">
+                        <div class="font-semibold tabular-nums text-foreground">{fmtNumber(d.unique_visitors)}</div>
+                        <div class="text-muted-foreground text-[10px]">attackers</div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <Icon name="plug" size={13} class="shrink-0 text-muted-foreground" />
+                      <div class="min-w-0">
+                        <div class="font-semibold tabular-nums text-foreground">:{d.top_dest_ports?.[0]?.status || '—'}</div>
+                        <div class="text-muted-foreground text-[10px]">top port</div>
+                      </div>
+                    </div>
                   {/if}
                 </div>
               {/if}
