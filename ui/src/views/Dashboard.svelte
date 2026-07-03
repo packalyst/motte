@@ -4,6 +4,7 @@
   import { theme, currentView, apiGet } from '../stores/app.js'
   import { subscribe, unsubscribe, generalInfoStore } from '../stores/websocket.js'
   import { visibilityChangeCount } from '../stores/network.js'
+  import { isInstalledPWA } from '../lib/pwa/permissions.js'
   import Icon from '../components/Icon.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
 
@@ -70,9 +71,13 @@
     unsubscribe('general_info')
   })
 
-  // Trigger refresh when app becomes visible (PWA foreground)
+  // Trigger refresh when app becomes visible.
+  // Gated to installed-PWA mode only — in a regular browser tab we don't want
+  // Alt-Tabbing back to wipe the current view and re-fetch everything.
+  const shouldReloadOnVisible = isInstalledPWA()
   let lastVisibilityCount = 0
   $effect(() => {
+    if (!shouldReloadOnVisible) return
     if ($visibilityChangeCount > lastVisibilityCount) {
       lastVisibilityCount = $visibilityChangeCount
       reloadCurrentView()
