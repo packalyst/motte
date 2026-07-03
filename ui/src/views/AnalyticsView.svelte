@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { apiGet } from '../stores/app.js'
+  import { usePersistentState } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
@@ -9,14 +10,29 @@
   import EmptyState from '../components/EmptyState.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import StatCard from '../components/StatCard.svelte'
+  import CountryFlag from '../components/CountryFlag.svelte'
   import Sparkline from '../components/Sparkline.svelte'
   import AreaChart from '../components/AreaChart.svelte'
   import BarList from '../components/BarList.svelte'
 
   let { loading = $bindable(true) } = $props()
 
-  let selectedType = $state(null)
-  let period = $state('day')
+  // Persist selectedType + period across refresh / navigation
+  const persisted = usePersistentState('analytics_ui', {
+    selectedType: null,
+    period: 'day',
+  })
+
+  // Bindable proxies over the persistent store
+  let selectedType = $derived(persisted.value.selectedType)
+  let period = $derived(persisted.value.period)
+
+  function setType(t) {
+    persisted.value = { ...persisted.value, selectedType: t }
+  }
+  function setPeriod(p) {
+    persisted.value = { ...persisted.value, period: p }
+  }
 
   let data = $state({
     inbound: null,
@@ -25,12 +41,12 @@
     fw: null,
   })
 
-  // Map each log type to a semantic color from the app's design system.
+  // Semantic app colors + safe tabler icon names
   const typeMeta = {
-    inbound:  { label: 'Inbound',  icon: 'arrow-down-right', color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10' },
-    dns:      { label: 'DNS',      icon: 'world-www',        color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10' },
-    outbound: { label: 'Outbound', icon: 'arrow-up-right',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10' },
-    fw:       { label: 'Firewall', icon: 'shield',           color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10' },
+    inbound:  { label: 'Inbound',  icon: 'login',    color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10' },
+    dns:      { label: 'DNS',      icon: 'world',    color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10' },
+    outbound: { label: 'Outbound', icon: 'logout',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10' },
+    fw:       { label: 'Firewall', icon: 'shield',   color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10' },
   }
 
   async function loadType(type) {
@@ -49,7 +65,7 @@
   }
 
   $effect(() => {
-    period
+    period                        // dep
     loadAll()
   })
 
@@ -81,19 +97,8 @@
     return Math.round((part / total) * 100)
   }
 
-  function flag(cc) {
-    if (!cc || cc.length !== 2) return ''
-    return String.fromCodePoint(...cc.toUpperCase().split('').map(c => 0x1f1a5 + c.charCodeAt(0)))
-  }
-
-  function withFlags(arr) {
-    if (!arr) return []
-    return arr.map(r => ({ ...r, _flag: flag(r.country) }))
-  }
-
-  function ipRows(arr) {
-    if (!arr) return []
-    return arr.map(r => ({ ...r, _flag: flag(r.country), _label: r.ip }))
+  function maxOf(arr, key = 'count') {
+    return arr && arr.length ? Math.max(...arr.map(x => x[key] || 0)) : 1
   }
 
   const httpColor = {
@@ -126,15 +131,14 @@
   />
 
   <div class="kt-panel">
-    <!-- Header: same shape as LogsView, no search input -->
     <div class="kt-panel-header flex-col sm:flex-row gap-2">
       <div class="contents sm:flex sm:items-center sm:gap-2">
         {#if selectedType}
-          <Button variant="outline" size="sm" icon="arrow-left" onclick={() => selectedType = null}>
+          <Button variant="outline" size="sm" icon="arrow-left" onclick={() => setType(null)}>
             Back
           </Button>
         {/if}
-        <Select bind:value={period} class="flex-1 sm:flex-none sm:w-40">
+        <Select value={period} onchange={(e) => setPeriod(e.target.value)} class="flex-1 sm:flex-none sm:w-40">
           <option value="hour">Last hour</option>
           <option value="day">Last 24 hours</option>
           <option value="week">Last 7 days</option>
@@ -148,7 +152,6 @@
       </div>
     </div>
 
-    <!-- Content -->
     <div class="p-4 space-y-4">
       {#if loading}
         <div class="flex justify-center py-12">
@@ -162,10 +165,9 @@
             {@const tr = d && !d.error ? trend(d.total_count, d.previous_total) : null}
             <button
               type="button"
-              onclick={() => selectedType = type}
+              onclick={() => setType(type)}
               class="group flex cursor-pointer flex-col rounded-lg border shadow-sm transition hover:shadow-md bg-card text-left {d && d.total_count > 0 ? meta.border : 'border-border'}"
             >
-              <!-- Header: icon + label + arrow -->
               <div class="flex items-center gap-2.5 p-3">
                 <div class="flex h-9 w-9 items-center justify-center rounded-lg shrink-0 {meta.bg} {meta.text}">
                   <Icon name={meta.icon} size={18} />
@@ -176,17 +178,16 @@
                     {d && d.total_count > 0 ? 'Click for details' : 'no events'}
                   </p>
                 </div>
-                <Icon name="arrow-right" size={14} class_="text-muted-foreground group-hover:text-foreground shrink-0" />
+                <Icon name="chevron-right" size={14} class="text-muted-foreground shrink-0" />
               </div>
 
-              <!-- Big number + trend -->
               <div class="px-3 pb-1">
                 <div class="text-3xl font-bold tabular-nums {meta.text}">
                   {d ? fmtNumber(d.total_count) : '—'}
                 </div>
                 {#if tr}
                   <div class="flex items-center gap-1 text-[11px] mt-0.5 {tr.dir === 'up' ? 'text-success' : 'text-destructive'}">
-                    <Icon name={tr.dir === 'up' ? 'trending-up' : 'trending-down'} size={11} />
+                    <Icon name={tr.dir === 'up' ? 'arrow-up' : 'arrow-down'} size={11} />
                     <span class="font-medium">{Math.abs(tr.pct).toFixed(1)}%</span>
                     <span class="text-muted-foreground font-normal">vs previous</span>
                   </div>
@@ -195,14 +196,12 @@
                 {/if}
               </div>
 
-              <!-- Sparkline -->
               {#if d?.time_series?.length > 1}
                 <div class="{meta.text} h-8 px-3">
                   <Sparkline data={d.time_series} width={220} height={32} />
                 </div>
               {/if}
 
-              <!-- Footer stats -->
               {#if d && !d.error && d.total_count > 0}
                 <div class="mt-2 border-t border-border p-3 grid grid-cols-2 gap-2 text-[11px]">
                   {#if type === 'inbound'}
@@ -236,6 +235,9 @@
         <!-- ═════════ DRILL-IN ═════════ -->
         {@const d = data[selectedType]}
         {@const tr = d && !d.error ? trend(d.total_count, d.previous_total) : null}
+        {@const maxCountry = d?.top_countries ? maxOf(d.top_countries) : 1}
+        {@const maxClient = d?.top_clients ? maxOf(d.top_clients) : 1}
+        {@const maxDest = d?.top_dest_ips ? maxOf(d.top_dest_ips) : 1}
 
         {#if !d}
           <div class="flex justify-center py-12"><LoadingSpinner /></div>
@@ -250,17 +252,16 @@
             description={selectedType === 'inbound' ? 'Traefik has not logged requests to any user domain or catchall route yet.' :
                          selectedType === 'outbound' ? 'The outbound watcher has not observed any peer traffic.' :
                          selectedType === 'fw' ? 'No firewall drops in this period.' :
-                         'AdGuard has not logged any queries. Check that DNS is being routed through it.'}
+                         'AdGuard has not logged any queries.'}
           />
         {:else}
 
-          <!-- KPI row: reuse StatCard -->
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard icon={typeMeta[selectedType].icon} color={typeMeta[selectedType].color} value={fmtNumber(d.total_count)} label="Total events" />
-            <StatCard icon="users" color="info" value={fmtNumber(d.unique_visitors)} label={selectedType === 'fw' ? 'Unique attackers' : 'Unique sources'} />
-            <StatCard icon="database" color="warning" value={fmtBytes(d.total_bytes)} label="Bandwidth" />
+            <StatCard icon="user" color="info" value={fmtNumber(d.unique_visitors)} label={selectedType === 'fw' ? 'Unique attackers' : 'Unique sources'} />
+            <StatCard icon="activity" color="warning" value={fmtBytes(d.total_bytes)} label="Bandwidth" />
             {#if selectedType === 'dns'}
-              <StatCard icon="cpu" color="success" value="{pct(d.cached_count, d.total_count)}%" label="Cache rate" />
+              <StatCard icon="check" color="success" value="{pct(d.cached_count, d.total_count)}%" label="Cache rate" />
             {:else if selectedType === 'inbound'}
               <StatCard icon="check" color="success" value="{pct((d.http_status?.find(s => s.status === '2xx')?.count || 0), (d.http_status?.reduce((s,x)=>s+x.count,0) || 1))}%" label="Success rate" />
             {:else if selectedType === 'fw'}
@@ -270,16 +271,14 @@
             {/if}
           </div>
 
-          <!-- Trend row (below KPIs, separate to avoid crowding StatCard) -->
           {#if tr}
             <div class="flex items-center gap-1 text-xs {tr.dir === 'up' ? 'text-success' : 'text-destructive'}">
-              <Icon name={tr.dir === 'up' ? 'trending-up' : 'trending-down'} size={14} />
+              <Icon name={tr.dir === 'up' ? 'arrow-up' : 'arrow-down'} size={14} />
               <span class="font-medium">{Math.abs(tr.pct).toFixed(1)}%</span>
               <span class="text-muted-foreground">vs previous {period}</span>
             </div>
           {/if}
 
-          <!-- Time series -->
           {#if d.time_series?.length}
             <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
               <div class="flex items-center justify-between mb-3">
@@ -287,27 +286,31 @@
                 <Badge variant="muted" size="sm">{period}</Badge>
               </div>
               <div class={typeMeta[selectedType].text}>
-                <AreaChart data={d.time_series} valueKey="count" labelKey="time" height={200} />
+                <AreaChart data={d.time_series} valueKey="count" labelKey="time" height={160} />
               </div>
             </div>
           {/if}
 
-          <!-- Widgets grid -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 
+            <!-- Countries: use CountryFlag (real images) with inline bars -->
             {#if d.top_countries?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">
                   Top countries {selectedType === 'outbound' ? '(destination)' : ''}
                 </div>
-                <BarList
-                  data={withFlags(d.top_countries)}
-                  labelKey="country"
-                  prefixKey="_flag"
-                  barClass={typeMeta[selectedType].bar}
-                  format={fmtNumber}
-                  labelWidth="w-10"
-                />
+                <div class="space-y-2.5">
+                  {#each d.top_countries as row}
+                    <div class="flex items-center gap-3 text-sm">
+                      <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
+                      <span class="w-8 shrink-0 text-xs font-mono uppercase">{row.country || '—'}</span>
+                      <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                        <div class="h-full {typeMeta[selectedType].bar}" style="width: {(row.count / maxCountry) * 100}%"></div>
+                      </div>
+                      <span class="font-mono text-xs w-14 text-right tabular-nums">{fmtNumber(row.count)}</span>
+                    </div>
+                  {/each}
+                </div>
               </div>
             {/if}
 
@@ -333,17 +336,22 @@
               </div>
             {/if}
 
+            <!-- Source IPs: real flag + IP + bar -->
             {#if d.top_clients?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Top source IPs</div>
-                <BarList
-                  data={ipRows(d.top_clients)}
-                  labelKey="_label"
-                  prefixKey="_flag"
-                  barClass={typeMeta[selectedType].bar}
-                  format={fmtNumber}
-                  labelWidth="w-32"
-                />
+                <div class="space-y-2.5">
+                  {#each d.top_clients as row}
+                    <div class="flex items-center gap-3 text-sm">
+                      <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
+                      <span class="w-32 shrink-0 truncate text-xs font-mono">{row.ip}</span>
+                      <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                        <div class="h-full {typeMeta[selectedType].bar}" style="width: {(row.count / maxClient) * 100}%"></div>
+                      </div>
+                      <span class="font-mono text-xs w-14 text-right tabular-nums">{fmtNumber(row.count)}</span>
+                    </div>
+                  {/each}
+                </div>
               </div>
             {/if}
 
@@ -370,14 +378,18 @@
             {:else if selectedType === 'outbound' && d.top_dest_ips?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div class="text-sm font-semibold mb-4">Top destinations</div>
-                <BarList
-                  data={ipRows(d.top_dest_ips)}
-                  labelKey="_label"
-                  prefixKey="_flag"
-                  barClass="bg-info"
-                  format={fmtNumber}
-                  labelWidth="w-32"
-                />
+                <div class="space-y-2.5">
+                  {#each d.top_dest_ips as row}
+                    <div class="flex items-center gap-3 text-sm">
+                      <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
+                      <span class="w-32 shrink-0 truncate text-xs font-mono">{row.ip}</span>
+                      <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                        <div class="h-full bg-info" style="width: {(row.count / maxDest) * 100}%"></div>
+                      </div>
+                      <span class="font-mono text-xs w-14 text-right tabular-nums">{fmtNumber(row.count)}</span>
+                    </div>
+                  {/each}
+                </div>
               </div>
             {:else if selectedType === 'fw' && d.top_rules?.length}
               <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
