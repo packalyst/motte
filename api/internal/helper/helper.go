@@ -2,6 +2,7 @@ package helper
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +10,10 @@ import (
 	"strconv"
 	"strings"
 )
+
+// DefaultEssentialPortsFile is where BuildEssentialPorts looks for the port
+// list when ESSENTIAL_PORTS_FILE is not set. Ships in the api docker image.
+const DefaultEssentialPortsFile = "/app/configs/essential-ports.json"
 
 // GetEnv returns the value of an environment variable or fatally exits if not set
 func GetEnv(key string) string {
@@ -111,52 +116,71 @@ type EssentialPort struct {
 	Service  string
 }
 
-// BuildEssentialPorts builds the list of essential ports from environment variables
+// essentialPortJSON is the on-disk shape of a port entry in essential-ports.json.
+type essentialPortJSON struct {
+	Port    int    `json:"port"`
+	Proto   string `json:"proto"`
+	Service string `json:"service"`
+}
+
+// BuildEssentialPorts builds the list of essential ports at boot time.
+//
+// Sources, in order:
+//  1. SSH port auto-detected from sshd_config (always).
+//  2. Ports listed in a JSON file — either at ESSENTIAL_PORTS_FILE (env
+//     override) or at DefaultEssentialPortsFile. Missing/unreadable/invalid
+//     JSON is a warning, not fatal — Docker discovery still runs later.
+//
+// Duplicates (same port+protocol) are collapsed; SSH always wins for that slot.
 func BuildEssentialPorts() []EssentialPort {
 	ports := []EssentialPort{}
 
-	// Auto-detect SSH port from sshd_config
-	sshPort := detectSSHPort()
-	if sshPort > 0 {
+	if sshPort := detectSSHPort(); sshPort > 0 {
 		ports = append(ports, EssentialPort{Port: sshPort, Protocol: "tcp", Service: "SSH"})
 	}
 
-	// Build from env vars
-	portMappings := []struct {
-		envVar   string
-		service  string
-		protocol string
-	}{
-		{"HTTP_PORT", "Traefik HTTP", "tcp"},
-		{"HTTPS_PORT", "Traefik HTTPS", "tcp"},
-		{"WG_PORT", "WireGuard", "udp"},
-		{"TRAEFIK_PORT", "Traefik Dashboard", "tcp"},
-		{"API_PORT", "API", "tcp"},
-		{"ADGUARD_PORT", "AdGuard", "tcp"},
-		{"STUN_PORT", "STUN/DERP", "udp"},
-		{"DNS_PORT", "DNS", "udp"},
-		{"HEADSCALE_METRICS_PORT", "Headscale Metrics", "tcp"},
-		{"HEADSCALE_GRPC_PORT", "Headscale gRPC", "tcp"},
+	path := GetEnvOptional("ESSENTIAL_PORTS_FILE", DefaultEssentialPortsFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("essential-ports: %s not found, skipping (Docker discovery still runs)", path)
+		} else {
+			log.Printf("essential-ports: cannot read %s: %v (skipping)", path, err)
+		}
+		return ports
 	}
 
-	for _, mapping := range portMappings {
-		if portStr := os.Getenv(mapping.envVar); portStr != "" {
-			if port, err := strconv.Atoi(portStr); err == nil && port > 0 {
-				// Avoid duplicates (e.g., if SSH is on port 22 and something else too)
-				exists := false
-				for _, p := range ports {
-					if p.Port == port && p.Protocol == mapping.protocol {
-						exists = true
-						break
-					}
-				}
-				if !exists {
-					ports = append(ports, EssentialPort{Port: port, Protocol: mapping.protocol, Service: mapping.service})
-				}
+	var entries []essentialPortJSON
+	if err := json.Unmarshal(data, &entries); err != nil {
+		log.Printf("essential-ports: invalid JSON in %s: %v (skipping)", path, err)
+		return ports
+	}
+
+	for _, e := range entries {
+		if e.Port < 1 || e.Port > 65535 {
+			log.Printf("essential-ports: skipping invalid port %d in %s", e.Port, path)
+			continue
+		}
+		proto := strings.ToLower(strings.TrimSpace(e.Proto))
+		if proto != "tcp" && proto != "udp" && proto != "both" {
+			log.Printf("essential-ports: skipping port %d — invalid proto %q in %s", e.Port, e.Proto, path)
+			continue
+		}
+		// Skip duplicates (SSH auto-detect already added, or JSON lists same port twice).
+		dup := false
+		for _, p := range ports {
+			if p.Port == e.Port && p.Protocol == proto {
+				dup = true
+				break
 			}
 		}
+		if dup {
+			continue
+		}
+		ports = append(ports, EssentialPort{Port: e.Port, Protocol: proto, Service: strings.TrimSpace(e.Service)})
 	}
 
+	log.Printf("essential-ports: loaded %d entries from %s", len(entries), path)
 	return ports
 }
 

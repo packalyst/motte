@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -293,4 +294,53 @@ func (s *Service) getDockerExposedPorts() []PortEntry {
 	}
 
 	return ports
+}
+
+// SyncDockerPortsToDB persists Docker-published container ports into
+// firewall_entries so they get enforced by nftables (not just shown in the UI).
+//
+// Behavior:
+//   - Disabled entirely if AUTO_DISCOVER_DOCKER_PORTS=false.
+//   - At each call, DELETEs every row with source='docker', then re-INSERTs the
+//     ports currently published by running containers. That way containers that
+//     have stopped drop their allow rules; manually-added rows (source='manual')
+//     and system rows (source='system') are never touched.
+//   - Uses INSERT OR IGNORE so if a port is already present with a different
+//     source (e.g. an essential port that a container happens to publish), the
+//     existing row wins and no duplicate is created.
+//
+// Meant to run once at service init, before ApplyRules.
+func (s *Service) SyncDockerPortsToDB() (int, error) {
+	if strings.EqualFold(os.Getenv("AUTO_DISCOVER_DOCKER_PORTS"), "false") {
+		log.Printf("firewall: AUTO_DISCOVER_DOCKER_PORTS=false, skipping Docker port discovery")
+		return 0, nil
+	}
+
+	discovered := s.getDockerExposedPorts()
+
+	// Wipe old docker-source rows so ports of removed containers stop being allowed.
+	if _, err := s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND source = 'docker'"); err != nil {
+		return 0, fmt.Errorf("clear stale docker ports: %w", err)
+	}
+
+	inserted := 0
+	for _, dp := range discovered {
+		if dp.Port < 1 || dp.Port > 65535 {
+			continue
+		}
+		res, err := s.db.Exec(`INSERT OR IGNORE INTO firewall_entries
+			(entry_type, value, action, direction, protocol, source, name, essential, enabled)
+			VALUES ('port', ?, 'allow', 'inbound', ?, 'docker', ?, 1, 1)`,
+			strconv.Itoa(dp.Port), dp.Protocol, dp.Service)
+		if err != nil {
+			log.Printf("firewall: failed to insert docker port %d/%s: %v", dp.Port, dp.Protocol, err)
+			continue
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			inserted++
+		}
+	}
+
+	log.Printf("firewall: docker port sync — %d discovered, %d inserted (rest were already present)", len(discovered), inserted)
+	return inserted, nil
 }

@@ -1,0 +1,11 @@
+[
+  { "port": 80,    "proto": "tcp", "service": "Traefik HTTP" },
+  { "port": 443,   "proto": "tcp", "service": "Traefik HTTPS" },
+  { "port": 8080,  "proto": "tcp", "service": "Traefik Dashboard" },
+  { "port": 8081,  "proto": "tcp", "service": "API" },
+  { "port": 8083,  "proto": "tcp", "service": "AdGuard UI" },
+  { "port": 8443,  "proto": "tcp", "service": "DERP HTTP" },
+  { "port": 51820, "proto": "udp", "service": "WireGuard" },
+  { "port": 3478,  "proto": "udp", "service": "STUN/DERP" },
+  { "port": 53,    "proto": "udp", "service": "DNS" }
+]

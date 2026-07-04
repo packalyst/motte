@@ -76,6 +76,13 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 		log.Printf("Warning: Failed to ensure essential ports: %v", err)
 	}
 
+	// Sync ports published by running Docker containers into firewall_entries.
+	// Runs after ensureEssentialPorts so system rows take precedence; runs
+	// before ApplyRules so the first nftables push already contains them.
+	if _, err := svc.SyncDockerPortsToDB(); err != nil {
+		log.Printf("Warning: Failed to sync Docker ports: %v", err)
+	}
+
 	// Apply initial rules
 	if err := svc.ApplyRules(); err != nil {
 		log.Printf("Warning: Failed to apply initial firewall rules: %v", err)
