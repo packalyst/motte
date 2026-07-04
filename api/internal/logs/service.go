@@ -3,13 +3,22 @@ package logs
 import (
 	"context"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
 	"api/internal/database"
 	"api/internal/helper"
 	"api/internal/router"
+	"api/internal/settings"
 )
+
+// settingsKeyForWatcher is the settings-table key used to persist a watcher's
+// enabled flag across restarts. Kept as a helper to guarantee both writer and
+// reader agree on the format.
+func settingsKeyForWatcher(name string) string {
+	return "log_watcher_" + name + "_enabled"
+}
 
 // Service manages all log watchers
 type Service struct {
@@ -56,10 +65,16 @@ func New() (*Service, error) {
 	return s, nil
 }
 
-// RegisterWatcher registers a watcher by name (disabled by default)
+// RegisterWatcher registers a watcher by name. Its enabled flag is restored
+// from the settings table if a value was persisted by a previous session;
+// otherwise it defaults to false (user must enable in Settings on first use).
 func (s *Service) RegisterWatcher(name string, watcher Watcher) {
 	s.watchers[name] = watcher
-	s.enabled[name] = false // User enables in Settings
+	if v, err := settings.GetSetting(settingsKeyForWatcher(name)); err == nil && v == "true" {
+		s.enabled[name] = true
+	} else {
+		s.enabled[name] = false
+	}
 }
 
 // GetDB returns the database connection for watcher creation
@@ -130,6 +145,11 @@ func (s *Service) EnableWatcher(name string, enable bool) bool {
 	}
 
 	s.enabled[name] = enable
+
+	// Persist the new state so it survives an api container restart.
+	if err := settings.SetSetting(settingsKeyForWatcher(name), strconv.FormatBool(enable)); err != nil {
+		log.Printf("Warning: failed to persist watcher %s enabled=%v: %v", name, enable, err)
+	}
 
 	if enable && !watcher.IsRunning() {
 		s.startWatcher(name, watcher)
