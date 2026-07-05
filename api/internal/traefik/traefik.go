@@ -16,6 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"api/internal/adguard"
 	"api/internal/helper"
 	"api/internal/router"
 )
@@ -538,7 +539,53 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Keep the panel's own domain reachable inside the VPN.
+	//
+	// When mode is "403" or "silent", the panel's public HTTPS listener refuses
+	// requests from outside the VPN CIDR. Clients on the VPN must reach the
+	// panel using its real hostname so the browser accepts the real cert
+	// (needed for HTTPS-only features like Service Worker + Push notifications).
+	// The only reliable way is a DNS override: teach AdGuard to answer the
+	// panel's hostname with the WG server IP. When mode is "off", drop the
+	// override so the hostname resolves publicly again.
+	syncPanelDomainRewrite(req.Mode)
+
 	router.JSON(w, map[string]string{"mode": req.Mode})
+}
+
+// syncPanelDomainRewrite adds or removes an AdGuard DNS rewrite for the panel's
+// own hostname whenever VPN-only mode changes.
+//
+// Failures are logged but do not fail the request — AdGuard being down or
+// missing credentials must not block the middleware toggle.
+func syncPanelDomainRewrite(mode string) {
+	domain := strings.TrimSpace(helper.GetEnvOptional("SSL_DOMAIN", ""))
+	if domain == "" {
+		domain = strings.TrimSpace(helper.GetEnvOptional("ADMIN_DOMAIN", ""))
+	}
+	if domain == "" {
+		log.Printf("vpn-only: no SSL_DOMAIN or ADMIN_DOMAIN configured, skipping AdGuard rewrite sync")
+		return
+	}
+
+	vpnIP := strings.TrimSpace(helper.GetEnvOptional("WG_SERVER_IP", "10.8.0.1"))
+
+	if mode == "off" {
+		if err := adguard.DeleteRewrite(domain, vpnIP); err != nil {
+			log.Printf("vpn-only: could not remove AdGuard rewrite %s → %s: %v", domain, vpnIP, err)
+		} else {
+			log.Printf("vpn-only: removed AdGuard rewrite %s → %s", domain, vpnIP)
+		}
+		return
+	}
+
+	// mode is "403" or "silent" — add the rewrite so VPN clients reach the panel
+	// via its real hostname (cert matches, HTTPS features enabled).
+	if err := adguard.AddRewrite(domain, vpnIP); err != nil {
+		log.Printf("vpn-only: could not add AdGuard rewrite %s → %s: %v", domain, vpnIP, err)
+	} else {
+		log.Printf("vpn-only: added AdGuard rewrite %s → %s", domain, vpnIP)
+	}
 }
 
 // escapeYAMLString escapes a string for safe YAML output
