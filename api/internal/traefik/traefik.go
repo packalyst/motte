@@ -19,14 +19,17 @@ import (
 	"api/internal/adguard"
 	"api/internal/helper"
 	"api/internal/router"
-	"api/internal/settings"
 )
 
-// settingsKeyVPNOnlyMode persists the user's chosen VPN-only mode. The value
-// stored is one of "off", "403", "silent". Source of truth for restore-at-boot
-// after manage.sh regenerates core.yml from template (which wipes the runtime
-// middleware attachments).
-const settingsKeyVPNOnlyMode = "vpn_only_mode"
+// PersistVPNOnlyMode and LoadVPNOnlyMode are hooks main.go wires up to the
+// settings package. They exist as package-level function variables (instead
+// of importing settings directly) because settings already imports us
+// transitively via headscale → domains → traefik, and Go doesn't allow the
+// reverse edge. Both are optional — nil-safe callers skip persistence.
+var (
+	PersistVPNOnlyMode func(mode string) error
+	LoadVPNOnlyMode    func() (string, error)
+)
 
 // Sentinel middleware names - used throughout the codebase
 const (
@@ -559,8 +562,10 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 
 	// Persist the choice so RestoreVPNOnlyMode can re-apply the middleware at
 	// next boot even if manage.sh regenerates core.yml from template.
-	if err := settings.SetSetting(settingsKeyVPNOnlyMode, req.Mode); err != nil {
-		log.Printf("vpn-only: could not persist mode %q: %v", req.Mode, err)
+	if PersistVPNOnlyMode != nil {
+		if err := PersistVPNOnlyMode(req.Mode); err != nil {
+			log.Printf("vpn-only: could not persist mode %q: %v", req.Mode, err)
+		}
 	}
 
 	router.JSON(w, map[string]string{"mode": req.Mode})
@@ -578,7 +583,10 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 //   - `manage.sh` re-run  (regenerates core.yml from template, wiping the
 //                          runtime middleware attachments — restore rewrites them)
 func (s *Service) RestoreVPNOnlyMode() {
-	stored, err := settings.GetSetting(settingsKeyVPNOnlyMode)
+	if LoadVPNOnlyMode == nil {
+		return // main.go didn't wire the loader — nothing to restore
+	}
+	stored, err := LoadVPNOnlyMode()
 	if err != nil || stored == "" || stored == "off" {
 		return
 	}

@@ -183,6 +183,15 @@ func main() {
 		settings.GetTraefikConfig = func() interface{} { return traefikSvc.GetConfig() }
 		settings.GetTraefikVPNOnly = traefikSvc.GetVPNOnlyMode
 
+		// Wire up VPN-only mode persistence (settings imports traefik transitively,
+		// so traefik can't import settings — dependency inversion via function vars).
+		traefik.PersistVPNOnlyMode = func(mode string) error {
+			return settings.SetSetting("vpn_only_mode", mode)
+		}
+		traefik.LoadVPNOnlyMode = func() (string, error) {
+			return settings.GetSetting("vpn_only_mode")
+		}
+
 		// Re-apply the persisted VPN-only mode. Needed after manage.sh regenerates
 		// core.yml from template (which wipes any middleware the user previously
 		// attached via the UI toggle).
