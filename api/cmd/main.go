@@ -183,6 +183,11 @@ func main() {
 		settings.GetTraefikConfig = func() interface{} { return traefikSvc.GetConfig() }
 		settings.GetTraefikVPNOnly = traefikSvc.GetVPNOnlyMode
 
+		// Re-apply the persisted VPN-only mode. Needed after manage.sh regenerates
+		// core.yml from template (which wipes any middleware the user previously
+		// attached via the UI toggle).
+		traefikSvc.RestoreVPNOnlyMode()
+
 		log.Println("Traefik service registered")
 	}
 

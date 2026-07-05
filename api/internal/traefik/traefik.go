@@ -19,7 +19,14 @@ import (
 	"api/internal/adguard"
 	"api/internal/helper"
 	"api/internal/router"
+	"api/internal/settings"
 )
+
+// settingsKeyVPNOnlyMode persists the user's chosen VPN-only mode. The value
+// stored is one of "off", "403", "silent". Source of truth for restore-at-boot
+// after manage.sh regenerates core.yml from template (which wipes the runtime
+// middleware attachments).
+const settingsKeyVPNOnlyMode = "vpn_only_mode"
 
 // Sentinel middleware names - used throughout the codebase
 const (
@@ -550,7 +557,58 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 	// override so the hostname resolves publicly again.
 	syncPanelDomainRewrite(req.Mode)
 
+	// Persist the choice so RestoreVPNOnlyMode can re-apply the middleware at
+	// next boot even if manage.sh regenerates core.yml from template.
+	if err := settings.SetSetting(settingsKeyVPNOnlyMode, req.Mode); err != nil {
+		log.Printf("vpn-only: could not persist mode %q: %v", req.Mode, err)
+	}
+
 	router.JSON(w, map[string]string{"mode": req.Mode})
+}
+
+// RestoreVPNOnlyMode reads the persisted VPN-only mode from the settings table
+// and re-applies the corresponding sentinel middleware to the ui/ui-secure
+// routers. Meant to be called once at api startup, after Traefik service
+// registration. Silent no-op when no mode was ever set or mode is "off".
+//
+// This is what makes the toggle survive:
+//   - `docker restart api`  (yaml file is preserved by bind mount, so nothing
+//                            to restore — but this runs anyway, and is idempotent)
+//   - `docker compose down && up`  (same as above)
+//   - `manage.sh` re-run  (regenerates core.yml from template, wiping the
+//                          runtime middleware attachments — restore rewrites them)
+func (s *Service) RestoreVPNOnlyMode() {
+	stored, err := settings.GetSetting(settingsKeyVPNOnlyMode)
+	if err != nil || stored == "" || stored == "off" {
+		return
+	}
+	if stored != "403" && stored != "silent" {
+		log.Printf("vpn-only: ignoring invalid stored mode %q", stored)
+		return
+	}
+
+	// Current on-disk state — may already match (bind-mounted yaml survived
+	// a plain container restart), in which case there's nothing to do.
+	if s.GetVPNOnlyMode() == stored {
+		return
+	}
+
+	middleware := MiddlewareSentinelVPN
+	if stored == "silent" {
+		middleware = MiddlewareSentinelVPNSilent
+	}
+
+	for _, routerName := range []string{"ui", "ui-secure"} {
+		// Clear both middlewares first so we don't stack duplicates.
+		s.removeMiddlewareFromRouter(routerName, MiddlewareSentinelVPN)
+		s.removeMiddlewareFromRouter(routerName, MiddlewareSentinelVPNSilent)
+		if err := s.addMiddlewareToRouter(routerName, middleware); err != nil {
+			// Router may not exist (e.g. ui-secure when SSL is disabled) — log
+			// but continue. The other router still gets the middleware.
+			log.Printf("vpn-only restore: router %s: %v", routerName, err)
+		}
+	}
+	log.Printf("vpn-only: restored mode %q to ui/ui-secure routers", stored)
 }
 
 // syncPanelDomainRewrite adds or removes an AdGuard DNS rewrite for the panel's

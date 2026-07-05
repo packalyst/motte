@@ -15,9 +15,21 @@
   const threshold = 80 // Distance to trigger refresh
   const maxPull = 120 // Max pull distance
 
+  // Dead-zone in pixels before we start accumulating pullDistance. This filters
+  // out finger-settle jitter and momentum-scroll artifacts that were falsely
+  // arming the refresh when the user flick-scrolled up quickly and their touch
+  // landed at scrollY=0.
+  const deadZone = 20
+
   function handleTouchStart(e) {
-    // Only start pull if at top of scroll and not in a scrollable child
-    if (window.scrollY === 0 && document.documentElement.scrollTop === 0 && !isRefreshing) {
+    // Only start pull if at top of scroll, not refreshing, and single-touch
+    // (multi-touch = pinch/zoom, not a pull gesture).
+    if (
+      window.scrollY === 0 &&
+      document.documentElement.scrollTop === 0 &&
+      !isRefreshing &&
+      e.touches.length === 1
+    ) {
       startY = e.touches[0].clientY
       isPulling = true
     }
@@ -29,14 +41,20 @@
     const currentY = e.touches[0].clientY
     const diff = currentY - startY
 
-    // Only pull down, not up, and only when at top
-    if (diff > 0 && window.scrollY === 0 && document.documentElement.scrollTop === 0) {
-      // Apply resistance
-      pullDistance = Math.min(diff * 0.5, maxPull)
-    } else if (diff < 0) {
-      // User scrolling up, cancel pull
+    // Cancel on upward movement.
+    if (diff < 0) {
       isPulling = false
       pullDistance = 0
+      return
+    }
+
+    // Ignore movement within the dead-zone — real pull gestures cross it
+    // decisively, momentum/jitter usually don't.
+    if (diff < deadZone) return
+
+    if (window.scrollY === 0 && document.documentElement.scrollTop === 0) {
+      // Apply resistance; subtract dead-zone so effective travel starts at 0.
+      pullDistance = Math.min((diff - deadZone) * 0.5, maxPull)
     }
   }
 
