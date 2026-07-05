@@ -556,6 +556,12 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 // syncPanelDomainRewrite adds or removes an AdGuard DNS rewrite for the panel's
 // own hostname whenever VPN-only mode changes.
 //
+// AdGuard's /control/rewrite/add endpoint appends without deduplicating, so
+// naively calling AddRewrite on every toggle produces duplicates when the user
+// switches between "silent" and "403". We always delete any existing rewrite
+// first (safe when none exists), then re-add if the new mode is non-off.
+// Result: exactly one row after any transition.
+//
 // Failures are logged but do not fail the request — AdGuard being down or
 // missing credentials must not block the middleware toggle.
 func syncPanelDomainRewrite(mode string) {
@@ -570,21 +576,34 @@ func syncPanelDomainRewrite(mode string) {
 
 	vpnIP := strings.TrimSpace(helper.GetEnvOptional("WG_SERVER_IP", "10.8.0.1"))
 
-	if mode == "off" {
-		if err := adguard.DeleteRewrite(domain, vpnIP); err != nil {
-			log.Printf("vpn-only: could not remove AdGuard rewrite %s → %s: %v", domain, vpnIP, err)
-		} else {
-			log.Printf("vpn-only: removed AdGuard rewrite %s → %s", domain, vpnIP)
+	// Purge every existing rewrite for this domain — covers both the current
+	// one AND any leftover duplicates from earlier bugged runs (silent→403→…).
+	// DeleteRewrite is idempotent on the AdGuard side; ignoring its per-call
+	// error is fine because a missing row still leaves us at count=0.
+	removed := 0
+	if existing, err := adguard.GetRewrites(); err == nil {
+		for _, r := range existing {
+			if r.Domain == domain {
+				if err := adguard.DeleteRewrite(r.Domain, r.Answer); err == nil {
+					removed++
+				}
+			}
 		}
+	} else {
+		log.Printf("vpn-only: could not list AdGuard rewrites: %v (continuing)", err)
+	}
+
+	if mode == "off" {
+		log.Printf("vpn-only: removed %d AdGuard rewrite(s) for %s", removed, domain)
 		return
 	}
 
-	// mode is "403" or "silent" — add the rewrite so VPN clients reach the panel
-	// via its real hostname (cert matches, HTTPS features enabled).
+	// mode is "403" or "silent" — add exactly one rewrite so VPN clients reach
+	// the panel via its real hostname (cert matches, HTTPS features enabled).
 	if err := adguard.AddRewrite(domain, vpnIP); err != nil {
 		log.Printf("vpn-only: could not add AdGuard rewrite %s → %s: %v", domain, vpnIP, err)
 	} else {
-		log.Printf("vpn-only: added AdGuard rewrite %s → %s", domain, vpnIP)
+		log.Printf("vpn-only: purged %d stale + added AdGuard rewrite %s → %s", removed, domain, vpnIP)
 	}
 }
 
