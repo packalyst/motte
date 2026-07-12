@@ -207,29 +207,21 @@
     }
   }
 
-  async function resetPeerUsage() {
-    const ip = selectedNode?._ip
-    if (!ip) return
-    try {
-      await apiDelete(`/api/logs/peer-usage?peer=${encodeURIComponent(ip)}`)
-      toast('Traffic reset for this peer', 'success')
-      await loadPeerUsage()
-    } catch (e) {
-      toast('Failed to reset: ' + e.message, 'error')
-    }
-  }
-
-  // Reset the accumulated WireGuard totals (dashboard up/down numbers).
+  // Reset both the accumulated WireGuard totals (dashboard up/down) and the
+  // per-destination breakdown (conntrack) for this peer, in one action.
   async function resetPeerTotals() {
     const ip = selectedNode?._ip
     if (!ip) return
     try {
       await apiPost(`/api/vpn/traffic/reset?peer=${encodeURIComponent(ip)}`)
+      await apiDelete(`/api/logs/peer-usage?peer=${encodeURIComponent(ip)}`)
       if (selectedNode) { selectedNode.totalTx = 0; selectedNode.totalRx = 0 }
-      toast('Traffic totals reset', 'success')
+      peerUsage = null
+      toast('Traffic reset', 'success')
       loader.reload()
+      if (activeTab === 'traffic') loadPeerUsage()
     } catch (e) {
-      toast('Failed to reset totals: ' + e.message, 'error')
+      toast('Failed to reset: ' + e.message, 'error')
     }
   }
 
@@ -834,7 +826,7 @@
               <ContentBlock variant="data" size="sm" solid light label="Public Key" value={selectedNode.publicKey} copyable mono />
             </div>
             <div class="mt-2 flex justify-end">
-              <Button onclick={resetPeerTotals} size="sm" variant="secondary" icon="refresh">Reset totals</Button>
+              <Button onclick={resetPeerTotals} size="sm" variant="secondary" icon="refresh">Reset traffic</Button>
             </div>
           {:else}
             <!-- Tailscale Overview - Combined -->
@@ -887,11 +879,6 @@
                     onclick={() => peerUsagePeriod = p}
                   >{p}</button>
                 {/each}
-                <button
-                  class="ml-1 px-2 py-0.5 text-[11px] rounded bg-muted text-muted-foreground hover:text-destructive"
-                  title="Reset this peer's traffic to zero"
-                  onclick={resetPeerUsage}
-                >Reset</button>
               </div>
             </div>
 
