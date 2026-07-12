@@ -92,6 +92,40 @@
 
   onMount(loadAll)
 
+  // ── Per-node outbound breakdown (conntrack byte accounting) ──
+  let peerList = $state([])
+  let selectedPeer = $state('')
+  let peerUsage = $state(null)
+  let peerUsageLoading = $state(false)
+
+  async function loadPeers() {
+    try {
+      const clients = await apiGet('/api/vpn/clients')
+      peerList = (Array.isArray(clients) ? clients : [])
+        .filter(c => c.ip)
+        .map(c => ({ value: c.ip, label: `${c.name || c.ip} (${c.ip})` }))
+    } catch { peerList = [] }
+  }
+  onMount(loadPeers)
+
+  async function loadPeerUsage() {
+    if (!selectedPeer) { peerUsage = null; return }
+    peerUsageLoading = true
+    try {
+      peerUsage = await apiGet(`/api/logs/peer-usage?peer=${encodeURIComponent(selectedPeer)}&period=${period}`)
+    } catch (e) {
+      peerUsage = { destinations: [], series: [], error: e.message }
+    } finally {
+      peerUsageLoading = false
+    }
+  }
+
+  // Reload the per-node breakdown when the node or period changes.
+  $effect(() => {
+    selectedPeer; period
+    if (selectedType === 'outbound' && selectedPeer) loadPeerUsage()
+  })
+
   function trend(cur, prev) {
     if (!prev || prev === 0) return null
     const p = ((cur - prev) / prev) * 100
@@ -357,6 +391,53 @@
               <div class={typeMeta[selectedType].text}>
                 <AreaChart data={d.time_series} valueKey="count" labelKey="time" height={160} />
               </div>
+            </div>
+          {/if}
+
+          {#if selectedType === 'outbound'}
+            <!-- Per-node traffic breakdown (bytes, from conntrack) -->
+            <div class="bg-card border border-border rounded-lg p-4 shadow-sm space-y-3">
+              <div class="flex items-center justify-between gap-2 flex-wrap">
+                <div class="text-sm font-semibold">Per-node traffic (bytes)</div>
+                <Select value={selectedPeer} onchange={(e) => selectedPeer = e.target.value} class="w-full sm:w-64">
+                  <option value="">Select a node…</option>
+                  {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
+                </Select>
+              </div>
+
+              {#if peerUsageLoading}
+                <div class="text-xs text-muted-foreground py-6 text-center">Loading…</div>
+              {:else if !selectedPeer}
+                <div class="text-xs text-muted-foreground py-4 text-center">Select a node to see where its traffic went, by bytes.</div>
+              {:else if peerUsage}
+                <div class="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                  <StatCard icon="upload" color="info" value={fmtBytes(peerUsage.total_up)} label="Uploaded" />
+                  <StatCard icon="download" color="success" value={fmtBytes(peerUsage.total_down)} label="Downloaded" />
+                  <StatCard icon="globe" color="primary" value={peerUsage.destinations?.length || 0} label="Destinations" />
+                </div>
+
+                {#if peerUsage.series?.length}
+                  <div class="text-info">
+                    <AreaChart data={peerUsage.series} valueKey="total" labelKey="time" height={160} format={fmtBytes} />
+                  </div>
+                {/if}
+
+                {#if peerUsage.destinations?.length}
+                  <div>
+                    <div class="text-sm font-semibold mb-3">Top destinations</div>
+                    <BarList
+                      data={peerUsage.destinations.map(x => ({ ...x, _label: x.domain || x.dest_ip }))}
+                      labelKey="_label"
+                      valueKey="bytes_total"
+                      format={fmtBytes}
+                      labelWidth="w-44"
+                      barClass="bg-info"
+                    />
+                  </div>
+                {:else}
+                  <div class="text-xs text-muted-foreground py-2">No per-destination data for this node yet — enable the conntrack watcher in Settings → Logs Watchers.</div>
+                {/if}
+              {/if}
             </div>
           {/if}
 

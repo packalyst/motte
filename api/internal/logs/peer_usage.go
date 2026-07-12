@@ -19,13 +19,22 @@ type PeerUsageDest struct {
 	BytesTotal int64  `json:"bytes_total"`
 }
 
+// PeerUsageBucket is one time-series point (hour bucket) of a peer's bytes.
+type PeerUsageBucket struct {
+	Time  string `json:"time"`
+	Up    int64  `json:"up"`
+	Down  int64  `json:"down"`
+	Total int64  `json:"total"`
+}
+
 // PeerUsageResponse is the per-peer destination breakdown.
 type PeerUsageResponse struct {
-	Peer         string          `json:"peer"`
-	Period       string          `json:"period"`
-	TotalUp      int64           `json:"total_up"`
-	TotalDown    int64           `json:"total_down"`
-	Destinations []PeerUsageDest `json:"destinations"`
+	Peer         string            `json:"peer"`
+	Period       string            `json:"period"`
+	TotalUp      int64             `json:"total_up"`
+	TotalDown    int64             `json:"total_down"`
+	Destinations []PeerUsageDest   `json:"destinations"`
+	Series       []PeerUsageBucket `json:"series"`
 }
 
 // periodSince maps a period string to a UTC cutoff time matching the
@@ -76,7 +85,7 @@ func (s *Service) handleGetPeerUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	resp := PeerUsageResponse{Peer: peer, Period: period, Destinations: []PeerUsageDest{}}
+	resp := PeerUsageResponse{Peer: peer, Period: period, Destinations: []PeerUsageDest{}, Series: []PeerUsageBucket{}}
 	geoSvc := geolocation.GetService()
 
 	for rows.Next() {
@@ -105,6 +114,30 @@ func (s *Service) handleGetPeerUsage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp.Destinations = append(resp.Destinations, d)
+	}
+
+	// Time series: bytes per hour bucket, for charting the peer's traffic.
+	if sRows, err := s.db.Query(`
+		SELECT bucket, SUM(bytes_up) AS up, SUM(bytes_down) AS down
+		FROM traffic_usage
+		WHERE peer_ip = ? AND bucket >= ?
+		GROUP BY bucket
+		ORDER BY bucket
+	`, peer, since); err == nil {
+		defer sRows.Close()
+		for sRows.Next() {
+			var bucket time.Time
+			var up, down int64
+			if err := sRows.Scan(&bucket, &up, &down); err != nil {
+				continue
+			}
+			resp.Series = append(resp.Series, PeerUsageBucket{
+				Time:  bucket.Format("01-02 15h"),
+				Up:    up,
+				Down:  down,
+				Total: up + down,
+			})
+		}
 	}
 
 	router.JSON(w, resp)

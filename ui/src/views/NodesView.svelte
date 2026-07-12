@@ -915,7 +915,7 @@
             {#if peerUsageLoading}
               <div class="text-xs text-muted-foreground py-6 text-center">Loading…</div>
             {:else if peerUsage?.destinations?.length}
-              {@const rows = peerUsage.destinations.map(d => ({ ...d, label: d.domain || d.dest_ip }))}
+              {@const rows = peerUsage.destinations.slice(0, 5).map(d => ({ ...d, label: d.domain || d.dest_ip }))}
               <div class="grid grid-cols-2 gap-3">
                 <ContentBlock variant="data" size="sm" solid light label="Uploaded (measured)" value={formatBytes(peerUsage.total_up)} rightIcon="upload" />
                 <ContentBlock variant="data" size="sm" solid light label="Downloaded (measured)" value={formatBytes(peerUsage.total_down)} rightIcon="download" />
