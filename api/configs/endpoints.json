@@ -181,6 +181,7 @@
         {"path": "/clients/{id}/scan", "methods": ["POST"], "handler": "ScanPorts", "description": "Scan open ports on client"},
         {"path": "/clients/{id}/scan", "methods": ["DELETE"], "handler": "StopScan", "description": "Stop running scan"},
         {"path": "/apply", "methods": ["POST"], "handler": "ApplyRules", "description": "Apply nftables + Headscale ACL"},
+        {"path": "/traffic/reset", "methods": ["POST"], "handler": "ResetTraffic", "description": "Reset accumulated WireGuard traffic totals (optional ?peer=ip)"},
         {"path": "/router/status", "methods": ["GET"], "handler": "GetRouterStatus", "description": "Get router status"},
         {"path": "/router/setup", "methods": ["POST"], "handler": "SetupRouter", "description": "Setup router"},
         {"path": "/router/restart", "methods": ["POST"], "handler": "RestartRouter", "description": "Restart router"},

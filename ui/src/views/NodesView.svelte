@@ -219,6 +219,20 @@
     }
   }
 
+  // Reset the accumulated WireGuard totals (dashboard up/down numbers).
+  async function resetPeerTotals() {
+    const ip = selectedNode?._ip
+    if (!ip) return
+    try {
+      await apiPost(`/api/vpn/traffic/reset?peer=${encodeURIComponent(ip)}`)
+      if (selectedNode) { selectedNode.totalTx = 0; selectedNode.totalRx = 0 }
+      toast('Traffic totals reset', 'success')
+      loader.reload()
+    } catch (e) {
+      toast('Failed to reset totals: ' + e.message, 'error')
+    }
+  }
+
   // Load usage when the Traffic tab is opened or the period changes.
   $effect(() => {
     if (activeTab === 'traffic' && selectedNode) {
@@ -818,6 +832,9 @@
               <ContentBlock variant="data" size="sm" solid light label="Uploaded" value={formatBytes(selectedNode.totalTx)} rightIcon="upload" />
               <ContentBlock variant="data" size="sm" solid light label="Downloaded" value={formatBytes(selectedNode.totalRx)} rightIcon="download" />
               <ContentBlock variant="data" size="sm" solid light label="Public Key" value={selectedNode.publicKey} copyable mono />
+            </div>
+            <div class="mt-2 flex justify-end">
+              <Button onclick={resetPeerTotals} size="sm" variant="secondary" icon="refresh">Reset totals</Button>
             </div>
           {:else}
             <!-- Tailscale Overview - Combined -->

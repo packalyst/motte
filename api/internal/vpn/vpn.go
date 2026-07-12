@@ -201,11 +201,12 @@ func New() *Service {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		// Clients & ACL
-		"GetClients": s.handleGetClients,
-		"GetClient":  s.handleGetClient,
-		"UpdateACL":  s.handleUpdateACL,
-		"ApplyRules": s.handleApplyRules,
-		"ToggleDNS":  s.handleToggleDNS,
+		"GetClients":   s.handleGetClients,
+		"GetClient":    s.handleGetClient,
+		"UpdateACL":    s.handleUpdateACL,
+		"ApplyRules":   s.handleApplyRules,
+		"ToggleDNS":    s.handleToggleDNS,
+		"ResetTraffic": s.handleResetTraffic,
 		// Port Scanner
 		"ScanPorts": s.handleScanPorts,
 		"StopScan":  s.handleStopScan,
@@ -587,6 +588,29 @@ func (s *Service) handleRestartRouter(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleRemoveRouter(w http.ResponseWriter, r *http.Request) {
 	if err := RemoveRouter(); err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, map[string]string{"status": "ok"})
+}
+
+// handleResetTraffic zeroes the accumulated WireGuard traffic totals shown on
+// the dashboard. Pass ?peer=<ip> to reset one peer, or omit to reset all.
+// last_tx/last_rx are intentionally left as-is so the next sync only adds the
+// small since-last-sync delta rather than jumping back to the lifetime counter.
+func (s *Service) handleResetTraffic(w http.ResponseWriter, r *http.Request) {
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ip := r.URL.Query().Get("peer")
+	if ip == "" {
+		_, err = db.Exec(`UPDATE vpn_clients SET total_tx = 0, total_rx = 0`)
+	} else {
+		_, err = db.Exec(`UPDATE vpn_clients SET total_tx = 0, total_rx = 0 WHERE ip = ?`, ip)
+	}
+	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
