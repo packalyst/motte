@@ -888,7 +888,7 @@
               </div>
               <BarList data={rows} labelKey="label" valueKey="bytes_total" labelWidth="w-40" format={formatBytes} barClass="bg-info" />
               <p class="text-[10px] text-muted-foreground">
-                Measured via connection tracking; totals approximate the peer's WireGuard total (intra-VPN and still-open flows excluded).
+                Measured from when the conntrack watcher was enabled (updates every ~10s as connections transfer data, including still-open ones). Traffic from before it was enabled isn't included, so this won't match the peer's lifetime WireGuard total.
               </p>
             {:else}
               <div class="text-center py-6 space-y-1">
