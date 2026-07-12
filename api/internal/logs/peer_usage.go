@@ -109,3 +109,22 @@ func (s *Service) handleGetPeerUsage(w http.ResponseWriter, r *http.Request) {
 
 	router.JSON(w, resp)
 }
+
+// handleResetPeerUsage handles DELETE /api/logs/peer-usage?peer=<ip>
+// Clears the byte rollup for one peer (or all peers if peer is omitted), so
+// measurement effectively restarts from zero. In-flight flows keep their
+// running counters, so only bytes transferred after the reset are counted.
+func (s *Service) handleResetPeerUsage(w http.ResponseWriter, r *http.Request) {
+	peer := r.URL.Query().Get("peer")
+	var err error
+	if peer == "" {
+		_, err = s.db.Exec(`DELETE FROM traffic_usage`)
+	} else {
+		_, err = s.db.Exec(`DELETE FROM traffic_usage WHERE peer_ip = ?`, peer)
+	}
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, map[string]string{"status": "ok"})
+}

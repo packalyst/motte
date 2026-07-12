@@ -234,6 +234,7 @@
         {"path": "/stats", "methods": ["GET"], "handler": "GetStats", "description": "Get aggregated statistics"},
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get watcher statuses"},
         {"path": "/peer-usage", "methods": ["GET"], "handler": "GetPeerUsage", "description": "Per-peer destination byte breakdown"},
+        {"path": "/peer-usage", "methods": ["DELETE"], "handler": "ResetPeerUsage", "description": "Reset per-peer traffic rollup"},
         {"path": "/watcher", "methods": ["POST"], "handler": "SetWatcher", "description": "Enable/disable watcher"}
       ]
     },

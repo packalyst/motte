@@ -185,11 +185,12 @@ func (s *Service) GetStatus() []WatcherStatus {
 // Handlers returns API handlers map
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetLogs":      s.handleGetLogs,
-		"GetStats":     s.handleGetStats,
-		"GetStatus":    s.handleGetStatus,
-		"SetWatcher":   s.handleSetWatcher,
-		"DeleteLogs":   s.handleDeleteLogs,
-		"GetPeerUsage": s.handleGetPeerUsage,
+		"GetLogs":        s.handleGetLogs,
+		"GetStats":       s.handleGetStats,
+		"GetStatus":      s.handleGetStatus,
+		"SetWatcher":     s.handleSetWatcher,
+		"DeleteLogs":     s.handleDeleteLogs,
+		"GetPeerUsage":   s.handleGetPeerUsage,
+		"ResetPeerUsage": s.handleResetPeerUsage,
 	}
 }

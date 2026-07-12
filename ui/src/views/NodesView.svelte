@@ -207,6 +207,18 @@
     }
   }
 
+  async function resetPeerUsage() {
+    const ip = selectedNode?._ip
+    if (!ip) return
+    try {
+      await apiDelete(`/api/logs/peer-usage?peer=${encodeURIComponent(ip)}`)
+      toast('Traffic reset for this peer', 'success')
+      await loadPeerUsage()
+    } catch (e) {
+      toast('Failed to reset: ' + e.message, 'error')
+    }
+  }
+
   // Load usage when the Traffic tab is opened or the period changes.
   $effect(() => {
     if (activeTab === 'traffic' && selectedNode) {
@@ -851,13 +863,18 @@
           <div class="space-y-3">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs text-muted-foreground">Where this peer's traffic went, by bytes.</div>
-              <div class="flex gap-1">
+              <div class="flex items-center gap-1">
                 {#each ['hour','day','week'] as p}
                   <button
                     class="px-2 py-0.5 text-[11px] rounded capitalize {peerUsagePeriod === p ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}"
                     onclick={() => peerUsagePeriod = p}
                   >{p}</button>
                 {/each}
+                <button
+                  class="ml-1 px-2 py-0.5 text-[11px] rounded bg-muted text-muted-foreground hover:text-destructive"
+                  title="Reset this peer's traffic to zero"
+                  onclick={resetPeerUsage}
+                >Reset</button>
               </div>
             </div>
 
