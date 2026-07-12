@@ -334,6 +334,24 @@ func createSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_logs_src ON logs(logs_src_ip, logs_timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_logs_domain ON logs(logs_domain);
 	CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(logs_type, logs_status);
+
+	-- Per-peer, per-destination byte rollup (populated by the conntrack watcher).
+	-- Answers "peer X sent/received N bytes to destination Y" over time buckets.
+	CREATE TABLE IF NOT EXISTS traffic_usage (
+		peer_ip       TEXT NOT NULL,
+		dest_ip       TEXT NOT NULL,
+		dest_port     INTEGER NOT NULL DEFAULT 0,
+		protocol      TEXT,
+		domain        TEXT,
+		dest_country  TEXT,
+		bytes_up      INTEGER NOT NULL DEFAULT 0,
+		bytes_down    INTEGER NOT NULL DEFAULT 0,
+		bucket        DATETIME NOT NULL,
+		updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (peer_ip, dest_ip, dest_port, bucket)
+	);
+	CREATE INDEX IF NOT EXISTS idx_usage_peer ON traffic_usage(peer_ip, bucket DESC);
+	CREATE INDEX IF NOT EXISTS idx_usage_bucket ON traffic_usage(bucket);
 	`
 
 	// Execute logs schema

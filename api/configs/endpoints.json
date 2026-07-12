@@ -187,6 +187,16 @@
         {"path": "/router", "methods": ["DELETE"], "handler": "RemoveRouter", "description": "Remove router"}
       ]
     },
+    "turbotunnels": {
+      "prefix": "/api/turbotunnels",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get turbotunnels container status"},
+        {"path": "/start", "methods": ["POST"], "handler": "Start", "description": "Start (or create) the turbotunnels container"},
+        {"path": "/stop", "methods": ["POST"], "handler": "Stop", "description": "Stop the turbotunnels container"},
+        {"path": "/restart", "methods": ["POST"], "handler": "Restart", "description": "Restart the turbotunnels container"}
+      ]
+    },
     "geolocation": {
       "prefix": "/api/geo",
       "enabled": true,
@@ -223,6 +233,7 @@
         {"path": "", "methods": ["DELETE"], "handler": "DeleteLogs", "description": "Delete logs (respects type/status/search query filters)"},
         {"path": "/stats", "methods": ["GET"], "handler": "GetStats", "description": "Get aggregated statistics"},
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get watcher statuses"},
+        {"path": "/peer-usage", "methods": ["GET"], "handler": "GetPeerUsage", "description": "Per-peer destination byte breakdown"},
         {"path": "/watcher", "methods": ["POST"], "handler": "SetWatcher", "description": "Enable/disable watcher"}
       ]
     },

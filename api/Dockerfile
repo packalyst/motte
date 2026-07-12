@@ -20,6 +20,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nftables \
     iptables \
+    conntrack \
     wireguard-tools \
     iproute2 \
     dnsutils \

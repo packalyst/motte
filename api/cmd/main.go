@@ -28,6 +28,7 @@ import (
 	"api/internal/setup"
 	"api/internal/stats"
 	"api/internal/traefik"
+	"api/internal/turbotunnels"
 	"api/internal/vpn"
 	"api/internal/wireguard"
 	"api/internal/ws"
@@ -254,6 +255,11 @@ func main() {
 		log.Println("Domains service registered")
 	}
 
+	if config.IsServiceEnabled("turbotunnels") {
+		r.RegisterService("turbotunnels", turbotunnels.New().Handlers())
+		log.Println("Turbotunnels service registered")
+	}
+
 	if config.IsServiceEnabled("logs") {
 		logsSvc, err := logs.New()
 		if err != nil {
@@ -263,6 +269,7 @@ func main() {
 			logsSvc.RegisterWatcher("traefik", sources.NewTraefikWatcher(logsSvc.GetDB(), logsSvc.GetConfig()))
 			logsSvc.RegisterWatcher("adguard", sources.NewAdGuardWatcher(logsSvc.GetDB(), logsSvc.GetConfig()))
 			logsSvc.RegisterWatcher("outbound", sources.NewOutboundWatcher(logsSvc.GetDB(), logsSvc.GetConfig()))
+			logsSvc.RegisterWatcher("conntrack", sources.NewConntrackWatcher(logsSvc.GetDB(), logsSvc.GetConfig()))
 			logsSvc.Start()
 			r.RegisterService("logs", logsSvc.Handlers())
 			log.Println("Logs service registered")

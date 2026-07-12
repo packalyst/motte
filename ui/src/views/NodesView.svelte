@@ -16,6 +16,7 @@
   import EmptyState from '../components/EmptyState.svelte'
   import Tabs from '../components/Tabs.svelte'
   import OptionCard from '../components/OptionCard.svelte'
+  import BarList from '../components/BarList.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -178,9 +179,35 @@
   // Dynamic tabs based on node type
   const detailTabs = $derived(
     selectedNode?._type === 'wireguard'
-      ? [{id:'overview',label:'Overview'},{id:'qr',label:'QR & Config'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
-      : [{id:'overview',label:'Overview'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
+      ? [{id:'overview',label:'Overview'},{id:'traffic',label:'Traffic'},{id:'qr',label:'QR & Config'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
+      : [{id:'overview',label:'Overview'},{id:'traffic',label:'Traffic'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
   )
+
+  // Per-peer destination traffic breakdown (conntrack byte accounting)
+  let peerUsage = $state(null)
+  let peerUsageLoading = $state(false)
+  let peerUsagePeriod = $state('day')
+
+  async function loadPeerUsage() {
+    const ip = selectedNode?._ip
+    if (!ip) { peerUsage = null; return }
+    peerUsageLoading = true
+    try {
+      peerUsage = await apiGet(`/api/logs/peer-usage?peer=${encodeURIComponent(ip)}&period=${peerUsagePeriod}`)
+    } catch (e) {
+      peerUsage = { destinations: [], error: e.message }
+    } finally {
+      peerUsageLoading = false
+    }
+  }
+
+  // Load usage when the Traffic tab is opened or the period changes.
+  $effect(() => {
+    if (activeTab === 'traffic' && selectedNode) {
+      peerUsagePeriod // track
+      loadPeerUsage()
+    }
+  })
 
   let showCreateModal = $state(false)
   let showNodeModal = $state(false)
@@ -812,6 +839,42 @@
               {/if}
             </div>
           {/if}
+
+        {:else if activeTab === 'traffic'}
+          <!-- Traffic Tab - per-destination byte breakdown (conntrack) -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs text-muted-foreground">Where this peer's traffic went, by bytes.</div>
+              <div class="flex gap-1">
+                {#each ['hour','day','week'] as p}
+                  <button
+                    class="px-2 py-0.5 text-[11px] rounded capitalize {peerUsagePeriod === p ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}"
+                    onclick={() => peerUsagePeriod = p}
+                  >{p}</button>
+                {/each}
+              </div>
+            </div>
+
+            {#if peerUsageLoading}
+              <div class="text-xs text-muted-foreground py-6 text-center">Loading…</div>
+            {:else if peerUsage?.destinations?.length}
+              {@const rows = peerUsage.destinations.map(d => ({ ...d, label: d.domain || d.dest_ip }))}
+              <div class="grid grid-cols-2 gap-3">
+                <ContentBlock variant="data" size="sm" solid light label="Uploaded (measured)" value={formatBytes(peerUsage.total_up)} rightIcon="upload" />
+                <ContentBlock variant="data" size="sm" solid light label="Downloaded (measured)" value={formatBytes(peerUsage.total_down)} rightIcon="download" />
+              </div>
+              <BarList data={rows} labelKey="label" valueKey="bytes_total" labelWidth="w-40" format={formatBytes} barClass="bg-info" />
+              <p class="text-[10px] text-muted-foreground">
+                Measured via connection tracking; totals approximate the peer's WireGuard total (intra-VPN and still-open flows excluded).
+              </p>
+            {:else}
+              <div class="text-center py-6 space-y-1">
+                <Icon name="chart-bar" size={24} class="mx-auto text-muted-foreground/50" />
+                <div class="text-sm text-foreground">No destination data yet</div>
+                <div class="text-[11px] text-muted-foreground">Enable the <span class="font-mono">conntrack</span> watcher in Settings → Logs, then generate some traffic.</div>
+              </div>
+            {/if}
+          </div>
 
         {:else if activeTab === 'qr'}
           <!-- WireGuard QR & Config Tab - Side by side layout -->
