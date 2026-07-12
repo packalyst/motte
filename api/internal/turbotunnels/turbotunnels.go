@@ -92,22 +92,45 @@ func GetStatus() Status {
 }
 
 // Start starts the container, creating it from the local image if needed.
+//
+// A container left over from a previous `docker compose up` can reference a
+// vpn-network ID that no longer exists (the network is recreated with a new ID
+// each time the stack comes up), which makes a plain start fail with
+// "network ... not found". Since turbotunnels is stateless, any existing but
+// non-running container is removed and recreated fresh so it binds to the
+// current network.
 func Start() error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// If the container already exists, just start it.
+	// Inspect the current container (if any).
 	resp, err := helper.DockerRequest("GET", "/containers/"+ContainerName+"/json", nil)
 	if err != nil {
 		return fmt.Errorf("docker API error: %v", err)
 	}
 	exists := resp.StatusCode == http.StatusOK
+	var info struct {
+		State struct {
+			Running bool `json:"Running"`
+		} `json:"State"`
+	}
+	if exists {
+		json.NewDecoder(resp.Body).Decode(&info)
+	}
 	resp.Body.Close()
 
-	if !exists {
-		if err := createContainer(); err != nil {
-			return err
+	if exists && info.State.Running {
+		return nil // already up
+	}
+	if exists {
+		// Remove the stale/stopped container so we recreate with a fresh
+		// network binding.
+		if rm, _ := helper.DockerRequest("DELETE", "/containers/"+ContainerName+"?force=true", nil); rm != nil {
+			rm.Body.Close()
 		}
+	}
+	if err := createContainer(); err != nil {
+		return err
 	}
 
 	startResp, err := helper.DockerRequest("POST", "/containers/"+ContainerName+"/start", nil)
@@ -152,7 +175,11 @@ func createContainer() error {
 		},
 		"NetworkingConfig": map[string]interface{}{
 			"EndpointsConfig": map[string]interface{}{
-				"vpn-network": map[string]interface{}{},
+				"vpn-network": map[string]interface{}{
+					"IPAMConfig": map[string]interface{}{
+						"IPv4Address": helper.GetEnvOptional("TURBOTUNNELS_CONTAINER_IP", "172.18.0.5"),
+					},
+				},
 			},
 		},
 	}

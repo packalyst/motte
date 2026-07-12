@@ -3,6 +3,7 @@ package sources
 import (
 	"bufio"
 	"context"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -86,10 +87,11 @@ func (w *ConntrackWatcher) Start(ctx context.Context) error {
 	ctx, w.cancel = context.WithCancel(ctx)
 
 	// Byte counters are off by default; without this, conntrack reports no
-	// bytes and we'd have nothing to attribute. Best-effort — the container
-	// is privileged with host networking, so this normally succeeds.
-	if out, err := exec.Command("sysctl", "-w", "net.netfilter.nf_conntrack_acct=1").CombinedOutput(); err != nil {
-		w.lastError.Store("could not enable nf_conntrack_acct: " + string(out))
+	// bytes and we'd have nothing to attribute. Write the proc knob directly
+	// (the image has no sysctl binary). Best-effort — the container is
+	// privileged with host networking, so this normally succeeds.
+	if err := os.WriteFile("/proc/sys/net/netfilter/nf_conntrack_acct", []byte("1\n"), 0644); err != nil {
+		w.lastError.Store("could not enable nf_conntrack_acct: " + err.Error())
 	}
 
 	// -E: event mode, -e DESTROY: only closed flows (final byte counts).
