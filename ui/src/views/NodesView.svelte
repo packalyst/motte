@@ -187,11 +187,17 @@
   let peerUsage = $state(null)
   let peerUsageLoading = $state(false)
   let peerUsagePeriod = $state('day')
+  let conntrackStatus = $state(null)   // { enabled, running, lastError, processed }
 
   async function loadPeerUsage() {
     const ip = selectedNode?._ip
     if (!ip) { peerUsage = null; return }
     peerUsageLoading = true
+    // Watcher status explains an empty breakdown (disabled / erroring / no flows yet).
+    try {
+      const statuses = await apiGet('/api/logs/status')
+      conntrackStatus = (Array.isArray(statuses) ? statuses : []).find(s => s.name === 'conntrack') || null
+    } catch { conntrackStatus = null }
     try {
       peerUsage = await apiGet(`/api/logs/peer-usage?peer=${encodeURIComponent(ip)}&period=${peerUsagePeriod}`)
     } catch (e) {
@@ -854,6 +860,23 @@
                 {/each}
               </div>
             </div>
+
+            <!-- conntrack watcher status: explains why the list may be empty -->
+            {#if conntrackStatus && !conntrackStatus.enabled}
+              <div class="flex items-start gap-2 p-2 bg-warning/10 rounded text-[11px]">
+                <Icon name="alert-triangle" size={13} class="text-warning mt-0.5 shrink-0" />
+                <div>The <span class="font-mono">conntrack</span> watcher is <strong>disabled</strong>. Enable it in Settings → Logs Watchers to record per-destination traffic.</div>
+              </div>
+            {:else if conntrackStatus?.lastError}
+              <div class="flex items-start gap-2 p-2 bg-destructive/10 rounded text-[11px]">
+                <Icon name="alert-triangle" size={13} class="text-destructive mt-0.5 shrink-0" />
+                <div class="break-all">conntrack error: {conntrackStatus.lastError}</div>
+              </div>
+            {:else if conntrackStatus}
+              <div class="text-[10px] text-muted-foreground">
+                conntrack watcher: {conntrackStatus.running ? 'running' : 'stopped'} · {conntrackStatus.processed ?? 0} flows recorded
+              </div>
+            {/if}
 
             {#if peerUsageLoading}
               <div class="text-xs text-muted-foreground py-6 text-center">Loading…</div>
