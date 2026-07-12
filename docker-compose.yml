@@ -227,6 +227,40 @@ services:
     profiles:
       - vpn-router
 
+  # ============================================
+  # TURBOTUNNELS - Chained HTTP/HTTPS forward proxies
+  # tunnels.yaml is generated at startup from JSON
+  # (baked-in tunnels.default.json, or TUNNELS_JSON env override)
+  # ============================================
+  turbotunnels:
+    build: ./turbotunnels
+    container_name: turbotunnels
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "3128:3128"
+      - "1080:1080"
+      - "127.0.0.1:${TURBOTUNNELS_API_PORT:-5000}:5000"  # Control API (localhost only)
+    environment:
+      # Host/IP the proxy binds to inside the container (0.0.0.0 = all)
+      - HOST_IP=${TURBOTUNNELS_HOST_IP:-0.0.0.0}
+      # Optional inline JSON config; empty = use baked-in tunnels.default.json
+      - TUNNELS_JSON=${TUNNELS_JSON:-}
+      # Where the rendered YAML is written / read inside the container
+      - TUNNELS_YAML=${TUNNELS_YAML:-/app/tunnels.yaml}
+      # Control API credentials
+      - TUNNELS_ADMIN_USER=${TUNNELS_ADMIN_USER:-admin}
+      - TUNNELS_ADMIN_PASS=${TUNNELS_ADMIN_PASS:-changeme}
+    # Bring-your-own config: mount a real tunnels.yaml here and it is used as-is,
+    # taking priority over TUNNELS_JSON / the baked-in default.
+    # volumes:
+    #   - ./turbotunnels/tunnels.yaml:/app/tunnels.yaml
+    networks:
+      vpn-network:
+        ipv4_address: ${TURBOTUNNELS_CONTAINER_IP:-172.18.0.5}
+    profiles:
+      - turbotunnels
+
 volumes:
   api_data:
 

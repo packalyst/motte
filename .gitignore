@@ -11,6 +11,7 @@ traefik/logs/
 api_data/
 
 # Generated configs from templates
+turbotunnels/tunnels.yaml
 headscale/config/config.yaml
 headscale/config/acl.json
 traefik/traefik.yml
@@ -30,6 +31,10 @@ ui/package-lock.json
 # Go build artifacts
 api/api
 api/*.db
+
+# Python bytecode
+__pycache__/
+*.pyc
 
 # IDE
 .vscode/

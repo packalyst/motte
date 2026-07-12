@@ -1,0 +1,16 @@
+{
+  "tunnels": [
+    {
+      "listen_url": "http://",
+      "listen_user": "user",
+      "listen_pass": "pass",
+      "host_ip": "${HOST_IP}",
+      "listen_port": 3128,
+      "tunnel_url": "http://",
+      "tunnel_user": "user",
+      "tunnel_pass": "pass",
+      "tunnel_ip": "",
+      "tunnel_port": 3128
+    }
+  ]
+}
