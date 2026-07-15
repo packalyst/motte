@@ -184,7 +184,11 @@ func (w *ConntrackWatcher) processLine(line string, onClose bool) {
 	if !hasPrefix(peerIP, w.config.WgIPPrefix) && !hasPrefix(peerIP, w.config.HeadscaleIPPrefix) {
 		return
 	}
-	if isPrivateIP(destIP) {
+	// Skip generic LAN/private destinations, but keep VPN-internal ones (other
+	// peers / internal services) so split-tunnel traffic is still recorded.
+	if isPrivateIP(destIP) &&
+		!hasPrefix(destIP, w.config.WgIPPrefix) &&
+		!hasPrefix(destIP, w.config.HeadscaleIPPrefix) {
 		return
 	}
 
