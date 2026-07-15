@@ -327,6 +327,11 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 	// Forward chain - traffic routed THROUGH the server (VPN clients)
 	// Needs both saddr (block bad sources) and daddr (block bad destinations)
 	forwardRules := []string{
+		"# Clamp TCP MSS to the path MTU so large packets always fit the tunnel.",
+		"# Fixes slow VPN throughput (dropped oversized packets) without needing",
+		"# to tune MTU on each client. Non-terminating: only rewrites SYN packets.",
+		"tcp flags syn tcp option maxseg size set rt mtu",
+		"",
 		"# Allow established connections",
 		"ct state established,related accept",
 		"",
