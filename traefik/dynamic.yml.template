@@ -129,6 +129,11 @@ http:
         contentTypeNosniff: true
         browserXssFilter: true
         referrerPolicy: "strict-origin-when-cross-origin"
+        # HSTS: browsers ignore this over plain HTTP and only honor it over a
+        # valid HTTPS connection, so it is inert on an IP/HTTP setup and only
+        # activates once SSL is enabled. 1 year, current host only (no
+        # includeSubdomains/preload to avoid surprising other subdomains).
+        stsSeconds: 31536000
 
     # VPN-only with custom error page
     sentinel_vpn:
