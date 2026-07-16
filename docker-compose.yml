@@ -161,6 +161,8 @@ services:
       - HEADSCALE_ACL_PATH=${HEADSCALE_ACL_PATH:-/headscale/config/acl.json}
       - NFTABLES_ACL_PATH=${NFTABLES_ACL_PATH:-/etc/nftables.d/vpn-acl.nft}
       - HEADSCALE_BASE_DOMAIN=${HEADSCALE_BASE_DOMAIN}
+      # Turbotunnels: so the panel shows the same tunnels/creds the container runs
+      - TUNNELS_JSON=${TUNNELS_JSON:-}
     volumes:
       - api_data:/data
       - /var/log:/var/log:ro
