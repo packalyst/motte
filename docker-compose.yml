@@ -244,6 +244,11 @@ services:
     environment:
       # Host/IP the proxy binds to inside the container (0.0.0.0 = all)
       - HOST_IP=${TURBOTUNNELS_HOST_IP:-0.0.0.0}
+      # Proxy auth (substituted into the config). When started from the admin
+      # panel these are overridden with generated values; these are fallbacks
+      # for a standalone `docker compose` run.
+      - PROXY_USER=${TURBOTUNNELS_PROXY_USER:-proxy}
+      - PROXY_PASS=${TURBOTUNNELS_PROXY_PASS:-changeme}
       # Optional inline JSON config; empty = use baked-in tunnels.default.json
       - TUNNELS_JSON=${TUNNELS_JSON:-}
       # Where the rendered YAML is written / read inside the container

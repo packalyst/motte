@@ -32,12 +32,15 @@ var mu sync.Mutex
 
 // Status is the lifecycle state reported to the UI.
 type Status struct {
-	Status      string    `json:"status"` // running, stopped, not_created, error
-	ContainerUp bool      `json:"containerUp"`
-	Exists      bool      `json:"exists"`
-	Image       string    `json:"image"`
-	LastCheck   time.Time `json:"lastCheck"`
-	Error       string    `json:"error,omitempty"`
+	Status      string       `json:"status"` // running, stopped, not_created, error
+	ContainerUp bool         `json:"containerUp"`
+	Exists      bool         `json:"exists"`
+	Image       string       `json:"image"`
+	LastCheck   time.Time    `json:"lastCheck"`
+	Error       string       `json:"error,omitempty"`
+	AdminUser   string       `json:"adminUser,omitempty"`
+	AdminPass   string       `json:"adminPass,omitempty"`
+	Tunnels     []TunnelInfo `json:"tunnels,omitempty"` // proxy endpoints + example commands
 }
 
 // imageName returns the locally-built image name. docker-compose tags built
@@ -50,6 +53,13 @@ func imageName() string {
 // GetStatus inspects the container and reports its lifecycle state.
 func GetStatus() Status {
 	status := Status{Status: "not_created", Image: imageName(), LastCheck: time.Now()}
+
+	// Credentials + connection info are always shown so the user knows what to
+	// use (they're generated on first access and stay stable).
+	creds := ensureCredentials()
+	status.AdminUser = creds.AdminUser
+	status.AdminPass = creds.AdminPass
+	status.Tunnels = tunnelList(creds)
 
 	resp, err := helper.DockerRequest("GET", "/containers/"+ContainerName+"/json", nil)
 	if err != nil {
@@ -150,15 +160,21 @@ func Start() error {
 // createContainer creates the turbotunnels container from the locally-built
 // image, mirroring the docker-compose service definition.
 func createContainer() error {
+	creds := ensureCredentials()
 	config := map[string]interface{}{
 		"Image":    imageName(),
 		"Hostname": ContainerName,
 		"Env": []string{
 			"HOST_IP=" + helper.GetEnvOptional("TURBOTUNNELS_HOST_IP", "0.0.0.0"),
+			// Proxy auth: gen_config substitutes ${PROXY_USER}/${PROXY_PASS}
+			// into the tunnel config.
+			"PROXY_USER=" + creds.ProxyUser,
+			"PROXY_PASS=" + creds.ProxyPass,
 			"TUNNELS_JSON=" + helper.GetEnvOptional("TUNNELS_JSON", ""),
 			"TUNNELS_YAML=" + helper.GetEnvOptional("TUNNELS_YAML", "/app/tunnels.yaml"),
-			"TUNNELS_ADMIN_USER=" + helper.GetEnvOptional("TUNNELS_ADMIN_USER", "admin"),
-			"TUNNELS_ADMIN_PASS=" + helper.GetEnvOptional("TUNNELS_ADMIN_PASS", "changeme"),
+			// Control-API auth: generated, never a known default.
+			"TUNNELS_ADMIN_USER=" + creds.AdminUser,
+			"TUNNELS_ADMIN_PASS=" + creds.AdminPass,
 		},
 		"ExposedPorts": map[string]interface{}{
 			"3128/tcp": struct{}{},

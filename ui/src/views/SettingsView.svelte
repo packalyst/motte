@@ -1115,9 +1115,31 @@
         </div>
         <div class="kt-panel-body">
           {#if turbotunnelsStatus?.status === 'running'}
-            <p class="text-[10px] text-muted-foreground">
-              Chained HTTP/HTTPS forward proxies are running (ports 3128 / 1080).
-            </p>
+            <div class="space-y-2">
+              <p class="text-[10px] text-muted-foreground">Authenticated forward proxy — point apps at it with the credentials below.</p>
+              {#each turbotunnelsStatus.tunnels || [] as t}
+                <div class="p-2 rounded bg-muted/40 space-y-1.5">
+                  <div class="flex items-center gap-2 text-xs font-semibold">
+                    <Badge variant="info" size="sm">{t.protocol.toUpperCase()}</Badge>
+                    <span class="font-mono">{t.host}:{t.port}</span>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
+                    <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
+                  </div>
+                  <ContentBlock variant="data" label="Example" value={t.command} mono copyable padding="sm" />
+                </div>
+              {/each}
+              {#if turbotunnelsStatus.adminUser}
+                <details class="text-[10px] text-muted-foreground">
+                  <summary class="cursor-pointer select-none">Control API (reload) credentials</summary>
+                  <div class="mt-1 grid grid-cols-2 gap-2">
+                    <ContentBlock variant="data" label="Admin user" value={turbotunnelsStatus.adminUser} mono copyable padding="sm" />
+                    <ContentBlock variant="data" label="Admin pass" value={turbotunnelsStatus.adminPass} mono copyable padding="sm" />
+                  </div>
+                </details>
+              {/if}
+            </div>
           {:else if turbotunnelsStatus?.status === 'error'}
             <div class="flex items-start gap-2 p-2 bg-destructive/10 rounded">
               <Icon name="alert-triangle" size={14} class="text-destructive mt-0.5 shrink-0" />

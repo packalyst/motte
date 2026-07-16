@@ -47,21 +47,27 @@ def load_config():
         return json.load(file)
 
 
+def is_direct(tunnel):
+    """A tunnel is 'direct' (a plain forward proxy, no upstream hop) when its
+    tunnel_url is empty or tcp:// and no tunnel_ip is set. Otherwise it is
+    'chained' through an upstream proxy and needs a tunnel_ip."""
+    tunnel_url = str(tunnel.get("tunnel_url", "")).strip()
+    tunnel_ip = str(tunnel.get("tunnel_ip", "")).strip()
+    return tunnel_url in ("", "tcp://") and not tunnel_ip
+
+
 def validate_tunnel(tunnel, index):
     """Return a list of human-readable warnings for one tunnel entry.
 
-    An entry is only useful if it has an upstream target to forward to
-    (tunnel_url + tunnel_ip). Missing values produce a doomed turbo-tunnel
-    command like `-t http://:3128`, so warn clearly instead.
+    A direct proxy is valid on its own. A chained proxy needs a real upstream
+    (tunnel_ip); a missing one produces a doomed `-t http://:port`, so warn.
     """
     warnings = []
     label = f"tunnel #{index + 1}"
-    if not str(tunnel.get("tunnel_url", "")).strip():
-        warnings.append(f"{label}: missing 'tunnel_url' (upstream protocol)")
-    if not str(tunnel.get("tunnel_ip", "")).strip():
-        warnings.append(f"{label}: missing 'tunnel_ip' (upstream target host)")
     if not str(tunnel.get("listen_url", "")).strip():
         warnings.append(f"{label}: missing 'listen_url' (local listen protocol)")
+    if not is_direct(tunnel) and not str(tunnel.get("tunnel_ip", "")).strip():
+        warnings.append(f"{label}: missing 'tunnel_ip' (upstream target host)")
     return warnings
 
 

@@ -58,6 +58,14 @@ def update_yaml(yaml_file, tunnel_data):
     with open(yaml_file, 'w') as file:
         yaml.safe_dump(data, file)
 
+# Build a "proto://[user:pass@]host:port" endpoint string from its parts.
+def build_endpoint(proto, user, passwd, host, port):
+    endpoint = proto
+    if user and passwd:
+        endpoint += str(user) + ':' + str(passwd) + '@'
+    endpoint += str(host) + ':' + str(port)
+    return endpoint
+
 # Start tunnels from configuration
 def start_tunnels(config_data):
     global processes
@@ -67,19 +75,27 @@ def start_tunnels(config_data):
             for warning in warnings:
                 print(f"[start_tunnels] SKIP {warning}")
             continue
-        tunnel_command = 'turbo-tunnel -l ' + tunnel_config["listen_url"]
-        if tunnel_config["listen_user"] and tunnel_config["listen_pass"]:
-            tunnel_command += tunnel_config["listen_user"] + ':' + tunnel_config["listen_pass"] + '@'
-        tunnel_command += tunnel_config["host_ip"] + ':' + str(tunnel_config["listen_port"])
-        tunnel_command += ' -t ' + tunnel_config["tunnel_url"]
-        if tunnel_config["tunnel_user"] and tunnel_config["tunnel_pass"]:
-            tunnel_command += tunnel_config["tunnel_user"] + ':' + tunnel_config["tunnel_pass"] + '@'
-        tunnel_command += tunnel_config["tunnel_ip"] + ':' + str(tunnel_config["tunnel_port"])
-        if "plugin" in tunnel_config:
-            if tunnel_config["plugin"]:
-                tunnel_command += ' -p '+ tunnel_config["plugin"] 
-        print(tunnel_command)
-        proc = subprocess.Popen(tunnel_command, shell=True)
+        listen = build_endpoint(
+            tunnel_config["listen_url"], tunnel_config["listen_user"],
+            tunnel_config["listen_pass"], tunnel_config["host_ip"],
+            tunnel_config["listen_port"],
+        )
+        # Pass argv as a list with shell=False (default) so config values can
+        # never be interpreted by a shell (no command injection).
+        cmd = ['turbo-tunnel', '-l', listen]
+        # Direct proxy: omit -t (turbo-tunnel defaults to a direct connection).
+        # Chained proxy: forward through the configured upstream.
+        if not gen_config.is_direct(tunnel_config):
+            target = build_endpoint(
+                tunnel_config["tunnel_url"], tunnel_config["tunnel_user"],
+                tunnel_config["tunnel_pass"], tunnel_config["tunnel_ip"],
+                tunnel_config["tunnel_port"],
+            )
+            cmd += ['-t', target]
+        if tunnel_config.get("plugin"):
+            cmd += ['-p', tunnel_config["plugin"]]
+        print(' '.join(cmd))
+        proc = subprocess.Popen(cmd)
         processes.append(proc)
         print(f"Started tunnel: with PID: {proc.pid}")
 

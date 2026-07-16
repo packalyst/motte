@@ -2,15 +2,15 @@
   "tunnels": [
     {
       "listen_url": "http://",
-      "listen_user": "user",
-      "listen_pass": "pass",
+      "listen_user": "${PROXY_USER}",
+      "listen_pass": "${PROXY_PASS}",
       "host_ip": "${HOST_IP}",
       "listen_port": 3128,
-      "tunnel_url": "http://",
-      "tunnel_user": "user",
-      "tunnel_pass": "pass",
+      "tunnel_url": "tcp://",
+      "tunnel_user": "",
+      "tunnel_pass": "",
       "tunnel_ip": "",
-      "tunnel_port": 3128
+      "tunnel_port": ""
     }
   ]
 }
