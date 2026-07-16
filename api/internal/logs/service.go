@@ -192,5 +192,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"DeleteLogs":     s.handleDeleteLogs,
 		"GetPeerUsage":   s.handleGetPeerUsage,
 		"ResetPeerUsage": s.handleResetPeerUsage,
+		"GetTopTalkers":  s.handleGetTopTalkers,
 	}
 }

@@ -82,7 +82,7 @@
 
   async function loadAll() {
     loading = true
-    await Promise.all(Object.keys(typeMeta).map(loadType))
+    await Promise.all([...Object.keys(typeMeta).map(loadType), loadTopTalkers()])
     loading = false
   }
 
@@ -98,6 +98,15 @@
   let selectedPeer = $state('')
   let peerUsage = $state(null)
   let peerUsageLoading = $state(false)
+
+  // Top talkers (peers by bytes, from conntrack) — shown on the overview.
+  let topTalkers = $state([])
+  async function loadTopTalkers() {
+    try {
+      const res = await apiGet(`/api/logs/top-talkers?period=${period}`)
+      topTalkers = res.talkers || []
+    } catch { topTalkers = [] }
+  }
 
   async function loadPeers() {
     try {
@@ -126,6 +135,36 @@
     selectedPeer; period; selectedType
     if (selectedType === 'outbound' && selectedPeer) loadPeerUsage()
   })
+
+  // ── CSV export of the current drill-in view ──
+  function csvCell(v) {
+    const s = String(v ?? '')
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+  }
+  function downloadCsv() {
+    const d = data[selectedType]
+    if (!d) return
+    const lines = []
+    const section = (title, rows, cols) => {
+      if (!rows?.length) return
+      lines.push(title, cols.join(','))
+      for (const r of rows) lines.push(cols.map(c => csvCell(r[c])).join(','))
+      lines.push('')
+    }
+    section('Top source IPs', d.top_clients, ['ip', 'country', 'count'])
+    section('Top countries', d.top_countries, ['country', 'count'])
+    if (selectedType === 'outbound') section('Top destinations', d.top_dest_ips, ['ip', 'country', 'count'])
+    if (selectedType === 'inbound') { section('Top domains', d.top_domains, ['domain', 'count']); section('Top paths', d.top_paths, ['domain', 'path', 'count']) }
+    if (selectedType === 'dns') section('Top blocked', d.top_blocked, ['domain', 'count'])
+    if (selectedType === 'fw') { section('Top ports', d.top_dest_ports, ['status', 'count']); section('Top rules', d.top_rules, ['status', 'count']) }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `analytics-${selectedType || 'all'}-${period}${selectedPeer ? '-' + selectedPeer : ''}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   function trend(cur, prev) {
     if (!prev || prev === 0) return null
@@ -194,18 +233,23 @@
             Back
           </Button>
         {/if}
-        <Select value={period} onchange={(e) => setPeriod(e.target.value)} class="flex-1 sm:flex-none sm:w-40">
+        <Select value={period} onchange={(e) => setPeriod(e.target.value)} class="flex-1 sm:flex-none sm:w-36">
           <option value="hour">Last hour</option>
           <option value="day">Last 24 hours</option>
           <option value="week">Last 7 days</option>
         </Select>
-        <Select value={selectedPeer} onchange={(e) => { selectedPeer = e.target.value }} class="flex-1 sm:flex-none sm:w-48">
+        <Select value={selectedPeer} onchange={(e) => { selectedPeer = e.target.value }} class="flex-1 sm:flex-none sm:w-44">
           <option value="">All nodes</option>
           {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
         </Select>
       </div>
       <div class="w-full border-t border-border sm:hidden"></div>
       <div class="kt-btn-group self-end sm:self-auto">
+        {#if selectedType}
+          <Button variant="outline" size="sm" icon="download" onclick={downloadCsv}>
+            Export
+          </Button>
+        {/if}
         <Button variant="outline" size="sm" icon="refresh" onclick={loadAll}>
           Refresh
         </Button>
@@ -330,6 +374,30 @@
             </button>
           {/each}
         </div>
+
+        <!-- Top talkers by bytes (conntrack) — click to drill into that node's outbound -->
+        {#if topTalkers.length}
+          {@const maxTalker = maxOf(topTalkers.map(t => ({ count: t.total })))}
+          <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
+            <div class="text-sm font-semibold mb-4">Top talkers (by bytes)</div>
+            <div class="space-y-2.5">
+              {#each topTalkers as t}
+                <button
+                  type="button"
+                  onclick={() => { selectedPeer = t.peer; setType('outbound') }}
+                  title="View {t.name || t.peer} outbound traffic"
+                  class="flex items-center gap-3 text-sm w-full text-left rounded px-1 -mx-1 transition hover:bg-muted/50"
+                >
+                  <span class="w-40 shrink-0 truncate text-xs font-mono">{t.name || t.peer}</span>
+                  <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                    <div class="h-full bg-info" style="width: {(t.total / maxTalker) * 100}%"></div>
+                  </div>
+                  <span class="font-mono text-xs w-20 text-right tabular-nums">{fmtBytes(t.total)}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
 
         {#if Object.values(data).every(d => !d || d.error || d.total_count === 0)}
           <EmptyState
@@ -488,14 +556,19 @@
                 <div class="text-sm font-semibold mb-4">Top source IPs</div>
                 <div class="space-y-2.5">
                   {#each d.top_clients as row}
-                    <div class="flex items-center gap-3 text-sm">
+                    <button
+                      type="button"
+                      onclick={() => { selectedPeer = row.ip }}
+                      title="Filter to {row.ip}"
+                      class="flex items-center gap-3 text-sm w-full text-left rounded px-1 -mx-1 transition hover:bg-muted/50 {selectedPeer === row.ip ? 'bg-muted/50' : ''}"
+                    >
                       <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
                       <span class="w-32 shrink-0 truncate text-xs font-mono">{row.ip}</span>
                       <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                         <div class="h-full {typeMeta[selectedType].bar}" style="width: {(row.count / maxClient) * 100}%"></div>
                       </div>
                       <span class="font-mono text-xs w-14 text-right tabular-nums">{fmtNumber(row.count)}</span>
-                    </div>
+                    </button>
                   {/each}
                 </div>
               </div>

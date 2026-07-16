@@ -143,6 +143,53 @@ func (s *Service) handleGetPeerUsage(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, resp)
 }
 
+// TopTalker is one peer's total byte usage over a period.
+type TopTalker struct {
+	Peer  string `json:"peer"`
+	Name  string `json:"name,omitempty"`
+	Up    int64  `json:"up"`
+	Down  int64  `json:"down"`
+	Total int64  `json:"total"`
+}
+
+// handleGetTopTalkers handles GET /api/logs/top-talkers?period=day
+// Returns the peers that moved the most bytes (from the conntrack rollup),
+// joined to their client name.
+func (s *Service) handleGetTopTalkers(w http.ResponseWriter, r *http.Request) {
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		period = "day"
+	}
+	since := periodSince(period)
+
+	rows, err := s.db.Query(`
+		SELECT t.peer_ip, COALESCE(c.name, ''),
+		       SUM(t.bytes_up) AS up, SUM(t.bytes_down) AS down
+		FROM traffic_usage t
+		LEFT JOIN vpn_clients c ON t.peer_ip = c.ip
+		WHERE t.bucket >= ?
+		GROUP BY t.peer_ip
+		ORDER BY up + down DESC
+		LIMIT 10
+	`, since)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	talkers := []TopTalker{}
+	for rows.Next() {
+		var t TopTalker
+		if err := rows.Scan(&t.Peer, &t.Name, &t.Up, &t.Down); err != nil {
+			continue
+		}
+		t.Total = t.Up + t.Down
+		talkers = append(talkers, t)
+	}
+	router.JSON(w, map[string]interface{}{"period": period, "talkers": talkers})
+}
+
 // handleResetPeerUsage handles DELETE /api/logs/peer-usage?peer=<ip>
 // Clears the byte rollup for one peer (or all peers if peer is omitted), so
 // measurement effectively restarts from zero. In-flight flows keep their
