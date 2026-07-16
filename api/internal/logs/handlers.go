@@ -42,7 +42,7 @@ type StatsResponse struct {
 	TotalBytes     int64         `json:"total_bytes"`
 	TimeSeries     []Bucket      `json:"time_series"`
 	TopClients     []ClientStat  `json:"top_clients"`
-	TopCountries   []CountryStat `json:"top_countries"`   // src for inbound/dns/fw, dest for outbound
+	TopCountries   []CountryStat `json:"top_countries"` // src for inbound/dns/fw, dest for outbound
 
 	// Inbound-specific (Traefik)
 	TopDomains []DomainStat  `json:"top_domains,omitempty"`
@@ -233,11 +233,30 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		bucketFmt = "%Y-%m-%d %H:00:00" // hourly for 1d
 	}
 
+	// Optional per-node filter: restrict every aggregation to one source IP.
+	client := r.URL.Query().Get("client")
+	clientCond := ""
+	if client != "" {
+		clientCond = " AND logs_src_ip = ?"
+	}
+	// pArgs builds the arg list for a per-type query whose first placeholder is
+	// `interval`, appending the client filter when present (keeps ? order aligned).
+	pArgs := func() []interface{} {
+		if client != "" {
+			return []interface{}{interval, client}
+		}
+		return []interface{}{interval}
+	}
+
 	typeFilter := ""
 	args := []interface{}{interval}
 	if logType != "" {
-		typeFilter = " AND logs_type = ?"
+		typeFilter += " AND logs_type = ?"
 		args = append(args, logType)
+	}
+	if client != "" {
+		typeFilter += " AND logs_src_ip = ?"
+		args = append(args, client)
 	}
 
 	stats := StatsResponse{}
@@ -253,8 +272,12 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	prevArgs := []interface{}{prevStart, interval}
 	prevFilter := ""
 	if logType != "" {
-		prevFilter = " AND logs_type = ?"
+		prevFilter += " AND logs_type = ?"
 		prevArgs = append(prevArgs, logType)
+	}
+	if client != "" {
+		prevFilter += " AND logs_src_ip = ?"
+		prevArgs = append(prevArgs, client)
 	}
 	s.db.QueryRow(`
 		SELECT COUNT(*) FROM logs
@@ -345,9 +368,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			SELECT logs_domain, COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_domain != ''
-			  AND logs_type = 'inbound'
+			  AND logs_type = 'inbound'`+clientCond+`
 			GROUP BY logs_domain ORDER BY cnt DESC LIMIT 10
-		`, interval)
+		`, pArgs()...)
 		if domainRows != nil {
 			defer domainRows.Close()
 			for domainRows.Next() {
@@ -363,9 +386,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			SELECT COALESCE(logs_domain, ''), logs_path, COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'inbound'
-			  AND logs_path != ''
+			  AND logs_path != ''`+clientCond+`
 			GROUP BY logs_domain, logs_path ORDER BY cnt DESC LIMIT 10
-		`, interval)
+		`, pArgs()...)
 		if pathRows != nil {
 			defer pathRows.Close()
 			for pathRows.Next() {
@@ -387,9 +410,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'inbound'
-			  AND logs_status != ''
+			  AND logs_status != ''`+clientCond+`
 			GROUP BY bucket ORDER BY bucket
-		`, interval)
+		`, pArgs()...)
 		if httpRows != nil {
 			defer httpRows.Close()
 			for httpRows.Next() {
@@ -408,9 +431,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			SELECT logs_status, COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'dns'
-			  AND logs_status != ''
+			  AND logs_status != ''`+clientCond+`
 			GROUP BY logs_status ORDER BY cnt DESC
-		`, interval)
+		`, pArgs()...)
 		if statusRows != nil {
 			defer statusRows.Close()
 			for statusRows.Next() {
@@ -425,9 +448,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			SELECT logs_query_type, COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'dns'
-			  AND logs_query_type != ''
+			  AND logs_query_type != ''`+clientCond+`
 			GROUP BY logs_query_type ORDER BY cnt DESC LIMIT 10
-		`, interval)
+		`, pArgs()...)
 		if qtRows != nil {
 			defer qtRows.Close()
 			for qtRows.Next() {
@@ -441,16 +464,16 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		s.db.QueryRow(`
 			SELECT COALESCE(SUM(logs_cached), 0) FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
-			  AND logs_type = 'dns'
-		`, interval).Scan(&stats.CachedCount)
+			  AND logs_type = 'dns'`+clientCond+`
+		`, pArgs()...).Scan(&stats.CachedCount)
 
 		// Blocked count
 		s.db.QueryRow(`
 			SELECT COUNT(*) FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'dns'
-			  AND (logs_status LIKE '%BLOCK%' OR logs_status LIKE '%FILTER%')
-		`, interval).Scan(&stats.BlockedCount)
+			  AND (logs_status LIKE '%BLOCK%' OR logs_status LIKE '%FILTER%')`+clientCond+`
+		`, pArgs()...).Scan(&stats.BlockedCount)
 
 		// Top blocked domains
 		blockedRows, _ := s.db.Query(`
@@ -458,9 +481,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'dns'
 			  AND logs_domain != ''
-			  AND (logs_status LIKE '%BLOCK%' OR logs_status LIKE '%FILTER%')
+			  AND (logs_status LIKE '%BLOCK%' OR logs_status LIKE '%FILTER%')`+clientCond+`
 			GROUP BY logs_domain ORDER BY cnt DESC LIMIT 10
-		`, interval)
+		`, pArgs()...)
 		if blockedRows != nil {
 			defer blockedRows.Close()
 			for blockedRows.Next() {
@@ -479,9 +502,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			SELECT logs_protocol, COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'outbound'
-			  AND logs_protocol != ''
+			  AND logs_protocol != ''`+clientCond+`
 			GROUP BY logs_protocol ORDER BY cnt DESC
-		`, interval)
+		`, pArgs()...)
 		if protoRows != nil {
 			defer protoRows.Close()
 			for protoRows.Next() {
@@ -496,9 +519,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			SELECT logs_dest_ip, COALESCE(logs_dest_country, ''), COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'outbound'
-			  AND logs_dest_ip != ''
+			  AND logs_dest_ip != ''`+clientCond+`
 			GROUP BY logs_dest_ip ORDER BY cnt DESC LIMIT 10
-		`, interval)
+		`, pArgs()...)
 		if destRows != nil {
 			defer destRows.Close()
 			for destRows.Next() {
@@ -517,9 +540,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			SELECT CAST(logs_dest_port AS TEXT), COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'fw'
-			  AND logs_dest_port > 0
+			  AND logs_dest_port > 0`+clientCond+`
 			GROUP BY logs_dest_port ORDER BY cnt DESC LIMIT 10
-		`, interval)
+		`, pArgs()...)
 		if portRows != nil {
 			defer portRows.Close()
 			for portRows.Next() {
@@ -534,9 +557,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			SELECT logs_rule, COUNT(*) as cnt FROM logs
 			WHERE logs_timestamp > datetime('now', ?)
 			  AND logs_type = 'fw'
-			  AND logs_rule != ''
+			  AND logs_rule != ''`+clientCond+`
 			GROUP BY logs_rule ORDER BY cnt DESC LIMIT 10
-		`, interval)
+		`, pArgs()...)
 		if ruleRows != nil {
 			defer ruleRows.Close()
 			for ruleRows.Next() {

@@ -72,7 +72,8 @@
 
   async function loadType(type) {
     try {
-      const res = await apiGet(`/api/logs/stats?type=${type}&period=${period}`)
+      const clientParam = selectedPeer ? `&client=${encodeURIComponent(selectedPeer)}` : ''
+      const res = await apiGet(`/api/logs/stats?type=${type}&period=${period}${clientParam}`)
       data[type] = res
     } catch (e) {
       data[type] = { error: e.message }
@@ -86,7 +87,7 @@
   }
 
   $effect(() => {
-    period                        // dep
+    period; selectedPeer          // deps — reload all stats when either changes
     loadAll()
   })
 
@@ -120,9 +121,9 @@
     }
   }
 
-  // Reload the per-node breakdown when the node or period changes.
+  // Reload the per-node byte breakdown when the node, period, or type changes.
   $effect(() => {
-    selectedPeer; period
+    selectedPeer; period; selectedType
     if (selectedType === 'outbound' && selectedPeer) loadPeerUsage()
   })
 
@@ -197,6 +198,10 @@
           <option value="hour">Last hour</option>
           <option value="day">Last 24 hours</option>
           <option value="week">Last 7 days</option>
+        </Select>
+        <Select value={selectedPeer} onchange={(e) => { selectedPeer = e.target.value }} class="flex-1 sm:flex-none sm:w-48">
+          <option value="">All nodes</option>
+          {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
         </Select>
       </div>
       <div class="w-full border-t border-border sm:hidden"></div>
@@ -394,21 +399,12 @@
             </div>
           {/if}
 
-          {#if selectedType === 'outbound'}
-            <!-- Per-node traffic breakdown (bytes, from conntrack) -->
+          {#if selectedType === 'outbound' && selectedPeer}
+            <!-- Byte breakdown for the selected node (from conntrack) -->
             <div class="bg-card border border-border rounded-lg p-4 shadow-sm space-y-3">
-              <div class="flex items-center justify-between gap-2 flex-wrap">
-                <div class="text-sm font-semibold">Per-node traffic (bytes)</div>
-                <Select value={selectedPeer} onchange={(e) => selectedPeer = e.target.value} class="w-full sm:w-64">
-                  <option value="">Select a node…</option>
-                  {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
-                </Select>
-              </div>
-
+              <div class="text-sm font-semibold">Traffic by destination (bytes)</div>
               {#if peerUsageLoading}
                 <div class="text-xs text-muted-foreground py-6 text-center">Loading…</div>
-              {:else if !selectedPeer}
-                <div class="text-xs text-muted-foreground py-4 text-center">Select a node to see where its traffic went, by bytes.</div>
               {:else if peerUsage}
                 <div class="grid grid-cols-2 lg:grid-cols-3 gap-3">
                   <StatCard icon="upload" color="info" value={fmtBytes(peerUsage.total_up)} label="Uploaded" />
@@ -435,7 +431,7 @@
                     />
                   </div>
                 {:else}
-                  <div class="text-xs text-muted-foreground py-2">No per-destination data for this node yet — enable the conntrack watcher in Settings → Logs Watchers.</div>
+                  <div class="text-xs text-muted-foreground py-2">No per-destination byte data yet — enable the conntrack watcher in Settings → Logs Watchers.</div>
                 {/if}
               {/if}
             </div>
