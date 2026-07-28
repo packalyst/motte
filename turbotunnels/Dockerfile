@@ -9,17 +9,16 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Create a non-privileged user that the app will run under.
-# See https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user
+# Install Python deps system-wide (available to the unprivileged user below).
+RUN python3 -m pip install --no-cache-dir turbo-tunnel pyyaml flask flask-httpauth psutil
 
-RUN apt-get update \
- && apt-get install -y sudo
-RUN adduser --disabled-password --gecos '' turbotunnels
-RUN adduser turbotunnels sudo
-RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-RUN python3 -m pip install turbo-tunnel pyyaml flask flask-httpauth psutil
-COPY gen_config.py /app/
-COPY tunnels.default.json /app/
-COPY launch_tunnels.py /app/
-COPY https.py /app/
+# Run as an unprivileged user (NO sudo). The proxy binds only high ports
+# (3128/1080/5000) and writes its config under /app, so root is never needed.
+RUN adduser --disabled-password --gecos '' turbotunnels \
+ && chown turbotunnels:turbotunnels /app
+
+# App files, owned by the runtime user so gen_config can (re)write tunnels.yaml.
+COPY --chown=turbotunnels:turbotunnels gen_config.py tunnels.default.json launch_tunnels.py https.py /app/
+
+USER turbotunnels
 CMD python3 launch_tunnels.py

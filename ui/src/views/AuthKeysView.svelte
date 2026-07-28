@@ -100,12 +100,18 @@
     }
   }
 
+  // Escape values before putting them into an {@html}-rendered dialog string,
+  // so a crafted username can never inject markup/JS (defense in depth).
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  }
+
   async function confirmExpireKey(key) {
     const confirmed = await confirm({
       title: 'Expire Auth Key',
       message: 'Expire this key?',
       description: 'This key will no longer work to register new devices. This action cannot be undone.',
-      details: `<p><strong>Key:</strong> <code class="font-mono">${key.key?.substring(0, 16)}...</code></p><p><strong>User:</strong> ${key.userName || key.user}</p>`,
+      details: `<p><strong>Key:</strong> <code class="font-mono">${esc(key.key?.substring(0, 16))}...</code></p><p><strong>User:</strong> ${esc(key.userName || key.user)}</p>`,
       confirmText: 'Expire Key',
       alert: true
     })

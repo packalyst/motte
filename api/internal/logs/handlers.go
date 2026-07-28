@@ -629,7 +629,9 @@ func (s *Service) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	if search != "" {
 		query += " AND (logs_domain LIKE ? OR logs_src_ip LIKE ? OR logs_dest_ip LIKE ?)"
-		like := "%" + search + "%"
+		// Escape LIKE wildcards (same as handleGetLogs) so a search containing
+		// % or _ can't match — and delete — far more rows than the preview showed.
+		like := "%" + database.EscapeLikePattern(search) + "%"
 		args = append(args, like, like, like)
 	}
 

@@ -45,13 +45,16 @@ func randHex(n int) string {
 
 // ensureCredentials returns stored credentials, generating and persisting them
 // on first use so the container never runs with a default/known password.
+// Values are stored AES-256-GCM encrypted; a value that fails to decrypt (e.g.
+// a legacy plaintext value from before this change) is treated as missing and
+// regenerated, so the credentials are simply rotated once on upgrade.
 func ensureCredentials() Credentials {
 	get := func(key, prefix string, n int) string {
-		if v, err := settings.GetSetting(key); err == nil && v != "" {
+		if v, err := settings.GetSettingEncrypted(key); err == nil && v != "" {
 			return v
 		}
 		v := prefix + randHex(n)
-		_ = settings.SetSetting(key, v)
+		_ = settings.SetSettingEncrypted(key, v)
 		return v
 	}
 	return Credentials{

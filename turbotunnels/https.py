@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import hmac
 import re
 
 import tornado.iostream
@@ -302,9 +303,8 @@ class HTTPSTunnelServer(server.TunnelServer):
                         if header == "Proxy-Authorization":
                             value = self.request.headers[header]
                             auth_type, auth_value = value.split()
-                            if (
-                                auth_type == "Basic"
-                                and auth_value == auth.http_basic_auth(*auth_data)
+                            if auth_type == "Basic" and hmac.compare_digest(
+                                auth_value, auth.http_basic_auth(*auth_data)
                             ):
                                 break
                     else:

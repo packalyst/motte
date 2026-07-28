@@ -115,10 +115,9 @@ func (s *Service) GetHub() *Hub {
 // HandleWebSocket handles WebSocket upgrade requests
 // Authentication is done via first message after connection (more secure than URL query param)
 func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Check for token in query string (legacy support) or accept connection for message-based auth
-	token := r.URL.Query().Get("token")
-
-	// Upgrade to WebSocket first (auth will happen via message if no token in URL)
+	// Upgrade to WebSocket first; authentication happens via the first message.
+	// The token is never accepted in the URL query — that would leak it into
+	// proxy/access logs and browser history.
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
@@ -134,42 +133,30 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	var user *auth.User
 
-	// If token in URL (legacy), validate immediately
-	// Note: URL tokens are less secure (appear in logs) - prefer message-based auth
-	if token != "" {
-		user, err = authSvc.ValidateSession(token)
-		if err != nil {
-			conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid or expired token"}`))
-			conn.Close()
-			return
-		}
-	} else {
-		// Wait for auth message (with timeout)
-		conn.SetReadDeadline(time.Now().Add(helper.WebSocketReadTimeout))
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			conn.Close()
-			return
-		}
-		conn.SetReadDeadline(time.Time{}) // Reset deadline
+	// Authenticate via the first message: {"action":"auth","token":"..."}.
+	conn.SetReadDeadline(time.Now().Add(helper.WebSocketReadTimeout))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		conn.Close()
+		return
+	}
+	conn.SetReadDeadline(time.Time{}) // Reset deadline
 
-		// Parse auth message
-		var authMsg struct {
-			Action string `json:"action"`
-			Token  string `json:"token"`
-		}
-		if err := json.Unmarshal(msg, &authMsg); err != nil || authMsg.Action != "auth" || authMsg.Token == "" {
-			conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid auth message"}`))
-			conn.Close()
-			return
-		}
+	var authMsg struct {
+		Action string `json:"action"`
+		Token  string `json:"token"`
+	}
+	if err := json.Unmarshal(msg, &authMsg); err != nil || authMsg.Action != "auth" || authMsg.Token == "" {
+		conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid auth message"}`))
+		conn.Close()
+		return
+	}
 
-		user, err = authSvc.ValidateSession(authMsg.Token)
-		if err != nil {
-			conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid or expired token"}`))
-			conn.Close()
-			return
-		}
+	user, err = authSvc.ValidateSession(authMsg.Token)
+	if err != nil {
+		conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid or expired token"}`))
+		conn.Close()
+		return
 	}
 
 	// Create client

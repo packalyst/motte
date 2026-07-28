@@ -60,8 +60,10 @@ func getUserIDByName(name string) (string, error) {
 
 // CreateUser creates a new Headscale user
 func CreateUser(name string) error {
-	body := fmt.Sprintf(`{"name": "%s"}`, name)
-	resp, err := helper.HeadscalePost("/user", body)
+	// Build the body with json.Marshal (never string-format) so a name with a
+	// quote/backslash can't break out of or inject into the JSON.
+	b, _ := json.Marshal(map[string]string{"name": name})
+	resp, err := helper.HeadscalePost("/user", string(b))
 	if err != nil {
 		return err
 	}
@@ -312,6 +314,12 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	// Validate the name (same rule as delete) so it can never carry HTML/JS
+	// that later gets rendered in the UI. Root-cause fix for stored XSS.
+	if !validName.MatchString(req.Name) {
+		router.JSONError(w, "invalid user name (allowed: letters, digits, _ and -)", http.StatusBadRequest)
 		return
 	}
 	body, _ := json.Marshal(req)

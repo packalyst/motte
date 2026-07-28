@@ -127,15 +127,17 @@ func (r *Router) registerCombinedEndpointV2(actualPattern string, handlers []rou
 			}
 		}
 
-		// Try method matching without strict path match for parameterized routes
+		// Nothing strictly matched. NEVER dispatch a handler whose path did not
+		// match — that let a malformed URL (e.g. /api/wg/peers/5/typo) silently
+		// fire an unrelated action. Distinguish 405 (a route exists at this path
+		// but not for this method) from 404 (no such route).
 		for _, rh := range handlers {
-			if r.methodAllowed(req.Method, rh.methods) {
-				rh.handler(w, req)
+			if r.pathMatches(path, rh.fullPattern) {
+				JSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
 		}
-
-		JSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		JSONError(w, "Not found", http.StatusNotFound)
 	})
 }
 
