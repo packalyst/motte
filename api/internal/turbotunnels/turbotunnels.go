@@ -47,7 +47,6 @@ type Status struct {
 	Error       string       `json:"error,omitempty"`
 	Tunnels     []TunnelInfo `json:"tunnels"`        // configured proxies + example commands
 	Drift       bool         `json:"drift"`          // saved config differs from what's running
-	Logs        string       `json:"logs,omitempty"` // recent container logs (surfaced on failure)
 }
 
 // imageName returns the locally-built image name. docker-compose tags built
@@ -121,12 +120,6 @@ func GetStatus() Status {
 		status.Status = "stopped"
 	}
 	status.Drift = info.Config.Labels[labelConfigHash] != savedHash
-
-	// If it exists but isn't running, surface recent logs so a crash-on-start
-	// (bad upstream, etc.) is visible in the UI rather than a silent "stopped".
-	if status.Exists && !status.ContainerUp {
-		status.Logs = recentLogs()
-	}
 	return status
 }
 
@@ -285,21 +278,6 @@ func reconcileFirewall() {
 	if fw := firewall.GetService(); fw != nil {
 		fw.SyncAndReapply()
 	}
-}
-
-// recentLogs returns the tail of the container's logs, used to surface a
-// startup failure in the UI. Best-effort: returns "" on any error.
-func recentLogs() string {
-	resp, err := helper.DockerRequest("GET", "/containers/"+ContainerName+"/logs?stdout=true&stderr=true&tail=40", nil)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
-	return string(demuxDockerLog(body))
 }
 
 // demuxDockerLog strips the 8-byte multiplexing headers Docker prepends to each

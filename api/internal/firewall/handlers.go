@@ -159,6 +159,36 @@ func (s *Service) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 // Helper functions
 
 // getDistinctValues returns distinct values from a column
+// getDistinctEntrySources returns the distinct `source` values among firewall
+// entries, optionally restricted to a single action ("block"/"allow"). The
+// blocked-entries filter passes action="block" so it only offers sources that
+// actually appear on blocked rows — never allow-only sources like 'system'/
+// 'docker', which would otherwise be dead options returning an empty list.
+func (s *Service) getDistinctEntrySources(action string) []string {
+	query := "SELECT DISTINCT source FROM firewall_entries"
+	args := []interface{}{}
+	if action == "block" || action == "allow" {
+		query += " WHERE action = ?"
+		args = append(args, action)
+	}
+	query += " ORDER BY source"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return []string{}
+	}
+	defer rows.Close()
+
+	values := []string{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err == nil && v != "" {
+			values = append(values, v)
+		}
+	}
+	return values
+}
+
 func (s *Service) getDistinctValues(table, column string) []string {
 	if !isValidSQLIdentifier(table) || !isValidSQLIdentifier(column) {
 		return []string{}

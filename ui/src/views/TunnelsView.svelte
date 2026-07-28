@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, confirm, setConfirmLoading } from '../stores/app.js'
+  import { subscribeToLogs, unsubscribeFromLogs, dockerLogsStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
@@ -21,6 +22,11 @@
   let busy = $state(false)
   let refreshTimer = null
 
+  // Logs viewer modal (live stream, reusing the Docker logs WS channel).
+  let showLogsModal = $state(false)
+  let logsAutoScroll = $state(true)
+  let logsElement = $state(null)
+
   // Modal form state.
   let showModal = $state(false)
   let modalMode = $state('create') // create | edit
@@ -33,6 +39,12 @@
   // tunnel by id, so the card can show a copy-paste command when running.
   const infoById = $derived(
     Object.fromEntries((status?.tunnels || []).map((t) => [t.id, t]))
+  )
+
+  // Search / filter by tunnel name.
+  let searchQuery = $state('')
+  const filteredTunnels = $derived(
+    config.tunnels.filter((t) => (t.name || '').toLowerCase().includes(searchQuery.toLowerCase()))
   )
 
   function blankForm() {
@@ -220,12 +232,64 @@
     if (ok) await restart()
   }
 
+  function openLogs() {
+    showLogsModal = true
+    subscribeToLogs('turbotunnels')
+  }
+
+  function closeLogs() {
+    showLogsModal = false
+    unsubscribeFromLogs()
+  }
+
+  // Log line styling + timestamp formatting (matches the Docker logs viewer).
+  function getLogLevel(message) {
+    const lower = (message || '').toLowerCase()
+    if (lower.includes('error') || lower.includes('fatal') || lower.includes('panic')) return 'error'
+    if (lower.includes('warn')) return 'warn'
+    if (lower.includes('debug') || lower.includes('trace')) return 'debug'
+    if (lower.includes('info')) return 'info'
+    return 'default'
+  }
+
+  function getLogClass(log) {
+    if (log.stream === 'stderr') return 'text-destructive'
+    const level = getLogLevel(log.message)
+    if (level === 'error') return 'text-destructive'
+    if (level === 'warn') return 'text-warning'
+    if (level === 'debug') return 'text-muted-foreground'
+    if (level === 'info') return 'text-info'
+    return 'text-foreground'
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return ''
+    try {
+      const d = new Date(ts)
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+      return `${months[d.getMonth()]} ${String(d.getDate()).padStart(2,'0')} ${ts.substring(11,19)}`
+    } catch {
+      return ts.substring(11, 19)
+    }
+  }
+
+  // Auto-scroll the log view as new lines stream in.
+  $effect(() => {
+    const logs = $dockerLogsStore
+    if (logsAutoScroll && logsElement && logs.length > 0) {
+      logsElement.scrollTop = logsElement.scrollHeight
+    }
+  })
+
   onMount(() => {
     refresh()
     // Light polling so running/stopped state stays fresh while the page is open.
     refreshTimer = setInterval(loadStatus, 5000)
   })
-  onDestroy(() => clearInterval(refreshTimer))
+  onDestroy(() => {
+    clearInterval(refreshTimer)
+    unsubscribeFromLogs()
+  })
 </script>
 
 <div class="space-y-4">
@@ -233,33 +297,37 @@
     icon="arrows-right-left"
     title="Tunnels"
     description="Authenticated HTTP forward proxies. Direct tunnels exit from this server; chained tunnels forward through another proxy. Config is stored encrypted and applied by (re)starting the proxy."
-  />
-
-  <Toolbar>
-    <div class="flex items-center justify-between w-full gap-2">
-      <div class="flex items-center gap-2">
-        {#if status}
-          {#if running}
-            <Badge variant="success" size="sm">Running</Badge>
-          {:else if status.status === 'stopped'}
-            <Badge variant="warning" size="sm">Stopped</Badge>
-          {:else if status.status === 'error'}
-            <Badge variant="destructive" size="sm">Error</Badge>
-          {:else}
-            <Badge variant="muted" size="sm">Not running</Badge>
-          {/if}
-        {/if}
-      </div>
-      <div class="flex items-center gap-2">
+  >
+    {#if status}
+      <div class="mt-3 flex items-center gap-2 text-xs">
+        <span class="text-muted-foreground">Proxy status:</span>
         {#if running}
-          <Button size="sm" variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
-          <Button size="sm" variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
+          <Badge variant="success" size="sm">Running</Badge>
+        {:else if status.status === 'stopped'}
+          <Badge variant="warning" size="sm">Stopped</Badge>
+        {:else if status.status === 'error'}
+          <Badge variant="destructive" size="sm">Error</Badge>
         {:else}
-          <Button size="sm" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
+          <Badge variant="muted" size="sm">Not running</Badge>
         {/if}
-        <Button size="sm" icon="plus" onclick={openCreate}>Add tunnel</Button>
+        {#if config.tunnels.length}
+          <span class="text-muted-foreground">· {config.tunnels.length} tunnel{config.tunnels.length === 1 ? '' : 's'}</span>
+        {/if}
       </div>
+    {/if}
+  </InfoCard>
+
+  <Toolbar bind:search={searchQuery} placeholder="Search tunnels...">
+    <div class="kt-btn-group">
+      {#if running}
+        <Button size="sm" variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
+        <Button size="sm" variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
+      {:else}
+        <Button size="sm" variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
+      {/if}
     </div>
+    <Button size="sm" variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
+    <Button size="sm" icon="plus" onclick={openCreate}>Add tunnel</Button>
   </Toolbar>
 
   <!-- Drift banner: saved config differs from what's running -->
@@ -280,12 +348,6 @@
       <div class="text-xs text-foreground break-all">{status.error}</div>
     </div>
   {/if}
-  {#if status?.logs && !running && status?.exists}
-    <details class="text-xs">
-      <summary class="cursor-pointer select-none text-muted-foreground">Container logs (stopped)</summary>
-      <pre class="mt-2 p-2 rounded bg-muted/40 overflow-x-auto text-[11px] whitespace-pre-wrap">{status.logs}</pre>
-    </details>
-  {/if}
 
   <!-- Tunnels list -->
   {#if config.tunnels.length === 0}
@@ -298,9 +360,15 @@
         <Button variant="outline" icon="plus" onclick={openCreate}>Add tunnel</Button>
       </div>
     </EmptyState>
+  {:else if filteredTunnels.length === 0}
+    <EmptyState
+      icon="search"
+      title="No matching tunnels"
+      description="No tunnel names match your search." />
   {:else}
     <div class="space-y-2">
-      {#each config.tunnels as t, i (t.id || i)}
+      {#each filteredTunnels as t (t.id || t.name)}
+        {@const i = config.tunnels.indexOf(t)}
         {@const info = infoById[t.id]}
         {@const chained = !!(t.upstream && t.upstream.host)}
         <div class="bg-card border border-border rounded-lg px-4 py-3">
@@ -321,9 +389,9 @@
                 </p>
               </div>
             </div>
-            <div class="flex items-center gap-1">
-              <Button size="sm" variant="ghost" icon="pencil" onclick={() => openEdit(i)} title="Edit" />
-              <Button size="sm" variant="ghost" icon="trash" onclick={() => deleteTunnel(i)} title="Delete" />
+            <div class="kt-btn-group">
+              <Button size="sm" variant="outline" icon="pencil" onclick={() => openEdit(i)}>Edit</Button>
+              <Button size="sm" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}>Delete</Button>
             </div>
           </div>
 
@@ -390,5 +458,51 @@
         {modalMode === 'create' ? 'Add tunnel' : 'Save changes'}
       </Button>
     </div>
+  {/snippet}
+</Modal>
+
+<!-- Logs viewer (live stream over the Docker logs WS channel) -->
+<Modal bind:open={showLogsModal} title="Proxy logs" size="lg" onclose={closeLogs}>
+  <div class="space-y-3">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+        <span class="text-sm text-muted-foreground">Live streaming</span>
+        <Badge variant="muted" size="sm">{$dockerLogsStore.length} lines</Badge>
+      </div>
+      <Checkbox bind:checked={logsAutoScroll} label="Auto-scroll" />
+    </div>
+
+    <div bind:this={logsElement} class="bg-secondary border border-border rounded-lg max-h-[400px] overflow-auto">
+      {#if $dockerLogsStore.length === 0}
+        <div class="flex items-center justify-center py-12 text-muted-foreground">
+          <div class="w-5 h-5 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin mr-2"></div>
+          Waiting for logs...
+        </div>
+      {:else}
+        <table class="w-full text-xs font-mono">
+          <thead class="sticky top-0 bg-secondary border-b border-border">
+            <tr class="text-muted-foreground text-left">
+              <th class="px-2 py-1.5 w-10 text-right">#</th>
+              <th class="px-2 py-1.5 w-32">Timestamp</th>
+              <th class="px-2 py-1.5">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each $dockerLogsStore as log, i}
+              <tr class="hover:bg-muted/30 border-b border-border/20 last:border-0">
+                <td class="px-2 py-1 text-muted-foreground/40 text-right align-top select-none">{i + 1}</td>
+                <td class="px-2 py-1 text-muted-foreground/60 align-top whitespace-nowrap">{formatTimestamp(log.timestamp)}</td>
+                <td class="px-2 py-1 align-top break-all {getLogClass(log)}">{log.message}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </div>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={closeLogs} variant="secondary">Close</Button>
   {/snippet}
 </Modal>

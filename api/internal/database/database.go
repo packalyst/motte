@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -299,7 +300,7 @@ func createSchema(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS logs (
 		logs_id INTEGER PRIMARY KEY AUTOINCREMENT,
 		logs_timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		logs_type TEXT NOT NULL CHECK(logs_type IN ('outbound', 'inbound', 'dns', 'fw')),
+		logs_type TEXT NOT NULL CHECK(logs_type IN ('outbound', 'inbound', 'dns', 'fw', 'proxy')),
 
 		-- Source
 		logs_src_ip TEXT NOT NULL,
@@ -469,6 +470,64 @@ func runMigrations(db *sql.DB) {
 	if err == nil && count == 0 {
 		if _, err := db.Exec(`ALTER TABLE domain_routes ADD COLUMN skip_cert_verify BOOLEAN DEFAULT 0`); err == nil {
 			log.Printf("Migration: added skip_cert_verify column to domain_routes")
+		}
+	}
+
+	// Allow the 'proxy' log type (turbotunnels connections). SQLite can't ALTER
+	// a CHECK constraint, so rebuild the logs table if it doesn't permit it yet.
+	// The table is capped by the logs cleanup job, so the copy is cheap.
+	var logsSQL string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='logs'`).Scan(&logsSQL); err == nil {
+		if strings.Contains(logsSQL, "CHECK(logs_type IN") && !strings.Contains(logsSQL, "'proxy'") {
+			stmts := []string{
+				`ALTER TABLE logs RENAME TO logs_old`,
+				`CREATE TABLE logs (
+					logs_id INTEGER PRIMARY KEY AUTOINCREMENT,
+					logs_timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					logs_type TEXT NOT NULL CHECK(logs_type IN ('outbound', 'inbound', 'dns', 'fw', 'proxy')),
+					logs_src_ip TEXT NOT NULL,
+					logs_src_country TEXT,
+					logs_dest_ip TEXT,
+					logs_dest_port INTEGER,
+					logs_dest_country TEXT,
+					logs_domain TEXT,
+					logs_protocol TEXT,
+					logs_status TEXT,
+					logs_duration INTEGER,
+					logs_bytes INTEGER,
+					logs_cached INTEGER DEFAULT 0,
+					logs_method TEXT,
+					logs_path TEXT,
+					logs_router TEXT,
+					logs_service TEXT,
+					logs_query_type TEXT,
+					logs_upstream TEXT,
+					logs_rule TEXT
+				)`,
+				`INSERT INTO logs SELECT * FROM logs_old`,
+				`DROP TABLE logs_old`,
+				`CREATE INDEX IF NOT EXISTS idx_logs_type_time ON logs(logs_type, logs_timestamp DESC)`,
+				`CREATE INDEX IF NOT EXISTS idx_logs_src ON logs(logs_src_ip, logs_timestamp DESC)`,
+				`CREATE INDEX IF NOT EXISTS idx_logs_domain ON logs(logs_domain)`,
+				`CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(logs_type, logs_status)`,
+			}
+			if tx, err := db.Begin(); err == nil {
+				ok := true
+				for _, stmt := range stmts {
+					if _, err := tx.Exec(stmt); err != nil {
+						log.Printf("Migration: logs 'proxy' type rebuild failed: %v", err)
+						ok = false
+						break
+					}
+				}
+				if ok {
+					if err := tx.Commit(); err == nil {
+						log.Printf("Migration: rebuilt logs table to allow 'proxy' type")
+					}
+				} else {
+					tx.Rollback()
+				}
+			}
 		}
 	}
 }

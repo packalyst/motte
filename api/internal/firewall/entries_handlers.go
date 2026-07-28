@@ -50,9 +50,12 @@ func (s *Service) handleGetEntries(w http.ResponseWriter, r *http.Request) {
 	countQuery := "SELECT COUNT(*) FROM firewall_entries WHERE " + where
 	_ = s.db.QueryRow(countQuery, args...).Scan(&total)
 
-	// Get filter options (types are known constants, only sources need DB query)
+	// Get filter options (types are known constants, only sources need DB query).
+	// Sources are scoped to the current action so the blocked-entries filter only
+	// offers sources that actually appear on blocks (not allow-only sources like
+	// 'system'/'docker', which would always return an empty list).
 	types := []string{"ip", "range", "country", "port"}
-	sources := s.getDistinctValues("firewall_entries", "source")
+	sources := s.getDistinctEntrySources(actionFilter)
 
 	query := fmt.Sprintf(`SELECT id, entry_type, value, action, direction, protocol, source,
 		COALESCE(reason, ''), COALESCE(name, ''), essential, expires_at, enabled, hit_count, created_at

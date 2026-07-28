@@ -336,9 +336,9 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Top countries — src for inbound/dns/fw, dest for outbound
+	// Top countries — src for inbound/dns/fw, dest for outbound/proxy
 	countryCol := "logs_src_country"
-	if logType == "outbound" {
+	if logType == "outbound" || logType == "proxy" {
 		countryCol = "logs_dest_country"
 	}
 	countryRows, _ := s.db.Query(`

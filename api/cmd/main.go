@@ -257,10 +257,10 @@ func main() {
 
 	if config.IsServiceEnabled("turbotunnels") {
 		r.RegisterService("turbotunnels", turbotunnels.New().Handlers())
-		// Mirror proxy auth failures into the file the 'turbotunnels' firewall
-		// jail watches, so brute-force attempts against an exposed proxy get
-		// banned.
-		turbotunnels.StartAuthLogStreamer(context.Background())
+		// Mirror the proxy's log markers: auth failures → the firewall jail
+		// file (ban brute-forcers), authenticated connections → the logs table
+		// (shown on the Logs page).
+		turbotunnels.StartLogStreamer(context.Background())
 		log.Println("Turbotunnels service registered")
 	}
 

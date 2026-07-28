@@ -219,6 +219,12 @@ class HTTPSTunnelServer(server.TunnelServer):
                     self.set_status(400)
                     return
 
+                # Record the authenticated connection for the logs page.
+                utils.logger.info(
+                    "TURBOTUNNELS_CONN SRC=%s DST=%s DPORT=%d"
+                    % (client_ip(self), url.address[0], url.address[1])
+                )
+
                 try:
                     tunn = await self._get_tunnel(url.address)
                 except utils.TunnelError as e:
@@ -356,6 +362,12 @@ class HTTPSTunnelServer(server.TunnelServer):
                     downstream.close()
                     self._finished = True
                     return
+
+                # Record the authenticated connection for the logs page.
+                utils.logger.info(
+                    "TURBOTUNNELS_CONN SRC=%s DST=%s DPORT=%d"
+                    % (client_ip(self), address[0], address[1])
+                )
 
                 with server.TunnelConnection(
                     self.request.connection.context.address,

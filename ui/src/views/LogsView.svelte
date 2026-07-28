@@ -126,6 +126,7 @@
     switch (type) {
       case 'dns': return { icon: 'world-share', label: 'DNS', color: 'text-info' }
       case 'outbound': return { icon: 'arrow-up-right', label: 'Out', color: 'text-warning' }
+      case 'proxy': return { icon: 'arrows-right-left', label: 'Proxy', color: 'text-info' }
       case 'inbound': return { icon: 'arrow-down-left', label: 'In', color: 'text-success' }
       case 'fw': return { icon: 'shield', label: 'FW', color: 'text-danger' }
       default: return { icon: 'question-mark', label: type, color: 'text-muted-foreground' }

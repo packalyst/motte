@@ -10,6 +10,7 @@ const (
 	LogTypeInbound   LogType = "inbound"
 	LogTypeDNS       LogType = "dns"
 	LogTypeFirewall  LogType = "fw"
+	LogTypeProxy     LogType = "proxy" // turbotunnels forward-proxy connections
 )
 
 // LogStatus represents the status of a log entry
@@ -40,6 +41,7 @@ var AllLogTypes = []LogTypeInfo{
 	{Value: LogTypeDNS, Label: "DNS"},
 	{Value: LogTypeInbound, Label: "Inbound"},
 	{Value: LogTypeOutbound, Label: "Outbound"},
+	{Value: LogTypeProxy, Label: "Proxy"},
 	{Value: LogTypeFirewall, Label: "Firewall"},
 }
 
