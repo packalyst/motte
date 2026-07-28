@@ -232,6 +232,12 @@ func (s *Service) ensureDefaultJails() error {
 		{Name: "sshd", Enabled: true, LogFile: "/var/log/auth.log",
 			FilterRegex: `Failed password.*from (\d+\.\d+\.\d+\.\d+)`,
 			MaxRetry: 5, FindTime: 3600, BanTime: 2592000, Port: sshPort, Action: "drop"},
+		// Bans clients that repeatedly fail auth against a turbotunnels proxy.
+		// The api mirrors the proxy's "TURBOTUNNELS_AUTH_FAIL SRC=<ip>" markers
+		// into this file (see turbotunnels.StartAuthLogStreamer).
+		{Name: "turbotunnels", Enabled: true, LogFile: helper.TurbotunnelsAuthLogPath(),
+			FilterRegex: `TURBOTUNNELS_AUTH_FAIL SRC=(\d+\.\d+\.\d+\.\d+)`,
+			MaxRetry: 5, FindTime: 3600, BanTime: 2592000, Port: "all", Action: "drop"},
 	}
 
 	for _, jail := range defaultJails {

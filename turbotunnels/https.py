@@ -105,6 +105,38 @@ class HTTPSTunnelServer(server.TunnelServer):
         this = self
         self._tunnels = {}
 
+        def client_ip(handler):
+            """Best-effort source IP of the proxy client, for auth-fail logging."""
+            try:
+                return handler.request.connection.context.address[0]
+            except Exception:  # noqa: BLE001 - never let logging break the proxy
+                return "?"
+
+        def proxy_auth_ok(handler):
+            """True if the request carries the configured proxy credentials.
+
+            When no listen auth is configured this returns True (open proxy), but
+            the admin panel always provisions a username/password, so in practice
+            every tunnel is authenticated. The comparison is constant-time.
+            """
+            auth_data = this._listen_url.auth
+            if not auth_data:
+                return True
+            creds = auth_data.split(":")
+            value = handler.request.headers.get("Proxy-Authorization", "")
+            parts = value.split()
+            return (
+                len(parts) == 2
+                and parts[0] == "Basic"
+                and hmac.compare_digest(parts[1], auth.http_basic_auth(*creds))
+            )
+
+        # client_ip / proxy_auth_ok are closures over this post_init scope and
+        # are called directly from both request paths (plain HTTP and CONNECT).
+        # They are NOT referenced via `this`, because handle_request rebinds
+        # `this = self` later, which would make `this` a local and raise
+        # UnboundLocalError if used before that assignment.
+
         class EnumHTTPTunnelStatus(object):
 
             IDLE = 1
@@ -163,6 +195,18 @@ class HTTPSTunnelServer(server.TunnelServer):
                 return tunn
 
             async def handle_request(self):
+                # Enforce proxy auth on plain-HTTP requests (the original code
+                # only guarded CONNECT). Reject unauthenticated requests before
+                # any upstream connection is made.
+                if not proxy_auth_ok(self):
+                    utils.logger.info(
+                        "TURBOTUNNELS_AUTH_FAIL SRC=%s" % client_ip(self)
+                    )
+                    self.set_status(407)
+                    self.set_header(
+                        "Proxy-Authenticate", 'Basic realm="turbotunnels"'
+                    )
+                    return
                 s_url = self.request.path
                 if self.request.query:
                     s_url += "?" + self.request.query
@@ -296,26 +340,22 @@ class HTTPSTunnelServer(server.TunnelServer):
                 downstream = tunnel.TCPTunnel(
                     self.request.connection.detach(), server_side=True
                 )
-                auth_data = this._listen_url.auth
-                if auth_data:
-                    auth_data = auth_data.split(":")
-                    for header in self.request.headers:
-                        if header == "Proxy-Authorization":
-                            value = self.request.headers[header]
-                            auth_type, auth_value = value.split()
-                            if auth_type == "Basic" and hmac.compare_digest(
-                                auth_value, auth.http_basic_auth(*auth_data)
-                            ):
-                                break
-                    else:
-                        utils.logger.info(
-                            "[%s] Connection to %s:%d refused due to wrong auth"
-                            % (self.__class__.__name__, address[0], address[1])
-                        )
-                        await downstream.write(b"HTTP/1.1 407 Proxy Authentication Required\r\n")
-                        await downstream.write(b"Proxy-Authenticate: Basic realm=\"Access to the internal site\"\r\n\r\n")        
-                        #self._finished = True
-                        #return
+                # Enforce proxy auth on CONNECT. On failure, reject and RETURN
+                # (the original left the tunnel open after a 407, making every
+                # tunnel an open proxy). The client IP is logged for the jail.
+                if not proxy_auth_ok(self):
+                    utils.logger.info(
+                        "TURBOTUNNELS_AUTH_FAIL SRC=%s" % client_ip(self)
+                    )
+                    await downstream.write(
+                        b"HTTP/1.1 407 Proxy Authentication Required\r\n"
+                    )
+                    await downstream.write(
+                        b'Proxy-Authenticate: Basic realm="turbotunnels"\r\n\r\n'
+                    )
+                    downstream.close()
+                    self._finished = True
+                    return
 
                 with server.TunnelConnection(
                     self.request.connection.context.address,

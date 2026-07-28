@@ -9,8 +9,10 @@ self.addEventListener('install', () => self.skipWaiting())
 // Activate - claim all clients
 self.addEventListener('activate', (e) => e.waitUntil(clients.claim()))
 
-// Fetch - pass through (no caching for now)
-self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request)))
+// Fetch - pass through (no caching for now). Catch failures so a blocked or
+// offline request (e.g. a third-party analytics beacon blocked by the browser)
+// resolves to a network-error Response instead of an uncaught promise rejection.
+self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request).catch(() => Response.error())))
 
 // Push notification received
 self.addEventListener('push', (event) => {

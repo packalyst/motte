@@ -22,10 +22,6 @@
   let routerStatus = $state(null)
   let routerLoading = $state(false)
 
-  // Turbotunnels state
-  let turbotunnelsStatus = $state(null)
-  let turbotunnelsLoading = $state(false)
-
   // Headscale settings
   let headscaleApiUrl = $state('')  // Internal API URL (readonly)
   let headscaleUrl = $state('')     // Public URL (editable)
@@ -530,53 +526,6 @@
     }
   }
 
-  // Turbotunnels functions
-  async function loadTurbotunnelsStatus() {
-    try {
-      turbotunnelsStatus = await apiGet('/api/turbotunnels/status')
-    } catch (e) {
-      turbotunnelsStatus = { status: 'error', error: 'Failed to fetch status' }
-    }
-  }
-
-  async function startTurbotunnels() {
-    turbotunnelsLoading = true
-    try {
-      await apiPost('/api/turbotunnels/start')
-      toast('Turbotunnels started', 'success')
-      await loadTurbotunnelsStatus()
-    } catch (e) {
-      toast('Failed to start turbotunnels: ' + e.message, 'error')
-    } finally {
-      turbotunnelsLoading = false
-    }
-  }
-
-  async function stopTurbotunnels() {
-    turbotunnelsLoading = true
-    try {
-      await apiPost('/api/turbotunnels/stop')
-      toast('Turbotunnels stopped', 'success')
-      await loadTurbotunnelsStatus()
-    } catch (e) {
-      toast('Failed to stop turbotunnels: ' + e.message, 'error')
-    } finally {
-      turbotunnelsLoading = false
-    }
-  }
-
-  async function restartTurbotunnels() {
-    turbotunnelsLoading = true
-    try {
-      await apiPost('/api/turbotunnels/restart')
-      toast('Turbotunnels restarted', 'success')
-      await loadTurbotunnelsStatus()
-    } catch (e) {
-      toast('Failed to restart turbotunnels: ' + e.message, 'error')
-    } finally {
-      turbotunnelsLoading = false
-    }
-  }
 
   // Set VPN-only mode
   async function setVPNOnlyMode(mode) {
@@ -815,7 +764,6 @@
 
   onMount(() => {
     loadSettings()
-    loadTurbotunnelsStatus()
   })
 </script>
 
@@ -1091,82 +1039,6 @@
           {:else}
             <Button onclick={setupRouter} size="sm" icon="play" disabled={routerLoading}>
               {routerLoading ? 'Setting up...' : 'Enable'}
-            </Button>
-          {/if}
-        </div>
-      </div>
-
-      <!-- Turbotunnels -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="arrows-right-left" size={16} />
-            Turbotunnels
-          </h3>
-          {#if turbotunnelsStatus?.status === 'running'}
-            <Badge variant="success" size="sm">Running</Badge>
-          {:else if turbotunnelsStatus?.status === 'stopped'}
-            <Badge variant="warning" size="sm">Stopped</Badge>
-          {:else if turbotunnelsStatus?.status === 'error'}
-            <Badge variant="destructive" size="sm">Error</Badge>
-          {:else}
-            <Badge variant="muted" size="sm">Not created</Badge>
-          {/if}
-        </div>
-        <div class="kt-panel-body">
-          {#if turbotunnelsStatus?.status === 'running'}
-            <div class="space-y-2">
-              <p class="text-[10px] text-muted-foreground">Authenticated forward proxy — point apps at it with the credentials below.</p>
-              {#each turbotunnelsStatus.tunnels || [] as t}
-                <div class="p-2 rounded bg-muted/40 space-y-1.5">
-                  <div class="flex items-center gap-2 text-xs font-semibold">
-                    <Badge variant="info" size="sm">{t.protocol.toUpperCase()}</Badge>
-                    <span class="font-mono">{t.host}:{t.port}</span>
-                  </div>
-                  <div class="grid grid-cols-2 gap-2">
-                    <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
-                    <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
-                  </div>
-                  <ContentBlock variant="data" label="Example" value={t.command} mono copyable padding="sm" />
-                </div>
-              {/each}
-              {#if turbotunnelsStatus.adminUser}
-                <details class="text-[10px] text-muted-foreground">
-                  <summary class="cursor-pointer select-none">Control API (reload) credentials</summary>
-                  <div class="mt-1 grid grid-cols-2 gap-2">
-                    <ContentBlock variant="data" label="Admin user" value={turbotunnelsStatus.adminUser} mono copyable padding="sm" />
-                    <ContentBlock variant="data" label="Admin pass" value={turbotunnelsStatus.adminPass} mono copyable padding="sm" />
-                  </div>
-                </details>
-              {/if}
-            </div>
-          {:else if turbotunnelsStatus?.status === 'error'}
-            <div class="flex items-start gap-2 p-2 bg-destructive/10 rounded">
-              <Icon name="alert-triangle" size={14} class="text-destructive mt-0.5 shrink-0" />
-              <div class="text-[10px] text-foreground break-all">{turbotunnelsStatus.error}</div>
-            </div>
-          {:else if turbotunnelsStatus?.status === 'not_created'}
-            <p class="text-[10px] text-muted-foreground">
-              Start the turbotunnels proxy container. If its image has not been built yet, run
-              <code class="font-mono">docker compose --profile turbotunnels build</code> once first.
-            </p>
-          {:else}
-            <p class="text-[10px] text-muted-foreground">
-              The turbotunnels proxy container is stopped.
-            </p>
-          {/if}
-        </div>
-        <div class="kt-panel-footer">
-          {#if turbotunnelsStatus?.status === 'running'}
-            <Button onclick={restartTurbotunnels} size="sm" variant="secondary" icon="refresh" disabled={turbotunnelsLoading}>
-              {turbotunnelsLoading ? '...' : 'Restart'}
-            </Button>
-            <Button onclick={stopTurbotunnels} size="sm" variant="destructive" icon="player-stop" disabled={turbotunnelsLoading}>
-              {turbotunnelsLoading ? '...' : 'Stop'}
-            </Button>
-          {:else}
-            <Button onclick={startTurbotunnels} size="sm" icon="play" disabled={turbotunnelsLoading}>
-              {turbotunnelsLoading ? 'Starting...' : (turbotunnelsStatus?.status === 'not_created' ? 'Bring up' : 'Start')}
             </Button>
           {/if}
         </div>

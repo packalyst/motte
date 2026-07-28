@@ -366,6 +366,7 @@ var AllowedLogDirs = []string{
 	"/var/log",
 	"/home",
 	"/var/lib/docker",
+	"/data", // app data dir (DATA_DIR); holds the turbotunnels auth-fail log
 }
 
 // ValidateLogFilePath validates a log file path to prevent path traversal

@@ -2129,6 +2129,30 @@ fi
 
 echo ""
 
+# ===========================================
+# Build optional add-on images (compose profiles)
+# ===========================================
+# vpn-router and turbotunnels are gated behind compose profiles, so the plain
+# `up -d --build` above skips them and their images would go stale on update.
+# The admin panel creates and runs these containers itself via the Docker API
+# but CANNOT build images, so build them here on every deploy to keep them in
+# sync with the code. We do NOT start or recreate the containers: the panel owns
+# their lifecycle and their runtime config (e.g. turbotunnels' tunnels) lives in
+# the panel database. A running add-on picks up the new image the next time it
+# is (re)started from the UI.
+echo -e "${YELLOW}Building optional add-on images (turbotunnels, vpn-router)...${NC}"
+if docker compose --profile turbotunnels --profile vpn-router build turbotunnels vpn-router; then
+    echo -e "${GREEN}✓ Add-on images built${NC}"
+    if docker ps --format '{{.Names}}' | grep -Eq '^(turbotunnels|vpn-router)$'; then
+        echo -e "${CYAN}  Note: restart running add-ons from the panel (Tunnels / VPN Router) to apply the new image.${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ Add-on image build skipped/failed (non-fatal). Build later with:${NC}"
+    echo -e "    docker compose --profile turbotunnels --profile vpn-router build"
+fi
+
+echo ""
+
 # Post-deploy SSL certificate check
 if [ "$SSL_ENABLED" = "true" ]; then
     echo -e "${YELLOW}Waiting for SSL certificate...${NC}"

@@ -32,6 +32,15 @@ func GetEnvOptional(key, def string) string {
 	return def
 }
 
+// TurbotunnelsAuthLogPath is the api-owned file the turbotunnels proxy's auth
+// failures are mirrored to and that the 'turbotunnels' firewall jail monitors.
+// It lives under DATA_DIR (writable) because /var/log is read-only in the api
+// container. Defined here so both the turbotunnels writer and the firewall jail
+// agree on the path without an import cycle.
+func TurbotunnelsAuthLogPath() string {
+	return GetEnvOptional("DATA_DIR", "/data") + "/turbotunnels-auth.log"
+}
+
 // GetEnvInt returns the integer value of an environment variable or fatally exits if not set
 func GetEnvInt(key string) int {
 	v := os.Getenv(key)

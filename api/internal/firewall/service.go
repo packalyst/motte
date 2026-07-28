@@ -20,6 +20,26 @@ func init() {
 	LoadBlocklistSources()
 }
 
+// serviceInstance holds the process-wide firewall service so other packages
+// (e.g. turbotunnels) can trigger a Docker-port resync + reapply when they
+// publish or remove container ports. Mirrors geolocation.GetService().
+var serviceInstance *Service
+
+// GetService returns the global firewall service instance (nil before New runs).
+func GetService() *Service {
+	return serviceInstance
+}
+
+// SyncAndReapply re-discovers Docker-published ports and schedules a firewall
+// reapply. Call it after a container's published ports change so the allow
+// rules track the container's actual ports (added on start, removed on stop).
+func (s *Service) SyncAndReapply() {
+	if _, err := s.SyncDockerPortsToDB(); err != nil {
+		log.Printf("firewall: SyncAndReapply: docker port sync failed: %v", err)
+	}
+	s.RequestApply()
+}
+
 // New creates a new firewall service
 func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 	db, err := database.GetDB()
@@ -92,6 +112,7 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 	go svc.runJailMonitors()
 	go svc.runExpirationCleanup()
 
+	serviceInstance = svc
 	log.Printf("Firewall service initialized")
 	return svc, nil
 }
