@@ -11,7 +11,9 @@ WORKDIR /app
 
 # Only turbo-tunnel is needed (it pulls in tornado). No Flask/pyyaml/psutil:
 # there is no control server and no config file any more.
-RUN python3 -m pip install --no-cache-dir turbo-tunnel
+# PINNED: the auth fix works by overwriting this package's https.py below, so
+# the version must match the file we ship. Bump both together, deliberately.
+RUN python3 -m pip install --no-cache-dir turbo-tunnel==0.19.0
 
 # App files.
 COPY run.py https.py /app/

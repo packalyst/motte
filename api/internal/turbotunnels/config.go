@@ -184,6 +184,9 @@ func ValidateConfig(cfg Config) error {
 		}
 
 		if t.Upstream.IsSet() {
+			if !isSafeCredential(t.Upstream.Host) {
+				return fmt.Errorf("%s: upstream host must not contain spaces or any of : @ /", label)
+			}
 			if t.Upstream.Port < 1 || t.Upstream.Port > 65535 {
 				return fmt.Errorf("%s: upstream port %d is out of range (1-65535)", label, t.Upstream.Port)
 			}

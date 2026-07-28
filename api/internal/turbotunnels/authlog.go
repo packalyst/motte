@@ -8,17 +8,19 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"api/internal/helper"
 )
 
-// authMarker is the token the patched proxy (https.py) emits on a failed proxy
-// authentication, followed by "SRC=<client-ip>". The firewall jail's regex
-// extracts the IP from these lines.
-const authMarker = "TURBOTUNNELS_AUTH_FAIL SRC="
+// authLineRe matches the auth-failure marker the patched proxy (https.py) emits,
+// anchored to a valid IPv4 so no other container log line can spoof it. Only the
+// canonical "TURBOTUNNELS_AUTH_FAIL SRC=<ip>" substring is mirrored to the jail
+// file — surrounding log text is never written — so unstructured subprocess
+// stdout can't inject content into the jail's input.
+var authLineRe = regexp.MustCompile(`TURBOTUNNELS_AUTH_FAIL SRC=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
 
 // AuthLogPath is the api-owned file auth failures are mirrored to and that the
 // 'turbotunnels' firewall jail monitors.
@@ -79,8 +81,10 @@ func fetchAuthMarkers(since int64) []string {
 	var out []string
 	scanner := bufio.NewScanner(bytes.NewReader(demuxDockerLog(body)))
 	for scanner.Scan() {
-		if line := scanner.Text(); strings.Contains(line, authMarker) {
-			out = append(out, line)
+		// Mirror only the canonical marker+IP, and only when it carries a valid
+		// IPv4 — never the raw log line.
+		if m := authLineRe.FindString(scanner.Text()); m != "" {
+			out = append(out, m)
 		}
 	}
 	return out

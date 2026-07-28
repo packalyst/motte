@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { theme, apiGet, apiPost, currentView, validViews, setGlobalLogoutHandler, clearSessionTokens } from './stores/app.js'
-  import { connect as wsConnect, disconnect as wsDisconnect, wsUserStore, wsConnected, stopReconnect } from './stores/websocket.js'
+  import { connect as wsConnect, disconnect as wsDisconnect, wsUserStore, stopReconnect } from './stores/websocket.js'
   import Dashboard from './views/Dashboard.svelte'
   import Login from './views/Login.svelte'
   import SetupWizard from './views/SetupWizard.svelte'
@@ -28,21 +28,10 @@
     }
   })
 
-  // Handle WebSocket connection failure (invalid token)
-  let wsConnectAttempted = false
-  $effect(() => {
-    // If we attempted to connect and it failed (not connected, not reconnecting)
-    if (wsConnectAttempted && !$wsConnected && !checking) {
-      // WebSocket failed to connect - token might be invalid
-      const token = localStorage.getItem('session_token')
-      if (token && !user) {
-        // Clear invalid session and stop reconnect attempts
-        clearSessionTokens()
-        stopReconnect()
-        checking = false
-      }
-    }
-  })
+  // Note: session validity is decided by REST (/api/auth/me) on boot, not by
+  // the WebSocket. A WS hiccup (slow handshake behind Cloudflare, cold backend,
+  // transient drop) must NOT clear a valid session — otherwise a refresh logs
+  // the user out. The WS is only for live updates.
 
   // Clear stale tokens when showing login page
   $effect(() => {
@@ -80,19 +69,24 @@
       // Ignore errors
     }
 
-    // Setup is complete, check for existing session
+    // Setup is complete: validate any existing session via REST (the source of
+    // truth), independent of the WebSocket. apiGet clears the token and triggers
+    // logout automatically on a 401, so an invalid/expired token falls through
+    // to the login page; a valid one keeps us signed in across refreshes even if
+    // the WS is slow to connect.
     const token = localStorage.getItem('session_token')
-    if (token) {
-      // Connect WebSocket - it will validate token and send user info via 'init' message
-      wsConnectAttempted = true
+    if (!token) {
+      checking = false
+      return
+    }
+    try {
+      user = await apiGet('/api/auth/me')
+      // Auth established — connect the WebSocket for live updates.
       wsConnect()
-      // Give WebSocket time to connect, then show login if no user
-      setTimeout(() => {
-        if (!user) {
-          checking = false
-        }
-      }, 2000)
-    } else {
+    } catch {
+      // Invalid/expired token: apiGet already cleared the session.
+      stopReconnect()
+    } finally {
       checking = false
     }
   })
