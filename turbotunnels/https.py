@@ -226,11 +226,14 @@ class HTTPSTunnelServer(server.TunnelServer):
                     self.set_status(400)
                     return
 
-                # Record the authenticated connection for the logs page.
-                utils.logger.info(
-                    "TURBOTUNNELS_CONN SRC=%s USER=%s DST=%s DPORT=%d"
-                    % (client_ip(self), listen_user(), url.address[0], url.address[1])
-                )
+                # Record the authenticated connection for the logs page — unless
+                # it's a health probe from the panel (X-TT-Test), which must not
+                # appear in the logs or stats.
+                if not self.request.headers.get("X-TT-Test"):
+                    utils.logger.info(
+                        "TURBOTUNNELS_CONN SRC=%s USER=%s DST=%s DPORT=%d"
+                        % (client_ip(self), listen_user(), url.address[0], url.address[1])
+                    )
 
                 try:
                     tunn = await self._get_tunnel(url.address)

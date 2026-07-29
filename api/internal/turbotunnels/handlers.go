@@ -20,6 +20,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		"GetStatus":      s.handleStatus,
 		"GetStats":       s.handleStats,
+		"TestTunnel":     s.handleTest,
 		"GetConfig":      s.handleGetConfig,
 		"SaveConfig":     s.handleSaveConfig,
 		"GenCredentials": s.handleGenCredentials,
@@ -37,6 +38,20 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 // handleStats returns proxy usage (overall + per tunnel) for the last 24h.
 func (s *Service) handleStats(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, GetProxyStats())
+}
+
+// handleTest probes a tunnel end-to-end (through the proxy) and reports up/down
+// + exit IP. The tunnel must be running to pass.
+func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Port int    `json:"port"`
+		User string `json:"user"`
+		Pass string `json:"pass"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	router.JSON(w, TestTunnel(req.Port, req.User, req.Pass))
 }
 
 // handleGetConfig returns the saved tunnel configuration for the editor.

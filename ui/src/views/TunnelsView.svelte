@@ -8,6 +8,7 @@
   import Modal from '../components/Modal.svelte'
   import Toolbar from '../components/Toolbar.svelte'
   import Input from '../components/Input.svelte'
+  import Select from '../components/Select.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
@@ -21,6 +22,8 @@
   // The editable config (source of truth for tunnels), loaded from /config.
   let config = $state({ tunnels: [] })
   let stats = $state(null)
+  let vpnClients = $state([])          // for the upstream-node selector
+  let testResults = $state({})         // tunnel id -> { testing, ok, exitIp, latencyMs, error }
   let busy = $state(false)
   let refreshTimer = null
 
@@ -56,7 +59,7 @@
       listenPort: '',
       user: '',
       pass: '',
-      chained: false,
+      chained: true, // manual "Add tunnel" defaults to chained; Quick-deploy is direct
       upstream: { host: '', port: '', user: '', pass: '' },
     }
   }
@@ -96,8 +99,35 @@
     }
   }
 
+  async function loadClients() {
+    try {
+      vpnClients = await apiGet('/api/vpn/clients')
+    } catch {
+      vpnClients = []
+    }
+  }
+
+  // Fill the upstream host when a VPN node is picked from the dropdown.
+  function onUpstreamNode(e) {
+    const ip = e.target.value
+    if (ip) form.upstream.host = ip
+  }
+
+  // Probe a tunnel end-to-end (through the proxy) and stash the result by id.
+  async function testTunnel(t) {
+    testResults = { ...testResults, [t.id]: { testing: true } }
+    try {
+      const res = await apiPost('/api/turbotunnels/test', { port: t.listenPort, user: t.user, pass: t.pass })
+      testResults = { ...testResults, [t.id]: res }
+      toast(res.ok ? `Tunnel "${t.name}" is up — exit ${res.exitIp}` : `Tunnel "${t.name}" failed: ${res.error}`, res.ok ? 'success' : 'error')
+    } catch (e) {
+      testResults = { ...testResults, [t.id]: { error: e.message } }
+      toast('Test failed: ' + e.message, 'error')
+    }
+  }
+
   async function refresh() {
-    await Promise.all([loadStatus(), loadConfig(), loadStats()])
+    await Promise.all([loadStatus(), loadConfig(), loadStats(), loadClients()])
     loading = false
   }
 
@@ -200,6 +230,10 @@
   }
 
   async function saveTunnel() {
+    if (form.chained && !form.upstream.host.trim()) {
+      toast('A chained tunnel needs an upstream host — pick a node or enter one.', 'error')
+      return
+    }
     // Build the next config, then persist the whole document.
     const next = { tunnels: [...config.tunnels] }
     const tunnel = buildTunnelFromForm()
@@ -209,10 +243,15 @@
     busy = true
     try {
       status = await apiPut('/api/turbotunnels/config', next)
-      config = next
+      await loadConfig() // pull back with server-assigned IDs
       showModal = false
       toast(modalMode === 'create' ? 'Tunnel added' : 'Tunnel updated', 'success')
-      await maybeOfferRestart()
+      const applied = await maybeOfferRestart()
+      // Test-on-add: once the proxy is running the new config, verify the tunnel.
+      if (applied) {
+        const saved = config.tunnels.find((x) => x.user === tunnel.user && x.listenPort === tunnel.listenPort)
+        if (saved) testTunnel(saved)
+      }
     } catch (e) {
       // Validation errors come back as the message — show them inline.
       toast(e.message, 'error')
@@ -245,8 +284,9 @@
 
   // After a config change, if the proxy is running the change isn't live until
   // a restart — offer it explicitly so the user understands connections drop.
+  // Returns true if the proxy ended up (re)started with the new config.
   async function maybeOfferRestart() {
-    if (!running) return
+    if (!running) return false
     // No tunnels left → the running proxy has nothing to serve; offer to stop.
     if (config.tunnels.length === 0) {
       const ok = await confirm({
@@ -257,7 +297,7 @@
         cancelText: 'Later',
       })
       if (ok) await stop()
-      return
+      return false
     }
     const ok = await confirm({
       title: 'Restart proxy to apply?',
@@ -266,7 +306,11 @@
       confirmText: 'Restart now',
       cancelText: 'Later',
     })
-    if (ok) await restart()
+    if (ok) {
+      await restart()
+      return true
+    }
+    return false
   }
 
   function openLogs() {
@@ -437,10 +481,22 @@
               </div>
             </div>
             <div class="kt-btn-group">
+              <Button size="sm" variant="outline" icon="activity" onclick={() => testTunnel(t)}
+                disabled={!running || testResults[t.id]?.testing} title={running ? 'Test this tunnel' : 'Start the proxy to test'}>
+                {testResults[t.id]?.testing ? '...' : 'Test'}
+              </Button>
               <Button size="sm" variant="outline" icon="pencil" onclick={() => openEdit(i)}>Edit</Button>
               <Button size="sm" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}>Delete</Button>
             </div>
           </div>
+
+          {#if testResults[t.id] && !testResults[t.id].testing}
+            {@const tr = testResults[t.id]}
+            <div class="mt-2 flex items-center gap-1 text-[11px] {tr.ok ? 'text-success' : 'text-destructive'}">
+              <Icon name={tr.ok ? 'circle-check' : 'alert-triangle'} size={12} />
+              {#if tr.ok}Up · exit {tr.exitIp} · {tr.latencyMs}ms{:else}Down · {tr.error}{/if}
+            </div>
+          {/if}
 
           {#if stats?.perUser?.[t.user]}
             {@const ts = stats.perUser[t.user]}
@@ -474,9 +530,42 @@
     <Input label="Name" placeholder="My proxy" bind:value={form.name} prefixIcon="tag" />
     <Input label="Listen port" type="number" placeholder="3128" bind:value={form.listenPort} prefixIcon="plug" />
 
+    <!-- Mode: direct vs chained (chosen first — it drives the rest) -->
     <div>
-      <span class="text-sm font-medium text-foreground">Credentials</span>
-      <p class="text-xs text-muted-foreground mb-2">Every tunnel is internet-facing, so a strong password is required.</p>
+      <span class="text-sm font-medium text-foreground">Mode</span>
+      <p class="text-xs text-muted-foreground mb-2">
+        <b>Direct</b> exits from this server's IP. <b>Chained</b> forwards through another proxy (e.g. a VPN node) and exits from <i>its</i> IP.
+      </p>
+      <div class="flex gap-2">
+        <Checkbox variant="chip" icon="arrow-up-right" checked={!form.chained}
+          onchange={() => form.chained = false} label="Direct" />
+        <Checkbox variant="chip" color="warning" icon="link" checked={form.chained}
+          onchange={() => form.chained = true} label="Chained" />
+      </div>
+    </div>
+
+    {#if form.chained}
+      <div class="space-y-3 border-l-2 border-warning/40 pl-3">
+        <Select label="Upstream node" value={form.upstream.host} onchange={onUpstreamNode}>
+          <option value="">Custom / external proxy…</option>
+          {#each vpnClients as c}
+            <option value={c.ip}>{c.name} ({c.ip})</option>
+          {/each}
+        </Select>
+        <p class="text-[11px] text-muted-foreground -mt-1">Pick a VPN node to reach it by its WG IP, or choose Custom and type any proxy host.</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Input label="Upstream host" placeholder="1.2.3.4 or node IP" bind:value={form.upstream.host} prefixIcon="server" />
+          <Input label="Upstream port" type="number" placeholder="8080" bind:value={form.upstream.port} prefixIcon="plug" />
+          <Input label="Upstream user (optional)" bind:value={form.upstream.user} prefixIcon="user" />
+          <Input label="Upstream password (optional)" bind:value={form.upstream.pass} prefixIcon="key" />
+        </div>
+      </div>
+    {/if}
+
+    <!-- Proxy credentials (what clients use to connect TO this proxy) -->
+    <div class="border-t border-border pt-4">
+      <span class="text-sm font-medium text-foreground">Proxy credentials</span>
+      <p class="text-xs text-muted-foreground mb-2">What clients use to connect to this proxy. Every tunnel is internet-facing, so a strong password is required.</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Input label="Username" bind:value={form.user} prefixIcon="user" />
         <Input label="Password" bind:value={form.pass} prefixIcon="key" />
@@ -484,27 +573,6 @@
       <div class="mt-2">
         <Button size="sm" variant="outline" icon="refresh" onclick={() => generateCreds(form)}>Regenerate</Button>
       </div>
-    </div>
-
-    <div class="border-t border-border pt-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <span class="text-sm font-medium text-foreground">Chain through an upstream proxy</span>
-          <p class="text-xs text-muted-foreground">Off = direct (exits this server). On = forward through another proxy.</p>
-        </div>
-        <Checkbox variant="chip" icon="link" checked={form.chained}
-          onchange={() => form.chained = !form.chained}
-          label={form.chained ? 'Chained' : 'Direct'} />
-      </div>
-
-      {#if form.chained}
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-          <Input label="Upstream host" placeholder="1.2.3.4" bind:value={form.upstream.host} prefixIcon="server" />
-          <Input label="Upstream port" type="number" placeholder="8080" bind:value={form.upstream.port} prefixIcon="plug" />
-          <Input label="Upstream user (optional)" bind:value={form.upstream.user} prefixIcon="user" />
-          <Input label="Upstream password (optional)" bind:value={form.upstream.pass} prefixIcon="key" />
-        </div>
-      {/if}
     </div>
   </div>
 
