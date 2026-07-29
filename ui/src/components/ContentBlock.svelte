@@ -74,6 +74,17 @@
   // Determine icon size based on variant and explicit prop
   const computedIconSize = $derived(iconSize || (variant === 'row' && icon ? 20 : variant === 'box' && icon ? 18 : 16))
 
+  // Copy feedback: briefly swap the copy icon for a checkmark on success.
+  let copied = $state(false)
+  let copyTimer
+  async function doCopy() {
+    if (await copyWithToast(value, toast)) {
+      copied = true
+      clearTimeout(copyTimer)
+      copyTimer = setTimeout(() => (copied = false), 1500)
+    }
+  }
+
   // Text size class for data variant
   const valueTextSize = $derived(size === 'sm' ? 'text-xs' : 'text-sm')
 </script>
@@ -129,8 +140,8 @@
           {/if}
         {/if}
         {#if copyable && value}
-          <button onclick={() => copyWithToast(value, toast)} class="p-0.5 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer">
-            <Icon name="copy" size={12} />
+          <button onclick={doCopy} title={copied ? 'Copied!' : 'Copy'} class="p-0.5 shrink-0 cursor-pointer {copied ? 'text-success' : 'text-muted-foreground hover:text-foreground'}">
+            <Icon name={copied ? 'check' : 'copy'} size={12} />
           </button>
         {/if}
       </div>

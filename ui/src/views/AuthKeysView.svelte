@@ -342,7 +342,7 @@
 
   {#snippet footer()}
     {#if createdKey}
-      <Button onclick={() => copyToClipboard(`tailscale up --login-server=${serverUrl} --authkey=${createdKey.key}`)} icon="copy">Copy Command</Button>
+      <Button copyText={`tailscale up --login-server=${serverUrl} --authkey=${createdKey.key}`} icon="copy">Copy Command</Button>
       <Button onclick={() => { showCreateModal = false; createdKey = null; createForm = { user: '', reusable: false, ephemeral: false, expiration: '90' } }} variant="secondary">Done</Button>
     {:else}
       <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>

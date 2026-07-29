@@ -1,7 +1,5 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast } from '../stores/app.js'
-  import { copyToClipboard } from '../lib/utils/clipboard.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
 
@@ -152,7 +150,7 @@
               <Button onclick={dismiss} variant="ghost" class="flex-1">
                 Maybe later
               </Button>
-              <Button onclick={() => { copyToClipboard(window.location.href); toast('URL copied!', 'success') }} icon="copy" class="flex-1">
+              <Button copyText={window.location.href} icon="copy" class="flex-1">
                 Copy URL
               </Button>
             </div>

@@ -1,6 +1,5 @@
 <script>
   import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
-  import { copyWithToast } from '../stores/helpers.js'
   import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
@@ -83,8 +82,6 @@
       setConfirmLoading(false)
     }
   }
-
-  const copyToClipboard = (text) => copyWithToast(text, toast)
 </script>
 
 <div class="space-y-4">
@@ -234,7 +231,7 @@
 
   {#snippet footer()}
     {#if newKey}
-      <Button onclick={() => copyToClipboard(newKey)} icon="copy">Copy to Clipboard</Button>
+      <Button copyText={newKey} icon="copy">Copy to Clipboard</Button>
       <Button onclick={() => showCreateModal = false} variant="secondary">Done</Button>
     {:else}
       <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>

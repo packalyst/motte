@@ -401,13 +401,13 @@
   <Toolbar bind:search={searchQuery} placeholder="Search tunnels...">
     <div class="kt-btn-group">
       {#if running}
-        <Button size="sm" variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
-        <Button size="sm" variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
+        <Button size="xs" variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
+        <Button size="xs" variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
       {:else}
-        <Button size="sm" variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
+        <Button size="xs" variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
       {/if}
-      <Button size="sm" variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
-      <Button size="sm" icon="plus" onclick={openCreate}>Add tunnel</Button>
+      <Button size="xs" variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
+      <Button size="xs" icon="plus" onclick={openCreate}>Add tunnel</Button>
     </div>
   </Toolbar>
 
@@ -462,7 +462,7 @@
         {@const i = config.tunnels.indexOf(t)}
         {@const info = infoById[t.id]}
         {@const chained = !!(t.upstream && t.upstream.host)}
-        <div class="bg-card border border-border rounded-lg px-4 py-3">
+        <div class="bg-card border border-border rounded-lg px-4 py-3 border-l-4 {running ? 'border-l-success' : 'border-l-muted-foreground/30'}">
           <div class="flex flex-wrap sm:flex-nowrap items-center gap-3">
             <div class="flex items-center gap-3 min-w-0 flex-1">
               <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
@@ -481,12 +481,12 @@
               </div>
             </div>
             <div class="kt-btn-group">
-              <Button size="sm" variant="outline" icon="activity" onclick={() => testTunnel(t)}
+              <Button size="xs" variant="outline" icon="activity" onclick={() => testTunnel(t)}
                 disabled={!running || testResults[t.id]?.testing} title={running ? 'Test this tunnel' : 'Start the proxy to test'}>
                 {testResults[t.id]?.testing ? '...' : 'Test'}
               </Button>
-              <Button size="sm" variant="outline" icon="pencil" onclick={() => openEdit(i)}>Edit</Button>
-              <Button size="sm" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}>Delete</Button>
+              <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}>Edit</Button>
+              <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}>Delete</Button>
             </div>
           </div>
 
@@ -508,10 +508,9 @@
             </div>
           {/if}
 
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
             <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
             <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
-            <ContentBlock variant="data" label="Port" value={String(t.listenPort)} mono copyable padding="sm" />
           </div>
           {#if info?.command}
             <div class="mt-2">
