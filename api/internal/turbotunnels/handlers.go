@@ -19,6 +19,7 @@ func New() *Service {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		"GetStatus":      s.handleStatus,
+		"GetStats":       s.handleStats,
 		"GetConfig":      s.handleGetConfig,
 		"SaveConfig":     s.handleSaveConfig,
 		"GenCredentials": s.handleGenCredentials,
@@ -31,6 +32,11 @@ func (s *Service) Handlers() router.ServiceHandlers {
 
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, GetStatus())
+}
+
+// handleStats returns proxy usage (overall + per tunnel) for the last 24h.
+func (s *Service) handleStats(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, GetProxyStats())
 }
 
 // handleGetConfig returns the saved tunnel configuration for the editor.

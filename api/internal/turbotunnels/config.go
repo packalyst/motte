@@ -79,9 +79,34 @@ func newTunnelID() string {
 	return randHexN(8)
 }
 
+// b62Alphabet is the character set for generated passwords: mixed-case letters
+// and digits. Deliberately excludes symbols so the password stays URL-safe
+// inside "http://user:pass@host:port" and in shell commands.
+const b62Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+// randPassword returns an n-character base62 password (~5.95 bits/char) using
+// rejection sampling for an unbiased distribution. Falls back to hex only if
+// the system RNG fails.
+func randPassword(n int) string {
+	out := make([]byte, 0, n)
+	buf := make([]byte, 1)
+	// Largest multiple of the alphabet length below 256, to reject the biased tail.
+	limit := 256 - (256 % len(b62Alphabet))
+	for len(out) < n {
+		if _, err := rand.Read(buf); err != nil {
+			return randHexN(n)
+		}
+		if int(buf[0]) < limit {
+			out = append(out, b62Alphabet[int(buf[0])%len(b62Alphabet)])
+		}
+	}
+	return string(out)
+}
+
 // GenCredentials returns a fresh strong username/password pair for a proxy.
+// The password is 24 base62 chars (~143 bits of entropy).
 func GenCredentials() (user, pass string) {
-	return "u_" + randHexN(4), randHexN(16)
+	return "u_" + randHexN(4), randPassword(24)
 }
 
 // isSafeCredential reports whether s is safe to embed in an

@@ -131,6 +131,12 @@ class HTTPSTunnelServer(server.TunnelServer):
                 and hmac.compare_digest(parts[1], auth.http_basic_auth(*creds))
             )
 
+        def listen_user():
+            """The tunnel's configured username (the identity that authenticated,
+            since a tunnel has exactly one credential). '-' if unauthenticated."""
+            auth_data = this._listen_url.auth
+            return auth_data.split(":", 1)[0] if auth_data else "-"
+
         # client_ip / proxy_auth_ok are closures over this post_init scope and
         # are called directly from both request paths (plain HTTP and CONNECT).
         # They are NOT referenced via `this`, because handle_request rebinds
@@ -200,7 +206,8 @@ class HTTPSTunnelServer(server.TunnelServer):
                 # any upstream connection is made.
                 if not proxy_auth_ok(self):
                     utils.logger.info(
-                        "TURBOTUNNELS_AUTH_FAIL SRC=%s" % client_ip(self)
+                        "TURBOTUNNELS_AUTH_FAIL SRC=%s USER=%s"
+                        % (client_ip(self), listen_user())
                     )
                     self.set_status(407)
                     self.set_header(
@@ -221,8 +228,8 @@ class HTTPSTunnelServer(server.TunnelServer):
 
                 # Record the authenticated connection for the logs page.
                 utils.logger.info(
-                    "TURBOTUNNELS_CONN SRC=%s DST=%s DPORT=%d"
-                    % (client_ip(self), url.address[0], url.address[1])
+                    "TURBOTUNNELS_CONN SRC=%s USER=%s DST=%s DPORT=%d"
+                    % (client_ip(self), listen_user(), url.address[0], url.address[1])
                 )
 
                 try:
@@ -351,7 +358,8 @@ class HTTPSTunnelServer(server.TunnelServer):
                 # tunnel an open proxy). The client IP is logged for the jail.
                 if not proxy_auth_ok(self):
                     utils.logger.info(
-                        "TURBOTUNNELS_AUTH_FAIL SRC=%s" % client_ip(self)
+                        "TURBOTUNNELS_AUTH_FAIL SRC=%s USER=%s"
+                        % (client_ip(self), listen_user())
                     )
                     await downstream.write(
                         b"HTTP/1.1 407 Proxy Authentication Required\r\n"
@@ -365,8 +373,8 @@ class HTTPSTunnelServer(server.TunnelServer):
 
                 # Record the authenticated connection for the logs page.
                 utils.logger.info(
-                    "TURBOTUNNELS_CONN SRC=%s DST=%s DPORT=%d"
-                    % (client_ip(self), address[0], address[1])
+                    "TURBOTUNNELS_CONN SRC=%s USER=%s DST=%s DPORT=%d"
+                    % (client_ip(self), listen_user(), address[0], address[1])
                 )
 
                 with server.TunnelConnection(

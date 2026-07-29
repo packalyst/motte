@@ -22,8 +22,8 @@ import (
 //   - AUTH_FAIL: a failed proxy authentication (fed to the firewall jail).
 //   - CONN:      an authenticated connection (recorded in the logs table).
 var (
-	authLineRe = regexp.MustCompile(`TURBOTUNNELS_AUTH_FAIL SRC=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
-	connLineRe = regexp.MustCompile(`TURBOTUNNELS_CONN SRC=(\S+) DST=(\S+) DPORT=(\d+)`)
+	authLineRe = regexp.MustCompile(`TURBOTUNNELS_AUTH_FAIL SRC=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?: USER=(\S+))?`)
+	connLineRe = regexp.MustCompile(`TURBOTUNNELS_CONN SRC=(\S+) USER=(\S+) DST=(\S+) DPORT=(\d+)`)
 )
 
 // AuthLogPath is the api-owned file auth failures are mirrored to and that the
@@ -77,13 +77,19 @@ func StartLogStreamer(ctx context.Context) {
 func processLogLines(lines []string, jailPath string, db *database.DB) {
 	var authMarkers []string
 	for _, line := range lines {
-		if m := authLineRe.FindString(line); m != "" {
-			authMarkers = append(authMarkers, m)
+		if am := authLineRe.FindStringSubmatch(line); am != nil {
+			// Mirror to the jail file (the SRC drives the ban)...
+			authMarkers = append(authMarkers, am[0])
+			// ...and record the failed attempt as a blocked proxy log so it
+			// shows on the Logs page and counts toward the tunnel's failures.
+			if db != nil {
+				insertFailLog(db, am[1], am[2])
+			}
 			continue
 		}
 		if db != nil {
-			if mm := connLineRe.FindStringSubmatch(line); mm != nil {
-				insertConnLog(db, mm[1], mm[2], mm[3])
+			if cm := connLineRe.FindStringSubmatch(line); cm != nil {
+				insertConnLog(db, cm[1], cm[2], cm[3], cm[4])
 			}
 		}
 	}
@@ -92,11 +98,26 @@ func processLogLines(lines []string, jailPath string, db *database.DB) {
 	}
 }
 
-// insertConnLog records one authenticated proxy connection as an outbound log
-// row tagged 'turbotunnels', so it shows up on the Logs page. The destination
-// host goes to logs_domain; if it is a literal IP it is also stored as dest_ip
-// so country lookup works.
-func insertConnLog(db *database.DB, srcIP, host, portStr string) {
+// insertFailLog records one failed proxy authentication as a blocked 'proxy'
+// log row. USER is the target tunnel's username (known even though the client's
+// credentials were wrong), so the failure attributes to the right tunnel.
+func insertFailLog(db *database.DB, srcIP, user string) {
+	_, err := db.Exec(`
+		INSERT INTO logs (
+			logs_timestamp, logs_type, logs_src_ip, logs_protocol, logs_status, logs_service
+		) VALUES (?, 'proxy', ?, 'http', 'blocked', ?)`,
+		time.Now(), srcIP, user)
+	if err != nil {
+		log.Printf("turbotunnels: failed to insert auth-fail log: %v", err)
+	}
+}
+
+// insertConnLog records one authenticated proxy connection as a 'proxy' log
+// row, so it shows up on the Logs page. The authenticating tunnel username is
+// stored in logs_service (the 'proxy' type already identifies these as
+// turbotunnels). The destination host goes to logs_domain; if it is a literal
+// IP it is also stored as dest_ip so country lookup works.
+func insertConnLog(db *database.DB, srcIP, user, host, portStr string) {
 	port, _ := strconv.Atoi(portStr)
 	destIP := ""
 	if net.ParseIP(host) != nil {
@@ -106,8 +127,8 @@ func insertConnLog(db *database.DB, srcIP, host, portStr string) {
 		INSERT INTO logs (
 			logs_timestamp, logs_type, logs_src_ip, logs_dest_ip,
 			logs_dest_port, logs_protocol, logs_domain, logs_status, logs_service
-		) VALUES (?, 'proxy', ?, ?, ?, 'http', ?, 'allowed', 'turbotunnels')`,
-		time.Now(), srcIP, destIP, port, host)
+		) VALUES (?, 'proxy', ?, ?, ?, 'http', ?, 'allowed', ?)`,
+		time.Now(), srcIP, destIP, port, host, user)
 	if err != nil {
 		log.Printf("turbotunnels: failed to insert connection log: %v", err)
 	}

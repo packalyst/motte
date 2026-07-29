@@ -281,7 +281,20 @@
                   </div>
                 </td>
                 <td class="data-table-cell-mono">
-                  {#if log.logs_src_client_name}
+                  {#if log.logs_type === 'proxy' && log.logs_service}
+                    <div class="space-y-1">
+                      <div class="flex items-center gap-2">
+                        <Icon name="user" size={14} class="text-primary" />
+                        <span class="text-xs font-medium">{log.logs_service}</span>
+                      </div>
+                      <div class="border-t border-dashed border-border pt-1">
+                        <div class="flex items-center gap-2">
+                          <Icon name="network" size={14} class="text-muted-foreground opacity-50" />
+                          <span class="text-[10px] text-muted-foreground">{log.logs_src_ip}</span>
+                        </div>
+                      </div>
+                    </div>
+                  {:else if log.logs_src_client_name}
                     <div class="space-y-1">
                       <div class="flex items-center gap-2">
                         <Icon name="device-laptop" size={14} class="text-primary" />

@@ -12,6 +12,7 @@
   import EmptyState from '../components/EmptyState.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
   import InfoCard from '../components/InfoCard.svelte'
+  import StatCard from '../components/StatCard.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -19,6 +20,7 @@
   let status = $state(null)
   // The editable config (source of truth for tunnels), loaded from /config.
   let config = $state({ tunnels: [] })
+  let stats = $state(null)
   let busy = $state(false)
   let refreshTimer = null
 
@@ -76,8 +78,26 @@
     }
   }
 
+  async function loadStats() {
+    try {
+      stats = await apiGet('/api/turbotunnels/stats')
+    } catch {
+      // non-fatal — stats are best-effort
+    }
+  }
+
+  function formatLastSeen(ts) {
+    if (!ts) return ''
+    try {
+      // SQLite stores UTC "YYYY-MM-DD HH:MM:SS" — render in local time.
+      return new Date(ts.replace(' ', 'T') + 'Z').toLocaleString()
+    } catch {
+      return ts
+    }
+  }
+
   async function refresh() {
-    await Promise.all([loadStatus(), loadConfig()])
+    await Promise.all([loadStatus(), loadConfig(), loadStats()])
     loading = false
   }
 
@@ -284,7 +304,7 @@
   onMount(() => {
     refresh()
     // Light polling so running/stopped state stays fresh while the page is open.
-    refreshTimer = setInterval(loadStatus, 5000)
+    refreshTimer = setInterval(() => { loadStatus(); loadStats() }, 5000)
   })
   onDestroy(() => {
     clearInterval(refreshTimer)
@@ -325,10 +345,20 @@
       {:else}
         <Button size="sm" variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
       {/if}
+      <Button size="sm" variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
+      <Button size="sm" icon="plus" onclick={openCreate}>Add tunnel</Button>
     </div>
-    <Button size="sm" variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
-    <Button size="sm" icon="plus" onclick={openCreate}>Add tunnel</Button>
   </Toolbar>
+
+  <!-- Overall proxy usage (last 24h) -->
+  {#if stats}
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <StatCard icon="activity" color="success" value={stats.requests ?? 0} label="Requests (24h)" />
+      <StatCard icon="ban" color="destructive" value={stats.failed ?? 0} label="Failed (24h)" />
+      <StatCard icon="users" color="info" value={stats.clients ?? 0} label="Unique clients" />
+      <StatCard icon="world" color="primary" value={stats.topDest || '—'} label="Top destination" />
+    </div>
+  {/if}
 
   <!-- Drift banner: saved config differs from what's running -->
   {#if drift && running}
@@ -394,6 +424,16 @@
               <Button size="sm" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}>Delete</Button>
             </div>
           </div>
+
+          {#if stats?.perUser?.[t.user]}
+            {@const ts = stats.perUser[t.user]}
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[11px] text-muted-foreground">
+              <span class="flex items-center gap-1"><Icon name="activity" size={12} /> {ts.requests} req</span>
+              <span class="flex items-center gap-1 {ts.failed ? 'text-destructive' : ''}"><Icon name="ban" size={12} /> {ts.failed} failed</span>
+              <span class="flex items-center gap-1"><Icon name="users" size={12} /> {ts.clients} clients</span>
+              {#if ts.lastSeen}<span class="flex items-center gap-1"><Icon name="clock" size={12} /> {formatLastSeen(ts.lastSeen)}</span>{/if}
+            </div>
+          {/if}
 
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
             <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />

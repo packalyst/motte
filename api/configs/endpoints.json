@@ -193,6 +193,7 @@
       "enabled": true,
       "endpoints": [
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get turbotunnels container status + configured tunnels"},
+        {"path": "/stats", "methods": ["GET"], "handler": "GetStats", "description": "Get proxy usage stats (overall + per tunnel)"},
         {"path": "/config", "methods": ["GET"], "handler": "GetConfig", "description": "Get the saved tunnel configuration"},
         {"path": "/config", "methods": ["PUT"], "handler": "SaveConfig", "description": "Validate and save the tunnel configuration"},
         {"path": "/credentials", "methods": ["POST"], "handler": "GenCredentials", "description": "Generate a fresh strong proxy username/password"},
