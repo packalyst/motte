@@ -750,56 +750,20 @@ perform_update() {
     echo -e "${YELLOW}Stopping containers...${NC}"
     docker compose down 2>/dev/null || true
 
-    # Perform the update
-    if git merge "$TARGET_COMMIT" --no-edit 2>/dev/null; then
+    # Perform the update by resetting hard to the target commit rather than
+    # merging. A deploy target is always "whatever the remote says", and a
+    # reset survives a force-pushed / rewritten remote history (no common
+    # ancestor) — which a `git merge` cannot ("refusing to merge unrelated
+    # histories"). Local uncommitted changes were already handled above via the
+    # stash prompt, so nothing unexpected is lost here.
+    if git reset --hard "$TARGET_COMMIT"; then
         echo -e "${GREEN}✓ Update successful${NC}"
     else
-        # Check for merge conflicts
-        if git diff --name-only --diff-filter=U | grep -q .; then
-            echo -e "${RED}✗ Merge conflicts detected${NC}"
-            echo ""
-            echo "Conflicting files:"
-            git diff --name-only --diff-filter=U
-            echo ""
-            echo -e "${YELLOW}Options:${NC}"
-            echo "  1) Abort update and restore previous state"
-            echo "  2) Accept all incoming changes (theirs)"
-            echo "  3) Keep all local changes (ours)"
-            echo ""
-            read -p "Enter your choice [1-3]: " conflict_choice
-
-            case "$conflict_choice" in
-                1)
-                    git merge --abort
-                    echo -e "${YELLOW}Update aborted${NC}"
-                    if [ "$RESTORE_STASH" = true ]; then
-                        git stash pop
-                        echo -e "${GREEN}✓ Local changes restored${NC}"
-                    fi
-                    return 1
-                    ;;
-                2)
-                    git checkout --theirs .
-                    git add .
-                    git commit -m "Resolved conflicts: accepted incoming changes"
-                    echo -e "${GREEN}✓ Conflicts resolved (accepted incoming)${NC}"
-                    ;;
-                3)
-                    git checkout --ours .
-                    git add .
-                    git commit -m "Resolved conflicts: kept local changes"
-                    echo -e "${GREEN}✓ Conflicts resolved (kept local)${NC}"
-                    ;;
-                *)
-                    git merge --abort
-                    echo -e "${RED}Invalid choice, aborting${NC}"
-                    return 1
-                    ;;
-            esac
-        else
-            echo -e "${RED}✗ Update failed${NC}"
-            return 1
+        echo -e "${RED}✗ Update failed${NC}"
+        if [ "$RESTORE_STASH" = true ]; then
+            git stash pop 2>/dev/null || true
         fi
+        return 1
     fi
 
     # Restore stashed changes if applicable
