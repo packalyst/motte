@@ -118,7 +118,12 @@
 
   const start = () => lifecycle('start', 'Proxy started')
   const stop = () => lifecycle('stop', 'Proxy stopped')
-  const restart = () => lifecycle('restart', 'Proxy restarted')
+  async function restart() {
+    // With no tunnels there is nothing to run — stop instead of a doomed
+    // restart (the backend rejects starting with zero tunnels).
+    if (config.tunnels.length === 0) return stop()
+    return lifecycle('restart', 'Proxy restarted')
+  }
 
   async function quickDeploy() {
     busy = true
@@ -242,6 +247,18 @@
   // a restart — offer it explicitly so the user understands connections drop.
   async function maybeOfferRestart() {
     if (!running) return
+    // No tunnels left → the running proxy has nothing to serve; offer to stop.
+    if (config.tunnels.length === 0) {
+      const ok = await confirm({
+        title: 'Stop the proxy?',
+        message: 'No tunnels are configured anymore, so the running proxy has nothing left to serve.',
+        description: 'Stopping ends the running container.',
+        confirmText: 'Stop now',
+        cancelText: 'Later',
+      })
+      if (ok) await stop()
+      return
+    }
     const ok = await confirm({
       title: 'Restart proxy to apply?',
       message: 'The proxy is running. Applying this change restarts it and briefly drops active connections.',
