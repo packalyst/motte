@@ -374,11 +374,14 @@ class HTTPSTunnelServer(server.TunnelServer):
                     self._finished = True
                     return
 
-                # Record the authenticated connection for the logs page.
-                utils.logger.info(
-                    "TURBOTUNNELS_CONN SRC=%s USER=%s DST=%s DPORT=%d"
-                    % (client_ip(self), listen_user(), address[0], address[1])
-                )
+                # Record the authenticated connection for the logs page — unless
+                # it's a health probe from the panel (X-TT-Test on the CONNECT),
+                # which must not appear in the logs or stats.
+                if not self.request.headers.get("X-TT-Test"):
+                    utils.logger.info(
+                        "TURBOTUNNELS_CONN SRC=%s USER=%s DST=%s DPORT=%d"
+                        % (client_ip(self), listen_user(), address[0], address[1])
+                    )
 
                 with server.TunnelConnection(
                     self.request.connection.context.address,

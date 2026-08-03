@@ -1,7 +1,6 @@
 package turbotunnels
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,42 +19,46 @@ type TestResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// ipEchoURL is a plain-HTTP "what's my IP" endpoint. HTTP (not HTTPS) is used so
-// the request travels the proxy's plain-HTTP path, where the X-TT-Test header is
-// forwarded and the proxy skips logging it.
-const ipEchoURL = "http://api.ipify.org"
+// ipEchoURL is a "what's my IP" endpoint reached over HTTPS, so the request
+// travels the proxy via CONNECT — exactly like `curl -x`, whose auth is known
+// to work. The X-TT-Test header is sent on the CONNECT itself (see
+// ProxyConnectHeader below) so the proxy skips logging the probe.
+const ipEchoURL = "https://api.ipify.org"
 
 // TestTunnel makes an authenticated request THROUGH the given tunnel to an
 // IP-echo endpoint and reports whether it works plus the exit IP (this server
-// for a direct tunnel, the upstream's IP for a chained one). The request carries
-// the X-TT-Test header so the proxy does not log it as a real connection.
+// for a direct tunnel, the upstream's IP for a chained one).
 //
-// The proxy is reached over the internal docker network at the container's IP,
-// so this works regardless of host firewall rules.
+// It mirrors `curl -x http://user:pass@host:port https://…`: an HTTPS target so
+// the proxy is used via CONNECT, with the credentials in the proxy URL (Go
+// attaches Proxy-Authorization to CONNECT automatically). The proxy is reached
+// over the internal docker network at the container's IP, so host firewall
+// rules don't affect the probe.
 func TestTunnel(port int, user, pass string) TestResult {
 	if port < 1 || port > 65535 {
 		return TestResult{Error: "invalid port"}
 	}
 	host := helper.GetEnvOptional("TURBOTUNNELS_CONTAINER_IP", "172.18.0.5")
 
-	// No userinfo in the proxy URL: Go does not reliably attach
-	// Proxy-Authorization for plain-HTTP proxied requests (only for CONNECT),
-	// so we set the header explicitly below instead.
 	proxyURL := &url.URL{
 		Scheme: "http",
+		User:   url.UserPassword(user, pass),
 		Host:   fmt.Sprintf("%s:%d", host, port),
 	}
 	client := &http.Client{
-		Timeout:   8 * time.Second,
-		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout: 8 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+			// Sent on the CONNECT request so the proxy recognises this as a
+			// health probe and does not log it as a real connection.
+			ProxyConnectHeader: http.Header{"X-Tt-Test": []string{"1"}},
+		},
 	}
 
 	req, err := http.NewRequest("GET", ipEchoURL, nil)
 	if err != nil {
 		return TestResult{Error: err.Error()}
 	}
-	req.Header.Set("X-TT-Test", "1")
-	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(user+":"+pass)))
 
 	start := time.Now()
 	resp, err := client.Do(req)
@@ -65,9 +68,6 @@ func TestTunnel(port int, user, pass string) TestResult {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusProxyAuthRequired {
-		return TestResult{Error: "proxy rejected credentials", LatencyMs: latency}
-	}
 	if resp.StatusCode != http.StatusOK {
 		return TestResult{Error: fmt.Sprintf("upstream returned HTTP %d", resp.StatusCode), LatencyMs: latency}
 	}
@@ -80,6 +80,8 @@ func TestTunnel(port int, user, pass string) TestResult {
 func cleanTestError(err error) string {
 	msg := err.Error()
 	switch {
+	case strings.Contains(msg, "Proxy Authentication") || strings.Contains(msg, "407"):
+		return "proxy rejected credentials"
 	case strings.Contains(msg, "connection refused"):
 		return "proxy not reachable (is it running?)"
 	case strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded"):
