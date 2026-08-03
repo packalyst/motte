@@ -1,6 +1,7 @@
 package turbotunnels
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,9 +38,11 @@ func TestTunnel(port int, user, pass string) TestResult {
 	}
 	host := helper.GetEnvOptional("TURBOTUNNELS_CONTAINER_IP", "172.18.0.5")
 
+	// No userinfo in the proxy URL: Go does not reliably attach
+	// Proxy-Authorization for plain-HTTP proxied requests (only for CONNECT),
+	// so we set the header explicitly below instead.
 	proxyURL := &url.URL{
 		Scheme: "http",
-		User:   url.UserPassword(user, pass),
 		Host:   fmt.Sprintf("%s:%d", host, port),
 	}
 	client := &http.Client{
@@ -52,6 +55,7 @@ func TestTunnel(port int, user, pass string) TestResult {
 		return TestResult{Error: err.Error()}
 	}
 	req.Header.Set("X-TT-Test", "1")
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(user+":"+pass)))
 
 	start := time.Now()
 	resp, err := client.Do(req)
