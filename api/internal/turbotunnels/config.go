@@ -51,7 +51,7 @@ type Tunnel struct {
 	User       string   `json:"user"`
 	Pass       string   `json:"pass"`
 	Upstream   Upstream `json:"upstream"`
-	RotateIP   bool     `json:"rotateIp"` // placeholder; not yet wired at runtime
+	RotateURL  string   `json:"rotateUrl"` // rotating-IP endpoint URL; stored, not yet wired
 }
 
 // Proto returns the tunnel's protocol, defaulting to "http".

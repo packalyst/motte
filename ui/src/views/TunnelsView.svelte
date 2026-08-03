@@ -61,8 +61,8 @@
       user: '',
       pass: '',
       chained: true, // manual "Add tunnel" defaults to chained; Quick-deploy is direct
-      upstream: { host: '', port: '', user: '', pass: '' },
-      rotateIp: false,
+      upstream: { host: '', user: '', pass: '', ports: { http: '', socks5: '' } },
+      rotateUrl: '',
     }
   }
 
@@ -208,6 +208,8 @@
     const proto = t.protocol === 'socks5' ? 'socks5' : 'http'
     const ports = { http: '3128', socks5: '1080' }
     ports[proto] = String(t.listenPort ?? '')
+    const upPorts = { http: '', socks5: '' }
+    if (t.upstream?.port) upPorts[proto] = String(t.upstream.port)
     form = {
       id: t.id || '',
       name: t.name || '',
@@ -218,25 +220,17 @@
       chained: !!(t.upstream && t.upstream.host),
       upstream: {
         host: t.upstream?.host || '',
-        port: t.upstream?.port ?? '',
         user: t.upstream?.user || '',
         pass: t.upstream?.pass || '',
+        ports: upPorts,
       },
-      rotateIp: !!t.rotateIp,
+      rotateUrl: t.rotateUrl || '',
     }
     showModal = true
   }
 
   // Build one tunnel object per selected protocol (so "both" makes two).
   function buildTunnelsFromForm() {
-    const upstream = form.chained
-      ? {
-          host: form.upstream.host.trim(),
-          port: Number(form.upstream.port),
-          user: form.upstream.user.trim(),
-          pass: form.upstream.pass,
-        }
-      : { host: '', port: 0, user: '', pass: '' }
     const multi = form.protocols.length > 1
     return form.protocols.map((proto) => ({
       id: '',
@@ -245,8 +239,16 @@
       listenPort: Number(form.ports[proto]),
       user: form.user.trim(),
       pass: form.pass,
-      upstream,
-      rotateIp: form.rotateIp,
+      // Upstream host/creds are shared; the port is per-protocol.
+      upstream: form.chained
+        ? {
+            host: form.upstream.host.trim(),
+            port: Number(form.upstream.ports[proto]),
+            user: form.upstream.user.trim(),
+            pass: form.upstream.pass,
+          }
+        : { host: '', port: 0, user: '', pass: '' },
+      rotateUrl: form.rotateUrl.trim(),
     }))
   }
 
@@ -504,7 +506,7 @@
                   <span class="font-medium truncate">{t.name}</span>
                   <Badge variant="info" size="sm">{(t.protocol || 'http').toUpperCase()}</Badge>
                   <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
-                  {#if t.rotateIp}<Badge variant="secondary" size="sm">Rotating IP</Badge>{/if}
+                  {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating IP</Badge>{/if}
                 </div>
                 <p class="text-[11px] text-muted-foreground font-mono truncate">
                   {(info?.host || 'server')}:{t.listenPort}
@@ -605,9 +607,14 @@
           {/each}
         </Select>
         <p class="text-[11px] text-muted-foreground -mt-1">Pick a VPN node to reach it by its WG IP, or choose Custom and type any proxy host.</p>
+        <Input label="Upstream host" placeholder="1.2.3.4 or node IP" bind:value={form.upstream.host} prefixIcon="server" />
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Input label="Upstream host" placeholder="1.2.3.4 or node IP" bind:value={form.upstream.host} prefixIcon="server" />
-          <Input label="Upstream port" type="number" placeholder="8080" bind:value={form.upstream.port} prefixIcon="plug" />
+          {#if form.protocols.includes('http')}
+            <Input label="Upstream HTTP port" type="number" placeholder="3128" bind:value={form.upstream.ports.http} prefixIcon="plug" />
+          {/if}
+          {#if form.protocols.includes('socks5')}
+            <Input label="Upstream SOCKS5 port" type="number" placeholder="1080" bind:value={form.upstream.ports.socks5} prefixIcon="plug" />
+          {/if}
           <Input label="Upstream user (optional)" bind:value={form.upstream.user} prefixIcon="user" />
           <Input label="Upstream password (optional)" bind:value={form.upstream.pass} prefixIcon="key" />
         </div>
@@ -627,16 +634,10 @@
       </div>
     </div>
 
-    <!-- Rotating IP (placeholder — stored now, wired to endpoints later) -->
+    <!-- Rotating IP URL (stored now; the endpoint mapping comes later) -->
     <div class="border-t border-border pt-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <span class="text-sm font-medium text-foreground">Rotating IP</span>
-          <p class="text-xs text-muted-foreground">Saved for now; the endpoint mapping comes later.</p>
-        </div>
-        <Checkbox variant="chip" icon="refresh" checked={form.rotateIp}
-          onchange={() => form.rotateIp = !form.rotateIp} label={form.rotateIp ? 'On' : 'Off'} />
-      </div>
+      <Input label="Rotating IP URL (optional)" placeholder="https://…" bind:value={form.rotateUrl} prefixIcon="refresh" />
+      <p class="text-xs text-muted-foreground mt-1">Saved for now; we'll wire it to the endpoints later.</p>
     </div>
   </div>
 
