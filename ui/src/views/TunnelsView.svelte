@@ -56,12 +56,25 @@
     return {
       id: '',
       name: '',
-      listenPort: '',
+      protocols: ['http'],                 // create can pick multiple → one tunnel each
+      ports: { http: '3128', socks5: '1080' },
       user: '',
       pass: '',
       chained: true, // manual "Add tunnel" defaults to chained; Quick-deploy is direct
       upstream: { host: '', port: '', user: '', pass: '' },
+      rotateIp: false,
     }
+  }
+
+  // Toggle a protocol. Create allows both (→ 2 tunnels); edit is single-protocol.
+  function toggleProto(p) {
+    if (modalMode === 'edit') {
+      form.protocols = [p]
+      return
+    }
+    form.protocols = form.protocols.includes(p)
+      ? form.protocols.filter((x) => x !== p)
+      : [...form.protocols, p]
   }
 
   async function loadStatus() {
@@ -117,7 +130,7 @@
   async function testTunnel(t) {
     testResults = { ...testResults, [t.id]: { testing: true } }
     try {
-      const res = await apiPost('/api/turbotunnels/test', { port: t.listenPort, user: t.user, pass: t.pass })
+      const res = await apiPost('/api/turbotunnels/test', { protocol: t.protocol || 'http', port: t.listenPort, user: t.user, pass: t.pass })
       testResults = { ...testResults, [t.id]: res }
       toast(res.ok ? `Tunnel "${t.name}" is up — exit ${res.exitIp}` : `Tunnel "${t.name}" failed: ${res.error}`, res.ok ? 'success' : 'error')
     } catch (e) {
@@ -192,10 +205,14 @@
     const t = config.tunnels[index]
     modalMode = 'edit'
     editIndex = index
+    const proto = t.protocol === 'socks5' ? 'socks5' : 'http'
+    const ports = { http: '3128', socks5: '1080' }
+    ports[proto] = String(t.listenPort ?? '')
     form = {
       id: t.id || '',
       name: t.name || '',
-      listenPort: t.listenPort ?? '',
+      protocols: [proto],
+      ports,
       user: t.user || '',
       pass: t.pass || '',
       chained: !!(t.upstream && t.upstream.host),
@@ -205,52 +222,66 @@
         user: t.upstream?.user || '',
         pass: t.upstream?.pass || '',
       },
+      rotateIp: !!t.rotateIp,
     }
     showModal = true
   }
 
-  function buildTunnelFromForm() {
-    const t = {
-      id: form.id,
-      name: form.name.trim(),
-      listenPort: Number(form.listenPort),
+  // Build one tunnel object per selected protocol (so "both" makes two).
+  function buildTunnelsFromForm() {
+    const upstream = form.chained
+      ? {
+          host: form.upstream.host.trim(),
+          port: Number(form.upstream.port),
+          user: form.upstream.user.trim(),
+          pass: form.upstream.pass,
+        }
+      : { host: '', port: 0, user: '', pass: '' }
+    const multi = form.protocols.length > 1
+    return form.protocols.map((proto) => ({
+      id: '',
+      name: multi ? `${form.name.trim()} (${proto})` : form.name.trim(),
+      protocol: proto,
+      listenPort: Number(form.ports[proto]),
       user: form.user.trim(),
       pass: form.pass,
-      upstream: { host: '', port: 0, user: '', pass: '' },
-    }
-    if (form.chained) {
-      t.upstream = {
-        host: form.upstream.host.trim(),
-        port: Number(form.upstream.port),
-        user: form.upstream.user.trim(),
-        pass: form.upstream.pass,
-      }
-    }
-    return t
+      upstream,
+      rotateIp: form.rotateIp,
+    }))
   }
 
   async function saveTunnel() {
+    if (form.protocols.length === 0) {
+      toast('Pick at least one protocol (HTTP and/or SOCKS5).', 'error')
+      return
+    }
     if (form.chained && !form.upstream.host.trim()) {
       toast('A chained tunnel needs an upstream host — pick a node or enter one.', 'error')
       return
     }
-    // Build the next config, then persist the whole document.
+    // Build one tunnel per selected protocol, then persist the whole document.
+    const built = buildTunnelsFromForm()
     const next = { tunnels: [...config.tunnels] }
-    const tunnel = buildTunnelFromForm()
-    if (modalMode === 'create') next.tunnels.push(tunnel)
-    else next.tunnels[editIndex] = tunnel
+    if (modalMode === 'create') {
+      next.tunnels.push(...built)
+    } else {
+      built[0].id = form.id // preserve the edited tunnel's id
+      next.tunnels[editIndex] = built[0]
+    }
 
     busy = true
     try {
       status = await apiPut('/api/turbotunnels/config', next)
       await loadConfig() // pull back with server-assigned IDs
       showModal = false
-      toast(modalMode === 'create' ? 'Tunnel added' : 'Tunnel updated', 'success')
+      toast(modalMode === 'create' ? (built.length > 1 ? `${built.length} tunnels added` : 'Tunnel added') : 'Tunnel updated', 'success')
       const applied = await maybeOfferRestart()
-      // Test-on-add: once the proxy is running the new config, verify the tunnel.
+      // Test-on-add: once the proxy is running the new config, verify each tunnel.
       if (applied) {
-        const saved = config.tunnels.find((x) => x.user === tunnel.user && x.listenPort === tunnel.listenPort)
-        if (saved) testTunnel(saved)
+        for (const b of built) {
+          const saved = config.tunnels.find((x) => x.user === b.user && x.listenPort === b.listenPort)
+          if (saved) testTunnel(saved)
+        }
       }
     } catch (e) {
       // Validation errors come back as the message — show them inline.
@@ -471,8 +502,9 @@
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
                   <span class="font-medium truncate">{t.name}</span>
-                  <Badge variant="info" size="sm">HTTP</Badge>
+                  <Badge variant="info" size="sm">{(t.protocol || 'http').toUpperCase()}</Badge>
                   <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
+                  {#if t.rotateIp}<Badge variant="secondary" size="sm">Rotating IP</Badge>{/if}
                 </div>
                 <p class="text-[11px] text-muted-foreground font-mono truncate">
                   {(info?.host || 'server')}:{t.listenPort}
@@ -527,7 +559,28 @@
 <Modal bind:open={showModal} title={modalMode === 'create' ? 'Add tunnel' : 'Edit tunnel'} size="md">
   <div class="space-y-4">
     <Input label="Name" placeholder="My proxy" bind:value={form.name} prefixIcon="tag" />
-    <Input label="Listen port" type="number" placeholder="3128" bind:value={form.listenPort} prefixIcon="plug" />
+
+    <!-- Protocol(s): create can pick both → one tunnel each -->
+    <div>
+      <span class="text-sm font-medium text-foreground">Protocol{modalMode === 'create' ? 's' : ''}</span>
+      <p class="text-xs text-muted-foreground mb-2">
+        {modalMode === 'create' ? 'Pick one or both — selecting both creates two tunnels (one per port).' : 'HTTP or SOCKS5.'}
+      </p>
+      <div class="flex gap-2">
+        <Checkbox variant="chip" icon="world" checked={form.protocols.includes('http')} onchange={() => toggleProto('http')} label="HTTP" />
+        <Checkbox variant="chip" icon="plug-connected" checked={form.protocols.includes('socks5')} onchange={() => toggleProto('socks5')} label="SOCKS5" />
+      </div>
+    </div>
+
+    <!-- One port per selected protocol -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {#if form.protocols.includes('http')}
+        <Input label="HTTP port" type="number" placeholder="3128" bind:value={form.ports.http} prefixIcon="plug" />
+      {/if}
+      {#if form.protocols.includes('socks5')}
+        <Input label="SOCKS5 port" type="number" placeholder="1080" bind:value={form.ports.socks5} prefixIcon="plug" />
+      {/if}
+    </div>
 
     <!-- Mode: direct vs chained (chosen first — it drives the rest) -->
     <div>
@@ -571,6 +624,18 @@
       </div>
       <div class="mt-2">
         <Button size="sm" variant="outline" icon="refresh" onclick={() => generateCreds(form)}>Regenerate</Button>
+      </div>
+    </div>
+
+    <!-- Rotating IP (placeholder — stored now, wired to endpoints later) -->
+    <div class="border-t border-border pt-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm font-medium text-foreground">Rotating IP</span>
+          <p class="text-xs text-muted-foreground">Saved for now; the endpoint mapping comes later.</p>
+        </div>
+        <Checkbox variant="chip" icon="refresh" checked={form.rotateIp}
+          onchange={() => form.rotateIp = !form.rotateIp} label={form.rotateIp ? 'On' : 'Off'} />
       </div>
     </div>
   </div>

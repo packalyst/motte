@@ -46,10 +46,20 @@ func (u Upstream) IsSet() bool {
 type Tunnel struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
+	Protocol   string   `json:"protocol"` // "http" or "socks5" (default http)
 	ListenPort int      `json:"listenPort"`
 	User       string   `json:"user"`
 	Pass       string   `json:"pass"`
 	Upstream   Upstream `json:"upstream"`
+	RotateIP   bool     `json:"rotateIp"` // placeholder; not yet wired at runtime
+}
+
+// Proto returns the tunnel's protocol, defaulting to "http".
+func (t Tunnel) Proto() string {
+	if t.Protocol == "socks5" {
+		return "socks5"
+	}
+	return "http"
 }
 
 // IsDirect reports whether the tunnel exits from this server directly (no
@@ -184,6 +194,10 @@ func ValidateConfig(cfg Config) error {
 		}
 		seenName[t.Name] = true
 
+		if t.Protocol != "" && t.Protocol != "http" && t.Protocol != "socks5" {
+			return fmt.Errorf("%s: protocol must be http or socks5", label)
+		}
+
 		if t.ListenPort < 1 || t.ListenPort > 65535 {
 			return fmt.Errorf("%s: listen port %d is out of range (1-65535)", label, t.ListenPort)
 		}
@@ -288,6 +302,7 @@ func (c Config) tunnelsJSON() (string, error) {
 	}
 	type tunnelOut struct {
 		Port     int          `json:"port"`
+		Protocol string       `json:"protocol"`
 		User     string       `json:"user"`
 		Pass     string       `json:"pass"`
 		Upstream *upstreamOut `json:"upstream,omitempty"`
@@ -297,7 +312,7 @@ func (c Config) tunnelsJSON() (string, error) {
 	}{Tunnels: []tunnelOut{}}
 
 	for _, t := range c.Tunnels {
-		to := tunnelOut{Port: t.ListenPort, User: t.User, Pass: t.Pass}
+		to := tunnelOut{Port: t.ListenPort, Protocol: t.Proto(), User: t.User, Pass: t.Pass}
 		if t.Upstream.IsSet() {
 			to.Upstream = &upstreamOut{
 				Host: t.Upstream.Host,

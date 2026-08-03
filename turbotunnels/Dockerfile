@@ -16,13 +16,16 @@ WORKDIR /app
 RUN python3 -m pip install --no-cache-dir turbo-tunnel==0.19.0
 
 # App files.
-COPY run.py https.py /app/
+COPY run.py https.py socks.py /app/
 
-# Replace turbo_tunnel's own HTTP handler with our patched copy, which enforces
-# proxy auth on BOTH the CONNECT and plain-HTTP paths and logs auth failures.
-# https.py uses package-relative imports, so it must live inside the installed
-# turbo_tunnel package (it is not a standalone plugin).
-RUN cp /app/https.py "$(python3 -c 'import turbo_tunnel, os; print(os.path.dirname(turbo_tunnel.__file__))')/https.py"
+# Replace turbo_tunnel's HTTP and SOCKS5 handlers with our patched copies:
+#  - https.py enforces proxy auth on both CONNECT and plain-HTTP and logs events
+#  - socks.py adds the same connection/auth-failure log markers for SOCKS5
+# Both use package-relative imports, so they must live inside the installed
+# turbo_tunnel package (they are not standalone plugins).
+RUN TT=$(python3 -c 'import turbo_tunnel, os; print(os.path.dirname(turbo_tunnel.__file__))') \
+ && cp /app/https.py "$TT/https.py" \
+ && cp /app/socks.py "$TT/socks.py"
 
 # Run as an unprivileged user (NO sudo, NO root). The proxy only binds the
 # configured high ports and needs no privilege.

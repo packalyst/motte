@@ -31,10 +31,10 @@ LISTEN_HOST = "0.0.0.0"
 procs = []
 
 
-def endpoint(host, port, user="", passwd=""):
-    """Build a proxy endpoint 'http://[user:pass@]host:port'."""
+def endpoint(scheme, host, port, user="", passwd=""):
+    """Build a proxy endpoint 'scheme://[user:pass@]host:port'."""
     auth = f"{user}:{passwd}@" if user else ""
-    return f"http://{auth}{host}:{port}"
+    return f"{scheme}://{auth}{host}:{port}"
 
 
 def start(tunnels):
@@ -46,7 +46,11 @@ def start(tunnels):
             print(f"[run] SKIP {label}: missing/invalid 'port'", flush=True)
             continue
 
-        listen = endpoint(LISTEN_HOST, port, tunnel.get("user", ""), tunnel.get("pass", ""))
+        # Protocol: http (default) or socks5. The upstream (chained) uses the
+        # same scheme as the listen side.
+        scheme = "socks5" if tunnel.get("protocol") == "socks5" else "http"
+
+        listen = endpoint(scheme, LISTEN_HOST, port, tunnel.get("user", ""), tunnel.get("pass", ""))
         # argv as a list with shell=False (default): config values can never be
         # interpreted by a shell, so there is no command-injection surface.
         cmd = ["turbo-tunnel", "-l", listen]
@@ -57,7 +61,7 @@ def start(tunnels):
             cmd += [
                 "-t",
                 endpoint(
-                    upstream["host"], int(upstream["port"]),
+                    scheme, upstream["host"], int(upstream["port"]),
                     upstream.get("user", ""), upstream.get("pass", ""),
                 ),
             ]
@@ -65,7 +69,7 @@ def start(tunnels):
         proc = subprocess.Popen(cmd)
         procs.append(proc)
         mode = "chained" if chained else "direct"
-        print(f"[run] {label}: HTTP proxy on :{port} ({mode}) pid={proc.pid}", flush=True)
+        print(f"[run] {label}: {scheme} proxy on :{port} ({mode}) pid={proc.pid}", flush=True)
 
 
 def shutdown(*_):

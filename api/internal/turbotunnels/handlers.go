@@ -44,14 +44,15 @@ func (s *Service) handleStats(w http.ResponseWriter, r *http.Request) {
 // + exit IP. The tunnel must be running to pass.
 func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Port int    `json:"port"`
-		User string `json:"user"`
-		Pass string `json:"pass"`
+		Protocol string `json:"protocol"`
+		Port     int    `json:"port"`
+		User     string `json:"user"`
+		Pass     string `json:"pass"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	router.JSON(w, TestTunnel(req.Port, req.User, req.Pass))
+	router.JSON(w, TestTunnel(req.Protocol, req.Port, req.User, req.Pass))
 }
 
 // handleGetConfig returns the saved tunnel configuration for the editor.

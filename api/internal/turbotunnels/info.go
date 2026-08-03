@@ -30,16 +30,22 @@ func tunnelInfos(cfg Config) []TunnelInfo {
 		if t.User != "" {
 			auth = t.User + ":" + t.Pass + "@"
 		}
+		// curl proxy scheme: http:// for HTTP, socks5h:// for SOCKS5 (the "h"
+		// resolves DNS through the proxy).
+		scheme := "http"
+		if t.Proto() == "socks5" {
+			scheme = "socks5h"
+		}
 		out = append(out, TunnelInfo{
 			ID:       t.ID,
 			Name:     t.Name,
-			Protocol: "http",
+			Protocol: t.Proto(),
 			Host:     host,
 			Port:     t.ListenPort,
 			User:     t.User,
 			Pass:     t.Pass,
 			Direct:   t.IsDirect(),
-			Command:  fmt.Sprintf("curl -x http://%s%s:%d https://ifconfig.me", auth, host, t.ListenPort),
+			Command:  fmt.Sprintf("curl -x %s://%s%s:%d https://ifconfig.me", scheme, auth, host, t.ListenPort),
 		})
 	}
 	return out

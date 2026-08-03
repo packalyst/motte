@@ -102,6 +102,9 @@ func processLogLines(lines []string, jailPath string, db *database.DB) {
 // log row. USER is the target tunnel's username (known even though the client's
 // credentials were wrong), so the failure attributes to the right tunnel.
 func insertFailLog(db *database.DB, srcIP, user string) {
+	if isInternalSource(srcIP) {
+		return
+	}
 	_, err := db.Exec(`
 		INSERT INTO logs (
 			logs_timestamp, logs_type, logs_src_ip, logs_protocol, logs_status, logs_service
@@ -117,7 +120,23 @@ func insertFailLog(db *database.DB, srcIP, user string) {
 // stored in logs_service (the 'proxy' type already identifies these as
 // turbotunnels). The destination host goes to logs_domain; if it is a literal
 // IP it is also stored as dest_ip so country lookup works.
+// isInternalSource reports whether srcIP is on the internal docker network,
+// where the panel's own health probes (e.g. SOCKS5 tests) originate — so they
+// aren't recorded as real proxy usage. HTTP probes are already excluded by the
+// X-TT-Test header; this covers SOCKS5, which has no such header.
+func isInternalSource(srcIP string) bool {
+	_, ipnet, err := net.ParseCIDR(helper.GetEnvOptional("DOCKER_SUBNET", "172.18.0.0/24"))
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(srcIP)
+	return ip != nil && ipnet.Contains(ip)
+}
+
 func insertConnLog(db *database.DB, srcIP, user, host, portStr string) {
+	if isInternalSource(srcIP) {
+		return
+	}
 	port, _ := strconv.Atoi(portStr)
 	destIP := ""
 	if net.ParseIP(host) != nil {
