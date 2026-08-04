@@ -3,6 +3,7 @@ package turbotunnels
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -104,11 +105,12 @@ func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
 	rotateClearFails(ip) // a valid key clears this IP's failure streak
 
 	ok, code, body := callProviderRotate(target.RotateURL)
+	providerResp := formatProviderBody(body)
 	if !ok {
-		router.JSONWithStatus(w, map[string]interface{}{"ok": false, "error": "provider request failed", "providerStatus": code, "providerResponse": body}, http.StatusBadGateway)
+		router.JSONWithStatus(w, map[string]interface{}{"ok": false, "error": "provider request failed", "providerStatus": code, "providerResponse": providerResp}, http.StatusBadGateway)
 		return
 	}
-	router.JSON(w, map[string]interface{}{"ok": true, "tunnel": target.Name, "providerStatus": code, "providerResponse": body})
+	router.JSON(w, map[string]interface{}{"ok": true, "tunnel": target.Name, "providerStatus": code, "providerResponse": providerResp})
 }
 
 // rotateHTTPClient refuses to follow redirects, so a provider "change IP" URL
@@ -132,6 +134,16 @@ func callProviderRotate(url string) (bool, int, string) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	return resp.StatusCode >= 200 && resp.StatusCode < 400, resp.StatusCode, strings.TrimSpace(string(body))
+}
+
+// formatProviderBody returns the provider body as raw JSON when it already IS
+// valid JSON — so the client sees a nested object, not an escaped string — and
+// as a plain string otherwise.
+func formatProviderBody(body string) interface{} {
+	if body != "" && json.Valid([]byte(body)) {
+		return json.RawMessage(body)
+	}
+	return body
 }
 
 func rotateBlocked(ip string) bool {
