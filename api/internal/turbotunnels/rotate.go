@@ -25,16 +25,35 @@ type failWindow struct {
 	blockedUntil time.Time
 }
 
+// Abuse-guard tuning, all overridable via env (see the getters below).
 const (
-	rotateFailWindow    = 5 * time.Minute
-	rotateFailThreshold = 10
-	rotateBlockDuration = 30 * time.Minute
+	defaultRotateFailWindow    = 300  // seconds (5 min)
+	defaultRotateFailThreshold = 10   // failed attempts per window
+	defaultRotateBlockDuration = 1800 // seconds (30 min)
 )
 
 // rotateMinInterval is the minimum spacing between rotations for one key,
 // overridable via TURBOTUNNELS_ROTATE_MIN_INTERVAL (seconds).
 func rotateMinInterval() time.Duration {
 	return time.Duration(helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_MIN_INTERVAL", 10)) * time.Second
+}
+
+// rotateFailWindow is the window over which invalid-key attempts are counted,
+// overridable via TURBOTUNNELS_ROTATE_FAIL_WINDOW (seconds).
+func rotateFailWindow() time.Duration {
+	return time.Duration(helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_FAIL_WINDOW", defaultRotateFailWindow)) * time.Second
+}
+
+// rotateFailThreshold is how many invalid-key attempts within the window trip a
+// block, overridable via TURBOTUNNELS_ROTATE_FAIL_THRESHOLD.
+func rotateFailThreshold() int {
+	return helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_FAIL_THRESHOLD", defaultRotateFailThreshold)
+}
+
+// rotateBlockDuration is how long a tripped source IP stays blocked,
+// overridable via TURBOTUNNELS_ROTATE_BLOCK_DURATION (seconds).
+func rotateBlockDuration() time.Duration {
+	return time.Duration(helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_BLOCK_DURATION", defaultRotateBlockDuration)) * time.Second
 }
 
 // handleRotate is the PUBLIC rotation trigger: GET/POST /api/restart/{key}. It
@@ -115,13 +134,13 @@ func rotateRecordFail(ip string) {
 	defer rotMu.Unlock()
 	now := time.Now()
 	fw := ipFails[ip]
-	if fw == nil || now.Sub(fw.windowStart) > rotateFailWindow {
+	if fw == nil || now.Sub(fw.windowStart) > rotateFailWindow() {
 		fw = &failWindow{windowStart: now}
 		ipFails[ip] = fw
 	}
 	fw.count++
-	if fw.count >= rotateFailThreshold {
-		fw.blockedUntil = now.Add(rotateBlockDuration)
+	if fw.count >= rotateFailThreshold() {
+		fw.blockedUntil = now.Add(rotateBlockDuration())
 	}
 }
 
