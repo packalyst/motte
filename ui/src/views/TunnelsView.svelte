@@ -524,8 +524,12 @@
                 <Icon name="arrows-right-left" size={16} />
               </div>
               <span class="font-medium truncate flex-1 min-w-0">{t.name}</span>
-              <!-- Actions: grouped Edit/Delete (icon-only on mobile) + chevron. Don't toggle. -->
+              <!-- Actions inline with the title: Regenerate (only when rotating),
+                   grouped Edit/Delete (icon-only on mobile), chevron. Don't toggle. -->
               <div class="flex items-center gap-2 shrink-0" onclick={(e) => e.stopPropagation()} role="presentation">
+                {#if info?.rotateTrigger}
+                  <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy} title="Regenerate rotation key"><span class="hidden sm:inline">Regenerate</span></Button>
+                {/if}
                 <div class="kt-btn-group">
                   <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}><span class="hidden sm:inline">Edit</span></Button>
                   <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}><span class="hidden sm:inline">Delete</span></Button>
@@ -595,12 +599,7 @@
               </div>
 
               {#if info?.rotateTrigger}
-                <div class="flex items-end gap-2">
-                  <div class="flex-1 min-w-0">
-                    <ContentBlock variant="data" label="Rotation URL (secret)" value={info.rotateTrigger} mono copyable padding="sm" />
-                  </div>
-                  <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy}>Regenerate</Button>
-                </div>
+                <ContentBlock variant="data" label="Rotation URL (secret)" value={info.rotateTrigger} mono copyable padding="sm" />
               {/if}
             </div>
           {/if}
