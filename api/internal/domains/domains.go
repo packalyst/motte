@@ -281,6 +281,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"Toggle":          s.handleToggle,
 		"GetCertificates": s.handleGetCertificates,
 		"GetSystemDomain": s.handleGetSystemDomain,
+		"GetSystemDomains": s.handleGetSystemDomains,
 	}
 }
 
@@ -899,4 +900,48 @@ func (s *Service) handleGetSystemDomain(w http.ResponseWriter, r *http.Request) 
 		"domain":      sslDomain,
 		"certificate": certInfo,
 	})
+}
+
+// handleGetSystemDomains returns the read-only "system" domains (the panel's SSL
+// domain and the optional proxy domain) with their certificate info, so they can
+// be shown alongside user-managed routes in the UI. These are configured via
+// manage.sh / env and must NOT be edited from the routes UI — editing would break
+// core routing — so they carry no route id and are marked system:true.
+func (s *Service) handleGetSystemDomains(w http.ResponseWriter, r *http.Request) {
+	certs, _ := traefik.GetCertificates()
+	certFor := func(domain string) *traefik.CertificateInfo {
+		for i := range certs {
+			if certs[i].Domain == domain {
+				return &certs[i]
+			}
+		}
+		return nil
+	}
+
+	type systemDomain struct {
+		Role        string                   `json:"role"`
+		Domain      string                   `json:"domain"`
+		Description string                   `json:"description"`
+		Certificate *traefik.CertificateInfo `json:"certificate"`
+	}
+
+	out := make([]systemDomain, 0, 2)
+	if d := helper.GetEnvOptional("SSL_DOMAIN", ""); d != "" {
+		out = append(out, systemDomain{
+			Role:        "panel",
+			Domain:      d,
+			Description: "Admin panel + API (Traefik, TLS)",
+			Certificate: certFor(d),
+		})
+	}
+	if d := helper.GetEnvOptional("PROXY_DOMAIN", ""); d != "" {
+		out = append(out, systemDomain{
+			Role:        "proxy",
+			Domain:      d,
+			Description: "Tunnel proxy host + rotation trigger",
+			Certificate: certFor(d),
+		})
+	}
+
+	router.JSON(w, map[string]interface{}{"domains": out})
 }

@@ -27,13 +27,15 @@
     { fn: () => apiGet('/api/vpn/clients'), key: 'clients', isArray: true },
     { fn: () => apiGet('/api/traefik/overview'), key: 'traefik', default: {} },
     { fn: () => apiGet('/api/domains/certificates').catch(() => ({ certificates: [] })), key: 'certs', default: { certificates: [] } },
-    { fn: () => apiGet('/api/traefik/resolvers').catch(() => ({ resolvers: [] })), key: 'resolvers', extract: 'resolvers', isArray: true }
+    { fn: () => apiGet('/api/traefik/resolvers').catch(() => ({ resolvers: [] })), key: 'resolvers', extract: 'resolvers', isArray: true },
+    { fn: () => apiGet('/api/domains/system-domains').catch(() => ({ domains: [] })), key: 'systemDomains', extract: 'domains', isArray: true }
   ])
 
   const routes = $derived(loader.data.routes || [])
   const vpnClients = $derived(loader.data.clients || [])
   const certificates = $derived(loader.data.certs?.certificates || [])
   const certResolvers = $derived(loader.data.resolvers || [])
+  const systemDomains = $derived(loader.data.systemDomains || [])
   const availableMiddlewares = $derived.by(() => {
     const mws = loader.data.traefik?.middlewares || []
     return mws
@@ -473,6 +475,60 @@
       </Button>
     </div>
   </Toolbar>
+
+  <!-- System domains (read-only): panel + proxy. Configured via manage.sh, shown
+       here for visibility (SSL status) but not editable — editing would break core
+       routing. -->
+  {#if systemDomains.length > 0}
+    <div class="space-y-2 mb-3">
+      {#each systemDomains as sys}
+        <div class="bg-muted/30 border border-border border-dashed rounded-lg px-4 py-3">
+          <div class="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4">
+            <!-- Domain + Description -->
+            <div class="flex items-center gap-3 min-w-0 flex-1 sm:flex-none sm:min-w-[240px]">
+              <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 bg-muted text-muted-foreground" data-kt-tooltip>
+                <Icon name="lock" size={16} />
+                <span data-kt-tooltip-content class="kt-tooltip hidden">System domain — managed by manage.sh, not editable here</span>
+              </div>
+              <div class="min-w-0">
+                <a href="https://{sys.domain}" target="_blank" rel="noopener" class="kt-link kt-link-underlined kt-link-dashed">{sys.domain}</a>
+                <p class="text-[11px] text-muted-foreground truncate">{sys.description}</p>
+              </div>
+            </div>
+
+            <!-- Role -->
+            <Badge variant="info" size="sm">{sys.role === 'panel' ? 'Panel' : 'Proxy'}</Badge>
+
+            <!-- SSL status -->
+            {#if sys.certificate}
+              {@const cert = sys.certificate}
+              {#if cert.status === 'error'}
+                <Badge variant="destructive" size="sm" title={cert.error || 'Certificate generation failed'}>SSL Error</Badge>
+              {:else if cert.status === 'pending'}
+                <Badge variant="warning" size="sm" title="Waiting for certificate">SSL Pending</Badge>
+              {:else}
+                <Badge
+                  variant={cert.status === 'valid' ? 'success' : cert.status === 'warning' ? 'warning' : 'destructive'}
+                  size="sm"
+                  title={`Expires: ${new Date(cert.notAfter).toLocaleDateString()} (${cert.daysLeft} days)`}
+                >
+                  SSL {cert.daysLeft}d
+                </Badge>
+              {/if}
+            {:else}
+              <Badge variant="muted" size="sm" title="No certificate yet">No SSL</Badge>
+            {/if}
+
+            <!-- Spacer -->
+            <div class="hidden sm:block flex-1"></div>
+
+            <!-- Read-only marker (no actions) -->
+            <span class="text-[10px] text-muted-foreground uppercase tracking-wide hidden sm:inline">Read-only</span>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <!-- Routes List -->
   {#if routes.length > 0}
