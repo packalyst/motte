@@ -107,9 +107,9 @@ func insertFailLog(db *database.DB, srcIP, user string) {
 	}
 	_, err := db.Exec(`
 		INSERT INTO logs (
-			logs_timestamp, logs_type, logs_src_ip, logs_protocol, logs_status, logs_service
-		) VALUES (?, 'proxy', ?, 'http', 'blocked', ?)`,
-		time.Now(), srcIP, user)
+			logs_type, logs_src_ip, logs_protocol, logs_status, logs_service
+		) VALUES ('proxy', ?, 'http', 'blocked', ?)`,
+		srcIP, user)
 	if err != nil {
 		log.Printf("turbotunnels: failed to insert auth-fail log: %v", err)
 	}
@@ -144,10 +144,10 @@ func insertConnLog(db *database.DB, srcIP, user, host, portStr string) {
 	}
 	_, err := db.Exec(`
 		INSERT INTO logs (
-			logs_timestamp, logs_type, logs_src_ip, logs_dest_ip,
+			logs_type, logs_src_ip, logs_dest_ip,
 			logs_dest_port, logs_protocol, logs_domain, logs_status, logs_service
-		) VALUES (?, 'proxy', ?, ?, ?, 'http', ?, 'allowed', ?)`,
-		time.Now(), srcIP, destIP, port, host, user)
+		) VALUES ('proxy', ?, ?, ?, 'http', ?, 'allowed', ?)`,
+		srcIP, destIP, port, host, user)
 	if err != nil {
 		log.Printf("turbotunnels: failed to insert connection log: %v", err)
 	}

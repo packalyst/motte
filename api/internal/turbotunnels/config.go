@@ -30,9 +30,9 @@ const minPassLen = 12
 // proxy and exits from the upstream's IP.
 type Upstream struct {
 	Host string `json:"host"`
-	Port int    `json:"port"`
 	User string `json:"user"`
 	Pass string `json:"pass"`
+	Port int    `json:"port,omitempty"` // deprecated; per-listener UpstreamPort now
 }
 
 // IsSet reports whether an upstream (chained mode) is configured.
@@ -40,26 +40,36 @@ func (u Upstream) IsSet() bool {
 	return strings.TrimSpace(u.Host) != ""
 }
 
-// Tunnel is one HTTP forward-proxy the panel manages. Only HTTP is supported:
-// its auth path is verified end-to-end. SOCKS5 is intentionally excluded until
-// its auth enforcement is verified, so no tunnel can ever be an open proxy.
-type Tunnel struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Protocol   string   `json:"protocol"` // "http" or "socks5" (default http)
-	ListenPort int      `json:"listenPort"`
-	User       string   `json:"user"`
-	Pass       string   `json:"pass"`
-	Upstream   Upstream `json:"upstream"`
-	RotateURL  string   `json:"rotateUrl"` // rotating-IP endpoint URL; stored, not yet wired
+// Listener is one protocol+port a tunnel serves. A tunnel can have several
+// (e.g. HTTP on 3128 and SOCKS5 on 1080) sharing one identity/credentials.
+type Listener struct {
+	Protocol     string `json:"protocol"`               // http | socks5
+	Port         int    `json:"port"`                   // listen port
+	UpstreamPort int    `json:"upstreamPort,omitempty"` // upstream port for chained mode
 }
 
-// Proto returns the tunnel's protocol, defaulting to "http".
-func (t Tunnel) Proto() string {
-	if t.Protocol == "socks5" {
+// Proto returns the listener's protocol, defaulting to "http".
+func (l Listener) Proto() string {
+	if l.Protocol == "socks5" {
 		return "socks5"
 	}
 	return "http"
+}
+
+// Tunnel is one managed forward-proxy identity: shared name, credentials and
+// upstream, exposed via one or more Listeners (HTTP and/or SOCKS5).
+type Tunnel struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Listeners []Listener `json:"listeners"`
+	User      string     `json:"user"`
+	Pass      string     `json:"pass"`
+	Upstream  Upstream   `json:"upstream"`
+	RotateURL string     `json:"rotateUrl"` // rotating-IP endpoint URL; stored, not yet wired
+
+	// Deprecated single-listener fields, migrated to Listeners on load.
+	Protocol   string `json:"protocol,omitempty"`
+	ListenPort int    `json:"listenPort,omitempty"`
 }
 
 // IsDirect reports whether the tunnel exits from this server directly (no
@@ -153,6 +163,18 @@ func LoadConfig() (Config, error) {
 	if cfg.Tunnels == nil {
 		cfg.Tunnels = []Tunnel{}
 	}
+	// Migrate the old single-listener shape (protocol + listenPort) to Listeners.
+	for i := range cfg.Tunnels {
+		t := &cfg.Tunnels[i]
+		if len(t.Listeners) == 0 && t.ListenPort > 0 {
+			proto := t.Protocol
+			if proto == "" {
+				proto = "http"
+			}
+			t.Listeners = []Listener{{Protocol: proto, Port: t.ListenPort, UpstreamPort: t.Upstream.Port}}
+		}
+		t.Protocol, t.ListenPort, t.Upstream.Port = "", 0, 0 // drop deprecated fields
+	}
 	return cfg, nil
 }
 
@@ -194,19 +216,32 @@ func ValidateConfig(cfg Config) error {
 		}
 		seenName[t.Name] = true
 
-		if t.Protocol != "" && t.Protocol != "http" && t.Protocol != "socks5" {
-			return fmt.Errorf("%s: protocol must be http or socks5", label)
+		if len(t.Listeners) == 0 {
+			return fmt.Errorf("%s: pick at least one protocol (HTTP and/or SOCKS5)", label)
 		}
+		seenProto := map[string]bool{}
+		for _, l := range t.Listeners {
+			if l.Protocol != "http" && l.Protocol != "socks5" {
+				return fmt.Errorf("%s: protocol must be http or socks5", label)
+			}
+			if seenProto[l.Protocol] {
+				return fmt.Errorf("%s: %s is selected more than once", label, l.Protocol)
+			}
+			seenProto[l.Protocol] = true
 
-		if t.ListenPort < 1 || t.ListenPort > 65535 {
-			return fmt.Errorf("%s: listen port %d is out of range (1-65535)", label, t.ListenPort)
-		}
-		if seenPort[t.ListenPort] {
-			return fmt.Errorf("%s: listen port %d is used by more than one tunnel", label, t.ListenPort)
-		}
-		seenPort[t.ListenPort] = true
-		if svc, taken := external[t.ListenPort]; taken {
-			return fmt.Errorf("%s: port %d is already in use by %s", label, t.ListenPort, svc)
+			if l.Port < 1 || l.Port > 65535 {
+				return fmt.Errorf("%s: %s port %d is out of range (1-65535)", label, l.Protocol, l.Port)
+			}
+			if seenPort[l.Port] {
+				return fmt.Errorf("%s: port %d is used by more than one listener", label, l.Port)
+			}
+			seenPort[l.Port] = true
+			if svc, taken := external[l.Port]; taken {
+				return fmt.Errorf("%s: port %d is already in use by %s", label, l.Port, svc)
+			}
+			if t.Upstream.IsSet() && (l.UpstreamPort < 1 || l.UpstreamPort > 65535) {
+				return fmt.Errorf("%s: %s upstream port %d is out of range (1-65535)", label, l.Protocol, l.UpstreamPort)
+			}
 		}
 
 		if strings.TrimSpace(t.User) == "" {
@@ -225,9 +260,6 @@ func ValidateConfig(cfg Config) error {
 		if t.Upstream.IsSet() {
 			if !isSafeCredential(t.Upstream.Host) {
 				return fmt.Errorf("%s: upstream host must not contain spaces or any of : @ /", label)
-			}
-			if t.Upstream.Port < 1 || t.Upstream.Port > 65535 {
-				return fmt.Errorf("%s: upstream port %d is out of range (1-65535)", label, t.Upstream.Port)
 			}
 			if t.Upstream.User != "" && !isSafeCredential(t.Upstream.User) {
 				return fmt.Errorf("%s: upstream username must not contain spaces or any of : @ /", label)
@@ -311,17 +343,21 @@ func (c Config) tunnelsJSON() (string, error) {
 		Tunnels []tunnelOut `json:"tunnels"`
 	}{Tunnels: []tunnelOut{}}
 
+	// Flatten each tunnel's listeners into one per-listen entry — the exact
+	// shape run.py consumes, so the container wiring is unchanged.
 	for _, t := range c.Tunnels {
-		to := tunnelOut{Port: t.ListenPort, Protocol: t.Proto(), User: t.User, Pass: t.Pass}
-		if t.Upstream.IsSet() {
-			to.Upstream = &upstreamOut{
-				Host: t.Upstream.Host,
-				Port: t.Upstream.Port,
-				User: t.Upstream.User,
-				Pass: t.Upstream.Pass,
+		for _, l := range t.Listeners {
+			to := tunnelOut{Port: l.Port, Protocol: l.Proto(), User: t.User, Pass: t.Pass}
+			if t.Upstream.IsSet() {
+				to.Upstream = &upstreamOut{
+					Host: t.Upstream.Host,
+					Port: l.UpstreamPort,
+					User: t.Upstream.User,
+					Pass: t.Upstream.Pass,
+				}
 			}
+			out.Tunnels = append(out.Tunnels, to)
 		}
-		out.Tunnels = append(out.Tunnels, to)
 	}
 	blob, err := json.Marshal(out)
 	return string(blob), err
@@ -332,7 +368,9 @@ func (c Config) tunnelsJSON() (string, error) {
 func (c Config) listenPorts() []int {
 	ports := make([]int, 0, len(c.Tunnels))
 	for _, t := range c.Tunnels {
-		ports = append(ports, t.ListenPort)
+		for _, l := range t.Listeners {
+			ports = append(ports, l.Port)
+		}
 	}
 	return ports
 }

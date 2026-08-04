@@ -106,11 +106,11 @@ func (s *Service) handleQuickDeploy(w http.ResponseWriter, r *http.Request) {
 	if len(cfg.Tunnels) == 0 {
 		user, pass := GenCredentials()
 		cfg.Tunnels = []Tunnel{{
-			ID:         newTunnelID(),
-			Name:       "Quick proxy",
-			ListenPort: firstFreePort(3128),
-			User:       user,
-			Pass:       pass,
+			ID:        newTunnelID(),
+			Name:      "Quick proxy",
+			Listeners: []Listener{{Protocol: "http", Port: firstFreePort(3128)}},
+			User:      user,
+			Pass:      pass,
 		}}
 		if err := SaveConfig(cfg); err != nil {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)

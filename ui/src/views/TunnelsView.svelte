@@ -66,12 +66,8 @@
     }
   }
 
-  // Toggle a protocol. Create allows both (→ 2 tunnels); edit is single-protocol.
+  // Toggle a protocol on the tunnel (one listener each). A tunnel can serve both.
   function toggleProto(p) {
-    if (modalMode === 'edit') {
-      form.protocols = [p]
-      return
-    }
     form.protocols = form.protocols.includes(p)
       ? form.protocols.filter((x) => x !== p)
       : [...form.protocols, p]
@@ -104,12 +100,9 @@
 
   function formatLastSeen(ts) {
     if (!ts) return ''
-    try {
-      // SQLite stores UTC "YYYY-MM-DD HH:MM:SS" — render in local time.
-      return new Date(ts.replace(' ', 'T') + 'Z').toLocaleString()
-    } catch {
-      return ts
-    }
+    // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS"; render in local time.
+    const d = new Date(String(ts).replace(' ', 'T') + 'Z')
+    return isNaN(d.getTime()) ? '' : d.toLocaleString()
   }
 
   async function loadClients() {
@@ -127,14 +120,16 @@
   }
 
   // Probe a tunnel end-to-end (through the proxy) and stash the result by id.
-  async function testTunnel(t) {
-    testResults = { ...testResults, [t.id]: { testing: true } }
+  // Probe one listener (protocol+port) of a tunnel; result keyed by id:protocol.
+  async function testTunnel(t, l) {
+    const key = `${t.id}:${l.protocol}`
+    testResults = { ...testResults, [key]: { testing: true } }
     try {
-      const res = await apiPost('/api/turbotunnels/test', { protocol: t.protocol || 'http', port: t.listenPort, user: t.user, pass: t.pass })
-      testResults = { ...testResults, [t.id]: res }
-      toast(res.ok ? `Tunnel "${t.name}" is up — exit ${res.exitIp}` : `Tunnel "${t.name}" failed: ${res.error}`, res.ok ? 'success' : 'error')
+      const res = await apiPost('/api/turbotunnels/test', { protocol: l.protocol, port: l.port, user: t.user, pass: t.pass })
+      testResults = { ...testResults, [key]: res }
+      toast(res.ok ? `${t.name} (${l.protocol}) is up — exit ${res.exitIp}` : `${t.name} (${l.protocol}) failed: ${res.error}`, res.ok ? 'success' : 'error')
     } catch (e) {
-      testResults = { ...testResults, [t.id]: { error: e.message } }
+      testResults = { ...testResults, [key]: { error: e.message } }
       toast('Test failed: ' + e.message, 'error')
     }
   }
@@ -205,15 +200,17 @@
     const t = config.tunnels[index]
     modalMode = 'edit'
     editIndex = index
-    const proto = t.protocol === 'socks5' ? 'socks5' : 'http'
+    const listeners = t.listeners || []
     const ports = { http: '3128', socks5: '1080' }
-    ports[proto] = String(t.listenPort ?? '')
     const upPorts = { http: '', socks5: '' }
-    if (t.upstream?.port) upPorts[proto] = String(t.upstream.port)
+    for (const l of listeners) {
+      ports[l.protocol] = String(l.port ?? '')
+      if (l.upstreamPort) upPorts[l.protocol] = String(l.upstreamPort)
+    }
     form = {
       id: t.id || '',
       name: t.name || '',
-      protocols: [proto],
+      protocols: listeners.length ? listeners.map((l) => l.protocol) : ['http'],
       ports,
       user: t.user || '',
       pass: t.pass || '',
@@ -229,27 +226,23 @@
     showModal = true
   }
 
-  // Build one tunnel object per selected protocol (so "both" makes two).
-  function buildTunnelsFromForm() {
-    const multi = form.protocols.length > 1
-    return form.protocols.map((proto) => ({
-      id: '',
-      name: multi ? `${form.name.trim()} (${proto})` : form.name.trim(),
-      protocol: proto,
-      listenPort: Number(form.ports[proto]),
+  // Build one tunnel with a listener per selected protocol (shared identity).
+  function buildTunnelFromForm() {
+    return {
+      id: form.id,
+      name: form.name.trim(),
+      listeners: form.protocols.map((proto) => ({
+        protocol: proto,
+        port: Number(form.ports[proto]),
+        upstreamPort: form.chained ? Number(form.upstream.ports[proto]) : 0,
+      })),
       user: form.user.trim(),
       pass: form.pass,
-      // Upstream host/creds are shared; the port is per-protocol.
       upstream: form.chained
-        ? {
-            host: form.upstream.host.trim(),
-            port: Number(form.upstream.ports[proto]),
-            user: form.upstream.user.trim(),
-            pass: form.upstream.pass,
-          }
-        : { host: '', port: 0, user: '', pass: '' },
+        ? { host: form.upstream.host.trim(), user: form.upstream.user.trim(), pass: form.upstream.pass }
+        : { host: '', user: '', pass: '' },
       rotateUrl: form.rotateUrl.trim(),
-    }))
+    }
   }
 
   async function saveTunnel() {
@@ -261,29 +254,23 @@
       toast('A chained tunnel needs an upstream host — pick a node or enter one.', 'error')
       return
     }
-    // Build one tunnel per selected protocol, then persist the whole document.
-    const built = buildTunnelsFromForm()
+    // Build one tunnel (with a listener per protocol), then persist the document.
+    const built = buildTunnelFromForm()
     const next = { tunnels: [...config.tunnels] }
-    if (modalMode === 'create') {
-      next.tunnels.push(...built)
-    } else {
-      built[0].id = form.id // preserve the edited tunnel's id
-      next.tunnels[editIndex] = built[0]
-    }
+    if (modalMode === 'create') next.tunnels.push(built)
+    else next.tunnels[editIndex] = built
 
     busy = true
     try {
       status = await apiPut('/api/turbotunnels/config', next)
       await loadConfig() // pull back with server-assigned IDs
       showModal = false
-      toast(modalMode === 'create' ? (built.length > 1 ? `${built.length} tunnels added` : 'Tunnel added') : 'Tunnel updated', 'success')
+      toast(modalMode === 'create' ? 'Tunnel added' : 'Tunnel updated', 'success')
       const applied = await maybeOfferRestart()
-      // Test-on-add: once the proxy is running the new config, verify each tunnel.
+      // Test-on-add: once the proxy is running, verify each of its listeners.
       if (applied) {
-        for (const b of built) {
-          const saved = config.tunnels.find((x) => x.user === b.user && x.listenPort === b.listenPort)
-          if (saved) testTunnel(saved)
-        }
+        const saved = config.tunnels.find((x) => x.name === built.name)
+        if (saved) for (const l of saved.listeners || []) testTunnel(saved, l)
       }
     } catch (e) {
       // Validation errors come back as the message — show them inline.
@@ -297,8 +284,8 @@
     const t = config.tunnels[index]
     const confirmed = await confirm({
       title: 'Delete tunnel',
-      message: `Delete "${t.name}" (port ${t.listenPort})?`,
-      description: 'The proxy on this port will stop being served after a restart.',
+      message: `Delete "${t.name}" (${(t.listeners || []).map((l) => `${l.protocol}:${l.port}`).join(', ')})?`,
+      description: 'These proxies will stop being served after a restart.',
     })
     if (!confirmed) return
     setConfirmLoading(true)
@@ -502,35 +489,24 @@
                 <Icon name="arrows-right-left" size={16} />
               </div>
               <div class="min-w-0">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                   <span class="font-medium truncate">{t.name}</span>
-                  <Badge variant="info" size="sm">{(t.protocol || 'http').toUpperCase()}</Badge>
+                  {#each (t.listeners || []) as l}
+                    <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
+                  {/each}
                   <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
                   {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating IP</Badge>{/if}
                 </div>
-                <p class="text-[11px] text-muted-foreground font-mono truncate">
-                  {(info?.host || 'server')}:{t.listenPort}
-                  {#if chained}· via {t.upstream.host}:{t.upstream.port}{/if}
-                </p>
+                {#if chained}
+                  <p class="text-[11px] text-muted-foreground font-mono truncate">via {t.upstream.host}</p>
+                {/if}
               </div>
             </div>
             <div class="kt-btn-group">
-              <Button size="xs" variant="outline" icon="activity" onclick={() => testTunnel(t)}
-                disabled={!running || testResults[t.id]?.testing} title={running ? 'Test this tunnel' : 'Start the proxy to test'}>
-                {testResults[t.id]?.testing ? '...' : 'Test'}
-              </Button>
               <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}>Edit</Button>
               <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}>Delete</Button>
             </div>
           </div>
-
-          {#if testResults[t.id] && !testResults[t.id].testing}
-            {@const tr = testResults[t.id]}
-            <div class="mt-2 flex items-center gap-1 text-[11px] {tr.ok ? 'text-success' : 'text-destructive'}">
-              <Icon name={tr.ok ? 'circle-check' : 'alert-triangle'} size={12} />
-              {#if tr.ok}Up · exit {tr.exitIp} · {tr.latencyMs}ms{:else}Down · {tr.error}{/if}
-            </div>
-          {/if}
 
           {#if stats?.perUser?.[t.user]}
             {@const ts = stats.perUser[t.user]}
@@ -538,19 +514,44 @@
               <span class="flex items-center gap-1"><Icon name="activity" size={12} /> {ts.requests} req</span>
               <span class="flex items-center gap-1 {ts.failed ? 'text-destructive' : ''}"><Icon name="ban" size={12} /> {ts.failed} failed</span>
               <span class="flex items-center gap-1"><Icon name="users" size={12} /> {ts.clients} clients</span>
-              {#if ts.lastSeen}<span class="flex items-center gap-1"><Icon name="clock" size={12} /> {formatLastSeen(ts.lastSeen)}</span>{/if}
+              {#if formatLastSeen(ts.lastSeen)}<span class="flex items-center gap-1"><Icon name="clock" size={12} /> {formatLastSeen(ts.lastSeen)}</span>{/if}
             </div>
           {/if}
 
+          <!-- Endpoints (one per protocol) -->
+          <div class="space-y-2 mt-3">
+            {#each (t.listeners || []) as l}
+              {@const ep = (info?.endpoints || []).find((e) => e.protocol === l.protocol)}
+              {@const tr = testResults[`${t.id}:${l.protocol}`]}
+              <div class="rounded-md bg-muted/30 border border-border/50 p-2 space-y-1.5">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
+                    <span class="font-mono text-xs truncate">{(info?.host || 'server')}:{l.port}</span>
+                    {#if tr && !tr.testing}
+                      <span class="text-[11px] flex items-center gap-1 shrink-0 {tr.ok ? 'text-success' : 'text-destructive'}">
+                        <Icon name={tr.ok ? 'circle-check' : 'alert-triangle'} size={12} />
+                        {tr.ok ? `${tr.exitIp} · ${tr.latencyMs}ms` : tr.error}
+                      </span>
+                    {/if}
+                  </div>
+                  <Button size="xs" variant="outline" icon="activity" onclick={() => testTunnel(t, l)}
+                    disabled={!running || tr?.testing} title={running ? 'Test' : 'Start the proxy to test'}>
+                    {tr?.testing ? '...' : 'Test'}
+                  </Button>
+                </div>
+                {#if ep?.command}
+                  <ContentBlock variant="data" label="Command" value={ep.command} mono copyable padding="sm" />
+                {/if}
+              </div>
+            {/each}
+          </div>
+
+          <!-- Shared credentials -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
             <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
             <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
           </div>
-          {#if info?.command}
-            <div class="mt-2">
-              <ContentBlock variant="data" label="Example command" value={info.command} mono copyable padding="sm" />
-            </div>
-          {/if}
         </div>
       {/each}
     </div>
@@ -634,10 +635,10 @@
       </div>
     </div>
 
-    <!-- Rotating IP URL (stored now; the endpoint mapping comes later) -->
+    <!-- Rotating IP URL -->
     <div class="border-t border-border pt-4">
       <Input label="Rotating IP URL (optional)" placeholder="https://…" bind:value={form.rotateUrl} prefixIcon="refresh" />
-      <p class="text-xs text-muted-foreground mt-1">Saved for now; we'll wire it to the endpoints later.</p>
+      <p class="text-xs text-muted-foreground mt-1">Endpoint that provides this proxy's rotating exit IP.</p>
     </div>
   </div>
 
