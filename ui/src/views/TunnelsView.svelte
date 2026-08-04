@@ -511,34 +511,38 @@
         {@const chained = !!(t.upstream && t.upstream.host)}
         {@const isOpen = !!expanded[t.id]}
         <div class="bg-card border border-border rounded-lg border-l-4 {running ? 'border-l-success' : 'border-l-muted-foreground/30'}">
-          <!-- Header: icon + name/badges (left), actions (right). Tap toggles. -->
+          <!-- Header: tap toggles. Row 1 = icon + name + grouped actions;
+               row 2 = badges (from the left edge) with 'via' inline. -->
           <div
-            class="flex items-start gap-3 px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer select-none"
+            class="px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer select-none"
             role="button" tabindex="0" aria-expanded={isOpen}
             onclick={() => toggleExpand(t.id)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(t.id) } }}
           >
-            <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-              <Icon name="arrows-right-left" size={16} />
-            </div>
-            <div class="min-w-0 flex-1">
-              <span class="font-medium truncate block">{t.name}</span>
-              <div class="flex items-center gap-1 flex-wrap mt-1">
-                {#each (t.listeners || []) as l}
-                  <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
-                {/each}
-                <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
-                {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating</Badge>{/if}
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
+                <Icon name="arrows-right-left" size={16} />
               </div>
-              {#if chained}
-                <p class="text-[11px] text-muted-foreground font-mono truncate mt-0.5">via {t.upstream.host}</p>
-              {/if}
+              <span class="font-medium truncate flex-1 min-w-0">{t.name}</span>
+              <!-- Actions: grouped Edit/Delete (icon-only on mobile) + chevron. Don't toggle. -->
+              <div class="flex items-center gap-2 shrink-0" onclick={(e) => e.stopPropagation()} role="presentation">
+                <div class="kt-btn-group">
+                  <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}><span class="hidden sm:inline">Edit</span></Button>
+                  <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}><span class="hidden sm:inline">Delete</span></Button>
+                </div>
+                <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform {isOpen ? 'rotate-180' : ''}" />
+              </div>
             </div>
-            <!-- Actions: icon-only on mobile, labelled on desktop. Don't toggle. -->
-            <div class="flex items-center gap-1 shrink-0" onclick={(e) => e.stopPropagation()} role="presentation">
-              <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}><span class="hidden sm:inline">Edit</span></Button>
-              <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}><span class="hidden sm:inline">Delete</span></Button>
-              <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform ml-0.5 {isOpen ? 'rotate-180' : ''}" />
+            <!-- Badges start from the left edge (under the icon); 'via' inline (right on mobile). -->
+            <div class="flex items-center gap-1 flex-wrap mt-2">
+              {#each (t.listeners || []) as l}
+                <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
+              {/each}
+              <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
+              {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating</Badge>{/if}
+              {#if chained}
+                <span class="text-[11px] text-muted-foreground font-mono truncate ml-auto sm:ml-1">via {t.upstream.host}</span>
+              {/if}
             </div>
           </div>
 
@@ -591,12 +595,11 @@
               </div>
 
               {#if info?.rotateTrigger}
-                <div>
-                  <div class="flex items-center justify-between gap-2 mb-1">
-                    <span class="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Rotation URL (secret)</span>
-                    <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy}>Regenerate</Button>
+                <div class="flex items-end gap-2">
+                  <div class="flex-1 min-w-0">
+                    <ContentBlock variant="data" label="Rotation URL (secret)" value={info.rotateTrigger} mono copyable padding="sm" />
                   </div>
-                  <ContentBlock variant="data" value={info.rotateTrigger} mono copyable padding="sm" />
+                  <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy}>Regenerate</Button>
                 </div>
               {/if}
             </div>
