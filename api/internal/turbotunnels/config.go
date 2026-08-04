@@ -32,7 +32,6 @@ type Upstream struct {
 	Host string `json:"host"`
 	User string `json:"user"`
 	Pass string `json:"pass"`
-	Port int    `json:"port,omitempty"` // deprecated; per-listener UpstreamPort now
 }
 
 // IsSet reports whether an upstream (chained mode) is configured.
@@ -66,10 +65,6 @@ type Tunnel struct {
 	Pass      string     `json:"pass"`
 	Upstream  Upstream   `json:"upstream"`
 	RotateURL string     `json:"rotateUrl"` // rotating-IP endpoint URL; stored, not yet wired
-
-	// Deprecated single-listener fields, migrated to Listeners on load.
-	Protocol   string `json:"protocol,omitempty"`
-	ListenPort int    `json:"listenPort,omitempty"`
 }
 
 // IsDirect reports whether the tunnel exits from this server directly (no
@@ -162,18 +157,6 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.Tunnels == nil {
 		cfg.Tunnels = []Tunnel{}
-	}
-	// Migrate the old single-listener shape (protocol + listenPort) to Listeners.
-	for i := range cfg.Tunnels {
-		t := &cfg.Tunnels[i]
-		if len(t.Listeners) == 0 && t.ListenPort > 0 {
-			proto := t.Protocol
-			if proto == "" {
-				proto = "http"
-			}
-			t.Listeners = []Listener{{Protocol: proto, Port: t.ListenPort, UpstreamPort: t.Upstream.Port}}
-		}
-		t.Protocol, t.ListenPort, t.Upstream.Port = "", 0, 0 // drop deprecated fields
 	}
 	return cfg, nil
 }
