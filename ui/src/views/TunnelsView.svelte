@@ -52,6 +52,12 @@
     config.tunnels.filter((t) => (t.name || '').toLowerCase().includes(searchQuery.toLowerCase()))
   )
 
+  // Collapsible cards: expanded state keyed by tunnel id (collapsed by default).
+  let expanded = $state({})
+  function toggleExpand(id) {
+    expanded = { ...expanded, [id]: !expanded[id] }
+  }
+
   function blankForm() {
     return {
       id: '',
@@ -417,6 +423,7 @@
     icon="arrows-right-left"
     title="Tunnels"
     description="Authenticated HTTP forward proxies. Direct tunnels exit from this server; chained tunnels forward through another proxy. Config is stored encrypted and applied by (re)starting the proxy."
+    descriptionClass="hidden sm:block"
   >
     {#if status}
       <div class="mt-3 flex items-center gap-2 text-xs">
@@ -455,8 +462,9 @@
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
       <StatCard icon="activity" color="success" value={stats.requests ?? 0} label="Requests (24h)" />
       <StatCard icon="ban" color="destructive" value={stats.failed ?? 0} label="Failed (24h)" />
-      <StatCard icon="users" color="info" value={stats.clients ?? 0} label="Unique clients" />
-      <StatCard icon="world" color="primary" value={stats.topDest || '—'} label="Top destination" />
+      <!-- Secondary stats: hidden on mobile to keep the header compact -->
+      <div class="hidden sm:block"><StatCard icon="users" color="info" value={stats.clients ?? 0} label="Unique clients" /></div>
+      <div class="hidden sm:block"><StatCard icon="world" color="primary" value={stats.topDest || '—'} label="Top destination" /></div>
     </div>
   {/if}
 
@@ -501,83 +509,96 @@
         {@const i = config.tunnels.indexOf(t)}
         {@const info = infoById[t.id]}
         {@const chained = !!(t.upstream && t.upstream.host)}
-        <div class="bg-card border border-border rounded-lg px-4 py-3 border-l-4 {running ? 'border-l-success' : 'border-l-muted-foreground/30'}">
-          <div class="flex flex-wrap sm:flex-nowrap items-center gap-3">
-            <div class="flex items-center gap-3 min-w-0 flex-1">
-              <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                <Icon name="arrows-right-left" size={16} />
-              </div>
-              <div class="min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span class="font-medium truncate">{t.name}</span>
-                  {#each (t.listeners || []) as l}
-                    <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
-                  {/each}
-                  <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
-                  {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating IP</Badge>{/if}
-                </div>
-                {#if chained}
-                  <p class="text-[11px] text-muted-foreground font-mono truncate">via {t.upstream.host}</p>
-                {/if}
-              </div>
+        {@const isOpen = !!expanded[t.id]}
+        <div class="bg-card border border-border rounded-lg border-l-4 {running ? 'border-l-success' : 'border-l-muted-foreground/30'}">
+          <!-- Header: icon + name/badges (left), actions (right). Tap toggles. -->
+          <div
+            class="flex items-start gap-3 px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer select-none"
+            role="button" tabindex="0" aria-expanded={isOpen}
+            onclick={() => toggleExpand(t.id)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(t.id) } }}
+          >
+            <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
+              <Icon name="arrows-right-left" size={16} />
             </div>
-            <div class="kt-btn-group">
-              <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}>Edit</Button>
-              <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}>Delete</Button>
+            <div class="min-w-0 flex-1">
+              <span class="font-medium truncate block">{t.name}</span>
+              <div class="flex items-center gap-1 flex-wrap mt-1">
+                {#each (t.listeners || []) as l}
+                  <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
+                {/each}
+                <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
+                {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating</Badge>{/if}
+              </div>
+              {#if chained}
+                <p class="text-[11px] text-muted-foreground font-mono truncate mt-0.5">via {t.upstream.host}</p>
+              {/if}
+            </div>
+            <!-- Actions: icon-only on mobile, labelled on desktop. Don't toggle. -->
+            <div class="flex items-center gap-1 shrink-0" onclick={(e) => e.stopPropagation()} role="presentation">
+              <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}><span class="hidden sm:inline">Edit</span></Button>
+              <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}><span class="hidden sm:inline">Delete</span></Button>
+              <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform ml-0.5 {isOpen ? 'rotate-180' : ''}" />
             </div>
           </div>
 
-          {#if stats?.perUser?.[t.user]}
-            {@const ts = stats.perUser[t.user]}
-            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[11px] text-muted-foreground">
-              <span class="flex items-center gap-1"><Icon name="activity" size={12} /> {ts.requests} req</span>
-              <span class="flex items-center gap-1 {ts.failed ? 'text-destructive' : ''}"><Icon name="ban" size={12} /> {ts.failed} failed</span>
-              <span class="flex items-center gap-1"><Icon name="users" size={12} /> {ts.clients} clients</span>
-              {#if formatLastSeen(ts.lastSeen)}<span class="flex items-center gap-1"><Icon name="clock" size={12} /> {formatLastSeen(ts.lastSeen)}</span>{/if}
-            </div>
-          {/if}
+          <!-- Expanded body: usage, endpoints, credentials, rotation URL -->
+          {#if isOpen}
+            <div class="px-3 pb-3 sm:px-4 sm:pb-4 pt-3 border-t border-border/50 space-y-3">
+              {#if stats?.perUser?.[t.user]}
+                {@const ts = stats.perUser[t.user]}
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                  <span class="flex items-center gap-1"><Icon name="activity" size={12} /> {ts.requests} req</span>
+                  <span class="flex items-center gap-1 {ts.failed ? 'text-destructive' : ''}"><Icon name="ban" size={12} /> {ts.failed} failed</span>
+                  <span class="flex items-center gap-1"><Icon name="users" size={12} /> {ts.clients} clients</span>
+                  {#if formatLastSeen(ts.lastSeen)}<span class="flex items-center gap-1"><Icon name="clock" size={12} /> {formatLastSeen(ts.lastSeen)}</span>{/if}
+                </div>
+              {/if}
 
-          <!-- Endpoints (one per protocol) -->
-          <div class="space-y-2 mt-3">
-            {#each (t.listeners || []) as l}
-              {@const ep = (info?.endpoints || []).find((e) => e.protocol === l.protocol)}
-              {@const tr = testResults[`${t.id}:${l.protocol}`]}
-              <div class="rounded-md bg-muted/30 border border-border/50 p-2 space-y-1.5">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
-                    <span class="font-mono text-xs truncate">{(info?.host || 'server')}:{l.port}</span>
-                    {#if tr && !tr.testing}
-                      <span class="text-[11px] flex items-center gap-1 shrink-0 {tr.ok ? 'text-success' : 'text-destructive'}">
-                        <Icon name={tr.ok ? 'circle-check' : 'alert-triangle'} size={12} />
-                        {tr.ok ? `${tr.exitIp} · ${tr.latencyMs}ms` : tr.error}
-                      </span>
+              <!-- Endpoints (one per protocol) -->
+              <div class="space-y-2">
+                {#each (t.listeners || []) as l}
+                  {@const ep = (info?.endpoints || []).find((e) => e.protocol === l.protocol)}
+                  {@const tr = testResults[`${t.id}:${l.protocol}`]}
+                  <div class="rounded-md bg-muted/30 border border-border/50 p-2 space-y-1.5">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
+                        <span class="font-mono text-xs truncate">{(info?.host || 'server')}:{l.port}</span>
+                        {#if tr && !tr.testing}
+                          <span class="text-[11px] flex items-center gap-1 shrink-0 {tr.ok ? 'text-success' : 'text-destructive'}">
+                            <Icon name={tr.ok ? 'circle-check' : 'alert-triangle'} size={12} />
+                            {tr.ok ? `${tr.exitIp} · ${tr.latencyMs}ms` : tr.error}
+                          </span>
+                        {/if}
+                      </div>
+                      <Button size="xs" variant="outline" icon="activity" onclick={() => testTunnel(t, l)}
+                        disabled={!running || tr?.testing} title={running ? 'Test' : 'Start the proxy to test'}>
+                        {tr?.testing ? '...' : 'Test'}
+                      </Button>
+                    </div>
+                    {#if ep?.command}
+                      <ContentBlock variant="data" label="Command" value={ep.command} mono copyable padding="sm" />
                     {/if}
                   </div>
-                  <Button size="xs" variant="outline" icon="activity" onclick={() => testTunnel(t, l)}
-                    disabled={!running || tr?.testing} title={running ? 'Test' : 'Start the proxy to test'}>
-                    {tr?.testing ? '...' : 'Test'}
-                  </Button>
+                {/each}
+              </div>
+
+              <!-- Shared credentials -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
+                <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
+              </div>
+
+              {#if info?.rotateTrigger}
+                <div>
+                  <div class="flex items-center justify-between gap-2 mb-1">
+                    <span class="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Rotation URL (secret)</span>
+                    <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy}>Regenerate</Button>
+                  </div>
+                  <ContentBlock variant="data" value={info.rotateTrigger} mono copyable padding="sm" />
                 </div>
-                {#if ep?.command}
-                  <ContentBlock variant="data" label="Command" value={ep.command} mono copyable padding="sm" />
-                {/if}
-              </div>
-            {/each}
-          </div>
-
-          <!-- Shared credentials -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
-            <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
-            <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
-          </div>
-
-          {#if info?.rotateTrigger}
-            <div class="mt-2">
-              <ContentBlock variant="data" label="Rotation URL (secret)" value={info.rotateTrigger} mono copyable padding="sm" />
-              <div class="mt-1">
-                <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy}>Regenerate key</Button>
-              </div>
+              {/if}
             </div>
           {/if}
         </div>
