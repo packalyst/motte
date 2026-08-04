@@ -225,6 +225,33 @@ cf_upsert_a_record() {
     return 1
 }
 
+# cf_get_a_record DOMAIN — print "<content>\t<proxied>" for the A record (proxied
+# is "true"/"false"), empty if none. Returns 1 if no token/jq/zone/record so the
+# caller can fall back to a DNS heuristic. Authoritative source for orange vs grey
+# cloud, which plain DNS resolution can only guess at.
+cf_get_a_record() {
+    local domain="$1"
+    local token="${CF_DNS_API_TOKEN:-}"
+    [ -z "$token" ] && return 1
+    command -v jq &> /dev/null || return 1
+    local api="https://api.cloudflare.com/client/v4"
+    local zones zone_id="" zone_name=""
+    zones=$(curl -s -H "Authorization: Bearer $token" "$api/zones?per_page=50" 2>/dev/null)
+    [ "$(echo "$zones" | jq -r '.success' 2>/dev/null)" = "true" ] || return 1
+    while IFS=$'\t' read -r zid zname; do
+        [ -z "$zname" ] && continue
+        if [ "$domain" = "$zname" ] || [ "${domain%".$zname"}" != "$domain" ]; then
+            if [ ${#zname} -gt ${#zone_name} ]; then zone_id="$zid"; zone_name="$zname"; fi
+        fi
+    done < <(echo "$zones" | jq -r '.result[] | "\(.id)\t\(.name)"')
+    [ -z "$zone_id" ] && return 1
+    local rec
+    rec=$(curl -s -H "Authorization: Bearer $token" "$api/zones/$zone_id/dns_records?type=A&name=$domain" 2>/dev/null | jq -r '.result[0] | select(.) | "\(.content)\t\(.proxied)"')
+    [ -z "$rec" ] && return 1
+    echo "$rec"
+    return 0
+}
+
 prompt_yes_no() {
     local prompt="$1"
     local default="${2:-n}"
@@ -1841,26 +1868,68 @@ if [ -n "$PROXY_DOMAIN" ]; then
         echo -e "${RED}  ✗ Invalid domain format — skipping${NC}"
         PROXY_DOMAIN=""
     else
-        PD_RESULT=$(validate_domain_dns "$PROXY_DOMAIN" "$SERVER_IP" 2>/dev/null) || true
-        PD_CF_RANGES=$(fetch_cloudflare_ips) || true
-        if [ "$PD_RESULT" = "$SERVER_IP" ]; then
-            echo -e "${GREEN}  ✓ $PROXY_DOMAIN resolves to this server${NC}"
-        elif [ -n "$PD_RESULT" ] && [ -n "$PD_CF_RANGES" ] && is_cloudflare_ip "$PD_RESULT" "$PD_CF_RANGES"; then
-            echo -e "${GREEN}  ✓ $PROXY_DOMAIN is proxied through Cloudflare${NC}"
-        else
-            if [ -z "$PD_RESULT" ]; then
-                echo -e "${YELLOW}  ⚠ $PROXY_DOMAIN does not resolve yet${NC}"
-            else
-                echo -e "${YELLOW}  ⚠ $PROXY_DOMAIN resolves to ${PD_RESULT}, not this server${NC}"
-            fi
-            if [ -n "${CF_DNS_API_TOKEN:-}" ]; then
-                if prompt_yes_no "  Create/update the A record in Cloudflare (→ $SERVER_IP)?" "y"; then
+        # A proxy domain MUST be DNS-only (grey cloud): Cloudflare's proxy only
+        # forwards web ports (80/443), so if it's proxied (orange cloud) the proxy
+        # ports (1080/3128) silently break. Prefer the Cloudflare API (authoritative
+        # on proxied vs not); fall back to a DNS heuristic when there's no token.
+        PD_HANDLED="no"
+        if PD_REC=$(cf_get_a_record "$PROXY_DOMAIN" 2>/dev/null); then
+            PD_CONTENT="${PD_REC%%$'\t'*}"
+            PD_PROXIED="${PD_REC##*$'\t'}"
+            if [ "$PD_PROXIED" = "true" ]; then
+                echo -e "${RED}  ✗ $PROXY_DOMAIN is PROXIED in Cloudflare (orange cloud)${NC}"
+                echo -e "  ${YELLOW}Proxied domains only forward web ports — the proxy ports (1080/3128) will not work.${NC}"
+                if prompt_yes_no "  Switch it to DNS-only (→ $SERVER_IP) now?" "y"; then
                     if cf_upsert_a_record "$PROXY_DOMAIN" "$SERVER_IP"; then
-                        echo -e "${GREEN}  ✓ Cloudflare A record set: $PROXY_DOMAIN → $SERVER_IP${NC}"
+                        echo -e "${GREEN}  ✓ $PROXY_DOMAIN is now DNS-only → $SERVER_IP${NC}"
+                    fi
+                else
+                    echo -e "  ${CYAN}Grey-cloud it in Cloudflare (DNS-only) so proxy ports reach the server.${NC}"
+                fi
+            elif [ "$PD_CONTENT" != "$SERVER_IP" ]; then
+                echo -e "${YELLOW}  ⚠ $PROXY_DOMAIN is DNS-only but points to ${PD_CONTENT}, not this server${NC}"
+                if prompt_yes_no "  Update it to → $SERVER_IP?" "y"; then
+                    if cf_upsert_a_record "$PROXY_DOMAIN" "$SERVER_IP"; then
+                        echo -e "${GREEN}  ✓ $PROXY_DOMAIN → $SERVER_IP (DNS-only)${NC}"
                     fi
                 fi
             else
-                echo -e "  ${CYAN}Add an A record: $PROXY_DOMAIN → $SERVER_IP${NC}"
+                echo -e "${GREEN}  ✓ $PROXY_DOMAIN is DNS-only → this server${NC}"
+            fi
+            PD_HANDLED="yes"
+        fi
+
+        if [ "$PD_HANDLED" = "no" ]; then
+            # No CF record found (or no token/jq). Fall back to DNS resolution.
+            PD_RESULT=$(validate_domain_dns "$PROXY_DOMAIN" "$SERVER_IP" 2>/dev/null) || true
+            PD_CF_RANGES=$(fetch_cloudflare_ips) || true
+            if [ "$PD_RESULT" = "$SERVER_IP" ]; then
+                echo -e "${GREEN}  ✓ $PROXY_DOMAIN resolves to this server${NC}"
+            elif [ -n "$PD_RESULT" ] && [ -n "$PD_CF_RANGES" ] && is_cloudflare_ip "$PD_RESULT" "$PD_CF_RANGES"; then
+                echo -e "${RED}  ✗ $PROXY_DOMAIN resolves to a Cloudflare IP (looks proxied)${NC}"
+                echo -e "  ${YELLOW}The proxy ports (1080/3128) will not work while it's proxied.${NC}"
+                if [ -n "${CF_DNS_API_TOKEN:-}" ]; then
+                    if prompt_yes_no "  Set a DNS-only A record (→ $SERVER_IP) now?" "y"; then
+                        cf_upsert_a_record "$PROXY_DOMAIN" "$SERVER_IP" && \
+                            echo -e "${GREEN}  ✓ $PROXY_DOMAIN is now DNS-only → $SERVER_IP${NC}"
+                    fi
+                else
+                    echo -e "  ${CYAN}In Cloudflare, set $PROXY_DOMAIN to DNS-only (grey cloud) → $SERVER_IP${NC}"
+                fi
+            else
+                if [ -z "$PD_RESULT" ]; then
+                    echo -e "${YELLOW}  ⚠ $PROXY_DOMAIN does not resolve yet${NC}"
+                else
+                    echo -e "${YELLOW}  ⚠ $PROXY_DOMAIN resolves to ${PD_RESULT}, not this server${NC}"
+                fi
+                if [ -n "${CF_DNS_API_TOKEN:-}" ]; then
+                    if prompt_yes_no "  Create a DNS-only A record in Cloudflare (→ $SERVER_IP)?" "y"; then
+                        cf_upsert_a_record "$PROXY_DOMAIN" "$SERVER_IP" && \
+                            echo -e "${GREEN}  ✓ Cloudflare A record set: $PROXY_DOMAIN → $SERVER_IP (DNS-only)${NC}"
+                    fi
+                else
+                    echo -e "  ${CYAN}Add a DNS-only A record: $PROXY_DOMAIN → $SERVER_IP${NC}"
+                fi
             fi
         fi
     fi
