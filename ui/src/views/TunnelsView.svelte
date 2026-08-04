@@ -134,6 +134,25 @@
     }
   }
 
+  // Regenerate a tunnel's rotation key (clears it → backend assigns a new one).
+  // No restart needed: the key is used by the panel's rotation endpoint, not the
+  // proxy container.
+  async function regenerateRotationKey(t) {
+    const idx = config.tunnels.indexOf(t)
+    if (idx < 0) return
+    const next = { tunnels: config.tunnels.map((x, k) => (k === idx ? { ...x, rotateKey: '' } : x)) }
+    busy = true
+    try {
+      status = await apiPut('/api/turbotunnels/config', next)
+      await loadConfig()
+      toast('Rotation key regenerated', 'success')
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      busy = false
+    }
+  }
+
   async function refresh() {
     await Promise.all([loadStatus(), loadConfig(), loadStats(), loadClients()])
     loading = false
@@ -552,6 +571,15 @@
             <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
             <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
           </div>
+
+          {#if info?.rotateTrigger}
+            <div class="mt-2">
+              <ContentBlock variant="data" label="Rotation URL (secret)" value={info.rotateTrigger} mono copyable padding="sm" />
+              <div class="mt-1">
+                <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy}>Regenerate key</Button>
+              </div>
+            </div>
+          {/if}
         </div>
       {/each}
     </div>
@@ -637,8 +665,8 @@
 
     <!-- Rotating IP URL -->
     <div class="border-t border-border pt-4">
-      <Input label="Rotating IP URL (optional)" placeholder="https://…" bind:value={form.rotateUrl} prefixIcon="refresh" />
-      <p class="text-xs text-muted-foreground mt-1">Endpoint that provides this proxy's rotating exit IP.</p>
+      <Input label="Provider rotate URL (optional)" placeholder="https://provider.com/changeip?token=…" bind:value={form.rotateUrl} prefixIcon="refresh" />
+      <p class="text-xs text-muted-foreground mt-1">The provider's "change IP" endpoint. We never expose it — we call it via a generated secret rotation URL shown on the tunnel card.</p>
     </div>
   </div>
 

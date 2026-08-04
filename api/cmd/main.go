@@ -256,7 +256,10 @@ func main() {
 	}
 
 	if config.IsServiceEnabled("turbotunnels") {
-		r.RegisterService("turbotunnels", turbotunnels.New().Handlers())
+		ttSvc := turbotunnels.New()
+		r.RegisterService("turbotunnels", ttSvc.Handlers())
+		// Public rotation trigger at /api/restart/{key} (bypasses session auth).
+		r.RegisterService("rotate", ttSvc.RotateHandlers())
 		// Mirror the proxy's log markers: auth failures → the firewall jail
 		// file (ban brute-forcers), authenticated connections → the logs table
 		// (shown on the Logs page).

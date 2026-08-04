@@ -188,6 +188,13 @@
         {"path": "/router", "methods": ["DELETE"], "handler": "RemoveRouter", "description": "Remove router"}
       ]
     },
+    "rotate": {
+      "prefix": "/api/restart",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/{key}", "methods": ["GET", "POST"], "handler": "Rotate", "description": "Public tunnel IP-rotation trigger (key-protected)"}
+      ]
+    },
     "turbotunnels": {
       "prefix": "/api/turbotunnels",
       "enabled": true,

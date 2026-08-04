@@ -31,6 +31,12 @@ func (s *Service) Handlers() router.ServiceHandlers {
 	}
 }
 
+// RotateHandlers returns the handler for the PUBLIC rotation trigger, which is
+// registered under its own prefix (/api/restart) and bypasses session auth.
+func (s *Service) RotateHandlers() router.ServiceHandlers {
+	return router.ServiceHandlers{"Rotate": s.handleRotate}
+}
+
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, GetStatus())
 }
@@ -77,6 +83,9 @@ func (s *Service) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	for i := range cfg.Tunnels {
 		if cfg.Tunnels[i].ID == "" {
 			cfg.Tunnels[i].ID = newTunnelID()
+		}
+		if cfg.Tunnels[i].RotateKey == "" {
+			cfg.Tunnels[i].RotateKey = newRotateKey()
 		}
 	}
 	if err := SaveConfig(cfg); err != nil {

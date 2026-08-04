@@ -64,7 +64,8 @@ type Tunnel struct {
 	User      string     `json:"user"`
 	Pass      string     `json:"pass"`
 	Upstream  Upstream   `json:"upstream"`
-	RotateURL string     `json:"rotateUrl"` // rotating-IP endpoint URL; stored, not yet wired
+	RotateURL string     `json:"rotateUrl"` // provider "change IP" endpoint, called server-side
+	RotateKey string     `json:"rotateKey"` // secret for the public /api/restart/{key} trigger
 }
 
 // IsDirect reports whether the tunnel exits from this server directly (no
@@ -92,6 +93,11 @@ func randHexN(n int) string {
 // newTunnelID returns a short unique identifier for a tunnel.
 func newTunnelID() string {
 	return randHexN(8)
+}
+
+// newRotateKey returns a long, URL-safe secret for the public rotation trigger.
+func newRotateKey() string {
+	return randPassword(32)
 }
 
 // b62Alphabet is the character set for generated passwords: mixed-case letters

@@ -240,6 +240,7 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 	publicPrefixes := []string{
 		"/api/setup/",
 		"/api/auth/login",
+		"/api/restart/", // public tunnel-rotation trigger (its own per-key secret)
 	}
 
 	// Exact public paths
