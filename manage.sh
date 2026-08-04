@@ -2245,6 +2245,33 @@ if [ -f "traefik/dynamic.yml.template" ]; then
         certResolver: letsencrypt
         domains:
           - main: "${PROXY_DOMAIN}"
+
+    # Proxy domain - drop every other path (HTTPS). Priority 50: below the rotation
+    # router (100) so /api/restart still works, above the generic catch-all (1) so
+    # the proxy host never serves the panel. sentinel_drop silently closes the
+    # connection.
+    proxy-drop-secure:
+      rule: "Host(`${PROXY_DOMAIN}`)"
+      service: unified-api
+      priority: 50
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "${PROXY_DOMAIN}"
+
+    # Proxy domain - drop all plain HTTP (kills the port-80 panel fall-through).
+    proxy-drop:
+      rule: "Host(`${PROXY_DOMAIN}`)"
+      service: unified-api
+      priority: 50
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - web
 YAML
 )
             SSL_ROUTERS="${SSL_ROUTERS}
