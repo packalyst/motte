@@ -344,16 +344,16 @@ func (r *Router) loggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(wrapped, req)
 
 		clientIP := helper.GetClientIP(req)
+		logPath := helper.RedactSecretPath(req.URL.Path)
 
 		if r.config.Middleware.Logging.Format == "json" {
 			log.Printf(`{"request_id":"%s","method":"%s","path":"%s","status":%d,"duration":"%s","client_ip":"%s"}`,
-				requestID, req.Method, req.URL.Path, wrapped.statusCode, time.Since(start), clientIP)
+				requestID, req.Method, logPath, wrapped.statusCode, time.Since(start), clientIP)
 		} else {
-			log.Printf("[%s] %s %s %s %d %s", requestID, clientIP, req.Method, req.URL.Path, wrapped.statusCode, time.Since(start))
+			log.Printf("[%s] %s %s %s %d %s", requestID, clientIP, req.Method, logPath, wrapped.statusCode, time.Since(start))
 		}
 	})
 }
-
 
 // securityHeadersMiddleware adds security headers including CSP
 func (r *Router) securityHeadersMiddleware(next http.Handler) http.Handler {

@@ -1,9 +1,11 @@
 package turbotunnels
 
 import (
+	"context"
 	"crypto/subtle"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -101,25 +103,35 @@ func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
 
 	rotateClearFails(ip) // a valid key clears this IP's failure streak
 
-	ok, code := callProviderRotate(target.RotateURL)
+	ok, code, body := callProviderRotate(target.RotateURL)
 	if !ok {
-		router.JSONWithStatus(w, map[string]interface{}{"ok": false, "error": "provider request failed", "providerStatus": code}, http.StatusBadGateway)
+		router.JSONWithStatus(w, map[string]interface{}{"ok": false, "error": "provider request failed", "providerStatus": code, "providerResponse": body}, http.StatusBadGateway)
 		return
 	}
-	router.JSON(w, map[string]interface{}{"ok": true, "tunnel": target.Name, "providerStatus": code})
+	router.JSON(w, map[string]interface{}{"ok": true, "tunnel": target.Name, "providerStatus": code, "providerResponse": body})
 }
 
-// callProviderRotate GETs the provider's "change IP" endpoint server-side.
-// Returns whether it succeeded and the provider's HTTP status.
-func callProviderRotate(url string) (bool, int) {
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
+// rotateHTTPClient refuses to follow redirects, so a provider "change IP" URL
+// can't bounce the server-side request onward to an internal address (SSRF). No
+// IP filtering: private targets (WG 10.8.x, Headscale 100.64.x, LAN) are all
+// legitimate here — the URL is admin-configured, the public caller only supplies
+// the key that selects a pre-set tunnel.
+var rotateHTTPClient = &http.Client{
+	Timeout:       15 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// callProviderRotate GETs the provider's "change IP" endpoint server-side. It
+// returns whether it succeeded, the provider's HTTP status, and a capped copy of
+// the response body (surfaced back to the key holder).
+func callProviderRotate(url string) (bool, int, string) {
+	resp, err := rotateHTTPClient.Get(url)
 	if err != nil {
-		return false, 0
+		return false, 0, ""
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	return resp.StatusCode >= 200 && resp.StatusCode < 400, resp.StatusCode
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return resp.StatusCode >= 200 && resp.StatusCode < 400, resp.StatusCode, strings.TrimSpace(string(body))
 }
 
 func rotateBlocked(ip string) bool {
@@ -148,4 +160,36 @@ func rotateClearFails(ip string) {
 	rotMu.Lock()
 	delete(ipFails, ip)
 	rotMu.Unlock()
+}
+
+// StartRotateGuardCleanup periodically evicts expired abuse-guard entries so the
+// in-memory maps can't grow without bound (e.g. from many distinct — possibly
+// spoofed — source IPs sending invalid keys).
+func StartRotateGuardCleanup(ctx context.Context) {
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				now := time.Now()
+				rotMu.Lock()
+				for ip, fw := range ipFails {
+					// Drop once any block has lapsed AND the fail window is stale.
+					if now.After(fw.blockedUntil) && now.Sub(fw.windowStart) > rotateFailWindow() {
+						delete(ipFails, ip)
+					}
+				}
+				for k, ts := range lastRotate {
+					// Absent == "allowed", same as an expired entry.
+					if now.Sub(ts) > rotateMinInterval() {
+						delete(lastRotate, k)
+					}
+				}
+				rotMu.Unlock()
+			}
+		}
+	}()
 }

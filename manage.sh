@@ -181,9 +181,31 @@ is_cloudflare_ip() {
     return 1
 }
 
-# Create or update a Cloudflare A record: $1=domain → $2=ip (proxied).
-# Uses CF_DNS_API_TOKEN. Picks the zone whose name is the longest suffix of the
-# domain. Returns 0 on success. Requires jq.
+CF_API="https://api.cloudflare.com/client/v4"
+
+# cf_zone_id_for_domain DOMAIN — echo the zone id whose name is the longest suffix
+# of DOMAIN. Returns 1 on no-token / no-jq / API-error / no-match. Silent (callers
+# decide what to print). per_page=200 is Cloudflare's max page size, covering
+# essentially any account without pagination.
+cf_zone_id_for_domain() {
+    local domain="$1" token="${CF_DNS_API_TOKEN:-}"
+    [ -z "$token" ] && return 1
+    command -v jq &> /dev/null || return 1
+    local zones zone_id="" zone_name=""
+    zones=$(curl -s -H "Authorization: Bearer $token" "$CF_API/zones?per_page=200" 2>/dev/null)
+    [ "$(echo "$zones" | jq -r '.success' 2>/dev/null)" = "true" ] || return 1
+    while IFS=$'\t' read -r zid zname; do
+        [ -z "$zname" ] && continue
+        if [ "$domain" = "$zname" ] || [ "${domain%".$zname"}" != "$domain" ]; then
+            if [ ${#zname} -gt ${#zone_name} ]; then zone_id="$zid"; zone_name="$zname"; fi
+        fi
+    done < <(echo "$zones" | jq -r '.result[] | "\(.id)\t\(.name)"')
+    [ -z "$zone_id" ] && return 1
+    echo "$zone_id"
+}
+
+# Create or update a Cloudflare A record: $1=domain → $2=ip (DNS-only / grey cloud).
+# Uses CF_DNS_API_TOKEN. Returns 0 on success. Requires jq.
 cf_upsert_a_record() {
     local domain="$1" ip="$2"
     local token="${CF_DNS_API_TOKEN:-}"
@@ -192,33 +214,21 @@ cf_upsert_a_record() {
         echo -e "${YELLOW}  jq not available — cannot auto-create the DNS record${NC}" >&2
         return 1
     fi
-    local api="https://api.cloudflare.com/client/v4"
-    local zones zone_id="" zone_name=""
-    zones=$(curl -s -H "Authorization: Bearer $token" "$api/zones?per_page=50" 2>/dev/null)
-    if [ "$(echo "$zones" | jq -r '.success' 2>/dev/null)" != "true" ]; then
-        echo -e "${RED}  Cloudflare API error (check token permissions)${NC}" >&2
+    local zone_id
+    zone_id=$(cf_zone_id_for_domain "$domain") || {
+        echo -e "${RED}  No matching Cloudflare zone for $domain (or API error — check token permissions)${NC}" >&2
         return 1
-    fi
-    while IFS=$'\t' read -r zid zname; do
-        [ -z "$zname" ] && continue
-        if [ "$domain" = "$zname" ] || [ "${domain%".$zname"}" != "$domain" ]; then
-            if [ ${#zname} -gt ${#zone_name} ]; then zone_id="$zid"; zone_name="$zname"; fi
-        fi
-    done < <(echo "$zones" | jq -r '.result[] | "\(.id)\t\(.name)"')
-    if [ -z "$zone_id" ]; then
-        echo -e "${RED}  No matching Cloudflare zone for $domain${NC}" >&2
-        return 1
-    fi
+    }
     # DNS-only (not proxied): a proxy domain must resolve straight to the server,
     # because Cloudflare's proxy only forwards web ports (80/443), not the proxy
     # ports (1080/3128).
     local rec_id payload result
-    rec_id=$(curl -s -H "Authorization: Bearer $token" "$api/zones/$zone_id/dns_records?type=A&name=$domain" 2>/dev/null | jq -r '.result[0].id // empty')
+    rec_id=$(curl -s -H "Authorization: Bearer $token" "$CF_API/zones/$zone_id/dns_records?type=A&name=$domain" 2>/dev/null | jq -r '.result[0].id // empty')
     payload=$(jq -nc --arg name "$domain" --arg content "$ip" '{type:"A",name:$name,content:$content,ttl:120,proxied:false}')
     if [ -n "$rec_id" ]; then
-        result=$(curl -s -X PUT -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data "$payload" "$api/zones/$zone_id/dns_records/$rec_id" 2>/dev/null)
+        result=$(curl -s -X PUT -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data "$payload" "$CF_API/zones/$zone_id/dns_records/$rec_id" 2>/dev/null)
     else
-        result=$(curl -s -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data "$payload" "$api/zones/$zone_id/dns_records" 2>/dev/null)
+        result=$(curl -s -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data "$payload" "$CF_API/zones/$zone_id/dns_records" 2>/dev/null)
     fi
     [ "$(echo "$result" | jq -r '.success' 2>/dev/null)" = "true" ] && return 0
     echo -e "${RED}  Cloudflare record write failed: $(echo "$result" | jq -r '.errors[0].message // "unknown"')${NC}" >&2
@@ -230,23 +240,12 @@ cf_upsert_a_record() {
 # caller can fall back to a DNS heuristic. Authoritative source for orange vs grey
 # cloud, which plain DNS resolution can only guess at.
 cf_get_a_record() {
-    local domain="$1"
-    local token="${CF_DNS_API_TOKEN:-}"
+    local domain="$1" token="${CF_DNS_API_TOKEN:-}"
     [ -z "$token" ] && return 1
     command -v jq &> /dev/null || return 1
-    local api="https://api.cloudflare.com/client/v4"
-    local zones zone_id="" zone_name=""
-    zones=$(curl -s -H "Authorization: Bearer $token" "$api/zones?per_page=50" 2>/dev/null)
-    [ "$(echo "$zones" | jq -r '.success' 2>/dev/null)" = "true" ] || return 1
-    while IFS=$'\t' read -r zid zname; do
-        [ -z "$zname" ] && continue
-        if [ "$domain" = "$zname" ] || [ "${domain%".$zname"}" != "$domain" ]; then
-            if [ ${#zname} -gt ${#zone_name} ]; then zone_id="$zid"; zone_name="$zname"; fi
-        fi
-    done < <(echo "$zones" | jq -r '.result[] | "\(.id)\t\(.name)"')
-    [ -z "$zone_id" ] && return 1
-    local rec
-    rec=$(curl -s -H "Authorization: Bearer $token" "$api/zones/$zone_id/dns_records?type=A&name=$domain" 2>/dev/null | jq -r '.result[0] | select(.) | "\(.content)\t\(.proxied)"')
+    local zone_id rec
+    zone_id=$(cf_zone_id_for_domain "$domain") || return 1
+    rec=$(curl -s -H "Authorization: Bearer $token" "$CF_API/zones/$zone_id/dns_records?type=A&name=$domain" 2>/dev/null | jq -r '.result[0] | select(.) | "\(.content)\t\(.proxied)"')
     [ -z "$rec" ] && return 1
     echo "$rec"
     return 0
@@ -1902,6 +1901,11 @@ if [ -n "$PROXY_DOMAIN" ]; then
         if [ "$PD_HANDLED" = "no" ]; then
             # No CF record found (or no token/jq). Fall back to DNS resolution.
             PD_RESULT=$(validate_domain_dns "$PROXY_DOMAIN" "$SERVER_IP" 2>/dev/null) || true
+            # validate_domain_dns emits sentinel strings on failure; treat them as
+            # "no result" so messaging/branches don't print "resolves to unresolved".
+            if [ "$PD_RESULT" = "unresolved" ] || [ "$PD_RESULT" = "no-dns-tool" ]; then
+                PD_RESULT=""
+            fi
             PD_CF_RANGES=$(fetch_cloudflare_ips) || true
             if [ "$PD_RESULT" = "$SERVER_IP" ]; then
                 echo -e "${GREEN}  ✓ $PROXY_DOMAIN resolves to this server${NC}"

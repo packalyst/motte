@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -255,6 +256,13 @@ func ValidateConfig(cfg Config) error {
 			}
 			if t.Upstream.Pass != "" && !isSafeCredential(t.Upstream.Pass) {
 				return fmt.Errorf("%s: upstream password must not contain spaces or any of : @ /", label)
+			}
+		}
+
+		if t.RotateURL != "" {
+			u, err := url.Parse(t.RotateURL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return fmt.Errorf("%s: rotate URL must be a valid http(s) URL", label)
 			}
 		}
 	}

@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -11,6 +13,17 @@ var (
 	trustedProxyCIDRs []*net.IPNet
 	trustedProxyMutex sync.RWMutex
 )
+
+// RedactSecretPath hides secrets carried in the URL path — currently the rotation
+// key in /api/restart/{key} — so they never land in any log sink (the app log or
+// the Traefik-sourced inbound logs shown on the Logs page).
+func RedactSecretPath(path string) string {
+	const p = "/api/restart/"
+	if strings.HasPrefix(path, p) && len(path) > len(p) {
+		return p + "[redacted]"
+	}
+	return path
+}
 
 // InitTrustedProxies initializes the list of trusted proxy CIDRs
 // Pass comma-separated CIDR list, e.g. "172.18.0.0/24,10.0.0.0/8"
@@ -30,7 +43,20 @@ func InitTrustedProxies(cidrs string) {
 		}
 		_, cidr, err := net.ParseCIDR(cidrStr)
 		if err != nil {
-			continue
+			// Accept a bare IP as a single-host CIDR (/32 or /128). Without this a
+			// bare-IP entry is silently dropped; if ALL entries drop, the list is
+			// empty and IsTrustedProxy trusts everyone (spoofable XFF).
+			if ip := net.ParseIP(cidrStr); ip != nil {
+				bits := 32
+				if ip.To4() == nil {
+					bits = 128
+				}
+				_, cidr, err = net.ParseCIDR(fmt.Sprintf("%s/%d", cidrStr, bits))
+			}
+			if err != nil {
+				log.Printf("Warning: TRUSTED_PROXIES entry %q is not a valid IP or CIDR — ignored", cidrStr)
+				continue
+			}
 		}
 		trustedProxyCIDRs = append(trustedProxyCIDRs, cidr)
 	}

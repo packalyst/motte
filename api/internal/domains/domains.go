@@ -139,25 +139,24 @@ type Service struct {
 
 // DomainRoute represents a domain to port mapping
 type DomainRoute struct {
-	ID              int                    `json:"id"`
-	Domain          string                 `json:"domain"`
-	TargetIP        string                 `json:"targetIp"`
-	TargetPort      int                    `json:"targetPort"`
-	VPNClientID     *int                   `json:"vpnClientId,omitempty"`
-	Enabled         bool                   `json:"enabled"`
-	HTTPSBackend    bool                   `json:"httpsBackend"`
-	SkipCertVerify  bool                   `json:"skipCertVerify"`
-	Middlewares     []string               `json:"middlewares"`
-	Description     string                 `json:"description"`
-	AccessMode      string                 `json:"accessMode"`      // "vpn" or "public"
-	FrontendSSL     bool                   `json:"frontendSsl"`     // use websecure entrypoint
-	CertResolver    string                 `json:"certResolver,omitempty"` // explicit resolver name; empty = auto (wildcard/public/vpn tree)
-	SentinelConfig  *traefik.SentinelConfig `json:"sentinelConfig,omitempty"`
-	CreatedAt       time.Time              `json:"createdAt"`
-	UpdatedAt       time.Time              `json:"updatedAt"`
-	VPNClientName   string                 `json:"vpnClientName,omitempty"`
+	ID             int                     `json:"id"`
+	Domain         string                  `json:"domain"`
+	TargetIP       string                  `json:"targetIp"`
+	TargetPort     int                     `json:"targetPort"`
+	VPNClientID    *int                    `json:"vpnClientId,omitempty"`
+	Enabled        bool                    `json:"enabled"`
+	HTTPSBackend   bool                    `json:"httpsBackend"`
+	SkipCertVerify bool                    `json:"skipCertVerify"`
+	Middlewares    []string                `json:"middlewares"`
+	Description    string                  `json:"description"`
+	AccessMode     string                  `json:"accessMode"`             // "vpn" or "public"
+	FrontendSSL    bool                    `json:"frontendSsl"`            // use websecure entrypoint
+	CertResolver   string                  `json:"certResolver,omitempty"` // explicit resolver name; empty = auto (wildcard/public/vpn tree)
+	SentinelConfig *traefik.SentinelConfig `json:"sentinelConfig,omitempty"`
+	CreatedAt      time.Time               `json:"createdAt"`
+	UpdatedAt      time.Time               `json:"updatedAt"`
+	VPNClientName  string                  `json:"vpnClientName,omitempty"`
 }
-
 
 // New creates a new domains service
 func New() *Service {
@@ -273,14 +272,14 @@ func DeleteClientRoutes(clientID int) (int, error) {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"List":            s.handleList,
-		"Get":             s.handleGet,
-		"Create":          s.handleCreate,
-		"Update":          s.handleUpdate,
-		"Delete":          s.handleDelete,
-		"Toggle":          s.handleToggle,
-		"GetCertificates": s.handleGetCertificates,
-		"GetSystemDomain": s.handleGetSystemDomain,
+		"List":             s.handleList,
+		"Get":              s.handleGet,
+		"Create":           s.handleCreate,
+		"Update":           s.handleUpdate,
+		"Delete":           s.handleDelete,
+		"Toggle":           s.handleToggle,
+		"GetCertificates":  s.handleGetCertificates,
+		"GetSystemDomain":  s.handleGetSystemDomain,
 		"GetSystemDomains": s.handleGetSystemDomains,
 	}
 }
@@ -401,18 +400,18 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 
 // CreateRequest for creating a domain route
 type CreateRequest struct {
-	Domain          string                  `json:"domain"`
-	TargetIP        string                  `json:"targetIp"`
-	TargetPort      int                     `json:"targetPort"`
-	VPNClientID     *int                    `json:"vpnClientId,omitempty"`
-	HTTPSBackend    bool                    `json:"httpsBackend"`
-	SkipCertVerify  bool                    `json:"skipCertVerify"`
-	Middlewares     []string                `json:"middlewares"`
-	Description     string                  `json:"description"`
-	AccessMode      string                  `json:"accessMode"`  // "vpn" or "public", defaults to "vpn"
-	FrontendSSL     bool                    `json:"frontendSsl"` // use websecure entrypoint
-	CertResolver    string                  `json:"certResolver,omitempty"` // explicit resolver name; empty = auto
-	SentinelConfig  *traefik.SentinelConfig `json:"sentinelConfig,omitempty"`
+	Domain         string                  `json:"domain"`
+	TargetIP       string                  `json:"targetIp"`
+	TargetPort     int                     `json:"targetPort"`
+	VPNClientID    *int                    `json:"vpnClientId,omitempty"`
+	HTTPSBackend   bool                    `json:"httpsBackend"`
+	SkipCertVerify bool                    `json:"skipCertVerify"`
+	Middlewares    []string                `json:"middlewares"`
+	Description    string                  `json:"description"`
+	AccessMode     string                  `json:"accessMode"`             // "vpn" or "public", defaults to "vpn"
+	FrontendSSL    bool                    `json:"frontendSsl"`            // use websecure entrypoint
+	CertResolver   string                  `json:"certResolver,omitempty"` // explicit resolver name; empty = auto
+	SentinelConfig *traefik.SentinelConfig `json:"sentinelConfig,omitempty"`
 }
 
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -510,18 +509,18 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 // UpdateRequest for updating a domain route
 type UpdateRequest struct {
-	Domain          *string                 `json:"domain,omitempty"`
-	TargetIP        *string                 `json:"targetIp,omitempty"`
-	TargetPort      *int                    `json:"targetPort,omitempty"`
-	VPNClientID     *int                    `json:"vpnClientId,omitempty"`
-	HTTPSBackend    *bool                   `json:"httpsBackend,omitempty"`
-	SkipCertVerify  *bool                   `json:"skipCertVerify,omitempty"`
-	Middlewares     *[]string               `json:"middlewares,omitempty"`
-	Description     *string                 `json:"description,omitempty"`
-	AccessMode      *string                 `json:"accessMode,omitempty"`
-	FrontendSSL     *bool                   `json:"frontendSsl,omitempty"`
-	CertResolver    *string                 `json:"certResolver,omitempty"` // explicit resolver override; empty string = clear back to auto
-	SentinelConfig  *traefik.SentinelConfig `json:"sentinelConfig"` // No omitempty - null means clear
+	Domain         *string                 `json:"domain,omitempty"`
+	TargetIP       *string                 `json:"targetIp,omitempty"`
+	TargetPort     *int                    `json:"targetPort,omitempty"`
+	VPNClientID    *int                    `json:"vpnClientId,omitempty"`
+	HTTPSBackend   *bool                   `json:"httpsBackend,omitempty"`
+	SkipCertVerify *bool                   `json:"skipCertVerify,omitempty"`
+	Middlewares    *[]string               `json:"middlewares,omitempty"`
+	Description    *string                 `json:"description,omitempty"`
+	AccessMode     *string                 `json:"accessMode,omitempty"`
+	FrontendSSL    *bool                   `json:"frontendSsl,omitempty"`
+	CertResolver   *string                 `json:"certResolver,omitempty"` // explicit resolver override; empty string = clear back to auto
+	SentinelConfig *traefik.SentinelConfig `json:"sentinelConfig"`         // No omitempty - null means clear
 }
 
 func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {

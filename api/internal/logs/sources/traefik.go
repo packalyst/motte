@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"api/internal/database"
+	"api/internal/helper"
 	"api/internal/logs"
 )
 
@@ -121,7 +122,7 @@ func (w *TraefikWatcher) processLine(line string) {
 		durationMs,
 		entry.DownstreamContentSize,
 		entry.RequestMethod,
-		entry.RequestPath,
+		helper.RedactSecretPath(entry.RequestPath),
 		entry.RouterName,
 		entry.ServiceName,
 	)
