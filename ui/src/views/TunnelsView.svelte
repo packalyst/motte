@@ -519,19 +519,13 @@
             onclick={() => toggleExpand(t.id)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(t.id) } }}
           >
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-3">
               <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
                 <Icon name="arrows-right-left" size={16} />
               </div>
-              <span class="font-medium truncate min-w-0">{t.name}</span>
-              <!-- Regenerate: inline right after the title (only when rotating). -->
-              {#if info?.rotateTrigger}
-                <span class="shrink-0" onclick={(e) => e.stopPropagation()} role="presentation">
-                  <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy} title="Regenerate rotation key"><span class="hidden sm:inline">Regenerate</span></Button>
-                </span>
-              {/if}
-              <!-- Edit/Delete + chevron pushed to the far right. Don't toggle. -->
-              <div class="flex items-center gap-2 shrink-0 ml-auto" onclick={(e) => e.stopPropagation()} role="presentation">
+              <span class="font-medium truncate flex-1 min-w-0">{t.name}</span>
+              <!-- Edit/Delete grouped + chevron. Don't toggle. -->
+              <div class="flex items-center gap-2 shrink-0" onclick={(e) => e.stopPropagation()} role="presentation">
                 <div class="kt-btn-group">
                   <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}><span class="hidden sm:inline">Edit</span></Button>
                   <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}><span class="hidden sm:inline">Delete</span></Button>
@@ -601,7 +595,11 @@
               </div>
 
               {#if info?.rotateTrigger}
-                <ContentBlock variant="data" label="Rotation URL (secret)" value={info.rotateTrigger} mono copyable padding="sm" />
+                <ContentBlock variant="data" label="Rotation URL (secret)" value={info.rotateTrigger} mono copyable padding="sm">
+                  {#snippet labelAction()}
+                    <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateRotationKey(t)} disabled={busy}>Regenerate</Button>
+                  {/snippet}
+                </ContentBlock>
               {/if}
             </div>
           {/if}

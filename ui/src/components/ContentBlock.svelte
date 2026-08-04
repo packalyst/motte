@@ -62,7 +62,8 @@
     light = false,
     class: className = '',
     children,
-    descriptionSlot
+    descriptionSlot,
+    labelAction
   } = $props()
 
   const paddings = {
@@ -126,8 +127,13 @@
   <div class="flex items-center justify-between {paddings[padding]} {light ? 'bg-muted/30' : 'bg-muted/50'} rounded-lg border {solid ? 'border-border' : 'border-dashed border-border'} {className}">
     <!-- Left side -->
     <div class="min-w-0 flex-1">
-      {#if label}
-        <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">{label}</div>
+      {#if label || labelAction}
+        <div class="flex items-center justify-between gap-2 mb-0.5">
+          {#if label}
+            <div class="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+          {/if}
+          {#if labelAction}{@render labelAction()}{/if}
+        </div>
       {/if}
       <div class="flex items-center gap-1">
         {#if children}
