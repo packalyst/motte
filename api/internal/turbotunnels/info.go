@@ -35,11 +35,14 @@ func proxyHost() string {
 	return helper.GetEnvOptional("SERVER_IP", "<server-ip>")
 }
 
-// rotateBaseURL is the HTTPS base for the public rotation trigger. It uses the
-// panel's SSL domain, which already has a Traefik route for /api/ AND a TLS
-// cert. The proxy domain is only a DNS name for the proxy host (no cert/route),
-// so it cannot serve the HTTPS rotation endpoint.
+// rotateBaseURL is the HTTPS base for the public rotation trigger. Prefer the
+// proxy domain (manage.sh gives it a Traefik /api/restart route + cert), else
+// the panel's SSL domain (which already routes /api/ and has a cert), else the
+// server IP.
 func rotateBaseURL() string {
+	if d := helper.GetEnvOptional("PROXY_DOMAIN", ""); d != "" {
+		return "https://" + d
+	}
 	if d := helper.GetEnvOptional("SSL_DOMAIN", ""); d != "" {
 		return "https://" + d
 	}

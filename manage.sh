@@ -209,9 +209,12 @@ cf_upsert_a_record() {
         echo -e "${RED}  No matching Cloudflare zone for $domain${NC}" >&2
         return 1
     fi
+    # DNS-only (not proxied): a proxy domain must resolve straight to the server,
+    # because Cloudflare's proxy only forwards web ports (80/443), not the proxy
+    # ports (1080/3128).
     local rec_id payload result
     rec_id=$(curl -s -H "Authorization: Bearer $token" "$api/zones/$zone_id/dns_records?type=A&name=$domain" 2>/dev/null | jq -r '.result[0].id // empty')
-    payload=$(jq -nc --arg name "$domain" --arg content "$ip" '{type:"A",name:$name,content:$content,ttl:1,proxied:true}')
+    payload=$(jq -nc --arg name "$domain" --arg content "$ip" '{type:"A",name:$name,content:$content,ttl:120,proxied:false}')
     if [ -n "$rec_id" ]; then
         result=$(curl -s -X PUT -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data "$payload" "$api/zones/$zone_id/dns_records/$rec_id" 2>/dev/null)
     else
@@ -2150,6 +2153,34 @@ if [ -f "traefik/dynamic.yml.template" ]; then
 
         # Read SSL routers template and substitute variables
         SSL_ROUTERS=$(envsubst < traefik/dynamic-ssl-routers.yml.template)
+
+        # When a proxy domain is configured, expose ONLY the rotation trigger
+        # (/api/restart) on it over HTTPS, with its own Let's Encrypt cert. The
+        # proxy ports (1080/3128) are reached directly, not through Traefik; the
+        # rest of the panel API stays on SSL_DOMAIN. Skipped entirely when
+        # PROXY_DOMAIN is empty, so the generated config is unchanged.
+        if [ -n "${PROXY_DOMAIN:-}" ]; then
+            PROXY_ROUTER=$(PROXY_DOMAIN="$PROXY_DOMAIN" envsubst '${PROXY_DOMAIN}' <<'YAML'
+
+    # Proxy domain - rotation trigger only (HTTPS)
+    proxy-rotate-secure:
+      rule: "Host(`${PROXY_DOMAIN}`) && PathPrefix(`/api/restart`)"
+      service: unified-api
+      priority: 100
+      middlewares:
+        - rate-limit
+        - security-headers
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "${PROXY_DOMAIN}"
+YAML
+)
+            SSL_ROUTERS="${SSL_ROUTERS}
+${PROXY_ROUTER}"
+        fi
 
         # Insert SSL routers before "  services:" line
         # Using awk to insert content before the services section
