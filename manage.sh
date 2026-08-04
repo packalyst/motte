@@ -181,6 +181,47 @@ is_cloudflare_ip() {
     return 1
 }
 
+# Create or update a Cloudflare A record: $1=domain → $2=ip (proxied).
+# Uses CF_DNS_API_TOKEN. Picks the zone whose name is the longest suffix of the
+# domain. Returns 0 on success. Requires jq.
+cf_upsert_a_record() {
+    local domain="$1" ip="$2"
+    local token="${CF_DNS_API_TOKEN:-}"
+    [ -z "$token" ] && return 1
+    if ! command -v jq &> /dev/null; then
+        echo -e "${YELLOW}  jq not available — cannot auto-create the DNS record${NC}" >&2
+        return 1
+    fi
+    local api="https://api.cloudflare.com/client/v4"
+    local zones zone_id="" zone_name=""
+    zones=$(curl -s -H "Authorization: Bearer $token" "$api/zones?per_page=50" 2>/dev/null)
+    if [ "$(echo "$zones" | jq -r '.success' 2>/dev/null)" != "true" ]; then
+        echo -e "${RED}  Cloudflare API error (check token permissions)${NC}" >&2
+        return 1
+    fi
+    while IFS=$'\t' read -r zid zname; do
+        [ -z "$zname" ] && continue
+        if [ "$domain" = "$zname" ] || [ "${domain%".$zname"}" != "$domain" ]; then
+            if [ ${#zname} -gt ${#zone_name} ]; then zone_id="$zid"; zone_name="$zname"; fi
+        fi
+    done < <(echo "$zones" | jq -r '.result[] | "\(.id)\t\(.name)"')
+    if [ -z "$zone_id" ]; then
+        echo -e "${RED}  No matching Cloudflare zone for $domain${NC}" >&2
+        return 1
+    fi
+    local rec_id payload result
+    rec_id=$(curl -s -H "Authorization: Bearer $token" "$api/zones/$zone_id/dns_records?type=A&name=$domain" 2>/dev/null | jq -r '.result[0].id // empty')
+    payload=$(jq -nc --arg name "$domain" --arg content "$ip" '{type:"A",name:$name,content:$content,ttl:1,proxied:true}')
+    if [ -n "$rec_id" ]; then
+        result=$(curl -s -X PUT -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data "$payload" "$api/zones/$zone_id/dns_records/$rec_id" 2>/dev/null)
+    else
+        result=$(curl -s -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data "$payload" "$api/zones/$zone_id/dns_records" 2>/dev/null)
+    fi
+    [ "$(echo "$result" | jq -r '.success' 2>/dev/null)" = "true" ] && return 0
+    echo -e "${RED}  Cloudflare record write failed: $(echo "$result" | jq -r '.errors[0].message // "unknown"')${NC}" >&2
+    return 1
+}
+
 prompt_yes_no() {
     local prompt="$1"
     local default="${2:-n}"
@@ -1780,6 +1821,48 @@ else
     echo -e "  ${CYAN}Tip: Use Cloudflare Flexible SSL if you want HTTPS without local certs${NC}"
 fi
 
+echo ""
+
+# Proxy domain (optional): friendly host for tunnel commands + rotation URLs
+echo -e "${YELLOW}Proxy domain (optional)${NC}"
+CURRENT_PROXY_DOMAIN="${PROXY_DOMAIN:-}"
+if [ -n "$CURRENT_PROXY_DOMAIN" ]; then
+    echo -e "  Current: ${CYAN}${CURRENT_PROXY_DOMAIN}${NC}"
+fi
+echo -e "  Shown in tunnel proxy commands and rotation URLs. Empty = use the server IP / panel domain."
+read -p "  Enter proxy domain (Enter to skip/keep): " PROXY_DOMAIN_INPUT
+PROXY_DOMAIN="${PROXY_DOMAIN_INPUT:-$CURRENT_PROXY_DOMAIN}"
+
+if [ -n "$PROXY_DOMAIN" ]; then
+    if ! validate_domain_format "$PROXY_DOMAIN"; then
+        echo -e "${RED}  ✗ Invalid domain format — skipping${NC}"
+        PROXY_DOMAIN=""
+    else
+        PD_RESULT=$(validate_domain_dns "$PROXY_DOMAIN" "$SERVER_IP" 2>/dev/null) || true
+        PD_CF_RANGES=$(fetch_cloudflare_ips) || true
+        if [ "$PD_RESULT" = "$SERVER_IP" ]; then
+            echo -e "${GREEN}  ✓ $PROXY_DOMAIN resolves to this server${NC}"
+        elif [ -n "$PD_RESULT" ] && [ -n "$PD_CF_RANGES" ] && is_cloudflare_ip "$PD_RESULT" "$PD_CF_RANGES"; then
+            echo -e "${GREEN}  ✓ $PROXY_DOMAIN is proxied through Cloudflare${NC}"
+        else
+            if [ -z "$PD_RESULT" ]; then
+                echo -e "${YELLOW}  ⚠ $PROXY_DOMAIN does not resolve yet${NC}"
+            else
+                echo -e "${YELLOW}  ⚠ $PROXY_DOMAIN resolves to ${PD_RESULT}, not this server${NC}"
+            fi
+            if [ -n "${CF_DNS_API_TOKEN:-}" ]; then
+                if prompt_yes_no "  Create/update the A record in Cloudflare (→ $SERVER_IP)?" "y"; then
+                    if cf_upsert_a_record "$PROXY_DOMAIN" "$SERVER_IP"; then
+                        echo -e "${GREEN}  ✓ Cloudflare A record set: $PROXY_DOMAIN → $SERVER_IP${NC}"
+                    fi
+                fi
+            else
+                echo -e "  ${CYAN}Add an A record: $PROXY_DOMAIN → $SERVER_IP${NC}"
+            fi
+        fi
+    fi
+fi
+update_env_value "PROXY_DOMAIN" "$PROXY_DOMAIN"
 echo ""
 
 # 5. Check AdGuard credentials
