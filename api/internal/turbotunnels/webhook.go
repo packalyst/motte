@@ -115,17 +115,16 @@ func (s *Service) handleWebhook(w http.ResponseWriter, r *http.Request) {
 // readInbound collects caller-supplied params from the query string plus either a
 // form-encoded or JSON body, as url.Values (JSON scalars are stringified).
 func readInbound(r *http.Request) (url.Values, error) {
+	// Query params: treat '+' as a literal plus (RFC 3986 query semantics), so a
+	// caller can send e.g. to=+40712345678 without percent-encoding. Go's default
+	// query parsing would turn '+' into a space (a form-body convention).
+	vals := parseQueryLiteralPlus(r.URL.RawQuery)
+
 	ct := r.Header.Get("Content-Type")
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
 		ct = ct[:i]
 	}
 	if strings.TrimSpace(ct) == "application/json" {
-		vals := url.Values{}
-		for k, vs := range r.URL.Query() {
-			for _, v := range vs {
-				vals.Add(k, v)
-			}
-		}
 		body, _ := io.ReadAll(io.LimitReader(r.Body, maxInboundBody))
 		if len(bytes.TrimSpace(body)) > 0 {
 			var m map[string]interface{}
@@ -143,10 +142,29 @@ func readInbound(r *http.Request) (url.Values, error) {
 		}
 		return vals, nil
 	}
+
+	// Form-encoded (or empty) body: merge the POST body values on top of the query.
+	// Body '+' keeps its standard form-encoding meaning (space) — only the query
+	// preserves a literal '+'.
 	if err := r.ParseForm(); err != nil {
 		return nil, fmt.Errorf("bad request body")
 	}
-	return r.Form, nil
+	for k, vs := range r.PostForm {
+		for _, v := range vs {
+			vals.Add(k, v)
+		}
+	}
+	return vals, nil
+}
+
+// parseQueryLiteralPlus parses a raw URL query, treating '+' as a literal plus
+// rather than a space. Falls back to standard parsing on error.
+func parseQueryLiteralPlus(raw string) url.Values {
+	if v, err := url.ParseQuery(strings.ReplaceAll(raw, "+", "%2B")); err == nil {
+		return v
+	}
+	v, _ := url.ParseQuery(raw)
+	return v
 }
 
 // validateInboundParams enforces the webhook's param contract: only declared
