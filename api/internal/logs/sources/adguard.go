@@ -20,23 +20,23 @@ type AdGuardWatcher struct {
 
 // AdGuardLogEntry represents an AdGuard query log entry
 type AdGuardLogEntry struct {
-	T        string           `json:"T"`  // Timestamp
-	QH       string           `json:"QH"` // Query hostname
-	QT       string           `json:"QT"` // Query type (A, AAAA, etc.)
-	IP       string           `json:"IP"` // Client IP
-	Upstream string           `json:"Upstream,omitempty"`
-	Elapsed  int64            `json:"Elapsed"` // nanoseconds
-	Cached   bool             `json:"Cached,omitempty"`
-	Answer   string           `json:"Answer,omitempty"` // Base64-encoded DNS response
-	Result   AdGuardResult    `json:"Result,omitempty"`
+	T        string        `json:"T"`  // Timestamp
+	QH       string        `json:"QH"` // Query hostname
+	QT       string        `json:"QT"` // Query type (A, AAAA, etc.)
+	IP       string        `json:"IP"` // Client IP
+	Upstream string        `json:"Upstream,omitempty"`
+	Elapsed  int64         `json:"Elapsed"` // nanoseconds
+	Cached   bool          `json:"Cached,omitempty"`
+	Answer   string        `json:"Answer,omitempty"` // Base64-encoded DNS response
+	Result   AdGuardResult `json:"Result,omitempty"`
 }
 
 // AdGuardResult represents the filtering result
 type AdGuardResult struct {
-	IsFiltered bool              `json:"IsFiltered,omitempty"`
-	Reason     int               `json:"Reason,omitempty"`
-	Rules      []AdGuardRule     `json:"Rules,omitempty"`
-	IPList     []string          `json:"IPList,omitempty"`
+	IsFiltered bool          `json:"IsFiltered,omitempty"`
+	Reason     int           `json:"Reason,omitempty"`
+	Rules      []AdGuardRule `json:"Rules,omitempty"`
+	IPList     []string      `json:"IPList,omitempty"`
 }
 
 // AdGuardRule represents a matched rule
@@ -48,9 +48,9 @@ type AdGuardRule struct {
 
 // AdGuard Reason codes
 const (
-	ReasonNotFiltered    = 0
-	ReasonFiltered       = 3
-	ReasonRewritten      = 9
+	ReasonNotFiltered = 0
+	ReasonFiltered    = 3
+	ReasonRewritten   = 9
 )
 
 // NewAdGuardWatcher creates a new AdGuard watcher

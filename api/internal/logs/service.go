@@ -53,6 +53,21 @@ func New() (*Service, error) {
 		CountryBatchSize:  helper.GetEnvInt("LOGS_COUNTRY_BATCH"),
 	}
 
+	// Guard against bad/zero env values: a zero interval panics time.NewTicker,
+	// and a zero MaxEntries would make cleanup delete every log row.
+	if config.CleanupInterval <= 0 {
+		config.CleanupInterval = 60
+	}
+	if config.CountryInterval <= 0 {
+		config.CountryInterval = 5
+	}
+	if config.MaxEntries <= 0 {
+		config.MaxEntries = 100000
+	}
+	if config.CountryBatchSize <= 0 {
+		config.CountryBatchSize = 500
+	}
+
 	s := &Service{
 		db:       db,
 		config:   config,

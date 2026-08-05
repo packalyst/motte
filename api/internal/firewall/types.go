@@ -46,13 +46,13 @@ type Service struct {
 	dbMutex      sync.RWMutex
 	config       Config
 	dnsCache     *lruDNSCache
-	blockCache   *blockCache            // cached blocked IPs/ranges for fast lookup
+	blockCache   *blockCache // cached blocked IPs/ranges for fast lookup
 	ctx          context.Context
 	cancel       context.CancelFunc
 	jailMonitors map[int64]*jailMonitor
 	jailMutex    sync.RWMutex
-	nft          *nftables.Service      // nftables service for rule application
-	geo          *geolocation.Service   // geolocation service for country zones
+	nft          *nftables.Service    // nftables service for rule application
+	geo          *geolocation.Service // geolocation service for country zones
 }
 
 // Config holds firewall configuration

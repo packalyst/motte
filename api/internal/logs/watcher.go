@@ -22,12 +22,12 @@ type Watcher interface {
 
 // FileTailer provides reusable file tailing functionality
 type FileTailer struct {
-	filePath    string
-	lastSize    int64
-	mu          sync.Mutex
-	running     atomic.Bool
-	processed   atomic.Int64
-	lastError   atomic.Value
+	filePath     string
+	lastSize     int64
+	mu           sync.Mutex
+	running      atomic.Bool
+	processed    atomic.Int64
+	lastError    atomic.Value
 	pollInterval time.Duration
 }
 

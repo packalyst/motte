@@ -30,11 +30,11 @@ type DockerLogStreamer interface {
 
 // OverviewStats represents combined stats for the overview dashboard
 type OverviewStats struct {
-	System      SystemStats       `json:"system"`
-	Traffic     TrafficStats      `json:"traffic"`
-	Nodes       NodeStats         `json:"nodes"`
-	DockerInfo  *docker.DockerInfo `json:"dockerInfo,omitempty"`
-	DiskUsage   *docker.DiskUsage  `json:"diskUsage,omitempty"`
+	System     SystemStats        `json:"system"`
+	Traffic    TrafficStats       `json:"traffic"`
+	Nodes      NodeStats          `json:"nodes"`
+	DockerInfo *docker.DockerInfo `json:"dockerInfo,omitempty"`
+	DiskUsage  *docker.DiskUsage  `json:"diskUsage,omitempty"`
 }
 
 // SystemStats contains Go runtime metrics
@@ -102,7 +102,8 @@ var (
 	lastDockerContainers   []docker.Container
 	lastDockerContainersMu sync.RWMutex
 
-	// statusTicker for periodic status checks
+	// statusTicker for periodic status checks (guarded by statusMu)
+	statusMu     sync.Mutex
 	statusTicker *time.Ticker
 	stopStatus   chan struct{}
 )
@@ -154,21 +155,26 @@ func GetDockerLogStreamer() DockerLogStreamer {
 
 // StartStatusChecker starts the background status polling (nodes + docker)
 func StartStatusChecker(interval time.Duration) {
+	statusMu.Lock()
 	if statusTicker != nil {
+		statusMu.Unlock()
 		return // Already running
 	}
+	stop := make(chan struct{})
+	ticker := time.NewTicker(interval)
+	stopStatus, statusTicker = stop, ticker
+	statusMu.Unlock()
 
-	stopStatus = make(chan struct{})
-	statusTicker = time.NewTicker(interval)
-
+	// Use the local `ticker`/`stop` (not the package vars) so the goroutine never
+	// races with Start/Stop mutating them.
 	go func() {
 		log.Printf("Status checker started (interval: %v)", interval)
 		for {
 			select {
-			case <-statusTicker.C:
+			case <-ticker.C:
 				checkAndBroadcastStatus()
-			case <-stopStatus:
-				statusTicker.Stop()
+			case <-stop:
+				ticker.Stop()
 				log.Println("Status checker stopped")
 				return
 			}
@@ -178,9 +184,11 @@ func StartStatusChecker(interval time.Duration) {
 
 // StopStatusChecker stops the background status polling
 func StopStatusChecker() {
+	statusMu.Lock()
+	defer statusMu.Unlock()
 	if stopStatus != nil {
 		close(stopStatus)
-		statusTicker = nil
+		stopStatus, statusTicker = nil, nil // nil both: double-close safe + restartable
 	}
 }
 

@@ -102,8 +102,12 @@ func (s *Service) handleGetResolvers(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]interface{}{"resolvers": names})
 }
 
+// traefikClient is a shared client with a timeout, so a stalled Traefik API
+// can't hang requests forever (handleOverview fans out 4 calls per request).
+var traefikClient = &http.Client{Timeout: helper.HTTPClientTimeout}
+
 func (s *Service) fetchTraefikAPI(path string) (map[string]interface{}, error) {
-	resp, err := http.Get(s.traefikAPI + path)
+	resp, err := traefikClient.Get(s.traefikAPI + path)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +121,7 @@ func (s *Service) fetchTraefikAPI(path string) (map[string]interface{}, error) {
 }
 
 func (s *Service) fetchTraefikAPIArray(path string) ([]interface{}, error) {
-	resp, err := http.Get(s.traefikAPI + path)
+	resp, err := traefikClient.Get(s.traefikAPI + path)
 	if err != nil {
 		return nil, err
 	}
@@ -719,16 +723,16 @@ type SentinelConfig struct {
 
 // DomainRouteConfig represents a domain route for Traefik config generation
 type DomainRouteConfig struct {
-	Domain          string
-	TargetIP        string
-	TargetPort      int
-	HTTPSBackend    bool
-	SkipCertVerify  bool            // skip TLS verification for HTTPS backends
-	Middlewares     []string
-	AccessMode      string          // "vpn" or "public"
-	FrontendSSL     bool            // use websecure entrypoint with TLS
-	CertResolver    string          // explicit resolver name; empty = auto (wildcard/public/vpn tree)
-	SentinelConfig  *SentinelConfig // per-domain sentinel middleware config
+	Domain         string
+	TargetIP       string
+	TargetPort     int
+	HTTPSBackend   bool
+	SkipCertVerify bool // skip TLS verification for HTTPS backends
+	Middlewares    []string
+	AccessMode     string          // "vpn" or "public"
+	FrontendSSL    bool            // use websecure entrypoint with TLS
+	CertResolver   string          // explicit resolver name; empty = auto (wildcard/public/vpn tree)
+	SentinelConfig *SentinelConfig // per-domain sentinel middleware config
 }
 
 // GenerateDomainRoutes writes domain routes to Traefik's dynamic config directory

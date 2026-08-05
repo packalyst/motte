@@ -77,7 +77,9 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				close(client.send)
+				// Signal shutdown via `done`; never close `send` (multiple
+				// producers write to it — closing risks a panic).
+				close(client.done)
 
 				// Remove from all subscriptions
 				for channel := range h.subscriptions {

@@ -56,8 +56,9 @@ type ConntrackWatcher struct {
 }
 
 type flowBytes struct {
-	up   int64
-	down int64
+	up       int64
+	down     int64
+	lastSeen time.Time
 }
 
 // NewConntrackWatcher creates a new conntrack byte-accounting watcher.
@@ -225,11 +226,18 @@ func (w *ConntrackWatcher) processLine(line string, onClose bool) {
 	if onClose {
 		delete(w.counted, key)
 	} else {
-		w.counted[key] = flowBytes{up: curUp, down: curDown}
+		w.counted[key] = flowBytes{up: curUp, down: curDown, lastSeen: time.Now()}
 	}
-	// Bound memory if DESTROY events are ever missed for many flows.
+	// Bound memory if DESTROY events are ever missed for many flows. Evict only
+	// STALE flows (their close was missed) — never wipe the whole map, which
+	// would make still-open flows re-count their full total as a delta.
 	if len(w.counted) > 200000 {
-		w.counted = make(map[string]flowBytes)
+		cutoff := time.Now().Add(-30 * time.Minute)
+		for k, v := range w.counted {
+			if v.lastSeen.Before(cutoff) {
+				delete(w.counted, k)
+			}
+		}
 	}
 	w.mu.Unlock()
 

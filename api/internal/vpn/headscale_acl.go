@@ -18,10 +18,10 @@ func getHeadscaleACLPath() string {
 
 // HeadscaleACL represents the Headscale ACL policy file structure
 type HeadscaleACL struct {
-	Hosts       map[string]string `json:"hosts"`
-	Groups      map[string][]string `json:"groups,omitempty"`
-	TagOwners   map[string][]string `json:"tagOwners,omitempty"`
-	ACLs        []ACLEntry        `json:"acls"`
+	Hosts         map[string]string   `json:"hosts"`
+	Groups        map[string][]string `json:"groups,omitempty"`
+	TagOwners     map[string][]string `json:"tagOwners,omitempty"`
+	ACLs          []ACLEntry          `json:"acls"`
 	AutoApprovers map[string][]string `json:"autoApprovers,omitempty"`
 }
 

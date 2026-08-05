@@ -6,11 +6,11 @@ import "time"
 type LogType string
 
 const (
-	LogTypeOutbound  LogType = "outbound"
-	LogTypeInbound   LogType = "inbound"
-	LogTypeDNS       LogType = "dns"
-	LogTypeFirewall  LogType = "fw"
-	LogTypeProxy     LogType = "proxy" // turbotunnels forward-proxy connections
+	LogTypeOutbound LogType = "outbound"
+	LogTypeInbound  LogType = "inbound"
+	LogTypeDNS      LogType = "dns"
+	LogTypeFirewall LogType = "fw"
+	LogTypeProxy    LogType = "proxy" // turbotunnels forward-proxy connections
 )
 
 // LogStatus represents the status of a log entry
@@ -62,22 +62,22 @@ type LogEntry struct {
 	SrcIP         string    `json:"logs_src_ip"`
 	SrcClientName string    `json:"logs_src_client_name,omitempty"`
 	SrcCountry    string    `json:"logs_src_country,omitempty"`
-	DestIP      string    `json:"logs_dest_ip,omitempty"`
-	DestPort    int       `json:"logs_dest_port,omitempty"`
-	DestCountry string    `json:"logs_dest_country,omitempty"`
-	Domain      string    `json:"logs_domain,omitempty"`
-	Protocol    string    `json:"logs_protocol,omitempty"`
-	Status      string    `json:"logs_status,omitempty"`
-	Duration    int       `json:"logs_duration,omitempty"`
-	Bytes       int       `json:"logs_bytes,omitempty"`
-	Cached      int       `json:"logs_cached,omitempty"`
-	Method      string    `json:"logs_method,omitempty"`
-	Path        string    `json:"logs_path,omitempty"`
-	Router      string    `json:"logs_router,omitempty"`
-	Service     string    `json:"logs_service,omitempty"`
-	QueryType   string    `json:"logs_query_type,omitempty"`
-	Upstream    string    `json:"logs_upstream,omitempty"`
-	Rule        string    `json:"logs_rule,omitempty"`
+	DestIP        string    `json:"logs_dest_ip,omitempty"`
+	DestPort      int       `json:"logs_dest_port,omitempty"`
+	DestCountry   string    `json:"logs_dest_country,omitempty"`
+	Domain        string    `json:"logs_domain,omitempty"`
+	Protocol      string    `json:"logs_protocol,omitempty"`
+	Status        string    `json:"logs_status,omitempty"`
+	Duration      int       `json:"logs_duration,omitempty"`
+	Bytes         int       `json:"logs_bytes,omitempty"`
+	Cached        int       `json:"logs_cached,omitempty"`
+	Method        string    `json:"logs_method,omitempty"`
+	Path          string    `json:"logs_path,omitempty"`
+	Router        string    `json:"logs_router,omitempty"`
+	Service       string    `json:"logs_service,omitempty"`
+	QueryType     string    `json:"logs_query_type,omitempty"`
+	Upstream      string    `json:"logs_upstream,omitempty"`
+	Rule          string    `json:"logs_rule,omitempty"`
 }
 
 // Config holds logs service configuration

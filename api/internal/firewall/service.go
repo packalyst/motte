@@ -59,17 +59,17 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 		cancel:       cancel,
 		nft:          nftSvc,
 		config: Config{
-			EssentialPorts:         helper.BuildEssentialPorts(),
-			IgnoreNetworks:         helper.ParseStringList(helper.GetEnv("IGNORE_NETWORKS")),
-			MaxAttempts:            fwCfg.MaxAttempts,
-			DataDir:                dataDir,
-			WgPort:                 helper.GetEnvInt("WG_PORT"),
-			WgIPPrefix:             helper.ExtractIPPrefix(helper.GetEnv("WG_IP_RANGE")),
-			HeadscaleIPPrefix:      helper.ExtractIPPrefix(helper.GetEnv("HEADSCALE_IP_RANGE")),
-			JailCheckInterval:      fwCfg.JailCheckIntervalSec,
-			CleanupInterval:        fwCfg.CleanupIntervalMin,
-			DNSLookupTimeout:       fwCfg.DNSLookupTimeoutSec,
-			ServerIP:               helper.GetEnv("SERVER_IP"),
+			EssentialPorts:    helper.BuildEssentialPorts(),
+			IgnoreNetworks:    helper.ParseStringList(helper.GetEnv("IGNORE_NETWORKS")),
+			MaxAttempts:       fwCfg.MaxAttempts,
+			DataDir:           dataDir,
+			WgPort:            helper.GetEnvInt("WG_PORT"),
+			WgIPPrefix:        helper.ExtractIPPrefix(helper.GetEnv("WG_IP_RANGE")),
+			HeadscaleIPPrefix: helper.ExtractIPPrefix(helper.GetEnv("HEADSCALE_IP_RANGE")),
+			JailCheckInterval: fwCfg.JailCheckIntervalSec,
+			CleanupInterval:   fwCfg.CleanupIntervalMin,
+			DNSLookupTimeout:  fwCfg.DNSLookupTimeoutSec,
+			ServerIP:          helper.GetEnv("SERVER_IP"),
 		},
 	}
 
@@ -217,27 +217,27 @@ func (s *Service) Stop() {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		// Status and config
-		"GetStatus":      s.handleStatus,
-		"GetConfig":      s.handleGetConfig,
-		"UpdateConfig":   s.handleUpdateConfig,
-		"ApplyRules":     s.handleApplyRules,
-		"SyncStatus":     s.handleSyncStatus,
+		"GetStatus":    s.handleStatus,
+		"GetConfig":    s.handleGetConfig,
+		"UpdateConfig": s.handleUpdateConfig,
+		"ApplyRules":   s.handleApplyRules,
+		"SyncStatus":   s.handleSyncStatus,
 
 		// Unified entries API
-		"GetEntries":      s.handleGetEntries,
-		"CreateEntry":     s.handleCreateEntry,
-		"DeleteEntry":     s.handleDeleteEntry,
-		"ToggleEntry":     s.handleToggleEntry,
-		"BulkEntries":     s.handleBulkEntries,
-		"ImportEntries":   s.handleImportEntries,
-		"DeleteBySource":  s.handleDeleteBySource,
-		"DeleteAll":       s.handleDeleteAll,
+		"GetEntries":     s.handleGetEntries,
+		"CreateEntry":    s.handleCreateEntry,
+		"DeleteEntry":    s.handleDeleteEntry,
+		"ToggleEntry":    s.handleToggleEntry,
+		"BulkEntries":    s.handleBulkEntries,
+		"ImportEntries":  s.handleImportEntries,
+		"DeleteBySource": s.handleDeleteBySource,
+		"DeleteAll":      s.handleDeleteAll,
 
 		// Legacy endpoints (ports, blocklists)
-		"GetPorts":        s.handleGetPorts,
-		"AddPort":         s.handleAddPort,
-		"RemovePort":      s.handleRemovePort,
-		"GetBlocklists":   s.handleGetBlocklists,
+		"GetPorts":      s.handleGetPorts,
+		"AddPort":       s.handleAddPort,
+		"RemovePort":    s.handleRemovePort,
+		"GetBlocklists": s.handleGetBlocklists,
 
 		// SSH port management
 		"ChangeSSHPort": s.handleChangeSSHPort,

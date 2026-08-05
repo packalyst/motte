@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -30,12 +31,12 @@ type Service struct {
 	client *http.Client
 
 	// Cached overview stats (disk usage is slow)
-	overviewMu        sync.RWMutex
-	cachedInfo        *DockerInfo
-	cachedDiskUsage   *DiskUsage
-	cacheTime         time.Time
-	cacheTTL          time.Duration
-	cacheRefreshing   bool
+	overviewMu      sync.RWMutex
+	cachedInfo      *DockerInfo
+	cachedDiskUsage *DiskUsage
+	cacheTime       time.Time
+	cacheTTL        time.Duration
+	cacheRefreshing bool
 }
 
 // Container represents a Docker container
@@ -297,8 +298,9 @@ func (s *Service) StreamLogs(containerName string, onLog func(LogEntry), stop <-
 		// Docker log format: 8-byte header + message
 		// Header: [stream_type(1), 0, 0, 0, size(4)]
 		header := make([]byte, 8)
-		_, err := reader.Read(header)
-		if err != nil {
+		// ReadFull, not Read: the 8-byte header must arrive complete or the
+		// frame parser desyncs on a partial read.
+		if _, err := io.ReadFull(reader, header); err != nil {
 			return nil // Connection closed or stop signaled
 		}
 
@@ -314,10 +316,9 @@ func (s *Service) StreamLogs(containerName string, onLog func(LogEntry), stop <-
 			continue
 		}
 
-		// Read message
+		// Read message (exactly `size` bytes, not a partial read).
 		msg := make([]byte, size)
-		_, err = reader.Read(msg)
-		if err != nil {
+		if _, err := io.ReadFull(reader, msg); err != nil {
 			return nil
 		}
 
@@ -601,7 +602,7 @@ func categorizeLayer(cmd string) (category, purpose string) {
 	}
 
 	// Package managers - YUM/DNF
-	if (strings.Contains(cmdLower, "yum install") || strings.Contains(cmdLower, "dnf install")) {
+	if strings.Contains(cmdLower, "yum install") || strings.Contains(cmdLower, "dnf install") {
 		return "System packages", "Installed via yum/dnf"
 	}
 
@@ -812,10 +813,10 @@ type ContainerStats struct {
 
 // DockerStats combines all Docker statistics
 type DockerStats struct {
-	Info       *DockerInfo       `json:"info,omitempty"`
-	DiskUsage  *DiskUsage        `json:"diskUsage,omitempty"`
-	Containers []Container       `json:"containers"`
-	Stats      []ContainerStats  `json:"stats,omitempty"`
+	Info       *DockerInfo      `json:"info,omitempty"`
+	DiskUsage  *DiskUsage       `json:"diskUsage,omitempty"`
+	Containers []Container      `json:"containers"`
+	Stats      []ContainerStats `json:"stats,omitempty"`
 }
 
 // GetInfo returns Docker daemon system info
@@ -870,11 +871,11 @@ func (s *Service) GetDiskUsage() (*DiskUsage, error) {
 	defer resp.Body.Close()
 
 	var raw struct {
-		LayersSize  int64 `json:"LayersSize"`
-		Images      []struct{ Size int64 }
-		Containers  []struct{ SizeRw int64 }
-		Volumes     []struct{ UsageData struct{ Size int64 } }
-		BuildCache  []struct{ Size int64 }
+		LayersSize int64 `json:"LayersSize"`
+		Images     []struct{ Size int64 }
+		Containers []struct{ SizeRw int64 }
+		Volumes    []struct{ UsageData struct{ Size int64 } }
+		BuildCache []struct{ Size int64 }
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("failed to parse disk usage: %w", err)
@@ -932,8 +933,8 @@ func (s *Service) GetContainerStats(containerID, containerName string) (*Contain
 	}
 
 	var raw struct {
-		Read      string `json:"read"`
-		CPUStats  struct {
+		Read     string `json:"read"`
+		CPUStats struct {
 			CPUUsage struct {
 				TotalUsage int64 `json:"total_usage"`
 			} `json:"cpu_usage"`
@@ -1073,4 +1074,3 @@ func (s *Service) refreshOverviewCache() {
 	s.cacheTime = time.Now()
 	s.overviewMu.Unlock()
 }
-

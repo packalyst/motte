@@ -311,7 +311,6 @@ func SetupRouter() error {
 	return nil
 }
 
-
 func findRouterNode() string {
 	nodes, err := headscale.GetNodes()
 	if err != nil {
@@ -419,4 +418,3 @@ func RemoveRouter() error {
 	log.Printf("Cleared all VPN ACL rules and clients")
 	return nil
 }
-

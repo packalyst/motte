@@ -44,6 +44,17 @@ func (s *Service) runJailMonitors() {
 func (s *Service) startJailMonitor(jailID int64, name, logFile, filterRegex string, maxRetry, findTime, banTime int, lastLogPos int64) {
 	s.stopJailMonitor(jailID)
 
+	// Validate BEFORE registering, so a jail that can't run never leaves a stale
+	// monitor entry pointing at an already-returned goroutine.
+	if err := helper.ValidateLogFilePath(logFile); err != nil {
+		log.Printf("Jail %s: invalid log file path %s: %v", name, logFile, err)
+		return
+	}
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		log.Printf("Jail %s: log file %s not found, skipping", name, logFile)
+		return
+	}
+
 	ctx, cancel := context.WithCancel(s.ctx)
 
 	s.jailMutex.Lock()
@@ -89,17 +100,7 @@ func (s *Service) restartJailMonitor(jailID int64) {
 
 // monitorJailWithContext monitors a log file for the jail with a cancellable context
 func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name, logFile, filterRegex string, maxRetry, findTime, banTime int, lastLogPos int64) {
-	// Validate log file path to prevent path injection
-	if err := helper.ValidateLogFilePath(logFile); err != nil {
-		log.Printf("Jail %s: invalid log file path %s: %v", name, logFile, err)
-		return
-	}
-
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		log.Printf("Jail %s: log file %s not found, skipping", name, logFile)
-		return
-	}
-
+	// Log path + existence are validated in startJailMonitor before registration.
 	log.Printf("Starting jail monitor: %s (file: %s, maxRetry: %d, findTime: %ds, banTime: %ds)",
 		name, logFile, maxRetry, findTime, banTime)
 
@@ -228,16 +229,16 @@ func (s *Service) ensureDefaultJails() error {
 	defaultJails := []Jail{
 		{Name: "portscan", Enabled: true, LogFile: "/var/log/kern.log",
 			FilterRegex: `FIREWALL_DROP:.*SRC=(\d+\.\d+\.\d+\.\d+).*DPT=(\d+)`,
-			MaxRetry: 10, FindTime: 3600, BanTime: 2592000, Port: "all", Action: "drop"},
+			MaxRetry:    10, FindTime: 3600, BanTime: 2592000, Port: "all", Action: "drop"},
 		{Name: "sshd", Enabled: true, LogFile: "/var/log/auth.log",
 			FilterRegex: `Failed password.*from (\d+\.\d+\.\d+\.\d+)`,
-			MaxRetry: 5, FindTime: 3600, BanTime: 2592000, Port: sshPort, Action: "drop"},
+			MaxRetry:    5, FindTime: 3600, BanTime: 2592000, Port: sshPort, Action: "drop"},
 		// Bans clients that repeatedly fail auth against a turbotunnels proxy.
 		// The api mirrors the proxy's "TURBOTUNNELS_AUTH_FAIL SRC=<ip>" markers
 		// into this file (see turbotunnels.StartAuthLogStreamer).
 		{Name: "turbotunnels", Enabled: true, LogFile: helper.TurbotunnelsAuthLogPath(),
 			FilterRegex: `TURBOTUNNELS_AUTH_FAIL SRC=(\d+\.\d+\.\d+\.\d+)`,
-			MaxRetry: 5, FindTime: 3600, BanTime: 2592000, Port: "all", Action: "drop"},
+			MaxRetry:    5, FindTime: 3600, BanTime: 2592000, Port: "all", Action: "drop"},
 	}
 
 	for _, jail := range defaultJails {

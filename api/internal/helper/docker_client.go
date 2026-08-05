@@ -8,50 +8,56 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 // DockerClientTimeout is the default timeout for Docker API requests
 const DockerClientTimeout = 30 * time.Second
 
-// NewDockerHTTPClient creates an HTTP client configured to connect to Docker
-// It reads DOCKER_HOST env var and supports both TCP and Unix socket connections
+var (
+	dockerTransportOnce sync.Once
+	dockerTransport     *http.Transport
+)
+
+// dockerSharedTransport builds the Docker transport once and reuses it, so
+// connections are pooled (keep-alive) instead of a fresh transport + connection
+// being created — and leaked until GC — on every request. DOCKER_HOST is read
+// from the environment, which doesn't change over the process lifetime.
+func dockerSharedTransport() *http.Transport {
+	dockerTransportOnce.Do(func() {
+		dockerHost := os.Getenv("DOCKER_HOST")
+		if dockerHost == "" {
+			dockerHost = "unix:///var/run/docker.sock"
+		}
+		network, address := "unix", "/var/run/docker.sock"
+		if strings.HasPrefix(dockerHost, "tcp://") {
+			network, address = "tcp", strings.TrimPrefix(dockerHost, "tcp://")
+		} else if p := strings.TrimPrefix(dockerHost, "unix://"); p != "" {
+			address = p
+		}
+		dockerTransport = &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial(network, address)
+			},
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		}
+	})
+	return dockerTransport
+}
+
+// NewDockerHTTPClient creates an HTTP client configured to connect to Docker.
 func NewDockerHTTPClient() *http.Client {
 	return NewDockerHTTPClientWithTimeout(DockerClientTimeout)
 }
 
-// NewDockerHTTPClientWithTimeout creates a Docker HTTP client with custom timeout
+// NewDockerHTTPClientWithTimeout returns a Docker HTTP client with a custom
+// timeout. The client struct is cheap; the pooled transport is shared.
 func NewDockerHTTPClientWithTimeout(timeout time.Duration) *http.Client {
-	dockerHost := os.Getenv("DOCKER_HOST")
-	if dockerHost == "" {
-		dockerHost = "unix:///var/run/docker.sock"
-	}
-
-	var transport *http.Transport
-
-	if strings.HasPrefix(dockerHost, "tcp://") {
-		// TCP connection to docker socket proxy
-		tcpAddr := strings.TrimPrefix(dockerHost, "tcp://")
-		transport = &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return net.Dial("tcp", tcpAddr)
-			},
-		}
-	} else {
-		// Unix socket (default)
-		socketPath := strings.TrimPrefix(dockerHost, "unix://")
-		if socketPath == "" {
-			socketPath = "/var/run/docker.sock"
-		}
-		transport = &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
-			},
-		}
-	}
-
 	return &http.Client{
-		Transport: transport,
+		Transport: dockerSharedTransport(),
 		Timeout:   timeout,
 	}
 }

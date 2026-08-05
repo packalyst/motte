@@ -220,11 +220,19 @@ func (s *Service) GetFirewallSetCounts() map[string]int {
 func (s *Service) GetStats() map[string]interface{} {
 	stats := make(map[string]interface{})
 
-	for name, t := range s.tables {
-		tableStats := map[string]interface{}{
+	// Snapshot the tables map under the lock, then run the (slower) existence
+	// checks outside it — s.tables is written under applyMutex.
+	s.applyMutex.Lock()
+	tables := make(map[string]Table, len(s.tables))
+	for k, v := range s.tables {
+		tables[k] = v
+	}
+	s.applyMutex.Unlock()
+
+	for name, t := range tables {
+		stats[name] = map[string]interface{}{
 			"exists": s.TableExists(t.Family(), t.Name()),
 		}
-		stats[name] = tableStats
 	}
 
 	return stats
@@ -240,10 +248,14 @@ func (s *Service) GetSyncStatus() SyncStatus {
 	if s.lastApplyErr != nil {
 		status.LastApplyError = s.lastApplyErr.Error()
 	}
+	tables := make(map[string]Table, len(s.tables))
+	for k, v := range s.tables {
+		tables[k] = v
+	}
 	s.applyMutex.Unlock()
 
 	status.InSync = true
-	for name, t := range s.tables {
+	for name, t := range tables {
 		ts := TableStatus{
 			Name:   name,
 			Family: t.Family(),

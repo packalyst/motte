@@ -141,8 +141,16 @@ func ExpireAllNodes() (int, error) {
 
 // CreatePreAuthKey creates a pre-auth key for a user
 func CreatePreAuthKey(user string, reusable, ephemeral bool, expiration time.Time) (string, error) {
-	body := fmt.Sprintf(`{"user": "%s", "reusable": %t, "ephemeral": %t, "expiration": "%s"}`,
-		user, reusable, ephemeral, expiration.Format(time.RFC3339))
+	payload, err := json.Marshal(map[string]interface{}{
+		"user":       user,
+		"reusable":   reusable,
+		"ephemeral":  ephemeral,
+		"expiration": expiration.Format(time.RFC3339),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to build request: %v", err)
+	}
+	body := string(payload)
 
 	log.Printf("Creating pre-auth key for user %s, expiration: %s", user, expiration.Format(time.RFC3339))
 
@@ -240,26 +248,26 @@ func New() *Service {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetUsers":          s.handleGetUsers,
-		"CreateUser":        s.handleCreateUser,
-		"DeleteUser":        s.handleDeleteUser,
-		"RenameUser":        s.handleRenameUser,
-		"GetNodes":          s.handleGetNodes,
-		"DeleteNode":        s.handleDeleteNode,
-		"RenameNode":        s.handleRenameNode,
-		"ExpireNode":        s.handleExpireNode,
-		"GetNodeRoutes":     s.handleGetNodeRoutes,
-		"UpdateNodeTags":    s.handleUpdateNodeTags,
-		"GetRoutes":         s.handleGetRoutes,
-		"EnableRoute":       s.handleEnableRoute,
-		"DisableRoute":      s.handleDisableRoute,
-		"DeleteRoute":       s.handleDeleteRoute,
-		"GetPreAuthKeys":    s.handleGetPreAuthKeys,
-		"CreatePreAuthKey":  s.handleCreatePreAuthKey,
-		"ExpirePreAuthKey":  s.handleExpirePreAuthKey,
-		"GetAPIKeys":        s.handleGetAPIKeys,
-		"CreateAPIKey":      s.handleCreateAPIKey,
-		"DeleteAPIKey":      s.handleDeleteAPIKey,
+		"GetUsers":         s.handleGetUsers,
+		"CreateUser":       s.handleCreateUser,
+		"DeleteUser":       s.handleDeleteUser,
+		"RenameUser":       s.handleRenameUser,
+		"GetNodes":         s.handleGetNodes,
+		"DeleteNode":       s.handleDeleteNode,
+		"RenameNode":       s.handleRenameNode,
+		"ExpireNode":       s.handleExpireNode,
+		"GetNodeRoutes":    s.handleGetNodeRoutes,
+		"UpdateNodeTags":   s.handleUpdateNodeTags,
+		"GetRoutes":        s.handleGetRoutes,
+		"EnableRoute":      s.handleEnableRoute,
+		"DisableRoute":     s.handleDisableRoute,
+		"DeleteRoute":      s.handleDeleteRoute,
+		"GetPreAuthKeys":   s.handleGetPreAuthKeys,
+		"CreatePreAuthKey": s.handleCreatePreAuthKey,
+		"ExpirePreAuthKey": s.handleExpirePreAuthKey,
+		"GetAPIKeys":       s.handleGetAPIKeys,
+		"CreateAPIKey":     s.handleCreateAPIKey,
+		"DeleteAPIKey":     s.handleDeleteAPIKey,
 	}
 }
 
@@ -546,4 +554,3 @@ func (s *Service) handleDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	body, _ := json.Marshal(map[string]string{"prefix": id})
 	s.proxyPost(w, "/apikey/expire", string(body))
 }
-

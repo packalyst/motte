@@ -18,9 +18,9 @@ func NewVPNACLTable(db *database.DB) *VPNACLTable {
 	return &VPNACLTable{db: db}
 }
 
-func (t *VPNACLTable) Name() string     { return "wgadmin_vpn_acl" }
-func (t *VPNACLTable) Family() string   { return "inet" }
-func (t *VPNACLTable) Priority() int    { return 20 }
+func (t *VPNACLTable) Name() string   { return "wgadmin_vpn_acl" }
+func (t *VPNACLTable) Family() string { return "inet" }
+func (t *VPNACLTable) Priority() int  { return 20 }
 
 // Build generates the nftables script for VPN ACL
 func (t *VPNACLTable) Build() (string, error) {

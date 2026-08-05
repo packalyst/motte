@@ -24,6 +24,9 @@ func (s *Service) runCleanup() {
 // cleanup enforces max entries per type
 func (s *Service) cleanup() {
 	maxPerType := s.config.MaxEntries / len(AllLogTypes)
+	if maxPerType < 1 {
+		maxPerType = 1 // never let a misconfig delete every row
+	}
 
 	for _, logTypeInfo := range AllLogTypes {
 		logType := logTypeInfo.Value

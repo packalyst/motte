@@ -46,6 +46,12 @@ type Client struct {
 	// Buffered channel of outbound messages
 	send chan []byte
 
+	// Closed once by the hub on unregister to signal shutdown. We never close
+	// `send` (multiple producers write to it — e.g. the log-stream goroutine — and
+	// closing it would risk a send-on-closed-channel panic); WritePump exits on
+	// this instead.
+	done chan struct{}
+
 	// User info from auth
 	UserID   int64
 	Username string
@@ -61,6 +67,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, userID int64, username string) *C
 		hub:      hub,
 		conn:     conn,
 		send:     make(chan []byte, sendBufferSize),
+		done:     make(chan struct{}),
 		UserID:   userID,
 		Username: username,
 	}
@@ -137,13 +144,14 @@ func (c *Client) WritePump() {
 
 	for {
 		select {
-		case message, ok := <-c.send:
+		case <-c.done:
+			// Hub signalled shutdown.
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if !ok {
-				// Hub closed the channel
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
+			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+			return
+
+		case message := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 
 			w, err := c.conn.NextWriter(websocket.TextMessage)
 			if err != nil {
@@ -185,6 +193,8 @@ func (c *Client) sendMessage(msgType string, payload interface{}) {
 	}
 	select {
 	case c.send <- data:
+	case <-c.done:
+		// Client is shutting down — drop.
 	default:
 		// Buffer full, skip
 	}

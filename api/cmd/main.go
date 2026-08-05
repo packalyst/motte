@@ -60,6 +60,11 @@ func main() {
 	// Initialize encryption (must be before services that use encryption)
 	helper.InitEncryption()
 
+	// Keep the Cloudflare edge-range list current so CF-Connecting-IP is trusted
+	// only for requests that genuinely transit Cloudflare (falls back to the
+	// bundled list if the refresh fails).
+	helper.StartCloudflareIPUpdater(context.Background())
+
 	// Initialize and register services
 	// Auth must be first (other services depend on it)
 	if config.IsServiceEnabled("auth") {
