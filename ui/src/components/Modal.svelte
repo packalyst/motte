@@ -11,6 +11,7 @@
     size = 'md',
     headerClass = '',
     bodyClass = '',
+    dismissible = true, // when false, clicking the backdrop does NOT close the modal
     children,
     header,
     footer
@@ -19,7 +20,8 @@
   const sizes = {
     sm: 'max-w-md',   // 448px
     md: 'max-w-xl',   // 576px
-    lg: 'max-w-2xl'   // 672px
+    lg: 'max-w-2xl',  // 672px
+    xl: 'max-w-4xl'   // 896px
   }
 
   let modalElement = $state(null)
@@ -91,7 +93,7 @@
   data-kt-modal-backdrop="true"
   data-kt-modal-backdrop-static="true"
   role="presentation"
-  onclick={(e) => { if (e.target === modalElement) handleClose() }}
+  onclick={(e) => { if (dismissible && e.target === modalElement) handleClose() }}
 >
   <div class="kt-modal-content w-full {sizes[size]} top-[5%]">
     <div class="kt-modal-header {headerClass}">

@@ -79,7 +79,7 @@
   function blankWebhook() {
     return {
       id: '', name: '', method: 'POST', format: 'json', url: '',
-      keyCount: 1, keys: [],
+      keyCount: 'random', keys: [],
       params: [{ name: '', required: true, pattern: '', maxLen: '' }],
       fixed: [],
       minIntervalSec: 0,
@@ -333,8 +333,12 @@
   // Serialize one editor webhook to the backend shape. Keys are sent as-is when
   // their count is unchanged, else as blank slots so the server (re)mints them.
   function buildWebhook(wh) {
-    const count = Math.min(3, Math.max(1, Number(wh.keyCount) || 1))
-    const keys = (wh.keys && wh.keys.length === count)
+    // "random" picks 1–3 keys; otherwise the chosen count (clamped).
+    const count = wh.keyCount === 'random'
+      ? 1 + Math.floor(Math.random() * 3)
+      : Math.min(3, Math.max(1, Number(wh.keyCount) || 1))
+    // Keep existing keys only when the count is an explicit, matching number.
+    const keys = (wh.keyCount !== 'random' && wh.keys && wh.keys.length === count)
       ? wh.keys
       : Array.from({ length: count }, () => '')
     return {
@@ -714,7 +718,7 @@
 </div>
 
 <!-- Add / edit modal -->
-<Modal bind:open={showModal} title={modalMode === 'create' ? 'Add tunnel' : 'Edit tunnel'} size="md">
+<Modal bind:open={showModal} title={modalMode === 'create' ? 'Add tunnel' : 'Edit tunnel'} size="xl" dismissible={false}>
   <div class="space-y-4">
     <Input label="Name" placeholder="My proxy" bind:value={form.name} prefixIcon="tag" />
 
@@ -822,8 +826,8 @@
               <Button size="xs" variant="outline" icon="trash" onclick={() => removeWebhook(wi)}>Remove</Button>
             </div>
 
-            <Input label="Name" placeholder="Send SMS" bind:value={wh.name} prefixIcon="tag" />
-            <Input label="Target URL" placeholder="https://192.168.8.1/api/sms" bind:value={wh.url} prefixIcon="world" />
+            <Input label="Name" placeholder="My webhook" bind:value={wh.name} prefixIcon="tag" />
+            <Input label="Target URL" placeholder="https://example.com/endpoint" bind:value={wh.url} prefixIcon="world" />
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Select label="Method" bind:value={wh.method}>
@@ -836,6 +840,7 @@
                 <option value="query">Query</option>
               </Select>
               <Select label="Keys" bind:value={wh.keyCount}>
+                <option value="random">Random</option>
                 <option value={1}>1 key</option>
                 <option value={2}>2 keys</option>
                 <option value={3}>3 keys</option>
