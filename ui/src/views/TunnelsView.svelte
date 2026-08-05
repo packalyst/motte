@@ -763,14 +763,16 @@
 
       {#if form.chained}
         <div class="space-y-3 border-l-2 border-warning/40 pl-3">
-          <Select label="Upstream node" value={form.upstream.host} onchange={onUpstreamNode}>
-            <option value="">Custom / external proxy…</option>
-            {#each vpnClients as c}
-              <option value={c.ip}>{c.name} ({c.ip})</option>
-            {/each}
-          </Select>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Select label="Upstream node" value={form.upstream.host} onchange={onUpstreamNode}>
+              <option value="">Custom / external proxy…</option>
+              {#each vpnClients as c}
+                <option value={c.ip}>{c.name} ({c.ip})</option>
+              {/each}
+            </Select>
+            <Input label="Upstream host" placeholder="1.2.3.4 or node IP" bind:value={form.upstream.host} prefixIcon="server" />
+          </div>
           <p class="text-[11px] text-muted-foreground -mt-1">Pick a VPN node to reach it by its WG IP, or choose Custom and type any proxy host.</p>
-          <Input label="Upstream host" placeholder="1.2.3.4 or node IP" bind:value={form.upstream.host} prefixIcon="server" />
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {#if form.protocols.includes('http')}
               <Input label="Upstream HTTP port" type="number" placeholder="3128" bind:value={form.upstream.ports.http} prefixIcon="plug" />
@@ -786,14 +788,16 @@
 
       <!-- Proxy credentials (what clients use to connect TO this proxy) -->
       <div class="border-t border-border pt-4">
-        <span class="text-sm font-medium text-foreground">Proxy credentials</span>
-        <p class="text-xs text-muted-foreground mb-2">What clients use to connect to this proxy. Every tunnel is internet-facing, so a strong password is required.</p>
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <div class="min-w-0">
+            <span class="text-sm font-medium text-foreground">Proxy credentials</span>
+            <p class="text-xs text-muted-foreground">What clients use to connect. Every tunnel is internet-facing, so a strong password is required.</p>
+          </div>
+          <Button size="xs" variant="outline" icon="refresh" onclick={() => generateCreds(form)}>Regenerate</Button>
+        </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input label="Username" bind:value={form.user} prefixIcon="user" />
           <Input label="Password" bind:value={form.pass} prefixIcon="key" />
-        </div>
-        <div class="mt-2">
-          <Button size="sm" variant="outline" icon="refresh" onclick={() => generateCreds(form)}>Regenerate</Button>
         </div>
       </div>
 
