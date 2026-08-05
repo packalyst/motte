@@ -826,10 +826,16 @@
               <Button size="xs" variant="outline" icon="trash" onclick={() => removeWebhook(wi)}>Remove</Button>
             </div>
 
-            <Input label="Name" placeholder="My webhook" bind:value={wh.name} prefixIcon="tag" />
-            <Input label="Target URL" placeholder="https://example.com/endpoint" bind:value={wh.url} prefixIcon="world" />
-
+            <!-- Name (1/3) + Target URL (2/3) -->
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Input label="Name" placeholder="My webhook" bind:value={wh.name} prefixIcon="tag" />
+              <div class="sm:col-span-2">
+                <Input label="Target URL" placeholder="https://example.com/endpoint" bind:value={wh.url} prefixIcon="world" />
+              </div>
+            </div>
+
+            <!-- Method / Format / Keys / Interval — 2-up on mobile, 4-up on desktop -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <Select label="Method" bind:value={wh.method}>
                 <option value="POST">POST</option>
                 <option value="GET">GET</option>
@@ -845,13 +851,12 @@
                 <option value={2}>2 keys</option>
                 <option value={3}>3 keys</option>
               </Select>
+              <Input label="Interval (s)" type="number" placeholder="0 = ∞" bind:value={wh.minIntervalSec} prefixIcon="clock" />
             </div>
 
-            <Input label="Min interval (seconds, 0 = unlimited)" type="number" placeholder="0" bind:value={wh.minIntervalSec} prefixIcon="clock" />
-
             <!-- Accepted params -->
-            <div>
-              <div class="flex items-center justify-between mb-1">
+            <div class="rounded-md border border-border/60 bg-background/40 p-2.5">
+              <div class="flex items-center justify-between mb-2">
                 <span class="text-xs font-medium text-foreground">Accepted params</span>
                 <Button size="xs" variant="outline" icon="plus" onclick={() => addParam(wh)}>Add param</Button>
               </div>
@@ -859,27 +864,34 @@
                 <p class="text-[11px] text-muted-foreground italic">No params — the trigger accepts no input.</p>
               {/if}
               {#each wh.params as p, pi}
-                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2 mb-1.5">
-                  <div class="w-24 shrink-0"><Input placeholder="name" bind:value={p.name} /></div>
-                  <div class="flex-1 min-w-[120px]"><Input placeholder="pattern (regex, optional)" bind:value={p.pattern} /></div>
-                  <div class="w-20 shrink-0"><Input type="number" placeholder="maxLen" bind:value={p.maxLen} /></div>
-                  <Checkbox bind:checked={p.required} label="req" />
-                  <button onclick={() => removeParam(wh, pi)} class="text-destructive p-1 shrink-0" title="Remove param"><Icon name="trash" size={14} /></button>
+                <div class="grid grid-cols-12 gap-2 items-center mb-2 last:mb-0">
+                  <div class="col-span-6 sm:col-span-3"><Input placeholder="name" bind:value={p.name} /></div>
+                  <div class="col-span-6 sm:col-span-4"><Input placeholder="pattern (regex, optional)" bind:value={p.pattern} /></div>
+                  <div class="col-span-4 sm:col-span-2"><Input type="number" placeholder="maxLen" bind:value={p.maxLen} /></div>
+                  <div class="col-span-5 sm:col-span-2 flex items-center"><Checkbox bind:checked={p.required} label="req" /></div>
+                  <div class="col-span-3 sm:col-span-1 flex justify-end">
+                    <button onclick={() => removeParam(wh, pi)} class="text-destructive p-1" title="Remove param"><Icon name="trash" size={14} /></button>
+                  </div>
                 </div>
               {/each}
             </div>
 
             <!-- Fixed values (optional) -->
-            <div>
-              <div class="flex items-center justify-between mb-1">
+            <div class="rounded-md border border-border/60 bg-background/40 p-2.5">
+              <div class="flex items-center justify-between mb-2">
                 <span class="text-xs font-medium text-foreground">Fixed values <span class="font-normal text-muted-foreground">(always sent, e.g. a token)</span></span>
                 <Button size="xs" variant="outline" icon="plus" onclick={() => addFixed(wh)}>Add</Button>
               </div>
+              {#if wh.fixed.length === 0}
+                <p class="text-[11px] text-muted-foreground italic">None.</p>
+              {/if}
               {#each wh.fixed as f, fi}
-                <div class="flex items-center gap-2 mb-1.5">
-                  <div class="w-32 shrink-0"><Input placeholder="field" bind:value={f.key} /></div>
-                  <div class="flex-1 min-w-0"><Input placeholder="value" bind:value={f.value} /></div>
-                  <button onclick={() => removeFixed(wh, fi)} class="text-destructive p-1 shrink-0" title="Remove"><Icon name="trash" size={14} /></button>
+                <div class="grid grid-cols-12 gap-2 items-center mb-2 last:mb-0">
+                  <div class="col-span-5 sm:col-span-4"><Input placeholder="field" bind:value={f.key} /></div>
+                  <div class="col-span-6 sm:col-span-7"><Input placeholder="value" bind:value={f.value} /></div>
+                  <div class="col-span-1 flex justify-end">
+                    <button onclick={() => removeFixed(wh, fi)} class="text-destructive p-1" title="Remove"><Icon name="trash" size={14} /></button>
+                  </div>
                 </div>
               {/each}
             </div>
