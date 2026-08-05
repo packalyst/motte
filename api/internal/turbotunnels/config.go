@@ -109,8 +109,14 @@ func (t Tunnel) HasProxy() bool {
 	return len(t.Listeners) > 0
 }
 
-// maxWebhookKeys caps how many independent keys a webhook may require in its path.
-const maxWebhookKeys = 3
+// Webhook size caps, to keep the stored config bounded.
+const (
+	maxWebhookKeys       = 3   // independent keys a webhook may require in its path
+	maxWebhooksPerTunnel = 20  // webhooks per tunnel
+	maxWebhookParams     = 30  // declared params per webhook
+	maxWebhookFixed      = 20  // fixed values per webhook
+	maxWebhookPatternLen = 200 // max length of a param's validation regex
+)
 
 // newWebhookKeys returns count independent full-strength base62 secrets. Lengths
 // scale down as count rises but each stays strong on its own (1→43, 2→32, 3→26).
@@ -375,6 +381,9 @@ func isSafeParamName(s string) bool {
 
 // validateWebhooks checks every webhook on a tunnel.
 func validateWebhooks(t Tunnel, label string) error {
+	if len(t.Webhooks) > maxWebhooksPerTunnel {
+		return fmt.Errorf("%s: too many webhooks (max %d)", label, maxWebhooksPerTunnel)
+	}
 	seenName := map[string]bool{}
 	for j, wh := range t.Webhooks {
 		wl := wh.Name
@@ -411,6 +420,12 @@ func validateWebhooks(t Tunnel, label string) error {
 		if wh.MinIntervalSec < 0 {
 			return fmt.Errorf("%s / %s: min interval must be >= 0", label, wl)
 		}
+		if len(wh.Params) > maxWebhookParams {
+			return fmt.Errorf("%s / %s: too many params (max %d)", label, wl, maxWebhookParams)
+		}
+		if len(wh.Fixed) > maxWebhookFixed {
+			return fmt.Errorf("%s / %s: too many fixed values (max %d)", label, wl, maxWebhookFixed)
+		}
 
 		seenParam := map[string]bool{}
 		for _, p := range wh.Params {
@@ -425,6 +440,9 @@ func validateWebhooks(t Tunnel, label string) error {
 				return fmt.Errorf("%s / %s: param %q maxLen must be >= 0", label, wl, p.Name)
 			}
 			if p.Pattern != "" {
+				if len(p.Pattern) > maxWebhookPatternLen {
+					return fmt.Errorf("%s / %s: param %q pattern is too long (max %d)", label, wl, p.Name, maxWebhookPatternLen)
+				}
 				if _, err := regexp.Compile(p.Pattern); err != nil {
 					return fmt.Errorf("%s / %s: param %q has an invalid pattern: %v", label, wl, p.Name, err)
 				}

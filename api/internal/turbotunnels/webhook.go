@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,10 +17,11 @@ import (
 	"api/internal/router"
 )
 
-// lastWebhook tracks the last successful trigger per webhook ID for the optional
-// per-webhook min-interval throttle. Guarded by rotMu (shared with rotate). It is
-// bounded by the number of configured webhooks, so it needs no sweeper.
-var lastWebhook = map[string]time.Time{}
+// webhookNextAllowed maps a webhook ID to the earliest time it may fire again —
+// only populated for webhooks that set a min-interval. Guarded by rotMu (shared
+// with rotate) and pruned by StartRotateGuardCleanup once entries expire, so it
+// can't grow without bound.
+var webhookNextAllowed = map[string]time.Time{}
 
 // maxInboundBody caps how much of an inbound JSON body we read.
 const maxInboundBody = 64 << 10
@@ -29,6 +31,8 @@ const maxInboundBody = 64 << 10
 // and param contract, then forwards the validated params to the target URL —
 // never exposing the URL or keys — and returns the target's response.
 func (s *Service) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	// Cap the request body so a large POST can't balloon memory during parsing.
+	r.Body = http.MaxBytesReader(w, r.Body, maxInboundBody)
 	tail := router.ExtractPathParamFull(r, "/api/hook/")
 	ip := helper.GetClientIP(r)
 
@@ -127,12 +131,16 @@ func readInbound(r *http.Request) (url.Values, error) {
 	if strings.TrimSpace(ct) == "application/json" {
 		body, _ := io.ReadAll(io.LimitReader(r.Body, maxInboundBody))
 		if len(bytes.TrimSpace(body)) > 0 {
+			dec := json.NewDecoder(bytes.NewReader(body))
+			dec.UseNumber() // keep numbers verbatim (e.g. a phone sent as a number)
 			var m map[string]interface{}
-			if err := json.Unmarshal(body, &m); err != nil {
+			if err := dec.Decode(&m); err != nil {
 				return nil, fmt.Errorf("invalid JSON body")
 			}
 			for k, v := range m {
 				switch v.(type) {
+				case nil:
+					continue // JSON null == param absent
 				case map[string]interface{}, []interface{}:
 					return nil, fmt.Errorf("parameter %q must be a scalar", k)
 				default:
@@ -194,10 +202,11 @@ func validateInboundParams(wh *Webhook, in url.Values) (map[string]string, error
 			return nil, fmt.Errorf("parameter %q exceeds max length %d", p.Name, p.MaxLen)
 		}
 		if p.Pattern != "" {
-			re, err := regexp.Compile(p.Pattern)
-			// Require a FULL-string match regardless of whether the pattern is
-			// anchored, so an unanchored pattern can't accept extra junk.
-			if err != nil || !fullMatch(re, v) {
+			// Anchor both ends so the value must match in full regardless of
+			// whether the admin's pattern is anchored (and without the
+			// leftmost-first pitfall of FindStringIndex).
+			re, err := regexp.Compile(`\A(?:` + p.Pattern + `)\z`)
+			if err != nil || !re.MatchString(v) {
 				return nil, fmt.Errorf("parameter %q does not match the required format", p.Name)
 			}
 		}
@@ -206,13 +215,38 @@ func validateInboundParams(wh *Webhook, in url.Values) (map[string]string, error
 	return out, nil
 }
 
-// fullMatch reports whether re matches the entire string s.
-func fullMatch(re *regexp.Regexp, s string) bool {
-	loc := re.FindStringIndex(s)
-	return loc != nil && loc[0] == 0 && loc[1] == len(s)
+// encodeQueryLiteralPlus encodes url.Values like Encode(), but emits '+' as a
+// literal plus and a space as %20 (not '+'). This makes targets that read '+'
+// literally (e.g. +CC phone numbers) get the right value, while spaces in free
+// text (e.g. an SMS message) are not corrupted into '+'.
+func encodeQueryLiteralPlus(v url.Values) string {
+	keys := make([]string, 0, len(v))
+	for k := range v {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		ek := url.QueryEscape(k)
+		for _, val := range v[k] {
+			if b.Len() > 0 {
+				b.WriteByte('&')
+			}
+			// QueryEscape maps space->'+' and '+'->%2B. Turn the space-'+' into
+			// %20 first, then the escaped literal plus (%2B) back into '+'.
+			ev := url.QueryEscape(val)
+			ev = strings.ReplaceAll(ev, "+", "%20")
+			ev = strings.ReplaceAll(ev, "%2B", "+")
+			b.WriteString(ek)
+			b.WriteByte('=')
+			b.WriteString(ev)
+		}
+	}
+	return b.String()
 }
 
-// webhookAllow enforces the per-webhook minimum interval. 0 = unlimited.
+// webhookAllow enforces the per-webhook minimum interval. 0 = unlimited. Stores an
+// expiry (next-allowed time) so the sweeper can evict lapsed entries.
 func webhookAllow(wh *Webhook) bool {
 	if wh.MinIntervalSec <= 0 {
 		return true
@@ -220,10 +254,10 @@ func webhookAllow(wh *Webhook) bool {
 	rotMu.Lock()
 	defer rotMu.Unlock()
 	now := time.Now()
-	if last, ok := lastWebhook[wh.ID]; ok && now.Sub(last) < time.Duration(wh.MinIntervalSec)*time.Second {
+	if until, ok := webhookNextAllowed[wh.ID]; ok && now.Before(until) {
 		return false
 	}
-	lastWebhook[wh.ID] = now
+	webhookNextAllowed[wh.ID] = now.Add(time.Duration(wh.MinIntervalSec) * time.Second)
 	return true
 }
 
@@ -267,10 +301,7 @@ func callWebhook(wh *Webhook, params map[string]string) (int, string, error) {
 		for k, v := range data {
 			q.Set(k, v)
 		}
-		// Emit '+' literally (not %2B) so targets that expect a raw +CC phone
-		// number — like the direct call the user already uses — accept it. Every
-		// other character stays percent-encoded.
-		u.RawQuery = strings.ReplaceAll(q.Encode(), "%2B", "+")
+		u.RawQuery = encodeQueryLiteralPlus(q)
 		req, err = http.NewRequest(wh.Method, u.String(), nil)
 	default:
 		return 0, "", fmt.Errorf("unsupported format")

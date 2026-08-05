@@ -200,6 +200,12 @@ func StartRotateGuardCleanup(ctx context.Context) {
 						delete(lastRotate, k)
 					}
 				}
+				for id, until := range webhookNextAllowed {
+					// Once the throttle window has passed, the entry is redundant.
+					if now.After(until) {
+						delete(webhookNextAllowed, id)
+					}
+				}
 				rotMu.Unlock()
 			}
 		}
