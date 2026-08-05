@@ -1,7 +1,7 @@
 // Service Worker for Wire Panel PWA
 // Handles push notifications and basic PWA requirements
 
-const CACHE_VERSION = 'v1'
+const CACHE_VERSION = 'v2'
 
 // Install - activate immediately
 self.addEventListener('install', () => self.skipWaiting())
@@ -9,10 +9,20 @@ self.addEventListener('install', () => self.skipWaiting())
 // Activate - claim all clients
 self.addEventListener('activate', (e) => e.waitUntil(clients.claim()))
 
-// Fetch - pass through (no caching for now). Catch failures so a blocked or
-// offline request (e.g. a third-party analytics beacon blocked by the browser)
-// resolves to a network-error Response instead of an uncaught promise rejection.
-self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request).catch(() => Response.error())))
+// Fetch - pass through (no caching). We deliberately do NOT intercept the API or
+// the WebSocket: letting the browser handle /api/* natively means live/live-data
+// and /api/ws are never routed through the Service Worker, so switching the panel
+// between its public (Cloudflare) IP and its VPN IP can't leave them pinned to a
+// stale kept-alive connection. Everything else is a plain pass-through, with the
+// failure caught so a blocked/offline request resolves to a network-error Response
+// instead of an uncaught promise rejection.
+self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url)
+  if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) {
+    return // don't call respondWith → default browser handling (fresh connection)
+  }
+  e.respondWith(fetch(e.request).catch(() => Response.error()))
+})
 
 // Push notification received
 self.addEventListener('push', (event) => {
