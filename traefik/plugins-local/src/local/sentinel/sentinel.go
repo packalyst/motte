@@ -590,37 +590,60 @@ func (s *Sentinel) serveRobots(rw http.ResponseWriter, req *http.Request) {
 // IP Filter
 // =============================================================================
 
+// getClientIP returns the real client IP for the access checks.
+//
+// Forwarding headers are forgeable, so they're only honoured when the request
+// genuinely came through Cloudflare — i.e. the machine that connected to Traefik
+// (RemoteAddr) is a Cloudflare edge IP; then CF-Connecting-IP (which Cloudflare
+// sets) is authoritative. Otherwise the connecting peer IS the client (a VPN
+// client reaching Traefik over the tunnel, or a direct caller's real IP), and any
+// X-Forwarded-For / CF-Connecting-IP it sent is ignored. Trusting those headers
+// blindly (as this used to) let anyone spoof a VPN IP and bypass VPN-only mode.
 func (s *Sentinel) getClientIP(req *http.Request) net.IP {
-	// CF-Connecting-IP (Cloudflare)
-	if cfIP := req.Header.Get("CF-Connecting-IP"); cfIP != "" {
-		if ip := net.ParseIP(strings.TrimSpace(cfIP)); ip != nil {
-			return ip
-		}
-	}
-
-	// X-Forwarded-For
-	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			if ip := net.ParseIP(strings.TrimSpace(parts[0])); ip != nil {
-				return ip
-			}
-		}
-	}
-
-	// X-Real-IP
-	if xri := req.Header.Get("X-Real-IP"); xri != "" {
-		if ip := net.ParseIP(strings.TrimSpace(xri)); ip != nil {
-			return ip
-		}
-	}
-
-	// RemoteAddr
 	host, _, err := net.SplitHostPort(req.RemoteAddr)
 	if err != nil {
-		return net.ParseIP(req.RemoteAddr)
+		host = req.RemoteAddr
 	}
-	return net.ParseIP(host)
+	peer := net.ParseIP(host)
+
+	if peer != nil && isCloudflareIP(peer) {
+		if cf := net.ParseIP(strings.TrimSpace(req.Header.Get("CF-Connecting-IP"))); cf != nil {
+			return cf
+		}
+	}
+	return peer
+}
+
+// cloudflareCIDRs is Cloudflare's published edge range list (https://www.cloudflare.com/ips/).
+var cloudflareCIDRs = []string{
+	"173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+	"141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+	"197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+	"104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+	"2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+	"2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+}
+
+var (
+	cfOnce sync.Once
+	cfNets []*net.IPNet
+)
+
+// isCloudflareIP reports whether ip is within a Cloudflare edge range.
+func isCloudflareIP(ip net.IP) bool {
+	cfOnce.Do(func() {
+		for _, c := range cloudflareCIDRs {
+			if _, n, err := net.ParseCIDR(c); err == nil {
+				cfNets = append(cfNets, n)
+			}
+		}
+	})
+	for _, n := range cfNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Sentinel) isIPAllowed(ip net.IP) bool {
@@ -638,8 +661,8 @@ func (s *Sentinel) isIPAllowed(ip net.IP) bool {
 
 // CrawlerEntry represents a bot from monperrus/crawler-user-agents JSON.
 type CrawlerEntry struct {
-	Pattern  string   `json:"pattern"`
-	URL      string   `json:"url"`
+	Pattern   string   `json:"pattern"`
+	URL       string   `json:"url"`
 	Instances []string `json:"instances"`
 }
 
