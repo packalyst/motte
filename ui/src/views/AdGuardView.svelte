@@ -289,18 +289,29 @@
     }
   }
 
+  // Accept a hostname (optionally a *. wildcard) or an IPv4/IPv6 literal.
+  function isValidHost(v) {
+    const s = (v || '').trim()
+    if (!s) return false
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(s)) return s.split('.').every((o) => +o >= 0 && +o <= 255)
+    if (s.includes(':') && /^[0-9a-fA-F:]+$/.test(s)) return true // IPv6 (loose)
+    return /^(\*\.)?([a-zA-Z0-9_]([a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?\.)+[a-zA-Z]{2,}$/.test(s)
+  }
+
   function handleAddBlockRule() {
-    if (newBlockDomain) {
-      addRule(`||${newBlockDomain}^`)
-      newBlockDomain = ''
-    }
+    const d = newBlockDomain.trim()
+    if (!d) return
+    if (!isValidHost(d)) { toast('Enter a valid domain or IP', 'error'); return }
+    addRule(`||${d}^`)
+    newBlockDomain = ''
   }
 
   function handleAddAllowRule() {
-    if (newAllowDomain) {
-      addRule(`@@||${newAllowDomain}^`)
-      newAllowDomain = ''
-    }
+    const d = newAllowDomain.trim()
+    if (!d) return
+    if (!isValidHost(d)) { toast('Enter a valid domain or IP', 'error'); return }
+    addRule(`@@||${d}^`)
+    newAllowDomain = ''
   }
 
   async function toggleService(serviceId, blocked) {
@@ -347,11 +358,15 @@
   }
 
   async function addRewrite() {
-    if (!newRewriteDomain || !newRewriteAnswer) return
+    const domain = newRewriteDomain.trim()
+    const answer = newRewriteAnswer.trim()
+    if (!domain || !answer) return
+    if (!isValidHost(domain)) { toast('Rewrite domain must be a valid hostname', 'error'); return }
+    if (!isValidHost(answer)) { toast('Rewrite answer must be a valid IP or domain', 'error'); return }
     try {
-      await apiPut('/api/adguard/rewrites', { action: 'add', domain: newRewriteDomain, answer: newRewriteAnswer })
+      await apiPut('/api/adguard/rewrites', { action: 'add', domain, answer })
       // Update local state
-      rewrites = [...rewrites, { domain: newRewriteDomain, answer: newRewriteAnswer }]
+      rewrites = [...rewrites, { domain, answer }]
       toast('Rewrite added', 'success')
       newRewriteDomain = ''
       newRewriteAnswer = ''
@@ -617,21 +632,21 @@
                 class="flex-1"
                 onkeydown={(e) => { if (e.key === 'Enter') handleAddBlockRule() }}
               />
-              <div class="flex gap-2">
-                <Button onclick={handleAddBlockRule} icon="ban" class="flex-1 sm:flex-none">Block</Button>
-                <Button onclick={() => { newAllowDomain = newBlockDomain; newBlockDomain = ''; handleAddAllowRule() }} variant="outline" icon="check" class="flex-1 sm:flex-none">Allow</Button>
+              <div class="kt-toggle-group">
+                <Button onclick={handleAddBlockRule} icon="ban">Block</Button>
+                <Button onclick={() => { newAllowDomain = newBlockDomain; newBlockDomain = ''; handleAddAllowRule() }} icon="check">Allow</Button>
               </div>
             </div>
 
             <!-- Blocked -->
             <div class="mb-5">
-              <div class="flex items-center gap-2 mb-2">
+              <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
                 <Icon name="ban" size={16} class="text-destructive" />
                 <span class="text-sm font-medium text-foreground">Blocked</span>
                 <Badge variant="destructive" size="sm">{blockedDomains.length}</Badge>
               </div>
               {#if blockedDomains.length > 0}
-                <div class="space-y-1.5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                   {#each blockedDomains as domain}
                     <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 border-l-2 border-l-destructive/60 hover:bg-muted/50">
                       <span class="font-mono text-xs truncate flex-1">{domain}</span>
@@ -648,13 +663,13 @@
 
             <!-- Allowed -->
             <div>
-              <div class="flex items-center gap-2 mb-2">
+              <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
                 <Icon name="check" size={16} class="text-success" />
                 <span class="text-sm font-medium text-foreground">Allowed</span>
                 <Badge variant="success" size="sm">{allowedDomains.length}</Badge>
               </div>
               {#if allowedDomains.length > 0}
-                <div class="space-y-1.5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                   {#each allowedDomains as domain}
                     <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 border-l-2 border-l-success/60 hover:bg-muted/50">
                       <span class="font-mono text-xs truncate flex-1">{domain}</span>
@@ -684,7 +699,7 @@
             </div>
 
             <!-- Rewrites list -->
-            <div class="flex items-center gap-2 mb-2">
+            <div class="flex items-center gap-2 mb-3 pb-2 border-b border-border/50">
               <Icon name="link" size={16} class="text-info" />
               <span class="text-sm font-medium text-foreground">DNS Rewrites</span>
               <Badge variant="info" size="sm">{rewrites.length}</Badge>
@@ -693,7 +708,7 @@
             {#if rewrites.length === 0}
               <p class="text-xs text-muted-foreground italic">No DNS rewrites configured.</p>
             {:else}
-              <div class="space-y-1.5">
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {#each rewrites as rewrite}
                   <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 hover:bg-muted/50">
                     <span class="font-mono text-xs truncate">{rewrite.domain}</span>
