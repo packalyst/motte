@@ -267,7 +267,10 @@ func callWebhook(wh *Webhook, params map[string]string) (int, string, error) {
 		for k, v := range data {
 			q.Set(k, v)
 		}
-		u.RawQuery = q.Encode()
+		// Emit '+' literally (not %2B) so targets that expect a raw +CC phone
+		// number — like the direct call the user already uses — accept it. Every
+		// other character stays percent-encoded.
+		u.RawQuery = strings.ReplaceAll(q.Encode(), "%2B", "+")
 		req, err = http.NewRequest(wh.Method, u.String(), nil)
 	default:
 		return 0, "", fmt.Errorf("unsupported format")

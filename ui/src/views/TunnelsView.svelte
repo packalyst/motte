@@ -102,6 +102,9 @@
   function removeFixed(wh, j) { wh.fixed = wh.fixed.filter((_, k) => k !== j) }
   // Clearing keys marks the set for regeneration on save (server re-mints keyCount keys).
   function markRegen(wh) { wh.keys = []; toast('Keys will be regenerated on save', 'info') }
+  // A GET has no body by convention — targets read the query string and ignore a
+  // body — so GET is locked to the "query" format.
+  function syncMethodFormat(wh) { if (wh.method === 'GET') wh.format = 'query' }
 
   async function loadStatus() {
     try {
@@ -840,14 +843,18 @@
 
             <!-- Method / Format / Keys / Interval — 2-up on mobile, 4-up on desktop -->
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Select label="Method" bind:value={wh.method}>
+              <Select label="Method" bind:value={wh.method} onchange={() => syncMethodFormat(wh)}>
                 <option value="POST">POST</option>
                 <option value="GET">GET</option>
               </Select>
-              <Select label="Format" bind:value={wh.format}>
-                <option value="json">JSON</option>
-                <option value="form">Form</option>
-                <option value="query">Query</option>
+              <Select label="Format" bind:value={wh.format} disabled={wh.method === 'GET'}>
+                {#if wh.method === 'GET'}
+                  <option value="query">Query</option>
+                {:else}
+                  <option value="json">JSON</option>
+                  <option value="form">Form</option>
+                  <option value="query">Query</option>
+                {/if}
               </Select>
               <Select label="Keys" bind:value={wh.keyCount}>
                 <option value="random">Random</option>
