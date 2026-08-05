@@ -260,6 +260,8 @@ func main() {
 		r.RegisterService("turbotunnels", ttSvc.Handlers())
 		// Public rotation trigger at /api/restart/{key} (bypasses session auth).
 		r.RegisterService("rotate", ttSvc.RotateHandlers())
+		// Public webhook trigger at /api/hook/{keys...} (bypasses session auth).
+		r.RegisterService("webhook", ttSvc.WebhookHandlers())
 		// Mirror the proxy's log markers: auth failures → the firewall jail
 		// file (ban brute-forcers), authenticated connections → the logs table
 		// (shown on the Logs page).

@@ -14,13 +14,16 @@ var (
 	trustedProxyMutex sync.RWMutex
 )
 
-// RedactSecretPath hides secrets carried in the URL path — currently the rotation
-// key in /api/restart/{key} — so they never land in any log sink (the app log or
-// the Traefik-sourced inbound logs shown on the Logs page).
+// RedactSecretPath hides secrets carried in the URL path — the rotation key in
+// /api/restart/{key} and the webhook keys in /api/hook/{keys...} — so they never
+// land in any log sink (the app log or the Traefik-sourced inbound logs shown on
+// the Logs page). It receives only the path (query params are logged separately,
+// and callers should send webhook params in the body, not the query string).
 func RedactSecretPath(path string) string {
-	const p = "/api/restart/"
-	if strings.HasPrefix(path, p) && len(path) > len(p) {
-		return p + "[redacted]"
+	for _, p := range []string{"/api/restart/", "/api/hook/"} {
+		if strings.HasPrefix(path, p) && len(path) > len(p) {
+			return p + "[redacted]"
+		}
 	}
 	return path
 }

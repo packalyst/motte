@@ -45,8 +45,8 @@ type Status struct {
 	Image       string       `json:"image"`
 	LastCheck   time.Time    `json:"lastCheck"`
 	Error       string       `json:"error,omitempty"`
-	Tunnels     []TunnelInfo `json:"tunnels"`        // configured proxies + example commands
-	Drift       bool         `json:"drift"`          // saved config differs from what's running
+	Tunnels     []TunnelInfo `json:"tunnels"` // configured proxies + example commands
+	Drift       bool         `json:"drift"`   // saved config differs from what's running
 }
 
 // imageName returns the locally-built image name. docker-compose tags built

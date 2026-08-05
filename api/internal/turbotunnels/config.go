@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -56,8 +57,34 @@ func (l Listener) Proto() string {
 	return "http"
 }
 
-// Tunnel is one managed forward-proxy identity: shared name, credentials and
-// upstream, exposed via one or more Listeners (HTTP and/or SOCKS5).
+// WebhookParam declares one caller-supplied parameter a webhook accepts. Only
+// declared params are allowed inbound; each is validated then forwarded verbatim.
+type WebhookParam struct {
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
+	Pattern  string `json:"pattern,omitempty"` // optional RE2 regex the value must fully match
+	MaxLen   int    `json:"maxLen,omitempty"`  // optional max length (0 = no cap)
+}
+
+// Webhook is a validating pass-through trigger. The declared method+params are
+// what the public /api/hook/{keys...} endpoint ACCEPTS; validated params (plus
+// any Fixed values) are then forwarded to URL exactly as declared. The provider
+// URL and Keys are never exposed by the public endpoint.
+type Webhook struct {
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Method         string            `json:"method"`          // GET | POST (accepted inbound AND used outbound)
+	Format         string            `json:"format"`          // json | form | query (how params are forwarded)
+	URL            string            `json:"url"`             // target, called server-side, never exposed
+	Keys           []string          `json:"keys"`            // 1-3 independent secrets; ALL required in the path
+	Params         []WebhookParam    `json:"params"`          // accepted + forwarded caller params
+	Fixed          map[string]string `json:"fixed,omitempty"` // values set once, always forwarded, never caller-supplied
+	MinIntervalSec int               `json:"minIntervalSec"`  // per-webhook throttle, 0 = unlimited
+}
+
+// Tunnel is one managed entry. It may expose forward-proxy Listeners (HTTP and/or
+// SOCKS5) and/or a set of Webhooks. A webhook-only tunnel (no listeners) runs no
+// proxy container and needs no ports or proxy credentials.
 type Tunnel struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
@@ -67,12 +94,65 @@ type Tunnel struct {
 	Upstream  Upstream   `json:"upstream"`
 	RotateURL string     `json:"rotateUrl"` // provider "change IP" endpoint, called server-side
 	RotateKey string     `json:"rotateKey"` // secret for the public /api/restart/{key} trigger
+	Webhooks  []Webhook  `json:"webhooks,omitempty"`
 }
 
 // IsDirect reports whether the tunnel exits from this server directly (no
 // upstream hop).
 func (t Tunnel) IsDirect() bool {
 	return !t.Upstream.IsSet()
+}
+
+// HasProxy reports whether the tunnel serves any forward-proxy listener. A tunnel
+// with no listeners is webhook-only.
+func (t Tunnel) HasProxy() bool {
+	return len(t.Listeners) > 0
+}
+
+// maxWebhookKeys caps how many independent keys a webhook may require in its path.
+const maxWebhookKeys = 3
+
+// newWebhookKeys returns count independent full-strength base62 secrets. Lengths
+// scale down as count rises but each stays strong on its own (1→43, 2→32, 3→26).
+func newWebhookKeys(count int) []string {
+	if count < 1 {
+		count = 1
+	}
+	if count > maxWebhookKeys {
+		count = maxWebhookKeys
+	}
+	lengths := map[int]int{1: 43, 2: 32, 3: 26}
+	n := lengths[count]
+	keys := make([]string, count)
+	for i := range keys {
+		keys[i] = randPassword(n)
+	}
+	return keys
+}
+
+// newWebhookID returns a short unique identifier for a webhook.
+func newWebhookID() string {
+	return randHexN(6)
+}
+
+// ensureWebhookSecrets fills a webhook's ID and keys where missing. Keys are
+// (re)generated as a whole set whenever any slot is blank — so the UI both picks
+// the count (by sending N slots) and regenerates all N (by clearing them). The
+// count is clamped to [1, maxWebhookKeys].
+func ensureWebhookSecrets(wh *Webhook) {
+	if wh.ID == "" {
+		wh.ID = newWebhookID()
+	}
+	count := len(wh.Keys)
+	blank := count == 0
+	for _, k := range wh.Keys {
+		if strings.TrimSpace(k) == "" {
+			blank = true
+		}
+	}
+	if blank {
+		wh.Keys = newWebhookKeys(count)
+	}
 }
 
 // Config is the full set of managed tunnels — the whole persisted document.
@@ -206,63 +286,156 @@ func ValidateConfig(cfg Config) error {
 		}
 		seenName[t.Name] = true
 
-		if len(t.Listeners) == 0 {
-			return fmt.Errorf("%s: pick at least one protocol (HTTP and/or SOCKS5)", label)
-		}
-		seenProto := map[string]bool{}
-		for _, l := range t.Listeners {
-			if l.Protocol != "http" && l.Protocol != "socks5" {
-				return fmt.Errorf("%s: protocol must be http or socks5", label)
-			}
-			if seenProto[l.Protocol] {
-				return fmt.Errorf("%s: %s is selected more than once", label, l.Protocol)
-			}
-			seenProto[l.Protocol] = true
-
-			if l.Port < 1 || l.Port > 65535 {
-				return fmt.Errorf("%s: %s port %d is out of range (1-65535)", label, l.Protocol, l.Port)
-			}
-			if seenPort[l.Port] {
-				return fmt.Errorf("%s: port %d is used by more than one listener", label, l.Port)
-			}
-			seenPort[l.Port] = true
-			if svc, taken := external[l.Port]; taken {
-				return fmt.Errorf("%s: port %d is already in use by %s", label, l.Port, svc)
-			}
-			if t.Upstream.IsSet() && (l.UpstreamPort < 1 || l.UpstreamPort > 65535) {
-				return fmt.Errorf("%s: %s upstream port %d is out of range (1-65535)", label, l.Protocol, l.UpstreamPort)
-			}
+		// A tunnel must do something: serve a proxy listener or have a webhook.
+		if len(t.Listeners) == 0 && len(t.Webhooks) == 0 {
+			return fmt.Errorf("%s: pick at least one protocol (HTTP/SOCKS5) or add a webhook", label)
 		}
 
-		if strings.TrimSpace(t.User) == "" {
-			return fmt.Errorf("%s: username is required", label)
-		}
-		if !isSafeCredential(t.User) {
-			return fmt.Errorf("%s: username must not contain spaces or any of : @ /", label)
-		}
-		if len(t.Pass) < minPassLen {
-			return fmt.Errorf("%s: password must be at least %d characters (every proxy is internet-facing)", label, minPassLen)
-		}
-		if !isSafeCredential(t.Pass) {
-			return fmt.Errorf("%s: password must not contain spaces or any of : @ /", label)
+		// Proxy-specific checks apply only when the tunnel serves listeners.
+		if t.HasProxy() {
+			seenProto := map[string]bool{}
+			for _, l := range t.Listeners {
+				if l.Protocol != "http" && l.Protocol != "socks5" {
+					return fmt.Errorf("%s: protocol must be http or socks5", label)
+				}
+				if seenProto[l.Protocol] {
+					return fmt.Errorf("%s: %s is selected more than once", label, l.Protocol)
+				}
+				seenProto[l.Protocol] = true
+
+				if l.Port < 1 || l.Port > 65535 {
+					return fmt.Errorf("%s: %s port %d is out of range (1-65535)", label, l.Protocol, l.Port)
+				}
+				if seenPort[l.Port] {
+					return fmt.Errorf("%s: port %d is used by more than one listener", label, l.Port)
+				}
+				seenPort[l.Port] = true
+				if svc, taken := external[l.Port]; taken {
+					return fmt.Errorf("%s: port %d is already in use by %s", label, l.Port, svc)
+				}
+				if t.Upstream.IsSet() && (l.UpstreamPort < 1 || l.UpstreamPort > 65535) {
+					return fmt.Errorf("%s: %s upstream port %d is out of range (1-65535)", label, l.Protocol, l.UpstreamPort)
+				}
+			}
+
+			if strings.TrimSpace(t.User) == "" {
+				return fmt.Errorf("%s: username is required", label)
+			}
+			if !isSafeCredential(t.User) {
+				return fmt.Errorf("%s: username must not contain spaces or any of : @ /", label)
+			}
+			if len(t.Pass) < minPassLen {
+				return fmt.Errorf("%s: password must be at least %d characters (every proxy is internet-facing)", label, minPassLen)
+			}
+			if !isSafeCredential(t.Pass) {
+				return fmt.Errorf("%s: password must not contain spaces or any of : @ /", label)
+			}
+
+			if t.Upstream.IsSet() {
+				if !isSafeCredential(t.Upstream.Host) {
+					return fmt.Errorf("%s: upstream host must not contain spaces or any of : @ /", label)
+				}
+				if t.Upstream.User != "" && !isSafeCredential(t.Upstream.User) {
+					return fmt.Errorf("%s: upstream username must not contain spaces or any of : @ /", label)
+				}
+				if t.Upstream.Pass != "" && !isSafeCredential(t.Upstream.Pass) {
+					return fmt.Errorf("%s: upstream password must not contain spaces or any of : @ /", label)
+				}
+			}
+
+			if t.RotateURL != "" {
+				u, err := url.Parse(t.RotateURL)
+				if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+					return fmt.Errorf("%s: rotate URL must be a valid http(s) URL", label)
+				}
+			}
 		}
 
-		if t.Upstream.IsSet() {
-			if !isSafeCredential(t.Upstream.Host) {
-				return fmt.Errorf("%s: upstream host must not contain spaces or any of : @ /", label)
-			}
-			if t.Upstream.User != "" && !isSafeCredential(t.Upstream.User) {
-				return fmt.Errorf("%s: upstream username must not contain spaces or any of : @ /", label)
-			}
-			if t.Upstream.Pass != "" && !isSafeCredential(t.Upstream.Pass) {
-				return fmt.Errorf("%s: upstream password must not contain spaces or any of : @ /", label)
+		if err := validateWebhooks(t, label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isSafeParamName reports whether s is a safe webhook param/field name (letters,
+// digits, underscore; must start with a letter or underscore).
+func isSafeParamName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		ok := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9')
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// validateWebhooks checks every webhook on a tunnel.
+func validateWebhooks(t Tunnel, label string) error {
+	seenName := map[string]bool{}
+	for j, wh := range t.Webhooks {
+		wl := wh.Name
+		if wl == "" {
+			wl = fmt.Sprintf("webhook #%d", j+1)
+		}
+		if strings.TrimSpace(wh.Name) == "" {
+			return fmt.Errorf("%s: webhook name is required", label)
+		}
+		if seenName[wh.Name] {
+			return fmt.Errorf("%s: duplicate webhook name %q", label, wh.Name)
+		}
+		seenName[wh.Name] = true
+
+		if wh.Method != "GET" && wh.Method != "POST" {
+			return fmt.Errorf("%s / %s: method must be GET or POST", label, wl)
+		}
+		switch wh.Format {
+		case "json", "form", "query":
+		default:
+			return fmt.Errorf("%s / %s: format must be json, form or query", label, wl)
+		}
+		if u, err := url.Parse(wh.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%s / %s: URL must be a valid http(s) URL", label, wl)
+		}
+		if len(wh.Keys) < 1 || len(wh.Keys) > maxWebhookKeys {
+			return fmt.Errorf("%s / %s: must have 1 to %d keys", label, wl, maxWebhookKeys)
+		}
+		for _, k := range wh.Keys {
+			if len(k) < 12 || strings.ContainsAny(k, "/ \t") {
+				return fmt.Errorf("%s / %s: a key is too short or malformed", label, wl)
 			}
 		}
+		if wh.MinIntervalSec < 0 {
+			return fmt.Errorf("%s / %s: min interval must be >= 0", label, wl)
+		}
 
-		if t.RotateURL != "" {
-			u, err := url.Parse(t.RotateURL)
-			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-				return fmt.Errorf("%s: rotate URL must be a valid http(s) URL", label)
+		seenParam := map[string]bool{}
+		for _, p := range wh.Params {
+			if !isSafeParamName(p.Name) {
+				return fmt.Errorf("%s / %s: param name %q must be letters/digits/underscore", label, wl, p.Name)
+			}
+			if seenParam[p.Name] {
+				return fmt.Errorf("%s / %s: duplicate param %q", label, wl, p.Name)
+			}
+			seenParam[p.Name] = true
+			if p.MaxLen < 0 {
+				return fmt.Errorf("%s / %s: param %q maxLen must be >= 0", label, wl, p.Name)
+			}
+			if p.Pattern != "" {
+				if _, err := regexp.Compile(p.Pattern); err != nil {
+					return fmt.Errorf("%s / %s: param %q has an invalid pattern: %v", label, wl, p.Name, err)
+				}
+			}
+		}
+		for name := range wh.Fixed {
+			if !isSafeParamName(name) {
+				return fmt.Errorf("%s / %s: fixed field %q must be letters/digits/underscore", label, wl, name)
+			}
+			if seenParam[name] {
+				return fmt.Errorf("%s / %s: fixed field %q collides with a declared param", label, wl, name)
 			}
 		}
 	}

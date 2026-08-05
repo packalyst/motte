@@ -195,6 +195,13 @@
         {"path": "/{key}", "methods": ["GET", "POST"], "handler": "Rotate", "description": "Public tunnel IP-rotation trigger (key-protected)"}
       ]
     },
+    "webhook": {
+      "prefix": "/api/hook",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/{keys...}", "methods": ["GET", "POST"], "handler": "Webhook", "description": "Public webhook trigger (multi-key protected)"}
+      ]
+    },
     "turbotunnels": {
       "prefix": "/api/turbotunnels",
       "enabled": true,

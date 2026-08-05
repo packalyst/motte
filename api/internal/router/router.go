@@ -157,6 +157,26 @@ func (r *Router) pathMatches(reqPath, pattern string) bool {
 	reqParts := strings.Split(strings.Trim(reqPath, "/"), "/")
 	patParts := strings.Split(strings.Trim(pattern, "/"), "/")
 
+	// Trailing catch-all: a final "{name...}" matches one or more remaining
+	// segments (e.g. /api/hook/{keys...} matches /api/hook/k1/k2/k3). Only
+	// patterns explicitly ending in "...}" use this; every other route is
+	// unaffected.
+	if n := len(patParts); n > 0 && strings.HasPrefix(patParts[n-1], "{") && strings.HasSuffix(patParts[n-1], "...}") {
+		if len(reqParts) < n {
+			return false
+		}
+		for i := 0; i < n-1; i++ {
+			pat := patParts[i]
+			if strings.HasPrefix(pat, "{") && strings.HasSuffix(pat, "}") {
+				continue
+			}
+			if pat != reqParts[i] {
+				return false
+			}
+		}
+		return true
+	}
+
 	if len(reqParts) != len(patParts) {
 		return false
 	}
@@ -241,6 +261,7 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 		"/api/setup/",
 		"/api/auth/login",
 		"/api/restart/", // public tunnel-rotation trigger (its own per-key secret)
+		"/api/hook/",    // public webhook trigger (its own per-webhook keys)
 	}
 
 	// Exact public paths

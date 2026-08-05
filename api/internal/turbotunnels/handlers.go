@@ -37,6 +37,12 @@ func (s *Service) RotateHandlers() router.ServiceHandlers {
 	return router.ServiceHandlers{"Rotate": s.handleRotate}
 }
 
+// WebhookHandlers returns the handler for the PUBLIC webhook trigger, registered
+// under its own prefix (/api/hook) and bypassing session auth (per-webhook keys).
+func (s *Service) WebhookHandlers() router.ServiceHandlers {
+	return router.ServiceHandlers{"Webhook": s.handleWebhook}
+}
+
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, GetStatus())
 }
@@ -79,13 +85,18 @@ func (s *Service) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	if !router.DecodeJSONOrError(w, r, &cfg) {
 		return
 	}
-	// Assign IDs to any new tunnels so the UI has a stable key.
+	// Assign IDs/keys to any new tunnels & webhooks so the UI has stable keys.
 	for i := range cfg.Tunnels {
-		if cfg.Tunnels[i].ID == "" {
-			cfg.Tunnels[i].ID = newTunnelID()
+		t := &cfg.Tunnels[i]
+		if t.ID == "" {
+			t.ID = newTunnelID()
 		}
-		if cfg.Tunnels[i].RotateKey == "" {
-			cfg.Tunnels[i].RotateKey = newRotateKey()
+		// Rotate is proxy-tied: only mint a rotate key for tunnels with a proxy.
+		if t.RotateKey == "" && t.HasProxy() {
+			t.RotateKey = newRotateKey()
+		}
+		for j := range t.Webhooks {
+			ensureWebhookSecrets(&t.Webhooks[j])
 		}
 	}
 	if err := SaveConfig(cfg); err != nil {

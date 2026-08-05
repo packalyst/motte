@@ -2,6 +2,7 @@ package turbotunnels
 
 import (
 	"fmt"
+	"strings"
 
 	"api/internal/helper"
 )
@@ -13,17 +14,26 @@ type EndpointInfo struct {
 	Command  string `json:"command"`
 }
 
+// WebhookInfo is one webhook's public trigger URL (with its keys) for the UI.
+type WebhookInfo struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Method     string `json:"method"`
+	TriggerURL string `json:"triggerUrl"` // public URL to trigger it (contains the keys)
+}
+
 // TunnelInfo describes one configured proxy for the UI: shared identity plus one
 // endpoint per listener (HTTP and/or SOCKS5).
 type TunnelInfo struct {
-	ID           string         `json:"id"`
-	Name         string         `json:"name"`
-	Host         string         `json:"host"`
-	User         string         `json:"user"`
-	Pass         string         `json:"pass"`
-	Direct       bool           `json:"direct"` // true = exits this server; false = chained
-	RotateTrigger string        `json:"rotateTrigger"` // public URL to trigger rotation (has the key)
-	Endpoints    []EndpointInfo `json:"endpoints"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Host          string         `json:"host"`
+	User          string         `json:"user"`
+	Pass          string         `json:"pass"`
+	Direct        bool           `json:"direct"`        // true = exits this server; false = chained
+	RotateTrigger string         `json:"rotateTrigger"` // public URL to trigger rotation (has the key)
+	Endpoints     []EndpointInfo `json:"endpoints"`
+	Webhooks      []WebhookInfo  `json:"webhooks"`
 }
 
 // proxyHost is the hostname shown in tunnel commands: the configured PROXY_DOMAIN
@@ -80,6 +90,19 @@ func tunnelInfos(cfg Config) []TunnelInfo {
 		if t.RotateKey != "" && t.RotateURL != "" {
 			rotateTrigger = rotateBaseURL() + "/api/restart/" + t.RotateKey
 		}
+		whs := make([]WebhookInfo, 0, len(t.Webhooks))
+		for _, wh := range t.Webhooks {
+			trigger := ""
+			if len(wh.Keys) > 0 {
+				trigger = rotateBaseURL() + "/api/hook/" + strings.Join(wh.Keys, "/")
+			}
+			whs = append(whs, WebhookInfo{
+				ID:         wh.ID,
+				Name:       wh.Name,
+				Method:     wh.Method,
+				TriggerURL: trigger,
+			})
+		}
 		out = append(out, TunnelInfo{
 			ID:            t.ID,
 			Name:          t.Name,
@@ -89,6 +112,7 @@ func tunnelInfos(cfg Config) []TunnelInfo {
 			Direct:        t.IsDirect(),
 			RotateTrigger: rotateTrigger,
 			Endpoints:     eps,
+			Webhooks:      whs,
 		})
 	}
 	return out

@@ -62,13 +62,27 @@
     return {
       id: '',
       name: '',
-      protocols: ['http'],                 // create can pick multiple → one tunnel each
+      protocols: ['http'],                 // create can pick multiple → one listener each
       ports: { http: '3128', socks5: '1080' },
       user: '',
       pass: '',
       chained: true, // manual "Add tunnel" defaults to chained; Quick-deploy is direct
       upstream: { host: '', user: '', pass: '', ports: { http: '', socks5: '' } },
       rotateUrl: '',
+      webhookEnabled: false,
+      webhooks: [],
+    }
+  }
+
+  // A fresh webhook for the editor. keys[] stays empty until saved (server mints
+  // them); keyCount drives how many are generated.
+  function blankWebhook() {
+    return {
+      id: '', name: '', method: 'POST', format: 'json', url: '',
+      keyCount: 1, keys: [],
+      params: [{ name: '', required: true, pattern: '', maxLen: '' }],
+      fixed: [],
+      minIntervalSec: 0,
     }
   }
 
@@ -78,6 +92,16 @@
       ? form.protocols.filter((x) => x !== p)
       : [...form.protocols, p]
   }
+
+  // ---- Webhook editor helpers (operate on form.webhooks) -----------------
+  function addWebhook() { form.webhooks = [...form.webhooks, blankWebhook()] }
+  function removeWebhook(i) { form.webhooks = form.webhooks.filter((_, k) => k !== i) }
+  function addParam(wh) { wh.params = [...wh.params, { name: '', required: false, pattern: '', maxLen: '' }] }
+  function removeParam(wh, j) { wh.params = wh.params.filter((_, k) => k !== j) }
+  function addFixed(wh) { wh.fixed = [...wh.fixed, { key: '', value: '' }] }
+  function removeFixed(wh, j) { wh.fixed = wh.fixed.filter((_, k) => k !== j) }
+  // Clearing keys marks the set for regeneration on save (server re-mints keyCount keys).
+  function markRegen(wh) { wh.keys = []; toast('Keys will be regenerated on save', 'info') }
 
   async function loadStatus() {
     try {
@@ -235,7 +259,7 @@
     form = {
       id: t.id || '',
       name: t.name || '',
-      protocols: listeners.length ? listeners.map((l) => l.protocol) : ['http'],
+      protocols: listeners.map((l) => l.protocol), // empty = webhook-only
       ports,
       user: t.user || '',
       pass: t.pass || '',
@@ -247,37 +271,103 @@
         ports: upPorts,
       },
       rotateUrl: t.rotateUrl || '',
+      webhookEnabled: (t.webhooks || []).length > 0,
+      webhooks: (t.webhooks || []).map((wh) => ({
+        id: wh.id || '',
+        name: wh.name || '',
+        method: wh.method || 'POST',
+        format: wh.format || 'json',
+        url: wh.url || '',
+        keyCount: (wh.keys || []).length || 1,
+        keys: wh.keys || [],
+        params: (wh.params || []).map((p) => ({ name: p.name || '', required: !!p.required, pattern: p.pattern || '', maxLen: p.maxLen ? String(p.maxLen) : '' })),
+        fixed: Object.entries(wh.fixed || {}).map(([key, value]) => ({ key, value })),
+        minIntervalSec: wh.minIntervalSec || 0,
+      })),
     }
     showModal = true
   }
 
+  // Regenerate a single webhook's keys (clears them → server re-mints keyCount
+  // keys). Keeps the count by sending the same number of blank slots.
+  async function regenerateWebhookKeys(t, webhookId) {
+    const idx = config.tunnels.indexOf(t)
+    if (idx < 0) return
+    const next = { tunnels: config.tunnels.map((x, k) => {
+      if (k !== idx) return x
+      return { ...x, webhooks: (x.webhooks || []).map((wh) => wh.id === webhookId ? { ...wh, keys: (wh.keys || []).map(() => '') } : wh) }
+    }) }
+    busy = true
+    try {
+      status = await apiPut('/api/turbotunnels/config', next)
+      await loadConfig()
+      toast('Webhook keys regenerated', 'success')
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      busy = false
+    }
+  }
+
   // Build one tunnel with a listener per selected protocol (shared identity).
   function buildTunnelFromForm() {
+    const hasProxy = form.protocols.length > 0
     return {
       id: form.id,
       name: form.name.trim(),
-      listeners: form.protocols.map((proto) => ({
+      listeners: hasProxy ? form.protocols.map((proto) => ({
         protocol: proto,
         port: Number(form.ports[proto]),
         upstreamPort: form.chained ? Number(form.upstream.ports[proto]) : 0,
-      })),
-      user: form.user.trim(),
-      pass: form.pass,
-      upstream: form.chained
+      })) : [],
+      user: hasProxy ? form.user.trim() : '',
+      pass: hasProxy ? form.pass : '',
+      upstream: (hasProxy && form.chained)
         ? { host: form.upstream.host.trim(), user: form.upstream.user.trim(), pass: form.upstream.pass }
         : { host: '', user: '', pass: '' },
-      rotateUrl: form.rotateUrl.trim(),
+      rotateUrl: hasProxy ? form.rotateUrl.trim() : '',
+      webhooks: form.webhookEnabled ? form.webhooks.map(buildWebhook) : [],
+    }
+  }
+
+  // Serialize one editor webhook to the backend shape. Keys are sent as-is when
+  // their count is unchanged, else as blank slots so the server (re)mints them.
+  function buildWebhook(wh) {
+    const count = Math.min(3, Math.max(1, Number(wh.keyCount) || 1))
+    const keys = (wh.keys && wh.keys.length === count)
+      ? wh.keys
+      : Array.from({ length: count }, () => '')
+    return {
+      id: wh.id,
+      name: wh.name.trim(),
+      method: wh.method,
+      format: wh.format,
+      url: wh.url.trim(),
+      keys,
+      params: wh.params
+        .filter((p) => p.name.trim())
+        .map((p) => ({ name: p.name.trim(), required: !!p.required, pattern: p.pattern.trim(), maxLen: Number(p.maxLen) || 0 })),
+      fixed: Object.fromEntries(wh.fixed.filter((f) => f.key.trim()).map((f) => [f.key.trim(), f.value])),
+      minIntervalSec: Number(wh.minIntervalSec) || 0,
     }
   }
 
   async function saveTunnel() {
-    if (form.protocols.length === 0) {
-      toast('Pick at least one protocol (HTTP and/or SOCKS5).', 'error')
+    const hasProxy = form.protocols.length > 0
+    const hasWebhooks = form.webhookEnabled && form.webhooks.length > 0
+    if (!hasProxy && !hasWebhooks) {
+      toast('Pick at least one protocol (HTTP/SOCKS5) or add a webhook.', 'error')
       return
     }
-    if (form.chained && !form.upstream.host.trim()) {
+    if (hasProxy && form.chained && !form.upstream.host.trim()) {
       toast('A chained tunnel needs an upstream host — pick a node or enter one.', 'error')
       return
+    }
+    if (form.webhookEnabled) {
+      for (const wh of form.webhooks) {
+        if (!wh.name.trim()) { toast('Every webhook needs a name.', 'error'); return }
+        if (!wh.url.trim()) { toast(`Webhook "${wh.name || '(unnamed)'}" needs a target URL.`, 'error'); return }
+      }
     }
     // Build one tunnel (with a listener per protocol), then persist the document.
     const built = buildTunnelFromForm()
@@ -538,8 +628,11 @@
               {#each (t.listeners || []) as l}
                 <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
               {/each}
-              <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
+              {#if (t.listeners || []).length}
+                <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
+              {/if}
               {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating</Badge>{/if}
+              {#if (t.webhooks || []).length}<Badge variant="primary" size="sm">Webhook</Badge>{/if}
               {#if chained}
                 <span class="text-[11px] text-muted-foreground font-mono truncate ml-auto sm:ml-1">via {t.upstream.host}</span>
               {/if}
@@ -588,11 +681,13 @@
                 {/each}
               </div>
 
-              <!-- Shared credentials -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
-                <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
-              </div>
+              <!-- Shared credentials (proxy only) -->
+              {#if (t.listeners || []).length}
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <ContentBlock variant="data" label="User" value={t.user} mono copyable padding="sm" />
+                  <ContentBlock variant="data" label="Password" value={t.pass} mono copyable padding="sm" />
+                </div>
+              {/if}
 
               {#if info?.rotateTrigger}
                 <ContentBlock variant="data" label="Rotation URL (secret)" value={info.rotateTrigger} mono copyable padding="sm">
@@ -601,6 +696,15 @@
                   {/snippet}
                 </ContentBlock>
               {/if}
+
+              <!-- Webhook trigger URLs (secret — contain the keys) -->
+              {#each (info?.webhooks || []) as wh}
+                <ContentBlock variant="data" label={`Webhook: ${wh.name} · ${wh.method}`} value={wh.triggerUrl} mono copyable padding="sm">
+                  {#snippet labelAction()}
+                    <Button size="xs" variant="outline" icon="refresh" onclick={() => regenerateWebhookKeys(t, wh.id)} disabled={busy}>Regenerate</Button>
+                  {/snippet}
+                </ContentBlock>
+              {/each}
             </div>
           {/if}
         </div>
@@ -614,83 +718,174 @@
   <div class="space-y-4">
     <Input label="Name" placeholder="My proxy" bind:value={form.name} prefixIcon="tag" />
 
-    <!-- Protocol(s): create can pick both → one tunnel each -->
+    <!-- What this entry does: proxy protocol(s) and/or a webhook -->
     <div>
-      <span class="text-sm font-medium text-foreground">Protocol{modalMode === 'create' ? 's' : ''}</span>
+      <span class="text-sm font-medium text-foreground">Type</span>
       <p class="text-xs text-muted-foreground mb-2">
-        {modalMode === 'create' ? 'Pick one or both — selecting both creates two tunnels (one per port).' : 'HTTP or SOCKS5.'}
+        HTTP / SOCKS5 add proxy listeners; Webhook adds trigger endpoints. A Webhook-only entry runs no proxy.
       </p>
-      <div class="flex gap-2">
+      <div class="flex flex-wrap gap-2">
         <Checkbox variant="chip" icon="world" checked={form.protocols.includes('http')} onchange={() => toggleProto('http')} label="HTTP" />
         <Checkbox variant="chip" icon="plug-connected" checked={form.protocols.includes('socks5')} onchange={() => toggleProto('socks5')} label="SOCKS5" />
+        <Checkbox variant="chip" color="info" icon="bolt" checked={form.webhookEnabled} onchange={() => form.webhookEnabled = !form.webhookEnabled} label="Webhook" />
       </div>
     </div>
 
-    <!-- One port per selected protocol -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      {#if form.protocols.includes('http')}
-        <Input label="HTTP port" type="number" placeholder="3128" bind:value={form.ports.http} prefixIcon="plug" />
-      {/if}
-      {#if form.protocols.includes('socks5')}
-        <Input label="SOCKS5 port" type="number" placeholder="1080" bind:value={form.ports.socks5} prefixIcon="plug" />
-      {/if}
-    </div>
-
-    <!-- Mode: direct vs chained (chosen first — it drives the rest) -->
-    <div>
-      <span class="text-sm font-medium text-foreground">Mode</span>
-      <p class="text-xs text-muted-foreground mb-2">
-        <b>Direct</b> exits from this server's IP. <b>Chained</b> forwards through another proxy (e.g. a VPN node) and exits from <i>its</i> IP.
-      </p>
-      <div class="flex gap-2">
-        <Checkbox variant="chip" icon="arrow-up-right" checked={!form.chained}
-          onchange={() => form.chained = false} label="Direct" />
-        <Checkbox variant="chip" color="warning" icon="link" checked={form.chained}
-          onchange={() => form.chained = true} label="Chained" />
+    <!-- Proxy configuration: only when a proxy protocol is selected -->
+    {#if form.protocols.length > 0}
+      <!-- One port per selected protocol -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {#if form.protocols.includes('http')}
+          <Input label="HTTP port" type="number" placeholder="3128" bind:value={form.ports.http} prefixIcon="plug" />
+        {/if}
+        {#if form.protocols.includes('socks5')}
+          <Input label="SOCKS5 port" type="number" placeholder="1080" bind:value={form.ports.socks5} prefixIcon="plug" />
+        {/if}
       </div>
-    </div>
 
-    {#if form.chained}
-      <div class="space-y-3 border-l-2 border-warning/40 pl-3">
-        <Select label="Upstream node" value={form.upstream.host} onchange={onUpstreamNode}>
-          <option value="">Custom / external proxy…</option>
-          {#each vpnClients as c}
-            <option value={c.ip}>{c.name} ({c.ip})</option>
-          {/each}
-        </Select>
-        <p class="text-[11px] text-muted-foreground -mt-1">Pick a VPN node to reach it by its WG IP, or choose Custom and type any proxy host.</p>
-        <Input label="Upstream host" placeholder="1.2.3.4 or node IP" bind:value={form.upstream.host} prefixIcon="server" />
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {#if form.protocols.includes('http')}
-            <Input label="Upstream HTTP port" type="number" placeholder="3128" bind:value={form.upstream.ports.http} prefixIcon="plug" />
-          {/if}
-          {#if form.protocols.includes('socks5')}
-            <Input label="Upstream SOCKS5 port" type="number" placeholder="1080" bind:value={form.upstream.ports.socks5} prefixIcon="plug" />
-          {/if}
-          <Input label="Upstream user (optional)" bind:value={form.upstream.user} prefixIcon="user" />
-          <Input label="Upstream password (optional)" bind:value={form.upstream.pass} prefixIcon="key" />
+      <!-- Mode: direct vs chained (chosen first — it drives the rest) -->
+      <div>
+        <span class="text-sm font-medium text-foreground">Mode</span>
+        <p class="text-xs text-muted-foreground mb-2">
+          <b>Direct</b> exits from this server's IP. <b>Chained</b> forwards through another proxy (e.g. a VPN node) and exits from <i>its</i> IP.
+        </p>
+        <div class="flex gap-2">
+          <Checkbox variant="chip" icon="arrow-up-right" checked={!form.chained}
+            onchange={() => form.chained = false} label="Direct" />
+          <Checkbox variant="chip" color="warning" icon="link" checked={form.chained}
+            onchange={() => form.chained = true} label="Chained" />
         </div>
+      </div>
+
+      {#if form.chained}
+        <div class="space-y-3 border-l-2 border-warning/40 pl-3">
+          <Select label="Upstream node" value={form.upstream.host} onchange={onUpstreamNode}>
+            <option value="">Custom / external proxy…</option>
+            {#each vpnClients as c}
+              <option value={c.ip}>{c.name} ({c.ip})</option>
+            {/each}
+          </Select>
+          <p class="text-[11px] text-muted-foreground -mt-1">Pick a VPN node to reach it by its WG IP, or choose Custom and type any proxy host.</p>
+          <Input label="Upstream host" placeholder="1.2.3.4 or node IP" bind:value={form.upstream.host} prefixIcon="server" />
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {#if form.protocols.includes('http')}
+              <Input label="Upstream HTTP port" type="number" placeholder="3128" bind:value={form.upstream.ports.http} prefixIcon="plug" />
+            {/if}
+            {#if form.protocols.includes('socks5')}
+              <Input label="Upstream SOCKS5 port" type="number" placeholder="1080" bind:value={form.upstream.ports.socks5} prefixIcon="plug" />
+            {/if}
+            <Input label="Upstream user (optional)" bind:value={form.upstream.user} prefixIcon="user" />
+            <Input label="Upstream password (optional)" bind:value={form.upstream.pass} prefixIcon="key" />
+          </div>
+        </div>
+      {/if}
+
+      <!-- Proxy credentials (what clients use to connect TO this proxy) -->
+      <div class="border-t border-border pt-4">
+        <span class="text-sm font-medium text-foreground">Proxy credentials</span>
+        <p class="text-xs text-muted-foreground mb-2">What clients use to connect to this proxy. Every tunnel is internet-facing, so a strong password is required.</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Input label="Username" bind:value={form.user} prefixIcon="user" />
+          <Input label="Password" bind:value={form.pass} prefixIcon="key" />
+        </div>
+        <div class="mt-2">
+          <Button size="sm" variant="outline" icon="refresh" onclick={() => generateCreds(form)}>Regenerate</Button>
+        </div>
+      </div>
+
+      <!-- Rotating IP URL -->
+      <div class="border-t border-border pt-4">
+        <Input label="Provider rotate URL (optional)" placeholder="https://provider.com/changeip?token=…" bind:value={form.rotateUrl} prefixIcon="refresh" />
+        <p class="text-xs text-muted-foreground mt-1">The provider's "change IP" endpoint. We never expose it — we call it via a generated secret rotation URL shown on the tunnel card.</p>
       </div>
     {/if}
 
-    <!-- Proxy credentials (what clients use to connect TO this proxy) -->
-    <div class="border-t border-border pt-4">
-      <span class="text-sm font-medium text-foreground">Proxy credentials</span>
-      <p class="text-xs text-muted-foreground mb-2">What clients use to connect to this proxy. Every tunnel is internet-facing, so a strong password is required.</p>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Input label="Username" bind:value={form.user} prefixIcon="user" />
-        <Input label="Password" bind:value={form.pass} prefixIcon="key" />
-      </div>
-      <div class="mt-2">
-        <Button size="sm" variant="outline" icon="refresh" onclick={() => generateCreds(form)}>Regenerate</Button>
-      </div>
-    </div>
+    <!-- Webhooks editor -->
+    {#if form.webhookEnabled}
+      <div class="border-t border-border pt-4 space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <span class="text-sm font-medium text-foreground">Webhooks</span>
+            <p class="text-xs text-muted-foreground">Public trigger endpoints. Declared params are validated then forwarded to the target URL; the URL and keys are never exposed.</p>
+          </div>
+          <Button size="xs" variant="outline" icon="plus" onclick={addWebhook}>Add</Button>
+        </div>
 
-    <!-- Rotating IP URL -->
-    <div class="border-t border-border pt-4">
-      <Input label="Provider rotate URL (optional)" placeholder="https://provider.com/changeip?token=…" bind:value={form.rotateUrl} prefixIcon="refresh" />
-      <p class="text-xs text-muted-foreground mt-1">The provider's "change IP" endpoint. We never expose it — we call it via a generated secret rotation URL shown on the tunnel card.</p>
-    </div>
+        {#if form.webhooks.length === 0}
+          <p class="text-xs text-muted-foreground italic">No webhooks yet — click Add.</p>
+        {/if}
+
+        {#each form.webhooks as wh, wi}
+          <div class="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-medium text-foreground">Webhook {wi + 1}</span>
+              <Button size="xs" variant="outline" icon="trash" onclick={() => removeWebhook(wi)}>Remove</Button>
+            </div>
+
+            <Input label="Name" placeholder="Send SMS" bind:value={wh.name} prefixIcon="tag" />
+            <Input label="Target URL" placeholder="https://192.168.8.1/api/sms" bind:value={wh.url} prefixIcon="world" />
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Select label="Method" bind:value={wh.method}>
+                <option value="POST">POST</option>
+                <option value="GET">GET</option>
+              </Select>
+              <Select label="Format" bind:value={wh.format}>
+                <option value="json">JSON</option>
+                <option value="form">Form</option>
+                <option value="query">Query</option>
+              </Select>
+              <Select label="Keys" bind:value={wh.keyCount}>
+                <option value={1}>1 key</option>
+                <option value={2}>2 keys</option>
+                <option value={3}>3 keys</option>
+              </Select>
+            </div>
+
+            <Input label="Min interval (seconds, 0 = unlimited)" type="number" placeholder="0" bind:value={wh.minIntervalSec} prefixIcon="clock" />
+
+            <!-- Accepted params -->
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-xs font-medium text-foreground">Accepted params</span>
+                <Button size="xs" variant="outline" icon="plus" onclick={() => addParam(wh)}>Add param</Button>
+              </div>
+              {#if wh.params.length === 0}
+                <p class="text-[11px] text-muted-foreground italic">No params — the trigger accepts no input.</p>
+              {/if}
+              {#each wh.params as p, pi}
+                <div class="flex flex-wrap sm:flex-nowrap items-center gap-2 mb-1.5">
+                  <div class="w-24 shrink-0"><Input placeholder="name" bind:value={p.name} /></div>
+                  <div class="flex-1 min-w-[120px]"><Input placeholder="pattern (regex, optional)" bind:value={p.pattern} /></div>
+                  <div class="w-20 shrink-0"><Input type="number" placeholder="maxLen" bind:value={p.maxLen} /></div>
+                  <Checkbox bind:checked={p.required} label="req" />
+                  <button onclick={() => removeParam(wh, pi)} class="text-destructive p-1 shrink-0" title="Remove param"><Icon name="trash" size={14} /></button>
+                </div>
+              {/each}
+            </div>
+
+            <!-- Fixed values (optional) -->
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-xs font-medium text-foreground">Fixed values <span class="font-normal text-muted-foreground">(always sent, e.g. a token)</span></span>
+                <Button size="xs" variant="outline" icon="plus" onclick={() => addFixed(wh)}>Add</Button>
+              </div>
+              {#each wh.fixed as f, fi}
+                <div class="flex items-center gap-2 mb-1.5">
+                  <div class="w-32 shrink-0"><Input placeholder="field" bind:value={f.key} /></div>
+                  <div class="flex-1 min-w-0"><Input placeholder="value" bind:value={f.value} /></div>
+                  <button onclick={() => removeFixed(wh, fi)} class="text-destructive p-1 shrink-0" title="Remove"><Icon name="trash" size={14} /></button>
+                </div>
+              {/each}
+            </div>
+
+            {#if wh.id && wh.keys && wh.keys.length}
+              <Button size="xs" variant="outline" icon="refresh" onclick={() => markRegen(wh)}>Regenerate keys</Button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   {#snippet footer()}

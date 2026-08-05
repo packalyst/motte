@@ -2235,9 +2235,9 @@ if [ -f "traefik/dynamic.yml.template" ]; then
         if [ -n "${PROXY_DOMAIN:-}" ]; then
             PROXY_ROUTER=$(PROXY_DOMAIN="$PROXY_DOMAIN" envsubst '${PROXY_DOMAIN}' <<'YAML'
 
-    # Proxy domain - rotation trigger only (HTTPS)
+    # Proxy domain - public triggers only (rotation + webhooks), over HTTPS
     proxy-rotate-secure:
-      rule: "Host(`${PROXY_DOMAIN}`) && PathPrefix(`/api/restart`)"
+      rule: "Host(`${PROXY_DOMAIN}`) && (PathPrefix(`/api/restart`) || PathPrefix(`/api/hook`))"
       service: unified-api
       priority: 100
       middlewares:
