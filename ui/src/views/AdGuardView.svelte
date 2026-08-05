@@ -708,7 +708,7 @@
             {#if rewrites.length === 0}
               <p class="text-xs text-muted-foreground italic">No DNS rewrites configured.</p>
             {:else}
-              <div class="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                 {#each rewrites as rewrite}
                   <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 hover:bg-muted/50">
                     <span class="font-mono text-xs truncate">{rewrite.domain}</span>
