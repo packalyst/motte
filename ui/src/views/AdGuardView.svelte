@@ -608,74 +608,64 @@
           {#if !loadedTabs.rules}
             <LoadingSpinner size="lg" centered />
           {:else}
-            <!-- Add domain form -->
-            <div class="flex items-center gap-3 mb-6 pb-4 border-b border-border">
+            <!-- Add domain bar (stacks on mobile) -->
+            <div class="flex flex-col sm:flex-row gap-2 mb-5 pb-4 border-b border-border">
               <Input
                 type="text"
                 bind:value={newBlockDomain}
                 placeholder="Enter domain (e.g., facebook.com)"
                 class="flex-1"
-                onkeydown={(e) => {
-                  if (e.key === 'Enter') handleAddBlockRule()
-                }}
+                onkeydown={(e) => { if (e.key === 'Enter') handleAddBlockRule() }}
               />
-              <div class="kt-toggle-group">
-                <Button onclick={handleAddBlockRule} icon="ban">
-                  Block
-                </Button>
-                <Button onclick={() => { newAllowDomain = newBlockDomain; newBlockDomain = ''; handleAddAllowRule() }} icon="check">
-                  Allow
-                </Button>
+              <div class="flex gap-2">
+                <Button onclick={handleAddBlockRule} icon="ban" class="flex-1 sm:flex-none">Block</Button>
+                <Button onclick={() => { newAllowDomain = newBlockDomain; newBlockDomain = ''; handleAddAllowRule() }} variant="outline" icon="check" class="flex-1 sm:flex-none">Allow</Button>
               </div>
             </div>
 
-            <!-- Blocked Domains -->
-            <div class="mb-6">
-              <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-2">
-                  <Icon name="ban" size={16} class="text-destructive" />
-                  <span class="text-sm font-medium text-foreground">Blocked Domains</span>
-                </div>
-                <span class="text-xs text-muted-foreground">{blockedDomains.length} domains</span>
+            <!-- Blocked -->
+            <div class="mb-5">
+              <div class="flex items-center gap-2 mb-2">
+                <Icon name="ban" size={16} class="text-destructive" />
+                <span class="text-sm font-medium text-foreground">Blocked</span>
+                <Badge variant="destructive" size="sm">{blockedDomains.length}</Badge>
               </div>
               {#if blockedDomains.length > 0}
-                <div class="flex flex-wrap gap-2 pb-4 mb-4 border-b border-border/20">
+                <div class="space-y-1.5">
                   {#each blockedDomains as domain}
-                    <span class="kt-badge kt-badge-danger">
-                      <span class="font-mono">{domain}</span>
-                      <button onclick={() => removeRule(`||${domain}^`)} class="ml-1 hover:text-destructive-foreground">
-                        <Icon name="x" size={14} />
+                    <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 border-l-2 border-l-destructive/60 hover:bg-muted/50">
+                      <span class="font-mono text-xs truncate flex-1">{domain}</span>
+                      <button onclick={() => removeRule(`||${domain}^`)} class="icon-btn-destructive shrink-0" title="Remove" aria-label="Remove {domain}">
+                        <Icon name="trash" size={14} />
                       </button>
-                    </span>
+                    </div>
                   {/each}
                 </div>
               {:else}
-                <p class="text-sm text-muted-foreground pb-4 mb-4 border-b border-border/20">No blocked domains</p>
+                <p class="text-xs text-muted-foreground italic">No blocked domains.</p>
               {/if}
             </div>
 
-            <!-- Allowed Domains -->
+            <!-- Allowed -->
             <div>
-              <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-2">
-                  <Icon name="check" size={16} class="text-success" />
-                  <span class="text-sm font-medium text-foreground">Allowed Domains</span>
-                </div>
-                <span class="text-xs text-muted-foreground">{allowedDomains.length} domains</span>
+              <div class="flex items-center gap-2 mb-2">
+                <Icon name="check" size={16} class="text-success" />
+                <span class="text-sm font-medium text-foreground">Allowed</span>
+                <Badge variant="success" size="sm">{allowedDomains.length}</Badge>
               </div>
               {#if allowedDomains.length > 0}
-                <div class="flex flex-wrap gap-2">
+                <div class="space-y-1.5">
                   {#each allowedDomains as domain}
-                    <span class="kt-badge kt-badge-success">
-                      <span class="font-mono">{domain}</span>
-                      <button onclick={() => removeRule(`@@||${domain}^`)} class="ml-1 hover:text-success-foreground">
-                        <Icon name="x" size={14} />
+                    <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 border-l-2 border-l-success/60 hover:bg-muted/50">
+                      <span class="font-mono text-xs truncate flex-1">{domain}</span>
+                      <button onclick={() => removeRule(`@@||${domain}^`)} class="icon-btn-destructive shrink-0" title="Remove" aria-label="Remove {domain}">
+                        <Icon name="trash" size={14} />
                       </button>
-                    </span>
+                    </div>
                   {/each}
                 </div>
               {:else}
-                <p class="text-sm text-muted-foreground">No allowed domains</p>
+                <p class="text-xs text-muted-foreground italic">No allowed domains.</p>
               {/if}
             </div>
           {/if}
@@ -685,50 +675,34 @@
           {#if !loadedTabs.rewrites}
             <LoadingSpinner size="lg" centered />
           {:else}
-            <!-- Add rewrite form -->
-            <div class="flex items-center gap-3 mb-6 pb-4 border-b border-border">
-              <Input
-                type="text"
-                bind:value={newRewriteDomain}
-                placeholder="Domain (e.g., example.local)"
-                class="flex-1"
-                onkeydown={(e) => e.key === 'Enter' && addRewrite()}
-              />
-              <Icon name="arrow-right" size={16} class="text-muted-foreground flex-shrink-0" />
-              <Input
-                type="text"
-                bind:value={newRewriteAnswer}
-                placeholder="Answer (IP or domain)"
-                class="flex-1"
-                onkeydown={(e) => e.key === 'Enter' && addRewrite()}
-              />
-              <Button onclick={addRewrite} size="sm" icon="plus">
-                Add
-              </Button>
+            <!-- Add rewrite bar (stacks on mobile; arrow hidden when stacked) -->
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-5 pb-4 border-b border-border">
+              <Input type="text" bind:value={newRewriteDomain} placeholder="Domain (e.g., example.local)" class="flex-1" onkeydown={(e) => e.key === 'Enter' && addRewrite()} />
+              <Icon name="arrow-right" size={16} class="text-muted-foreground shrink-0 hidden sm:block" />
+              <Input type="text" bind:value={newRewriteAnswer} placeholder="Answer (IP or domain)" class="flex-1" onkeydown={(e) => e.key === 'Enter' && addRewrite()} />
+              <Button onclick={addRewrite} icon="plus">Add</Button>
             </div>
 
             <!-- Rewrites list -->
-            <div class="flex items-center justify-between mb-3">
-              <div class="flex items-center gap-2">
-                <Icon name="link" size={16} class="text-info" />
-                <span class="text-sm font-medium text-foreground">DNS Rewrites</span>
-              </div>
-              <span class="text-xs text-muted-foreground">{rewrites.length} rewrites</span>
+            <div class="flex items-center gap-2 mb-2">
+              <Icon name="link" size={16} class="text-info" />
+              <span class="text-sm font-medium text-foreground">DNS Rewrites</span>
+              <Badge variant="info" size="sm">{rewrites.length}</Badge>
             </div>
 
             {#if rewrites.length === 0}
-              <p class="text-sm text-muted-foreground">No DNS rewrites configured</p>
+              <p class="text-xs text-muted-foreground italic">No DNS rewrites configured.</p>
             {:else}
-              <div class="flex flex-wrap gap-2">
+              <div class="space-y-1.5">
                 {#each rewrites as rewrite}
-                  <span class="kt-badge kt-badge-outline">
-                    <span class="font-mono">{rewrite.domain}</span>
-                    <Icon name="arrow-right" size={12} class="text-muted-foreground mx-1" />
-                    <span class="font-mono text-primary">{rewrite.answer}</span>
-                    <button onclick={() => deleteRewrite(rewrite.domain, rewrite.answer)} class="ml-1 hover:text-destructive">
-                      <Icon name="x" size={14} />
+                  <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 hover:bg-muted/50">
+                    <span class="font-mono text-xs truncate">{rewrite.domain}</span>
+                    <Icon name="arrow-right" size={12} class="text-muted-foreground shrink-0" />
+                    <span class="font-mono text-xs text-primary truncate flex-1">{rewrite.answer}</span>
+                    <button onclick={() => deleteRewrite(rewrite.domain, rewrite.answer)} class="icon-btn-destructive shrink-0" title="Remove" aria-label="Remove rewrite">
+                      <Icon name="trash" size={14} />
                     </button>
-                  </span>
+                  </div>
                 {/each}
               </div>
             {/if}
