@@ -80,7 +80,7 @@
   <InfoCard
     icon="info-circle"
     title="About"
-    description="Unified admin panel for managing VPN infrastructure including WireGuard, Headscale, AdGuard DNS, and Traefik reverse proxy."
+    description="Unified admin panel for a full self-hosted networking stack: WireGuard & Headscale VPNs, AdGuard DNS filtering, Traefik reverse proxy, forward proxies (tunnels) with IP rotation, webhooks, firewall/fail2ban, and traffic analytics."
   />
 
   <div class="bg-card border border-border rounded-lg overflow-hidden">
@@ -93,7 +93,7 @@
           <div>
             <h3 class="text-lg font-semibold text-foreground mb-3">What is this?</h3>
             <p class="text-sm text-muted-foreground leading-relaxed">
-              This admin panel provides a unified interface for managing a complete VPN infrastructure stack. It integrates multiple services to provide secure, private network access with advanced features like DNS-level ad blocking, reverse proxy routing, and cross-network communication between different VPN types.
+              This admin panel provides a unified interface for a complete self-hosted VPN and networking stack. Beyond secure VPN access (WireGuard + Headscale), it adds DNS-level ad blocking, reverse-proxy routing to internal services, authenticated forward proxies with IP rotation, validating webhooks for automation, an intrusion-detection firewall, and traffic analytics — all managed from one place.
             </p>
           </div>
 
@@ -162,6 +162,42 @@
                 iconColor="text-info"
                 title="Geolocation"
                 description="IP lookup with MaxMind/IP2Location. Country blocking with IPDeny zone files."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="arrows-right-left"
+                iconColor="text-success"
+                title="Tunnels & Proxies"
+                description="Authenticated HTTP/SOCKS5 forward proxies — direct or chained through a VPN node — with per-tunnel credentials, live stats, and provider IP rotation."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="bolt"
+                iconColor="text-warning"
+                title="Webhooks & Automation"
+                description="Validating pass-through triggers: declare a strict inbound contract (method, params, patterns) and forward to any URL — SMS, IP rotation, or any provider."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="world-www"
+                iconColor="text-info"
+                title="Domain Routes"
+                description="Expose internal services on custom domains — VPN-only or public — with per-route middleware, TLS, and AdGuard DNS rewrites."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="chart-line"
+                iconColor="text-primary"
+                title="Traffic Analytics & Logs"
+                description="Unified inbound / DNS / outbound / firewall logs, per-node usage, top talkers, and time-series charts from 1 hour to all time."
               />
               <ContentBlock
                 variant="box"
