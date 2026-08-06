@@ -630,6 +630,7 @@
                 bind:value={newBlockDomain}
                 placeholder="Enter domain (e.g., facebook.com)"
                 class="flex-1"
+                prefixIcon="world"
                 onkeydown={(e) => { if (e.key === 'Enter') handleAddBlockRule() }}
               />
               <div class="kt-toggle-group">
@@ -692,9 +693,9 @@
           {:else}
             <!-- Add rewrite bar (stacks on mobile; arrow hidden when stacked) -->
             <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-5 pb-4 border-b border-border">
-              <Input type="text" bind:value={newRewriteDomain} placeholder="Domain (e.g., example.local)" class="flex-1" onkeydown={(e) => e.key === 'Enter' && addRewrite()} />
+              <Input type="text" bind:value={newRewriteDomain} placeholder="Domain (e.g., example.local)" class="flex-1" prefixIcon="world" onkeydown={(e) => e.key === 'Enter' && addRewrite()} />
               <Icon name="arrow-right" size={16} class="text-muted-foreground shrink-0 hidden sm:block" />
-              <Input type="text" bind:value={newRewriteAnswer} placeholder="Answer (IP or domain)" class="flex-1" onkeydown={(e) => e.key === 'Enter' && addRewrite()} />
+              <Input type="text" bind:value={newRewriteAnswer} placeholder="Answer (IP or domain)" class="flex-1" prefixIcon="server" onkeydown={(e) => e.key === 'Enter' && addRewrite()} />
               <Button onclick={addRewrite} icon="plus">Add</Button>
             </div>
 
