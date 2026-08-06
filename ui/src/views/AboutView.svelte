@@ -18,15 +18,21 @@
   const serviceConfig = {
     auth: { name: 'Authentication', icon: 'key', color: 'primary', order: 1 },
     headscale: { name: 'Headscale', icon: 'users', color: 'primary', order: 2 },
-    firewall: { name: 'Firewall', icon: 'shield', color: 'destructive', order: 3 },
-    adguard: { name: 'AdGuard', icon: 'shield-check', color: 'warning', order: 4 },
-    traefik: { name: 'Traefik', icon: 'world', color: 'info', order: 5 },
-    docker: { name: 'Docker', icon: 'box', color: 'info', order: 6 },
-    geolocation: { name: 'Geolocation', icon: 'globe', color: 'primary', order: 7 },
-    vpn: { name: 'VPN ACL', icon: 'route', color: 'success', order: 8 },
-    wireguard: { name: 'WireGuard', icon: 'shield-lock', color: 'success', order: 9 },
-    settings: { name: 'Settings', icon: 'settings', color: 'muted', order: 10 },
-    setup: { name: 'Setup', icon: 'wand', color: 'muted', order: 11 }
+    wireguard: { name: 'WireGuard', icon: 'shield-lock', color: 'success', order: 3 },
+    firewall: { name: 'Firewall', icon: 'shield', color: 'destructive', order: 4 },
+    adguard: { name: 'AdGuard', icon: 'shield-check', color: 'warning', order: 5 },
+    traefik: { name: 'Traefik', icon: 'world', color: 'info', order: 6 },
+    domains: { name: 'Domain Routes', icon: 'world-www', color: 'info', order: 7 },
+    turbotunnels: { name: 'Tunnels', icon: 'arrows-right-left', color: 'success', order: 8 },
+    rotate: { name: 'IP Rotation', icon: 'refresh', color: 'success', order: 9 },
+    webhook: { name: 'Webhooks', icon: 'bolt', color: 'warning', order: 10 },
+    docker: { name: 'Docker', icon: 'box', color: 'info', order: 11 },
+    vpn: { name: 'VPN ACL', icon: 'route', color: 'success', order: 12 },
+    geolocation: { name: 'Geolocation', icon: 'globe', color: 'primary', order: 13 },
+    logs: { name: 'Logs', icon: 'file-text', color: 'muted', order: 14 },
+    pwa: { name: 'Notifications', icon: 'bell', color: 'muted', order: 15 },
+    settings: { name: 'Settings', icon: 'settings', color: 'muted', order: 16 },
+    setup: { name: 'Setup', icon: 'wand', color: 'muted', order: 17 }
   }
 
   // Transform API schema for display
