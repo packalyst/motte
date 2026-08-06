@@ -48,6 +48,8 @@ func periodSince(period string) time.Time {
 		return now.Add(-7 * 24 * time.Hour)
 	case "month":
 		return now.Add(-30 * 24 * time.Hour)
+	case "all":
+		return now.AddDate(-100, 0, 0)
 	default: // day
 		return now.Add(-24 * time.Hour)
 	}

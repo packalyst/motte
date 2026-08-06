@@ -227,6 +227,14 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		interval = "-7 days"
 		prevStart = "-14 days"
 		bucketFmt = "%Y-%m-%d" // per-day for 1w
+	case "month":
+		interval = "-30 days"
+		prevStart = "-60 days"
+		bucketFmt = "%Y-%m-%d" // per-day for 30d
+	case "all":
+		interval = "-100 years"
+		prevStart = "-200 years" // no meaningful previous window → 0
+		bucketFmt = "%Y-%m-%d"   // per-day
 	default: // day
 		interval = "-1 day"
 		prevStart = "-2 days"

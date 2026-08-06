@@ -26,6 +26,7 @@
   // Bindable proxies over the persistent store
   let selectedType = $derived(persisted.value.selectedType)
   let period = $derived(persisted.value.period)
+  const periodLabel = $derived({ hour: '1h', day: '24h', week: '7d', month: '30d', all: 'all time' }[period] || period)
 
   function setType(t) {
     persisted.value = { ...persisted.value, selectedType: t }
@@ -237,6 +238,8 @@
           <option value="hour">Last hour</option>
           <option value="day">Last 24 hours</option>
           <option value="week">Last 7 days</option>
+          <option value="month">Last 30 days</option>
+          <option value="all">All time</option>
         </Select>
         <Select value={selectedPeer} onchange={(e) => { selectedPeer = e.target.value }} class="flex-1 sm:flex-none sm:w-44">
           <option value="">All nodes</option>
@@ -447,11 +450,11 @@
             {/if}
           </div>
 
-          {#if tr}
+          {#if tr && period !== 'all'}
             <div class="flex items-center gap-1 text-xs {tr.dir === 'up' ? 'text-success' : 'text-destructive'}">
               <Icon name={tr.dir === 'up' ? 'arrow-up' : 'arrow-down'} size={14} />
               <span class="font-medium">{Math.abs(tr.pct).toFixed(1)}%</span>
-              <span class="text-muted-foreground">vs previous {period}</span>
+              <span class="text-muted-foreground">vs previous {periodLabel}</span>
             </div>
           {/if}
 
@@ -459,7 +462,7 @@
             <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
               <div class="flex items-center justify-between mb-3">
                 <div class="text-sm font-semibold">Events over time</div>
-                <Badge variant="muted" size="sm">{period}</Badge>
+                <Badge variant="muted" size="sm">{periodLabel}</Badge>
               </div>
               <div class={typeMeta[selectedType].text}>
                 <AreaChart data={d.time_series} valueKey="count" labelKey="time" height={160} />
