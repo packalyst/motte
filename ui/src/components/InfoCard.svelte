@@ -1,7 +1,7 @@
 <script>
   import Icon from './Icon.svelte'
 
-  let { icon = 'info', title, description, descriptionClass = '', children } = $props()
+  let { icon = 'info-circle', title, description, descriptionClass = '', children } = $props()
 </script>
 
 <div class="bg-gradient-to-r from-primary/5 to-info/5 border border-primary/20 rounded-lg p-4">

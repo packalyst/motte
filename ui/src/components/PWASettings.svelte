@@ -98,7 +98,7 @@
 
   // Detect device type from user agent
   function getDeviceInfo(userAgent) {
-    if (!userAgent) return { icon: 'device', type: 'Unknown' }
+    if (!userAgent) return { icon: 'device-desktop', type: 'Unknown' }
     const ua = userAgent.toLowerCase()
 
     // Device type
@@ -109,7 +109,7 @@
     if (ua.includes('macintosh') || ua.includes('mac os')) return { icon: 'device-laptop', type: 'Mac' }
     if (ua.includes('windows')) return { icon: 'device-desktop', type: 'Windows' }
     if (ua.includes('linux')) return { icon: 'device-desktop', type: 'Linux' }
-    return { icon: 'device', type: 'Unknown' }
+    return { icon: 'device-desktop', type: 'Unknown' }
   }
 
   // Detect browser from user agent
