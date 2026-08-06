@@ -23,9 +23,9 @@
   } = $props()
 
   const sizes = {
-    default: 'px-4 py-3 text-sm',
-    sm: 'px-4 py-2 text-sm',
-    xs: 'px-3 py-2.5 text-xs'
+    default: 'px-3 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm',
+    sm: 'px-3 sm:px-4 py-2 text-xs sm:text-sm',
+    xs: 'px-2.5 sm:px-3 py-2 text-xs'
   }
 
   // Set initial active tab if not set (parent should use getInitialTab() from app.js)
@@ -52,7 +52,9 @@
   }
 </script>
 
-<div class="flex border-b border-border {background ? 'bg-muted/30' : ''} {className}">
+<!-- Horizontally scrollable so tab bars with many items can be swiped on mobile
+     instead of being clipped. Scrollbar hidden for a clean look. -->
+<div class="flex overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden border-b border-border {background ? 'bg-muted/30' : ''} {className}">
   {#each tabs as tab}
     <button
       onclick={() => selectTab(tab.id)}

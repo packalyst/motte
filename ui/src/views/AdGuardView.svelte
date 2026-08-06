@@ -549,7 +549,7 @@
             <LoadingSpinner size="lg" centered />
           {:else}
             <!-- Summary bar -->
-            <div class="flex items-center justify-between mb-4 pb-4 border-b border-border">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4 pb-4 border-b border-border">
               <div class="flex items-center gap-4 text-sm">
                 {#if filters.length > 0}
                   <span class="text-muted-foreground">{filters.filter(f => f.enabled).length} active</span>
@@ -579,7 +579,7 @@
               />
             {:else}
               <!-- Filters grid -->
-              <div class="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {#each filters as filter}
                   <div class="rounded-lg border border-border bg-card overflow-hidden {!filter.enabled ? 'opacity-50' : ''}">
                     <div class="p-3">
@@ -633,9 +633,9 @@
                 prefixIcon="world"
                 onkeydown={(e) => { if (e.key === 'Enter') handleAddBlockRule() }}
               />
-              <div class="kt-toggle-group">
-                <Button onclick={handleAddBlockRule} icon="ban">Block</Button>
-                <Button onclick={() => { newAllowDomain = newBlockDomain; newBlockDomain = ''; handleAddAllowRule() }} icon="check">Allow</Button>
+              <div class="kt-toggle-group flex w-full sm:w-auto">
+                <Button onclick={handleAddBlockRule} icon="ban" class="flex-1 sm:flex-none">Block</Button>
+                <Button onclick={() => { newAllowDomain = newBlockDomain; newBlockDomain = ''; handleAddAllowRule() }} icon="check" class="flex-1 sm:flex-none">Allow</Button>
               </div>
             </div>
 
