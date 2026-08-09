@@ -29,10 +29,10 @@
     docker: { name: 'Docker', icon: 'box', color: 'info', order: 11 },
     vpn: { name: 'VPN ACL', icon: 'route', color: 'success', order: 12 },
     geolocation: { name: 'Geolocation', icon: 'globe', color: 'primary', order: 13 },
-    logs: { name: 'Logs', icon: 'file-text', color: 'muted', order: 14 },
-    pwa: { name: 'Notifications', icon: 'bell', color: 'muted', order: 15 },
-    settings: { name: 'Settings', icon: 'settings', color: 'muted', order: 16 },
-    setup: { name: 'Setup', icon: 'wand', color: 'muted', order: 17 }
+    logs: { name: 'Logs', icon: 'file-text', color: 'info', order: 14 },
+    pwa: { name: 'Notifications', icon: 'bell', color: 'warning', order: 15 },
+    settings: { name: 'Settings', icon: 'settings', color: 'primary', order: 16 },
+    setup: { name: 'Setup', icon: 'wand', color: 'success', order: 17 }
   }
 
   // Transform API schema for display
@@ -44,7 +44,7 @@
             name: serviceConfig[id]?.name || id,
             prefix: svc.prefix,
             icon: serviceConfig[id]?.icon || 'server',
-            color: serviceConfig[id]?.color || 'muted',
+            color: serviceConfig[id]?.color || 'info',
             order: serviceConfig[id]?.order || 99,
             endpoints: svc.endpoints.map(ep => ({
               method: ep.methods[0],

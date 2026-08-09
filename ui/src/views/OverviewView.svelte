@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, untrack } from 'svelte'
   import { subscribe, unsubscribe, statsStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
@@ -8,8 +8,8 @@
   let { loading = $bindable(true) } = $props()
 
   // Rolling buffer of live traffic samples for the real-time chart. Each WebSocket
-  // stats push appends one point (server-computed bytes/sec); we keep the most
-  // recent MAX_SAMPLES so the chart shows a moving ~2-minute window.
+  // stats push appends one point (server-computed bytes/sec); the server pushes on
+  // its status-checker tick (~10s), so MAX_SAMPLES points is a moving ~10-min window.
   const MAX_SAMPLES = 60
   let samples = $state([])
 
@@ -44,14 +44,18 @@
     }
   })
 
-  // Append a live-traffic sample on each stats push. This effect only reads
-  // $statsStore, so mutating `samples` here can't loop.
+  // Append a live-traffic sample on each stats push. Only $statsStore may be a
+  // dependency; the sample mutation is wrapped in untrack() because push/shift read
+  // `samples` internally, which would otherwise make the effect depend on its own
+  // write and loop (effect_update_depth_exceeded).
   $effect(() => {
     const s = $statsStore
     if (!s?.traffic) return
-    const label = new Date().toTimeString().slice(0, 8) // HH:MM:SS
-    samples.push({ t: label, up: s.traffic.rate_tx ?? 0, down: s.traffic.rate_rx ?? 0 })
-    if (samples.length > MAX_SAMPLES) samples.shift()
+    untrack(() => {
+      const label = new Date().toTimeString().slice(0, 8) // HH:MM:SS
+      samples.push({ t: label, up: s.traffic.rate_tx ?? 0, down: s.traffic.rate_rx ?? 0 })
+      if (samples.length > MAX_SAMPLES) samples.shift()
+    })
   })
 
   onMount(() => {
