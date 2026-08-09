@@ -34,6 +34,14 @@ func (s *Service) blockIP(ip, jailName, reason string, banTime int) {
 
 // blockIPWithOptions blocks an IP with additional options
 func (s *Service) blockIPWithOptions(ip, jailName, reason string, banTime int, isRange bool, source string) {
+	// This panel is IPv4-only; the nftables blocked sets are ipv4_addr. An IPv6 value
+	// here would be rejected by the kernel and break the atomic ruleset reload, so skip
+	// it. External IPv6 is already dropped wholesale at the firewall, so nothing is lost.
+	if !isIPv4Value(ip) {
+		log.Printf("firewall: skipping auto-block of non-IPv4 address %q (jail: %s) — panel is IPv4-only", ip, jailName)
+		return
+	}
+
 	var expiresAt interface{}
 	if banTime > 0 {
 		expiresAt = time.Now().Add(time.Duration(banTime) * time.Second)

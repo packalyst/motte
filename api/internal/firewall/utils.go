@@ -23,6 +23,13 @@ func validateIPOrCIDR(input string) (string, bool, error) {
 		if err != nil {
 			return "", false, fmt.Errorf("invalid CIDR: %v", err)
 		}
+		// Reject IPv6: the nftables blocked sets are ipv4_addr, so an IPv6 element
+		// would be rejected by the kernel and break the atomic ruleset reload. This
+		// panel is IPv4-only and drops external IPv6 wholesale at the firewall, so
+		// per-address IPv6 blocking is neither possible nor needed here.
+		if ipNet.IP.To4() == nil {
+			return "", false, fmt.Errorf("IPv6 is not supported (this panel is IPv4-only; external IPv6 is dropped at the firewall)")
+		}
 		return ipNet.String(), true, nil
 	}
 
@@ -32,11 +39,26 @@ func validateIPOrCIDR(input string) (string, bool, error) {
 		return "", false, fmt.Errorf("invalid IP address")
 	}
 
-	// Normalize IPv4
-	if ip4 := ip.To4(); ip4 != nil {
-		return ip4.String(), false, nil
+	// Reject IPv6 (see CIDR branch above).
+	if ip.To4() == nil {
+		return "", false, fmt.Errorf("IPv6 is not supported (this panel is IPv4-only; external IPv6 is dropped at the firewall)")
 	}
-	return ip.String(), false, nil
+	return ip.To4().String(), false, nil
+}
+
+// isIPv4Value reports whether input is an IPv4 address or IPv4 CIDR. Used to keep
+// non-IPv4 values out of the ipv4_addr nftables sets: an IPv6 element there would be
+// rejected by the kernel and break the atomic ruleset reload. This guards the
+// automated auto-block path, where the value comes from log lines rather than a
+// human-validated form (an attacker's real IP via CF-Connecting-IP can be IPv6).
+func isIPv4Value(input string) bool {
+	input = strings.TrimSpace(input)
+	if strings.Contains(input, "/") {
+		_, ipNet, err := net.ParseCIDR(input)
+		return err == nil && ipNet.IP.To4() != nil
+	}
+	ip := net.ParseIP(input)
+	return ip != nil && ip.To4() != nil
 }
 
 // getSubnet24 returns the /24 subnet for an IP

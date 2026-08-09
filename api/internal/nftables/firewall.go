@@ -132,13 +132,12 @@ func (t *FirewallTable) Build() (string, error) {
 	}
 
 	// Per-peer WAN block: list of VPN peer IPs whose internet egress should be dropped.
+	// WAN interface (default-route NIC) is detected dynamically and reused for both the
+	// external-IPv6 drop and the per-peer WAN egress block. "" if detection fails.
 	noInternetPeers := loadNoInternetPeerIPs(t.db)
-	wanIface := ""
-	if len(noInternetPeers) > 0 {
-		wanIface = detectWANInterface()
-		if wanIface == "" {
-			log.Printf("nftables/firewall: %d peers flagged block_internet but WAN interface could not be detected; rule skipped", len(noInternetPeers))
-		}
+	wanIface := detectWANInterface()
+	if wanIface == "" && len(noInternetPeers) > 0 {
+		log.Printf("nftables/firewall: %d peers flagged block_internet but WAN interface could not be detected; rule skipped", len(noInternetPeers))
 	}
 
 	return t.buildScript(
@@ -299,7 +298,7 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 	sb.WriteString("\n")
 
 	// Input chain - traffic destined TO the server (check source address)
-	sb.WriteString(BuildChain("input", "filter", "input", 0, "drop", []string{
+	inputRules := []string{
 		"# Allow established connections",
 		"ct state established,related accept",
 		"",
@@ -310,6 +309,24 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 		"ip protocol icmp accept",
 		"ip6 nexthdr icmpv6 accept",
 		"",
+	}
+	// Drop all inbound IPv6 arriving on the public interface. This panel is IPv4-only:
+	// the blocklist/country sets are ipv4_addr, so an IPv6 packet to an open port would
+	// otherwise be accepted unfiltered (the port rules below are protocol-agnostic).
+	// Loopback (::1) and ICMPv6 neighbour discovery are already accepted above; the VPN
+	// (wg0) and Headscale overlay (fd7a::) ride other interfaces, so scoping the drop to
+	// the WAN NIC blocks only external IPv6 and leaves internal IPv6 intact. Skipped when
+	// the WAN interface can't be detected, so we never emit an unscoped drop.
+	// NOTE: Docker-published container ports use their own DNAT/forward path and are NOT
+	// governed by this chain — revisit this if the host ever gains real public IPv6.
+	if wanIface != "" {
+		inputRules = append(inputRules,
+			"# Drop external IPv6 (IPv4-only panel)",
+			"meta nfproto ipv6 iifname \""+SanitizeElement(wanIface)+"\" drop",
+			"",
+		)
+	}
+	inputRules = append(inputRules,
 		"# Drop traffic FROM blocked sources (saddr)",
 		"ip saddr @blocked_ips drop",
 		"ip saddr @blocked_ranges drop",
@@ -321,7 +338,8 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 		"",
 		"# Log and drop everything else",
 		`limit rate 5/minute log prefix "FIREWALL_DROP: " drop`,
-	}))
+	)
+	sb.WriteString(BuildChain("input", "filter", "input", 0, "drop", inputRules))
 	sb.WriteString("\n")
 
 	// Forward chain - traffic routed THROUGH the server (VPN clients)

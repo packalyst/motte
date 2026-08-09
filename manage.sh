@@ -1301,6 +1301,61 @@ else
 fi
 
 # ===========================================
+# Check IPv6 Exposure (IPv4-only panel)
+# ===========================================
+# This panel filters with IPv4-only nftables sets, and the API firewall now drops
+# external IPv6 on the WAN interface as a backstop. If the host has a public
+# (global-scope) IPv6 address, warn the operator and optionally disable IPv6 on the
+# WAN NIC only, for defense in depth. Loopback (::1), the VPN (wg0) / Headscale
+# overlay, and Docker bridges are never touched — only the public interface.
+echo -e "${BLUE}Checking IPv6 exposure...${NC}"
+
+# WAN interface = the NIC holding the default IPv4 route (detected, never hardcoded).
+WAN_IFACE=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}' || true)
+
+# Global-scope IPv6 only. Link-local (fe80::) and loopback (::1) always exist and
+# are not internet-reachable, so they must not trigger the warning.
+if [ -n "$WAN_IFACE" ]; then
+    GLOBAL_V6=$(ip -6 addr show dev "$WAN_IFACE" scope global 2>/dev/null | awk '/inet6/{print $2; exit}' || true)
+else
+    GLOBAL_V6=$(ip -6 addr show scope global 2>/dev/null | awk '/inet6/{print $2; exit}' || true)
+fi
+
+if [ -n "$GLOBAL_V6" ]; then
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║${NC}  ${RED}⚠ Public IPv6 detected${NC}                                    ${YELLOW}║${NC}"
+    echo -e "${YELLOW}╠════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${YELLOW}║${NC}  This panel is ${GREEN}IPv4-only${NC}: blocklists, country blocking and"
+    echo -e "${YELLOW}║${NC}  auto-blocking all operate on IPv4. The firewall already"
+    echo -e "${YELLOW}║${NC}  ${GREEN}drops external IPv6${NC} on ${CYAN}${WAN_IFACE:-the WAN}${NC} as a backstop, but"
+    echo -e "${YELLOW}║${NC}  the host still has a public IPv6 address:"
+    echo -e "${YELLOW}║${NC}     ${CYAN}${GLOBAL_V6}${NC} on ${CYAN}${WAN_IFACE:-?}${NC}"
+    echo -e "${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}  Optionally disable IPv6 on the WAN NIC only (loopback, VPN"
+    echo -e "${YELLOW}║${NC}  and Docker IPv6 stay intact) for defense in depth."
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    if [ -n "$WAN_IFACE" ] && prompt_yes_no "Disable IPv6 on ${WAN_IFACE} at the OS level?" "n"; then
+        # sysctl path: dots in interface names (VLANs, e.g. eth0.100) map to slashes.
+        SYSCTL_KEY="net.ipv6.conf.${WAN_IFACE//./\/}.disable_ipv6"
+        SYSCTL_FILE="/etc/sysctl.d/99-wgadmin-ipv6.conf"
+        if sudo sysctl -w "${SYSCTL_KEY}=1" >/dev/null 2>&1; then
+            printf '# Disable IPv6 on the WAN interface (wgadmin panel is IPv4-only)\n%s = 1\n' "$SYSCTL_KEY" | sudo tee "$SYSCTL_FILE" >/dev/null
+            echo -e "${GREEN}✓ IPv6 disabled on ${WAN_IFACE} (persisted in ${SYSCTL_FILE})${NC}"
+            echo -e "  ${CYAN}To re-enable later: sudo rm ${SYSCTL_FILE} && sudo sysctl -w ${SYSCTL_KEY}=0${NC}"
+        else
+            echo -e "${RED}✗ Could not disable IPv6 on ${WAN_IFACE} (need root?). The firewall backstop still drops external IPv6.${NC}"
+        fi
+    else
+        echo -e "${CYAN}Leaving host IPv6 as-is — external IPv6 is still dropped at the firewall.${NC}"
+    fi
+    echo ""
+else
+    echo -e "${GREEN}✓ No public IPv6 on the host — IPv4-only (external IPv6 is dropped at the firewall as a backstop)${NC}"
+    echo ""
+fi
+
+# ===========================================
 # Environment File Setup
 # ===========================================
 
