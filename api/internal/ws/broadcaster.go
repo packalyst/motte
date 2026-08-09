@@ -33,8 +33,16 @@ type OverviewStats struct {
 	System     SystemStats        `json:"system"`
 	Traffic    TrafficStats       `json:"traffic"`
 	Nodes      NodeStats          `json:"nodes"`
+	Services   []ServiceHealth    `json:"services,omitempty"`
 	DockerInfo *docker.DockerInfo `json:"dockerInfo,omitempty"`
 	DiskUsage  *docker.DiskUsage  `json:"diskUsage,omitempty"`
+}
+
+// ServiceHealth is one core service's up/down status for the dashboard health row.
+type ServiceHealth struct {
+	Key    string `json:"key"`    // stable identifier, e.g. "traefik"
+	Name   string `json:"name"`   // display label, e.g. "Traefik"
+	Status string `json:"status"` // "up" | "down"
 }
 
 // SystemStats contains Go runtime metrics

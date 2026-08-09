@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -19,6 +20,18 @@ type PeerTransfer struct {
 	PublicKey string
 	Rx        int64 // bytes received
 	Tx        int64 // bytes transmitted
+}
+
+// WireGuardUp reports whether the WireGuard interface is present on the host.
+// WireGuard runs on the host (not a container), so container state can't tell us
+// its health; the interface's presence in /sys/class/net is a cheap, reliable
+// "is the tunnel up" signal (no exec, safe to call on every stats push).
+func WireGuardUp() bool {
+	iface := helper.GetEnvOptional("WG_INTERFACE", "wg0")
+	if _, err := os.Stat("/sys/class/net/" + iface); err != nil {
+		return false
+	}
+	return true
 }
 
 // GetWgTransfer returns current WireGuard transfer stats per peer

@@ -3,8 +3,15 @@
   import { subscribe, unsubscribe, statsStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
+  import AreaChart from '../components/AreaChart.svelte'
 
   let { loading = $bindable(true) } = $props()
+
+  // Rolling buffer of live traffic samples for the real-time chart. Each WebSocket
+  // stats push appends one point (server-computed bytes/sec); we keep the most
+  // recent MAX_SAMPLES so the chart shows a moving ~2-minute window.
+  const MAX_SAMPLES = 60
+  let samples = $state([])
 
   // Format bytes to human readable
   function formatBytes(bytes, decimals = 1) {
@@ -37,6 +44,16 @@
     }
   })
 
+  // Append a live-traffic sample on each stats push. This effect only reads
+  // $statsStore, so mutating `samples` here can't loop.
+  $effect(() => {
+    const s = $statsStore
+    if (!s?.traffic) return
+    const label = new Date().toTimeString().slice(0, 8) // HH:MM:SS
+    samples.push({ t: label, up: s.traffic.rate_tx ?? 0, down: s.traffic.rate_rx ?? 0 })
+    if (samples.length > MAX_SAMPLES) samples.shift()
+  })
+
   onMount(() => {
     subscribe('stats')
     loading = false
@@ -54,7 +71,60 @@
     description="System status, VPN traffic, and resource usage at a glance."
   />
 
-  <!-- System Stats - Row 1 -->
+  <!-- Service Health Row -->
+  {#if $statsStore?.services?.length}
+    <div class="flex flex-wrap items-center gap-2">
+      {#each $statsStore.services as svc (svc.key)}
+        <div
+          class="flex items-center gap-2 px-3 py-1.5 rounded-lg border {svc.status === 'up' ? 'border-border bg-card' : 'border-destructive/40 bg-destructive/5'}"
+          title="{svc.name}: {svc.status === 'up' ? 'running' : 'not running'}"
+        >
+          <span class="inline-flex h-2 w-2 rounded-full {svc.status === 'up' ? 'bg-success' : 'bg-destructive animate-pulse'}"></span>
+          <span class="text-sm font-medium">{svc.name}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  <!-- Live Traffic -->
+  <div class="kt-panel">
+    <div class="kt-panel-header flex items-center justify-between">
+      <h3 class="kt-panel-title">Live Traffic</h3>
+      <div class="flex items-center gap-4 text-sm">
+        <span class="flex items-center gap-1.5 text-success"><Icon name="arrow-up" size={16} />{formatRate($statsStore?.traffic?.rate_tx)}</span>
+        <span class="flex items-center gap-1.5 text-info"><Icon name="arrow-down" size={16} />{formatRate($statsStore?.traffic?.rate_rx)}</span>
+      </div>
+    </div>
+    <div class="kt-panel-body">
+      {#if samples.length > 1}
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div>
+            <div class="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
+              <Icon name="arrow-up" size={14} class="text-success" />Upload
+            </div>
+            <div class="text-success">
+              <AreaChart data={samples} valueKey="up" labelKey="t" height={120} format={formatRate} />
+            </div>
+          </div>
+          <div>
+            <div class="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
+              <Icon name="arrow-down" size={14} class="text-info" />Download
+            </div>
+            <div class="text-info">
+              <AreaChart data={samples} valueKey="down" labelKey="t" height={120} format={formatRate} />
+            </div>
+          </div>
+        </div>
+      {:else}
+        <div class="text-center text-muted-foreground py-8">
+          <Icon name="activity" size={32} class="mx-auto mb-2 opacity-50" />
+          <p class="text-sm">Collecting live traffic…</p>
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  <!-- Key Stats -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="kt-panel">
       <div class="kt-panel-body p-4">
@@ -65,20 +135,6 @@
           <div>
             <div class="text-xs text-muted-foreground">Uptime</div>
             <div class="text-lg font-semibold">{formatUptime($statsStore?.system?.uptime)}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="kt-panel">
-      <div class="kt-panel-body p-4">
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-info/10">
-            <Icon name="cpu" size={20} class="text-info" />
-          </div>
-          <div>
-            <div class="text-xs text-muted-foreground">Memory</div>
-            <div class="text-lg font-semibold">{formatBytes($statsStore?.system?.mem_alloc)}</div>
           </div>
         </div>
       </div>
@@ -111,61 +167,16 @@
         </div>
       </div>
     </div>
-  </div>
-
-  <!-- Traffic Stats - Row 2 -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-    <div class="kt-panel">
-      <div class="kt-panel-body p-4">
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-success/10">
-            <Icon name="arrow-up" size={20} class="text-success" />
-          </div>
-          <div>
-            <div class="text-xs text-muted-foreground">Upload</div>
-            <div class="text-lg font-semibold">{formatRate($statsStore?.traffic?.rate_tx)}</div>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <div class="kt-panel">
       <div class="kt-panel-body p-4">
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-info/10">
-            <Icon name="arrow-down" size={20} class="text-info" />
+            <Icon name="plug-connected" size={20} class="text-info" />
           </div>
           <div>
-            <div class="text-xs text-muted-foreground">Download</div>
-            <div class="text-lg font-semibold">{formatRate($statsStore?.traffic?.rate_rx)}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="kt-panel">
-      <div class="kt-panel-body p-4">
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-warning/10">
-            <Icon name="activity" size={20} class="text-warning" />
-          </div>
-          <div>
-            <div class="text-xs text-muted-foreground">Goroutines</div>
-            <div class="text-lg font-semibold">{$statsStore?.system?.num_goroutine || 0}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="kt-panel">
-      <div class="kt-panel-body p-4">
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-secondary/10">
-            <Icon name="plug-connected" size={20} class="text-muted-foreground" />
-          </div>
-          <div>
-            <div class="text-xs text-muted-foreground">WS Clients</div>
-            <div class="text-lg font-semibold">{$statsStore?.system?.ws_clients || 0}</div>
+            <div class="text-xs text-muted-foreground">WG Peers</div>
+            <div class="text-lg font-semibold">{$statsStore?.nodes?.wgPeers || 0}</div>
           </div>
         </div>
       </div>
@@ -352,4 +363,11 @@
     {/if}
   </div>
   {/if}
+
+  <!-- System internals (muted) -->
+  <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-muted-foreground pt-1">
+    <span class="flex items-center gap-1.5"><Icon name="cpu" size={14} />Memory {formatBytes($statsStore?.system?.mem_alloc)}</span>
+    <span class="flex items-center gap-1.5"><Icon name="activity" size={14} />Goroutines {$statsStore?.system?.num_goroutine || 0}</span>
+    <span class="flex items-center gap-1.5"><Icon name="plug-connected" size={14} />WS Clients {$statsStore?.system?.ws_clients || 0}</span>
+  </div>
 </div>

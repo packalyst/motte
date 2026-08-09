@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -337,6 +338,42 @@ func main() {
 			dockerInfo, diskUsage = dockerSvc.GetOverviewStats()
 		}
 
+		// Assemble core-service health for the dashboard health row. Container-based
+		// services report "up" when running; WireGuard runs on the host, so it's
+		// checked via its interface. Profile-gated add-ons (turbotunnels) are only
+		// listed when actually deployed, so a stopped optional add-on isn't
+		// misreported as "down".
+		upDown := func(ok bool) string {
+			if ok {
+				return "up"
+			}
+			return "down"
+		}
+		services := []ws.ServiceHealth{
+			{Key: "wireguard", Name: "WireGuard", Status: upDown(vpn.WireGuardUp())},
+		}
+		if dockerSvc != nil {
+			running := map[string]bool{}
+			present := map[string]bool{}
+			if containers, err := dockerSvc.GetContainers(); err == nil {
+				for _, c := range containers {
+					name := strings.TrimPrefix(c.Name, "/")
+					present[name] = true
+					running[name] = c.State == "running"
+				}
+			}
+			for _, svc := range []struct{ key, name, container string }{
+				{"traefik", "Traefik", "traefik"},
+				{"headscale", "Headscale", "headscale"},
+				{"adguard", "AdGuard", "adguard"},
+			} {
+				services = append(services, ws.ServiceHealth{Key: svc.key, Name: svc.name, Status: upDown(running[svc.container])})
+			}
+			if present["turbotunnels"] {
+				services = append(services, ws.ServiceHealth{Key: "turbotunnels", Name: "Tunnels", Status: upDown(running["turbotunnels"])})
+			}
+		}
+
 		return ws.OverviewStats{
 			System: ws.SystemStats{
 				Uptime:       sysStats.Uptime,
@@ -359,6 +396,7 @@ func main() {
 				HsNodes: nodeStats.HsNodes,
 				WgPeers: nodeStats.WgPeers,
 			},
+			Services:   services,
 			DockerInfo: dockerInfo,
 			DiskUsage:  diskUsage,
 		}
