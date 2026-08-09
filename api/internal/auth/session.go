@@ -44,7 +44,8 @@ func (s *Service) GetSessions(userID int64, currentToken string) ([]Session, err
 		sess.CreatedAt = parseTime(createdAt)
 		sess.ExpiresAt = parseTime(expiresAt)
 		sess.LastActive = parseTime(lastActive)
-		sess.Current = sess.ID == currentToken
+		// sess.ID is the stored hash; compare against the hash of the current token.
+		sess.Current = sess.ID == hashToken(currentToken)
 		sessions = append(sessions, sess)
 	}
 
@@ -66,7 +67,7 @@ func (s *Service) RevokeSession(sessionID string, userID int64) error {
 
 // RevokeOtherSessions revokes all sessions except the current one
 func (s *Service) RevokeOtherSessions(currentToken string, userID int64) (int64, error) {
-	result, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ? AND id != ?", userID, currentToken)
+	result, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ? AND id != ?", userID, hashToken(currentToken))
 	if err != nil {
 		return 0, fmt.Errorf("failed to revoke sessions: %v", err)
 	}
@@ -157,8 +158,9 @@ func (s *Service) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Don't allow revoking current session
-	if sessionID == token {
+	// Don't allow revoking current session. sessionID is the stored hash (from
+	// GetSessions); compare it against the hash of the current token.
+	if sessionID == hashToken(token) {
 		router.JSONError(w, "Cannot revoke current session. Use logout instead.", http.StatusBadRequest)
 		return
 	}

@@ -19,6 +19,20 @@ import (
 )
 
 // ensureVPNMiddleware adds sentinel_vpn@file if no VPN middleware exists
+// validateMiddlewaresAndResolver rejects middleware names / cert-resolver values that
+// aren't safe to write into the generated Traefik YAML (see traefik.GenerateDomainRoutes).
+func validateMiddlewaresAndResolver(middlewares []string, certResolver string) error {
+	for _, mw := range middlewares {
+		if !traefik.IsValidMiddlewareName(mw) {
+			return fmt.Errorf("invalid middleware name: %q", mw)
+		}
+	}
+	if certResolver != "" && !traefik.IsValidCertResolver(certResolver) {
+		return fmt.Errorf("invalid certResolver: %q", certResolver)
+	}
+	return nil
+}
+
 func ensureVPNMiddleware(middlewares []string) []string {
 	for _, mw := range middlewares {
 		if mw == traefik.MiddlewareSentinelVPNFile || mw == traefik.MiddlewareSentinelVPNSilentFile {
@@ -449,6 +463,13 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject middleware / resolver values that can't be safely written into the
+	// generated Traefik YAML (defense-in-depth; the emitter also filters them).
+	if err := validateMiddlewaresAndResolver(req.Middlewares, req.CertResolver); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// For VPN mode, ensure a VPN middleware is present
 	if req.AccessMode == "vpn" {
 		req.Middlewares = ensureVPNMiddleware(req.Middlewares)
@@ -551,6 +572,20 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if raw, exists := rawMap["sentinelConfig"]; exists {
 		sentinelConfigPresent = true
 		sentinelConfigNull = string(raw) == "null"
+	}
+
+	// Reject middleware / resolver values that can't be safely written into the YAML.
+	if req.Middlewares != nil {
+		if err := validateMiddlewaresAndResolver(*req.Middlewares, ""); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.CertResolver != nil {
+		if err := validateMiddlewaresAndResolver(nil, *req.CertResolver); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Validate fields if provided

@@ -63,12 +63,16 @@ func (s *Service) handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		PrivateKey:   priKey.String(),
 		PublicKey:    priKey.PublicKey().String(),
 		PresharedKey: psk.String(),
-		IPAddress:    s.peerStore.AllocateIP(s.config.IPRange),
 		CreatedAt:    time.Now(),
 		Enabled:      true,
 	}
 
-	s.peerStore.Add(peer)
+	// Allocate the IP and insert atomically so concurrent creates can't collide on
+	// the same address (which the ON CONFLICT(ip) upsert would resolve by overwriting).
+	if err := s.peerStore.AllocateAndAdd(peer, s.config.IPRange); err != nil {
+		router.JSONError(w, err.Error(), http.StatusConflict)
+		return
+	}
 	s.syncConfig()
 
 	// Broadcast node stats update

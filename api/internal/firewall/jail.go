@@ -111,7 +111,14 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 	cleanupTicker := time.NewTicker(5 * time.Minute)
 	defer cleanupTicker.Stop()
 
-	regex := regexp.MustCompile(filterRegex)
+	// Compile (not MustCompile): create/update validate the pattern, but a bad value
+	// reaching here out-of-band (migration, direct DB edit) must not panic-crash the
+	// process — log and stop just this monitor instead.
+	regex, err := regexp.Compile(filterRegex)
+	if err != nil {
+		log.Printf("jail %s: invalid filter regex %q, monitor not started: %v", name, filterRegex, err)
+		return
+	}
 	ipAttempts := make(map[string][]time.Time)
 
 	if lastLogPos == 0 {

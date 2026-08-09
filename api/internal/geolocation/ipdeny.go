@@ -4,12 +4,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"api/internal/database"
 )
+
+// maxZoneFetchBytes caps a single country-zone download. Real zone files are well
+// under this; the cap exists to stop an unbounded read from a hostile/redirected host.
+const maxZoneFetchBytes = 32 << 20 // 32 MB
 
 // IPDenyProvider provides country CIDR ranges from ipdeny.com
 type IPDenyProvider struct {
@@ -91,9 +96,15 @@ func (p *IPDenyProvider) FetchCountryZones(countryCode string) (string, error) {
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// Size-cap the read: the timeout bounds time, not bytes. Read one byte past the
+	// cap and treat overflow as an error so we never apply a truncated zone list
+	// (a redirect to a huge object or a hostile/MITM'd host can't exhaust memory).
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxZoneFetchBytes+1))
 	if err != nil {
 		return "", err
+	}
+	if int64(len(body)) > maxZoneFetchBytes {
+		return "", fmt.Errorf("zone response exceeds %d bytes", maxZoneFetchBytes)
 	}
 
 	// Clean up the zones - remove comments and empty lines
@@ -157,16 +168,33 @@ func (p *IPDenyProvider) RefreshAllZones() (int, int) {
 	return updated, errors
 }
 
-// parseZonesToCIDRs parses a zones string into a slice of CIDRs
+// parseZonesToCIDRs parses a zones string into a slice of IPv4 CIDRs. Each line is
+// validated as an IPv4 address or CIDR and anything else is dropped: these values
+// feed the blocked_countries ipv4_addr set directly, so a malformed or IPv6 line
+// from the remote source would otherwise break the atomic nftables reload.
 func parseZonesToCIDRs(zones string) []string {
 	var cidrs []string
 	for _, line := range strings.Split(zones, "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			cidrs = append(cidrs, line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
 		}
+		if !isIPv4CIDROrIP(line) {
+			continue
+		}
+		cidrs = append(cidrs, line)
 	}
 	return cidrs
+}
+
+// isIPv4CIDROrIP reports whether s is a valid IPv4 address or IPv4 CIDR.
+func isIPv4CIDROrIP(s string) bool {
+	if strings.Contains(s, "/") {
+		_, ipNet, err := net.ParseCIDR(s)
+		return err == nil && ipNet.IP.To4() != nil
+	}
+	ip := net.ParseIP(s)
+	return ip != nil && ip.To4() != nil
 }
 
 // GetCountryCIDRs returns CIDR ranges for a specific country

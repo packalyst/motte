@@ -52,10 +52,10 @@ func (s *Service) requireAuthIfCompleted(w http.ResponseWriter, r *http.Request)
 
 // SetupStatus represents the setup state
 type SetupStatus struct {
-	Completed           bool `json:"completed"`
-	HasAdmin            bool `json:"hasAdmin"`
-	HasHeadscale        bool `json:"hasHeadscale"`
-	AdguardPassChanged  bool `json:"adguardPassChanged"`
+	Completed          bool `json:"completed"`
+	HasAdmin           bool `json:"hasAdmin"`
+	HasHeadscale       bool `json:"hasHeadscale"`
+	AdguardPassChanged bool `json:"adguardPassChanged"`
 }
 
 // SetupRequest represents the setup wizard data
@@ -80,11 +80,11 @@ func New() *Service {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetStatus":        s.handleGetStatus,
-		"TestHeadscale":    s.handleTestHeadscale,
-		"CompleteSetup":    s.handleCompleteSetup,
-		"DetectHeadscale":  s.handleDetectHeadscale,
-		"GenerateAPIKey":   s.handleGenerateAPIKey,
+		"GetStatus":       s.handleGetStatus,
+		"TestHeadscale":   s.handleTestHeadscale,
+		"CompleteSetup":   s.handleCompleteSetup,
+		"DetectHeadscale": s.handleDetectHeadscale,
+		"GenerateAPIKey":  s.handleGenerateAPIKey,
 	}
 }
 
@@ -178,6 +178,11 @@ func demuxDockerStream(r io.Reader) (string, error) {
 }
 
 func (s *Service) handleDetectHeadscale(w http.ResponseWriter, r *http.Request) {
+	// Once setup is complete this is admin-only: it queries the Docker socket and
+	// discloses internal Headscale topology, so it must not stay publicly reachable.
+	if !s.requireAuthIfCompleted(w, r) {
+		return
+	}
 	url, err := detectHeadscaleURL()
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusServiceUnavailable)
@@ -431,6 +436,12 @@ type TestHeadscaleRequest struct {
 }
 
 func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
+	// Once setup is complete this must be admin-only: it performs a server-side
+	// request to a caller-supplied URL (SSRF oracle) and must not be public.
+	if !s.requireAuthIfCompleted(w, r) {
+		return
+	}
+
 	var req TestHeadscaleRequest
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -455,8 +466,13 @@ func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
 	}
 	testURL := baseURL + "/user"
 
-	// Test connection to headscale
-	client := &http.Client{Timeout: helper.HTTPClientTimeout}
+	// Test connection to headscale. Refuse redirects so a malicious/misconfigured
+	// target can't bounce this server-side request to an internal host (e.g. the
+	// cloud-metadata endpoint), which would slip past the URL sanitizer above.
+	client := &http.Client{
+		Timeout:       helper.HTTPClientTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	testReq, err := http.NewRequest("GET", testURL, nil)
 	if err != nil {
 		router.JSONError(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)

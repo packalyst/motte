@@ -297,9 +297,14 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// Skip auth if no validator is set (e.g., during initial setup)
+		// Auth is required but unavailable: the validator is only registered when the
+		// auth service is enabled AND initializes successfully (see cmd/main.go). A nil
+		// validator therefore means auth is disabled or failed to init at boot — fail
+		// CLOSED for protected paths rather than serving them with no authentication.
+		// Public paths (login, setup, health) are matched above, so this can't lock out
+		// the setup wizard or login.
 		if authValidator == nil {
-			next.ServeHTTP(w, req)
+			JSONError(w, "Authentication unavailable", http.StatusServiceUnavailable)
 			return
 		}
 

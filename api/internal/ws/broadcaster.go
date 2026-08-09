@@ -161,6 +161,31 @@ func GetDockerLogStreamer() DockerLogStreamer {
 	return dockerLogStreamer
 }
 
+// safeGo runs fn in a new goroutine, recovering from any panic. Callback code
+// (e.g. web-push notification handlers) runs here; without recover a single panic
+// in that path would crash the entire backend process, not just the notification.
+func safeGo(fn func()) {
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("ws: recovered from panic in goroutine: %v", rec)
+			}
+		}()
+		fn()
+	}()
+}
+
+// safeRun runs fn synchronously with panic recovery, so one failed status-checker
+// tick logs and the periodic loop keeps running instead of dying permanently.
+func safeRun(name string, fn func()) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("ws: recovered from panic in %s: %v", name, rec)
+		}
+	}()
+	fn()
+}
+
 // StartStatusChecker starts the background status polling (nodes + docker)
 func StartStatusChecker(interval time.Duration) {
 	statusMu.Lock()
@@ -180,7 +205,7 @@ func StartStatusChecker(interval time.Duration) {
 		for {
 			select {
 			case <-ticker.C:
-				checkAndBroadcastStatus()
+				safeRun("status checker tick", checkAndBroadcastStatus)
 			case <-stop:
 				ticker.Stop()
 				log.Println("Status checker stopped")
@@ -320,7 +345,8 @@ func checkNodeStatusChanges(current []NodeStatusInfo, onChange NodeStatusChangeF
 		if prev, exists := lastNodeStatus[node.Name]; exists {
 			if prev != node.Online {
 				// Status changed - notify
-				go onChange(node.Name, node.Online)
+				changedName, changedOnline := node.Name, node.Online
+				safeGo(func() { onChange(changedName, changedOnline) })
 			}
 		}
 		// Note: new nodes don't trigger notification (avoid spam on first sync)

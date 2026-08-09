@@ -167,21 +167,41 @@ func (ps *PeerStore) Load() error {
 	return nil
 }
 
-// Add adds or updates a peer in database and cache
+// Add adds or updates a peer in database and cache.
 func (ps *PeerStore) Add(peer *Peer) {
 	ps.Lock()
 	defer ps.Unlock()
+	if err := ps.addLocked(peer); err != nil {
+		log.Printf("Warning: failed to save peer %s: %v", peer.Name, err)
+	}
+}
 
+// AllocateAndAdd allocates a free IP and inserts the peer atomically under the write
+// lock, so two concurrent creates can never be handed the same address (and thus can't
+// overwrite each other via the ON CONFLICT(ip) upsert). Returns an error if the
+// address pool is exhausted or the insert fails.
+func (ps *PeerStore) AllocateAndAdd(peer *Peer, ipRange string) error {
+	ps.Lock()
+	defer ps.Unlock()
+	ip := ps.allocateIPLocked(ipRange)
+	if ip == "" {
+		return fmt.Errorf("address pool exhausted")
+	}
+	peer.IPAddress = ip
+	return ps.addLocked(peer)
+}
+
+// addLocked performs the DB upsert + cache update. The caller must hold ps.Lock().
+func (ps *PeerStore) addLocked(peer *Peer) error {
 	db, err := database.GetDB()
 	if err != nil {
-		return
+		return err
 	}
 
 	// Encrypt sensitive keys
 	privateKeyEnc, presharedKeyEnc, err := encryptPeerKeys(peer)
 	if err != nil {
-		log.Printf("ERROR: Failed to encrypt keys for peer %s: %v", peer.Name, err)
-		return
+		return fmt.Errorf("encrypt keys: %w", err)
 	}
 
 	// Prepare raw_data without sensitive keys
@@ -215,13 +235,13 @@ func (ps *PeerStore) Add(peer *Peer) {
 			updated_at = CURRENT_TIMESTAMP
 	`, peer.Name, peer.IPAddress, peer.ID, string(rawData), peer.PublicKey, privateKeyEnc, presharedKeyEnc, enabledInt, blockInternetInt)
 	if err != nil {
-		log.Printf("Warning: failed to save peer %s: %v", peer.Name, err)
-		return
+		return err
 	}
 
 	// Update cache with a copy
 	peerForCache := *peer
 	ps.cache[peer.ID] = &peerForCache
+	return nil
 }
 
 // SetBlockInternet flips the per-peer WAN-block flag in DB and cache.
@@ -310,11 +330,17 @@ func (ps *PeerStore) List() []*Peer {
 	return list
 }
 
-// AllocateIP allocates a new IP address for a peer
+// AllocateIP allocates a new IP address for a peer.
 func (ps *PeerStore) AllocateIP(ipRange string) string {
 	ps.RLock()
 	defer ps.RUnlock()
+	return ps.allocateIPLocked(ipRange)
+}
 
+// allocateIPLocked returns a free IP (or "" if the pool is exhausted). The caller
+// must hold ps (read or write); it performs no locking of its own so it can be
+// composed with an insert under a single write lock (see AllocateAndAdd).
+func (ps *PeerStore) allocateIPLocked(ipRange string) string {
 	usedIPs := make(map[string]bool)
 	for _, p := range ps.cache {
 		usedIPs[p.IPAddress] = true

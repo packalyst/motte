@@ -355,12 +355,11 @@ func main() {
 		if dockerSvc != nil {
 			running := map[string]bool{}
 			present := map[string]bool{}
-			if containers, err := dockerSvc.GetContainers(); err == nil {
-				for _, c := range containers {
-					name := strings.TrimPrefix(c.Name, "/")
-					present[name] = true
-					running[name] = c.State == "running"
-				}
+			// Cached, non-blocking: this runs on the broadcast hot path.
+			for _, c := range dockerSvc.GetContainersCached() {
+				name := strings.TrimPrefix(c.Name, "/")
+				present[name] = true
+				running[name] = c.State == "running"
 			}
 			for _, svc := range []struct{ key, name, container string }{
 				{"traefik", "Traefik", "traefik"},
@@ -404,12 +403,9 @@ func main() {
 
 	// Set up docker provider for real-time container updates
 	if dockerSvc != nil {
+		// Cached, non-blocking: this runs on the broadcast hot path.
 		ws.SetDockerProvider(func() []docker.Container {
-			containers, err := dockerSvc.GetContainers()
-			if err != nil {
-				return nil
-			}
-			return containers
+			return dockerSvc.GetContainersCached()
 		})
 
 		// Set up docker log streamer

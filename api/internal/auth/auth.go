@@ -2,8 +2,10 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -258,9 +260,10 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 	sessionHours := settings.GetSettingInt("session_timeout", 24)
 	expiresAt := time.Now().Add(time.Duration(sessionHours) * time.Hour)
 
+	// Store only the hash of the token; the raw token is returned to the client below.
 	_, err = s.db.Exec(
 		"INSERT INTO sessions (id, user_id, expires_at, ip_address, user_agent, last_active) VALUES (?, ?, ?, ?, ?, ?)",
-		sessionID, user.ID, expiresAt, ipAddress, userAgent, time.Now(),
+		hashToken(sessionID), user.ID, expiresAt, ipAddress, userAgent, time.Now(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %v", err)
@@ -298,7 +301,7 @@ func (s *Service) ValidateSession(token string) (*User, error) {
 		FROM sessions s
 		JOIN users u ON s.user_id = u.id
 		WHERE s.id = ? AND s.expires_at > datetime('now')
-	`, token).Scan(
+	`, hashToken(token)).Scan(
 		&session.ID, &session.UserID, &session.ExpiresAt,
 		&user.ID, &user.Username, &user.CreatedAt, &lastLogin,
 	)
@@ -323,12 +326,12 @@ func (s *Service) updateSessionActivity(token string) {
 		UPDATE sessions
 		SET last_active = datetime('now')
 		WHERE id = ? AND (last_active IS NULL OR last_active < datetime('now', '-1 minute'))
-	`, token)
+	`, hashToken(token))
 }
 
 // Logout invalidates a session
 func (s *Service) Logout(token string) error {
-	_, err := s.db.Exec("DELETE FROM sessions WHERE id = ?", token)
+	_, err := s.db.Exec("DELETE FROM sessions WHERE id = ?", hashToken(token))
 	return err
 }
 
@@ -346,6 +349,15 @@ func generateSessionID() (string, error) {
 		return "", fmt.Errorf("crypto/rand failed: %w", err)
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// hashToken returns the storage key for a session token. The raw token is the bearer
+// credential held only by the client; the database stores just this hash, so a DB read
+// (backup leak, injection elsewhere) yields no usable tokens. sha256 is appropriate
+// here: the token is already 256 bits of crypto/rand entropy, so no salt/KDF is needed.
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // parseTime tries multiple time formats for SQLite compatibility

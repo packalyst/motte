@@ -92,6 +92,47 @@ func (s *Service) handleGetEntries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// validateAndNormalizeEntry validates a firewall entry's type and value and returns
+// the normalized value plus the effective type (a single IP auto-upgrades to "range"
+// for a CIDR). Every insert path (single and bulk) must go through this: an
+// unvalidated value reaching a typed nftables set (ipv4_addr / inet_service) is
+// rejected by the kernel and breaks the ENTIRE atomic ruleset reload, wedging the
+// firewall until the bad row is removed by hand.
+func validateAndNormalizeEntry(entryType, value string) (string, string, error) {
+	switch entryType {
+	case nftables.EntryTypeIP:
+		normalized, isRange, err := validateIPOrCIDR(value)
+		if err != nil {
+			return "", "", err
+		}
+		if isRange {
+			return nftables.EntryTypeRange, normalized, nil
+		}
+		return nftables.EntryTypeIP, normalized, nil
+	case nftables.EntryTypeRange:
+		normalized, _, err := validateIPOrCIDR(value)
+		if err != nil {
+			return "", "", err
+		}
+		return nftables.EntryTypeRange, normalized, nil
+	case nftables.EntryTypeCountry:
+		code := strings.ToUpper(strings.TrimSpace(value))
+		// 2 ALPHA chars only — also keeps a crafted value out of the ipdeny fetch URL.
+		if len(code) != 2 || code[0] < 'A' || code[0] > 'Z' || code[1] < 'A' || code[1] > 'Z' {
+			return "", "", fmt.Errorf("country code must be 2 letters (ISO 3166-1 alpha-2)")
+		}
+		return nftables.EntryTypeCountry, code, nil
+	case nftables.EntryTypePort:
+		port, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || port < 1 || port > 65535 {
+			return "", "", fmt.Errorf("invalid port number (must be 1-65535)")
+		}
+		return nftables.EntryTypePort, strconv.Itoa(port), nil
+	default:
+		return "", "", fmt.Errorf("invalid type: must be ip, range, country, or port")
+	}
+}
+
 // handleCreateEntry creates a new firewall entry
 func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -108,17 +149,14 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate type
-	validTypes := map[string]bool{
-		nftables.EntryTypeIP:      true,
-		nftables.EntryTypeRange:   true,
-		nftables.EntryTypeCountry: true,
-		nftables.EntryTypePort:    true,
-	}
-	if !validTypes[req.Type] {
-		router.JSONError(w, "invalid type: must be ip, range, country, or port", http.StatusBadRequest)
+	// Validate + normalize type and value (shared with the bulk path so neither can
+	// insert an element that would break the atomic nftables reload).
+	normType, normalizedValue, err := validateAndNormalizeEntry(req.Type, req.Value)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	req.Type = normType
 
 	// Set defaults
 	if req.Action == "" {
@@ -135,49 +173,12 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		req.Protocol = nftables.ProtocolBoth
 	}
 
-	// Validate and normalize value based on type
-	var normalizedValue string
-	switch req.Type {
-	case nftables.EntryTypeIP:
-		normalized, isRange, err := validateIPOrCIDR(req.Value)
-		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if isRange {
-			req.Type = nftables.EntryTypeRange // Auto-upgrade to range if CIDR
-		}
-		normalizedValue = normalized
-
-		// Self-protection for IPs
+	// Self-protection: never let an admin block their own single IP.
+	if req.Type == nftables.EntryTypeIP {
 		if err := s.validateIPNotProtected(normalizedValue, r); err != nil {
 			router.JSONError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-
-	case nftables.EntryTypeRange:
-		normalized, _, err := validateIPOrCIDR(req.Value)
-		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		normalizedValue = normalized
-
-	case nftables.EntryTypeCountry:
-		code := strings.ToUpper(strings.TrimSpace(req.Value))
-		if len(code) != 2 {
-			router.JSONError(w, "country code must be 2 letters (ISO 3166-1 alpha-2)", http.StatusBadRequest)
-			return
-		}
-		normalizedValue = code
-
-	case nftables.EntryTypePort:
-		port, err := strconv.Atoi(req.Value)
-		if err != nil || port < 1 || port > 65535 {
-			router.JSONError(w, "invalid port number (must be 1-65535)", http.StatusBadRequest)
-			return
-		}
-		normalizedValue = req.Value
 	}
 
 	var expiresAt interface{}
@@ -278,9 +279,18 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 		}
 
 		created := 0
+		skipped := 0
 		var countryEntries []string
 
 		for _, e := range req.Entries {
+			// Same validation as the single-entry path — skip invalid rows instead of
+			// letting a bad value poison the atomic nftables reload.
+			normType, normValue, err := validateAndNormalizeEntry(e.Type, e.Value)
+			if err != nil {
+				skipped++
+				continue
+			}
+
 			action := e.Action
 			if action == "" {
 				action = nftables.ActionBlock
@@ -291,16 +301,18 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Insert entry immediately (zones will be fetched async for countries)
-			_, err := s.db.Exec(`INSERT OR IGNORE INTO firewall_entries
+			_, err = s.db.Exec(`INSERT OR IGNORE INTO firewall_entries
 				(entry_type, value, action, direction, protocol, source, name, enabled)
 				VALUES (?, ?, ?, ?, 'both', 'manual', ?, 1)`,
-				e.Type, e.Value, action, direction, e.Name)
+				normType, normValue, action, direction, e.Name)
 			if err == nil {
 				created++
 				// Track country entries for async zone fetching
-				if e.Type == nftables.EntryTypeCountry {
-					countryEntries = append(countryEntries, e.Value)
+				if normType == nftables.EntryTypeCountry {
+					countryEntries = append(countryEntries, normValue)
 				}
+			} else {
+				skipped++
 			}
 		}
 
@@ -308,6 +320,7 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 		router.JSON(w, map[string]interface{}{
 			"status":   "queued",
 			"created":  created,
+			"skipped":  skipped,
 			"fetching": len(countryEntries),
 		})
 

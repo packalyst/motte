@@ -25,6 +25,11 @@ var validContainerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 // validImageName matches valid Docker image names (registry/namespace/name:tag or name@sha256:digest)
 var validImageName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_./:@-]*$`)
 
+// maxLogFrameBytes caps a single Docker log frame. A frame claiming more is treated
+// as corrupt/hostile and the stream is stopped, rather than allocating what the
+// untrusted 8-byte header claims (up to ~4 GB).
+const maxLogFrameBytes = 8 << 20 // 8 MB
+
 // Service handles Docker operations via Unix socket or TCP
 type Service struct {
 	host   string // tcp://host:port or unix:///path
@@ -37,6 +42,13 @@ type Service struct {
 	cacheTime       time.Time
 	cacheTTL        time.Duration
 	cacheRefreshing bool
+
+	// Cached container list for the WebSocket broadcast hot path (see GetContainersCached)
+	containersMu         sync.RWMutex
+	cachedContainers     []Container
+	containersCacheTime  time.Time
+	containersCacheTTL   time.Duration
+	containersRefreshing bool
 }
 
 // Container represents a Docker container
@@ -97,9 +109,10 @@ func New() *Service {
 	}
 
 	return &Service{
-		host:     dockerHost,
-		client:   client,
-		cacheTTL: 30 * time.Second, // Cache docker overview stats for 30 seconds
+		host:               dockerHost,
+		client:             client,
+		cacheTTL:           30 * time.Second, // Cache docker overview stats for 30 seconds
+		containersCacheTTL: 3 * time.Second,  // Cache container list on the broadcast hot path
 	}
 }
 
@@ -193,8 +206,14 @@ func (s *Service) GetContainers() ([]Container, error) {
 			imageID = imageID[:12]
 		}
 
+		// Short-ID slice: guard against a malformed/short container ID (avoid panic).
+		shortID := c.ID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+
 		containers = append(containers, Container{
-			ID:      c.ID[:12],
+			ID:      shortID,
 			Name:    name,
 			Image:   c.Image,
 			ImageID: imageID,
@@ -314,6 +333,12 @@ func (s *Service) StreamLogs(containerName string, onLog func(LogEntry), stop <-
 		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
 		if size == 0 {
 			continue
+		}
+		// The header is untrusted (corrupt/hostile frame, or a TTY container whose raw
+		// output is misparsed as a header). An implausible size would otherwise make us
+		// allocate up to ~4 GB in one shot — stop the stream instead.
+		if size < 0 || size > maxLogFrameBytes {
+			return nil
 		}
 
 		// Read message (exactly `size` bytes, not a partial read).
@@ -470,7 +495,10 @@ func (s *Service) handleAnalyzeImage(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "Image name required", http.StatusBadRequest)
 		return
 	}
-	if !validImageName.MatchString(name) {
+	// Reject ".." as well: the name is interpolated into the Docker API path, and the
+	// regex permits "/" (valid for registry/namespace), so "a/../../containers/x/json"
+	// would otherwise traverse to other Docker API endpoints (GET-only SSRF).
+	if !validImageName.MatchString(name) || strings.Contains(name, "..") {
 		router.JSONError(w, "Invalid image name", http.StatusBadRequest)
 		return
 	}
@@ -1014,6 +1042,71 @@ func (s *Service) GetContainerStats(containerID, containerName string) (*Contain
 		BlockRead:  blockRead,
 		BlockWrite: blockWrite,
 	}, nil
+}
+
+// GetContainersCached returns the last known container list without blocking,
+// refreshing in the background when stale. Used on the WebSocket broadcast hot path
+// (docker status + service-health), where a direct GetContainers() call to a slow or
+// hung Docker socket would block the status-checker goroutine (up to the 30s client
+// timeout) and freeze all live updates for every connected client. The first call
+// fetches synchronously so the initial snapshot is correct (no false "all down" flash).
+func (s *Service) GetContainersCached() []Container {
+	s.containersMu.RLock()
+	firstFetch := s.containersCacheTime.IsZero()
+	cacheValid := !firstFetch && time.Since(s.containersCacheTime) < s.containersCacheTTL
+	cached := s.cachedContainers
+	refreshing := s.containersRefreshing
+	s.containersMu.RUnlock()
+
+	if cacheValid {
+		return cached
+	}
+
+	// First ever call: fetch synchronously so callers get real data immediately.
+	if firstFetch {
+		if containers, err := s.GetContainers(); err == nil {
+			s.containersMu.Lock()
+			s.cachedContainers = containers
+			s.containersCacheTime = time.Now()
+			s.containersMu.Unlock()
+			return containers
+		}
+		return cached // error on first fetch: return nil, a later call retries
+	}
+
+	// Stale: return the current snapshot and refresh in the background (never blocks).
+	if refreshing {
+		return cached
+	}
+	s.containersMu.Lock()
+	if s.containersRefreshing {
+		s.containersMu.Unlock()
+		return cached
+	}
+	s.containersRefreshing = true
+	s.containersMu.Unlock()
+
+	go s.refreshContainersCache()
+	return cached
+}
+
+// refreshContainersCache fetches the container list in the background, keeping the
+// previous snapshot on error.
+func (s *Service) refreshContainersCache() {
+	defer func() {
+		s.containersMu.Lock()
+		s.containersRefreshing = false
+		s.containersMu.Unlock()
+	}()
+
+	containers, err := s.GetContainers()
+	if err != nil {
+		return
+	}
+	s.containersMu.Lock()
+	s.cachedContainers = containers
+	s.containersCacheTime = time.Now()
+	s.containersMu.Unlock()
 }
 
 // GetOverviewStats returns docker info and disk usage for overview page (cached)

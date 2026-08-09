@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -677,6 +678,22 @@ func syncPanelDomainRewrite(mode string) {
 	}
 }
 
+// validMiddlewareName / validCertResolver constrain values that are written into the
+// generated dynamic YAML unquoted. Without this a value containing a newline or YAML
+// metacharacter could inject sibling keys or corrupt the whole file (breaking Traefik
+// for every route). Middleware refs look like "sentinel-vpn@file"; resolver names like
+// "letsencrypt-dnschallenge".
+var (
+	validMiddlewareName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]*$`)
+	validCertResolver   = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+)
+
+// IsValidMiddlewareName reports whether s is a safe Traefik middleware reference.
+func IsValidMiddlewareName(s string) bool { return validMiddlewareName.MatchString(s) }
+
+// IsValidCertResolver reports whether s is a safe Traefik cert-resolver name.
+func IsValidCertResolver(s string) bool { return validCertResolver.MatchString(s) }
+
 // escapeYAMLString escapes a string for safe YAML output
 func escapeYAMLString(s string) string {
 	// Replace backslashes first, then other special chars
@@ -757,9 +774,16 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 		for _, route := range routes {
 			name := helper.SanitizeDomainName(route.Domain)
 
-			// Build middlewares list
-			middlewares := make([]string, len(route.Middlewares))
-			copy(middlewares, route.Middlewares)
+			// Build middlewares list. Filter invalid names (emission backstop): these
+			// are written into the YAML unquoted, so a bad value would corrupt the file.
+			middlewares := make([]string, 0, len(route.Middlewares))
+			for _, mw := range route.Middlewares {
+				if IsValidMiddlewareName(mw) {
+					middlewares = append(middlewares, mw)
+				} else {
+					log.Printf("traefik: skipping invalid middleware name %q on domain %s", mw, route.Domain)
+				}
+			}
 
 			// Add per-domain sentinel config middleware if configured and enabled
 			if route.SentinelConfig != nil && route.SentinelConfig.Enabled {
@@ -816,7 +840,9 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 				}
 				// TLS configuration
 				// Explicit user-selected resolver wins over the auto tree below.
-				if route.CertResolver != "" {
+				// Invalid names are ignored (fall through to the auto tree) so a bad
+				// value can't be written unquoted into the YAML.
+				if route.CertResolver != "" && IsValidCertResolver(route.CertResolver) {
 					sb.WriteString("      tls:\n")
 					sb.WriteString(fmt.Sprintf("        certResolver: %s\n", route.CertResolver))
 					sb.WriteString("        domains:\n")

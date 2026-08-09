@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 
 	"api/internal/helper"
 )
+
+// maxBlocklistBytes caps a single blocklist download. Real lists are far smaller;
+// the cap stops an unbounded read from a hostile or redirected host.
+const maxBlocklistBytes = 32 << 20 // 32 MB
 
 // Blocklist sources loaded from config file
 var blocklistSources map[string]BlocklistSource
@@ -59,9 +64,14 @@ func (s *Service) fetchBlocklist(rawURL string, minScore int) ([]string, error) 
 		return nil, &httpError{resp.StatusCode}
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// Size-cap the read (timeout bounds time, not bytes): read one byte past the cap
+	// and error on overflow so a redirect to a huge object can't exhaust memory.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBlocklistBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(body)) > maxBlocklistBytes {
+		return nil, fmt.Errorf("blocklist response exceeds %d bytes", maxBlocklistBytes)
 	}
 
 	return parseBlocklistBody(string(body), minScore), nil
