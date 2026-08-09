@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"log"
 	"sync"
 	"time"
@@ -33,7 +34,37 @@ var (
 	// TOTP rate limiting (keyed by user ID)
 	totpAttempts      = make(map[int64]*loginAttempt)
 	totpAttemptsMutex sync.RWMutex
+
+	// Last successfully-used TOTP code per user, to block replay of a captured code
+	// within its validity window. Keyed by user ID, so bounded by the user count.
+	usedTOTP      = make(map[int64]usedTOTPCode)
+	usedTOTPMutex sync.Mutex
 )
+
+// usedTOTPCode records a consumed code and when the replay guard for it expires.
+type usedTOTPCode struct {
+	code    string
+	expires time.Time
+}
+
+// totpReplayed reports whether code was already consumed by this user within its window.
+func totpReplayed(userID int64, code string) bool {
+	usedTOTPMutex.Lock()
+	defer usedTOTPMutex.Unlock()
+	u, ok := usedTOTP[userID]
+	if !ok || time.Now().After(u.expires) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(u.code), []byte(code)) == 1
+}
+
+// markTOTPUsed records a successfully-used code so it can't be replayed. The window
+// (90s) covers the TOTP period plus the library's ±1 step validation skew.
+func markTOTPUsed(userID int64, code string) {
+	usedTOTPMutex.Lock()
+	defer usedTOTPMutex.Unlock()
+	usedTOTP[userID] = usedTOTPCode{code: code, expires: time.Now().Add(90 * time.Second)}
+}
 
 func init() {
 	// Initialize trusted proxies from environment
@@ -72,6 +103,15 @@ func init() {
 				}
 			}
 			totpAttemptsMutex.Unlock()
+
+			// Cleanup expired TOTP replay-guard entries
+			usedTOTPMutex.Lock()
+			for userID, u := range usedTOTP {
+				if now.After(u.expires) {
+					delete(usedTOTP, userID)
+				}
+			}
+			usedTOTPMutex.Unlock()
 		}
 	}()
 }

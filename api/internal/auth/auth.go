@@ -247,6 +247,13 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 				return nil, errors.New("invalid 2FA code")
 			}
 
+			// Reject replay of a code already consumed within its window.
+			if totpReplayed(user.ID, totpCode) {
+				recordFailedTOTP(user.ID)
+				return nil, errors.New("2FA code already used, wait for the next code")
+			}
+			markTOTPUsed(user.ID, totpCode)
+
 			// Clear TOTP attempts on success
 			clearTOTPAttempts(user.ID)
 		}

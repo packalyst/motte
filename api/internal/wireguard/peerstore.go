@@ -354,13 +354,12 @@ func (ps *PeerStore) allocateIPLocked(ipRange string) string {
 
 	numIPs := 1 << (32 - maskBits)
 
+	// Increment as a 32-bit integer so the carry propagates across all four octets
+	// (correct for any mask, not just /16); base is the network address.
+	base := binary.BigEndian.Uint32(baseIP)
 	for i := 2; i < numIPs; i++ {
-		ip := make([]byte, 4)
-		copy(ip, baseIP)
-		ip[3] = byte((int(baseIP[3]) + i) & 0xFF)
-		ip[2] = byte((int(baseIP[2]) + (int(baseIP[3])+i)/256) & 0xFF)
-		ip[1] = byte((int(baseIP[1]) + (int(baseIP[2])+(int(baseIP[3])+i)/256)/256) & 0xFF)
-
+		var ip [4]byte
+		binary.BigEndian.PutUint32(ip[:], base+uint32(i))
 		ipStr := fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3])
 		if !usedIPs[ipStr] {
 			return ipStr

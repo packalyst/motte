@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -62,8 +63,15 @@ func NewDockerHTTPClientWithTimeout(timeout time.Duration) *http.Client {
 	}
 }
 
+// validDockerContainer restricts container names interpolated into the Docker API
+// path. It disallows "/" so a name can't traverse to other API endpoints.
+var validDockerContainer = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
 // DockerExec runs a command in a container via Docker API
 func DockerExec(container string, cmd []string) error {
+	if !validDockerContainer.MatchString(container) {
+		return fmt.Errorf("invalid container name: %q", container)
+	}
 	client := NewDockerHTTPClientWithTimeout(30 * time.Second)
 
 	cmdJSON, _ := json.Marshal(cmd)

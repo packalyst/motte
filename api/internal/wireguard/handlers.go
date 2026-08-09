@@ -3,6 +3,8 @@ package wireguard
 import (
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"api/internal/nftables"
@@ -18,6 +20,22 @@ func requestFirewallApply() {
 	if nft := nftables.GetService(); nft != nil {
 		nft.RequestApply()
 	}
+}
+
+// validPeerName restricts peer names to a safe charset. The name is reflected into
+// the config-download filename (Content-Disposition), so quotes/control characters
+// are disallowed; it is stored parameterized and never written into wg0.conf.
+var validPeerName = regexp.MustCompile(`^[A-Za-z0-9 ._-]{1,64}$`)
+
+// validatePeerName rejects empty or unsafe peer names (used by create and update).
+func validatePeerName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("name is required")
+	}
+	if !validPeerName.MatchString(name) {
+		return fmt.Errorf("name may contain only letters, numbers, spaces, and . _ - (max 64 chars)")
+	}
+	return nil
 }
 
 // HTTP Handlers
@@ -40,8 +58,8 @@ func (s *Service) handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		router.JSONError(w, "name is required", http.StatusBadRequest)
+	if err := validatePeerName(req.Name); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -110,6 +128,10 @@ func (s *Service) handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Name != nil {
+		if err := validatePeerName(*req.Name); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		peer.Name = *req.Name
 	}
 	if req.Enabled != nil {

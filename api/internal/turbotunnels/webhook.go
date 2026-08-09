@@ -103,6 +103,9 @@ func (s *Service) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	code, body, err := callWebhook(target, params)
 	if err != nil {
+		// The forward never reached the provider, so don't burn the caller's rate-limit
+		// window — roll it back so they can retry immediately.
+		webhookRefund(target)
 		router.JSONWithStatus(w, map[string]interface{}{"ok": false, "error": "forward failed"}, http.StatusBadGateway)
 		return
 	}
@@ -259,6 +262,19 @@ func webhookAllow(wh *Webhook) bool {
 	}
 	webhookNextAllowed[wh.ID] = now.Add(time.Duration(wh.MinIntervalSec) * time.Second)
 	return true
+}
+
+// webhookRefund rolls back the rate-limit window reserved by webhookAllow. Called
+// when the forward failed to reach the provider, so a caller isn't throttled for a
+// send that never happened. Safe because webhookAllow only sets the window after the
+// previous one has expired, so deleting it just undoes our own reservation.
+func webhookRefund(wh *Webhook) {
+	if wh.MinIntervalSec <= 0 {
+		return
+	}
+	rotMu.Lock()
+	delete(webhookNextAllowed, wh.ID)
+	rotMu.Unlock()
 }
 
 // callWebhook forwards the validated params (plus the webhook's fixed values) to
