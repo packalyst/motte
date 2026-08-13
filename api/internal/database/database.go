@@ -258,6 +258,30 @@ func createSchema(db *sql.DB) error {
 		UNIQUE(source_client_id, target_client_id)
 	);
 
+	-- Virtual IPs: extra VPN /32s routed to a peer (client_id), mapped by a DNAT on
+	-- that peer to a device on its LAN (e.g. a camera). restricted=1 means only the
+	-- peers listed in vpn_virtual_ip_acl may reach it.
+	CREATE TABLE IF NOT EXISTS vpn_virtual_ips (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		client_id INTEGER NOT NULL,
+		ip TEXT NOT NULL UNIQUE,
+		label TEXT DEFAULT '',
+		restricted INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE
+	);
+
+	-- Which peers may reach a restricted virtual IP (empty = nobody until opted in).
+	CREATE TABLE IF NOT EXISTS vpn_virtual_ip_acl (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		virtual_ip_id INTEGER NOT NULL,
+		source_client_id INTEGER NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (virtual_ip_id) REFERENCES vpn_virtual_ips(id) ON DELETE CASCADE,
+		FOREIGN KEY (source_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
+		UNIQUE(virtual_ip_id, source_client_id)
+	);
+
 	-- VPN router status tracking
 	CREATE TABLE IF NOT EXISTS vpn_router_config (
 		id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -278,6 +302,11 @@ func createSchema(db *sql.DB) error {
 	-- VPN ACL rules indexes
 	CREATE INDEX IF NOT EXISTS idx_vpn_acl_source ON vpn_acl_rules(source_client_id);
 	CREATE INDEX IF NOT EXISTS idx_vpn_acl_target ON vpn_acl_rules(target_client_id);
+
+	-- Virtual IP indexes
+	CREATE INDEX IF NOT EXISTS idx_vpn_virtual_ips_client ON vpn_virtual_ips(client_id);
+	CREATE INDEX IF NOT EXISTS idx_vpn_virtual_ip_acl_vip ON vpn_virtual_ip_acl(virtual_ip_id);
+	CREATE INDEX IF NOT EXISTS idx_vpn_virtual_ip_acl_src ON vpn_virtual_ip_acl(source_client_id);
 	`
 
 	// Execute firewall schema

@@ -195,6 +195,10 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetPeerConfig":   s.handleGetPeerConfig,
 		"GetPeerQR":       s.handleGetPeerQR,
 		"GetServer":       s.handleGetServer,
+		"ListVirtualIPs":  s.handleListVirtualIPs,
+		"AddVirtualIP":    s.handleAddVirtualIP,
+		"DeleteVirtualIP": s.handleDeleteVirtualIP,
+		"SetVirtualIPACL": s.handleSetVirtualIPACL,
 	}
 }
 

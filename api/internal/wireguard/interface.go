@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/database"
+
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -141,6 +143,34 @@ func (s *Service) getDefaultInterface() string {
 	return ""
 }
 
+// loadVirtualIPsByHost returns virtual IPs grouped by their host peer's VPN IP.
+// Only enabled wireguard peers are included. Returns an empty map on any error so
+// syncConfig degrades to plain /32 AllowedIPs rather than failing.
+func loadVirtualIPsByHost() map[string][]string {
+	out := map[string][]string{}
+	db, err := database.GetDB()
+	if err != nil {
+		return out
+	}
+	rows, err := db.Query(`
+		SELECT c.ip, v.ip
+		FROM vpn_virtual_ips v
+		JOIN vpn_clients c ON v.client_id = c.id
+		WHERE c.type = 'wireguard' AND c.enabled = 1`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var hostIP, vip string
+		if err := rows.Scan(&hostIP, &vip); err != nil {
+			continue
+		}
+		out[hostIP] = append(out[hostIP], vip)
+	}
+	return out
+}
+
 func (s *Service) syncConfig() error {
 	confPath := filepath.Join(s.config.DataDir, s.config.Interface+".conf")
 	enabledPeers := make(map[string]bool)
@@ -151,6 +181,11 @@ ListenPort = %d
 
 `, s.config.ServerPriKey, s.config.ListenPort)
 
+	// Virtual IPs routed to each peer (keyed by the peer's own VPN IP). These are
+	// extra /32s a peer "hosts" (mapped to a LAN device by a DNAT on the peer). They
+	// are appended to the peer's AllowedIPs so the server routes them into its tunnel.
+	vipsByHost := loadVirtualIPsByHost()
+
 	s.peerStore.RLock()
 	for _, peer := range s.peerStore.cache {
 		if peer.Enabled {
@@ -159,7 +194,11 @@ ListenPort = %d
 			if peer.PresharedKey != "" {
 				peerConf += fmt.Sprintf("PresharedKey = %s\n", peer.PresharedKey)
 			}
-			peerConf += fmt.Sprintf("AllowedIPs = %s/32\n\n", peer.IPAddress)
+			allowed := peer.IPAddress + "/32"
+			for _, vip := range vipsByHost[peer.IPAddress] {
+				allowed += ", " + vip + "/32"
+			}
+			peerConf += fmt.Sprintf("AllowedIPs = %s\n\n", allowed)
 			conf += peerConf
 		}
 	}

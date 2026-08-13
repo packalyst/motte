@@ -40,7 +40,13 @@ func (t *VPNACLTable) Build() (string, error) {
 		return "", err
 	}
 
-	return t.buildScript(clients, rules, wgIPRange, hsIPRange, serverIP), nil
+	// Load virtual IPs + their allow-lists
+	vips, err := t.loadVirtualIPs(clients)
+	if err != nil {
+		return "", err
+	}
+
+	return t.buildScript(clients, rules, vips, wgIPRange, hsIPRange, serverIP), nil
 }
 
 type vpnClient struct {
@@ -93,7 +99,59 @@ func (t *VPNACLTable) loadRules() ([]aclRule, error) {
 	return rules, nil
 }
 
-func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, wgIPRange, hsIPRange, serverIP string) string {
+// aclVirtualIP is a virtual IP plus the source peer IPs allowed to reach it.
+type aclVirtualIP struct {
+	IP         string
+	Restricted bool
+	Allowed    []string // allowed source peer IPs (only meaningful when Restricted)
+}
+
+// loadVirtualIPs loads virtual IPs and, for restricted ones, the source peer IPs
+// allowed to reach them. The outer result is drained before the per-vip allow-list
+// queries run, so no cursor is held open across a nested query.
+func (t *VPNACLTable) loadVirtualIPs(clients map[int64]vpnClient) ([]aclVirtualIP, error) {
+	rows, err := t.db.Query(`SELECT id, ip, restricted FROM vpn_virtual_ips`)
+	if err != nil {
+		return nil, err
+	}
+	type row struct {
+		id         int64
+		ip         string
+		restricted int
+	}
+	var raw []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.ip, &r.restricted); err != nil {
+			continue
+		}
+		raw = append(raw, r)
+	}
+	rows.Close()
+
+	out := make([]aclVirtualIP, 0, len(raw))
+	for _, r := range raw {
+		v := aclVirtualIP{IP: r.ip, Restricted: r.restricted == 1}
+		if v.Restricted {
+			arows, err := t.db.Query(`SELECT source_client_id FROM vpn_virtual_ip_acl WHERE virtual_ip_id = ?`, r.id)
+			if err == nil {
+				for arows.Next() {
+					var cid int64
+					if arows.Scan(&cid) == nil {
+						if c, ok := clients[cid]; ok {
+							v.Allowed = append(v.Allowed, c.IP)
+						}
+					}
+				}
+				arows.Close()
+			}
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, vips []aclVirtualIP, wgIPRange, hsIPRange, serverIP string) string {
 	var sb strings.Builder
 
 	// Validate IP ranges before use
@@ -207,6 +265,29 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 			}
 		}
 	}
+
+	// === Virtual IP access ===
+	// Virtual IPs sit inside the WG range, so the catch-all wg->wg drop below already
+	// makes them unreachable by default. Emit accepts here (before that drop) to open
+	// them: restricted -> only the listed source peers; open -> any peer. A restricted
+	// vip with no allowed sources emits nothing and stays unreachable (secure default).
+	sb.WriteString("        # === Virtual IPs ===\n")
+	for _, v := range vips {
+		if !ValidateIPOrCIDR(v.IP) {
+			continue
+		}
+		if v.Restricted {
+			for _, src := range v.Allowed {
+				if !ValidateIPOrCIDR(src) {
+					continue
+				}
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", src, v.IP))
+			}
+		} else {
+			sb.WriteString(fmt.Sprintf("        ip daddr %s accept\n", v.IP))
+		}
+	}
+	sb.WriteString("\n")
 
 	// Drop unallowed VPN-to-VPN traffic
 	sb.WriteString("        # Drop unallowed VPN traffic\n")

@@ -105,6 +105,10 @@
         {"path": "/peers/{id}/unblock-internet", "methods": ["POST"], "handler": "UnblockInternet", "description": "Restore WAN egress for peer"},
         {"path": "/peers/{id}/config", "methods": ["GET"], "handler": "GetPeerConfig", "description": "Download peer config"},
         {"path": "/peers/{id}/qr", "methods": ["GET"], "handler": "GetPeerQR", "description": "Get peer QR code"},
+        {"path": "/peers/{id}/vips", "methods": ["GET"], "handler": "ListVirtualIPs", "description": "List a peer's virtual IPs"},
+        {"path": "/peers/{id}/vips", "methods": ["POST"], "handler": "AddVirtualIP", "description": "Add a virtual IP to a peer"},
+        {"path": "/vips/{vipId}", "methods": ["DELETE"], "handler": "DeleteVirtualIP", "description": "Delete a virtual IP"},
+        {"path": "/vips/{vipId}/acl", "methods": ["PUT"], "handler": "SetVirtualIPACL", "description": "Set a virtual IP's access allow-list"},
         {"path": "/server", "methods": ["GET"], "handler": "GetServer", "description": "Get server info"}
       ]
     },

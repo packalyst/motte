@@ -179,7 +179,7 @@
   // Dynamic tabs based on node type
   const detailTabs = $derived(
     selectedNode?._type === 'wireguard'
-      ? [{id:'overview',label:'Overview'},{id:'traffic',label:'Traffic'},{id:'qr',label:'QR & Config'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
+      ? [{id:'overview',label:'Overview'},{id:'traffic',label:'Traffic'},{id:'qr',label:'QR & Config'},{id:'access',label:'Access'},{id:'vips',label:'Virtual IPs'},{id:'actions',label:'Actions'}]
       : [{id:'overview',label:'Overview'},{id:'traffic',label:'Traffic'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
   )
 
@@ -401,6 +401,70 @@
   $effect(() => {
     if (activeTab === 'access' && selectedNode && !selectedVpnClient) {
       loadVpnClientByIp(selectedNode._ip)
+    }
+  })
+
+  // --- Virtual IPs (extra VPN /32s hosted by this peer, forwarded to a LAN device) ---
+  let vips = $state([])
+  let vipsLoading = $state(false)
+  let newVipIp = $state('')
+  let newVipLabel = $state('')
+
+  async function loadVips() {
+    if (selectedNode?._type !== 'wireguard' || !selectedNode?._wgId) { vips = []; return }
+    vipsLoading = true
+    try {
+      vips = (await apiGet(`/api/wg/peers/${selectedNode._wgId}/vips`)) || []
+    } catch { vips = [] }
+    vipsLoading = false
+  }
+
+  async function addVip() {
+    const ip = newVipIp.trim()
+    if (!ip) return
+    try {
+      await apiPost(`/api/wg/peers/${selectedNode._wgId}/vips`, { ip, label: newVipLabel.trim(), restricted: true })
+      newVipIp = ''; newVipLabel = ''
+      toast('Virtual IP added', 'success')
+      await loadVips()
+    } catch (e) { toast(e?.message || 'Failed to add virtual IP', 'error') }
+  }
+
+  async function removeVip(id) {
+    try {
+      await apiDelete(`/api/wg/vips/${id}`)
+      toast('Virtual IP removed', 'success')
+      await loadVips()
+    } catch (e) { toast(e?.message || 'Failed to remove', 'error') }
+  }
+
+  async function saveVipAcl(vip) {
+    try {
+      await apiPut(`/api/wg/vips/${vip.id}/acl`, { restricted: vip.restricted, allowedClientIds: vip.allowedClientIds || [] })
+    } catch (e) { toast(e?.message || 'Failed to update access', 'error'); await loadVips() }
+  }
+
+  function toggleVipRestrict(vip) {
+    vip.restricted = !vip.restricted
+    saveVipAcl(vip)
+  }
+
+  function toggleVipPeer(vip, clientId) {
+    const set = new Set(vip.allowedClientIds || [])
+    if (set.has(clientId)) set.delete(clientId); else set.add(clientId)
+    vip.allowedClientIds = [...set]
+    saveVipAcl(vip)
+  }
+
+  // Other peers that can be granted access to a virtual IP (exclude the host peer itself).
+  const vipPeerChoices = $derived(
+    (clients || []).filter(c => c.ip !== selectedNode?._ip).map(c => ({ id: c.id, name: c.name || c.ip, ip: c.ip }))
+  )
+
+  // Load virtual IPs when switching to the 'vips' tab.
+  $effect(() => {
+    if (activeTab === 'vips' && selectedNode?._type === 'wireguard') {
+      loadVips()
     }
   })
 
@@ -1095,6 +1159,75 @@
                 <Button onclick={saveAcl} disabled={aclLoading} icon={aclLoading ? undefined : 'device-floppy'}>
                   {aclLoading ? 'Saving...' : 'Save & Apply'}
                 </Button>
+              </div>
+            {/if}
+          </div>
+
+        {:else if activeTab === 'vips'}
+          <!-- Virtual IPs Tab -->
+          <div class="p-4 space-y-4">
+            <InfoCard
+              icon="route"
+              title="Virtual IPs"
+              description="Extra VPN IPs routed to this peer. On the peer, forward each to a LAN device with a DNAT (see cam-forward.sh). Restricted IPs are reachable only by the peers you allow."
+            />
+
+            <div class="flex flex-col sm:flex-row gap-2">
+              <Input bind:value={newVipIp} placeholder="Virtual IP (e.g. 10.8.0.20)" prefixIcon="network" class="flex-1" />
+              <Input bind:value={newVipLabel} placeholder="Label (e.g. Tapo camera)" prefixIcon="tag" class="flex-1" />
+              <Button onclick={addVip} icon="plus" disabled={!newVipIp.trim()}>Add</Button>
+            </div>
+
+            {#if vipsLoading}
+              <div class="text-center text-muted-foreground py-6 text-sm">Loading…</div>
+            {:else if vips.length === 0}
+              <EmptyState icon="route" title="No virtual IPs" description="Add a virtual IP to expose a LAN device (like a camera) behind this peer." />
+            {:else}
+              <div class="space-y-3">
+                {#each vips as vip (vip.id)}
+                  <div class="kt-panel">
+                    <div class="kt-panel-body p-3 space-y-3">
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="min-w-0">
+                          <div class="font-mono text-sm font-medium">{vip.ip}</div>
+                          {#if vip.label}<div class="text-xs text-muted-foreground truncate">{vip.label}</div>{/if}
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <Badge variant={vip.restricted ? 'warning' : 'success'}>{vip.restricted ? 'Restricted' : 'Open to all'}</Badge>
+                          <button class="icon-btn-destructive" title="Remove virtual IP" onclick={() => removeVip(vip.id)}>
+                            <Icon name="trash" size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="checkbox" checked={vip.restricted} onchange={() => toggleVipRestrict(vip)} />
+                        <span>Restrict access to selected peers</span>
+                      </label>
+
+                      {#if vip.restricted}
+                        <div class="border-t border-border/50 pt-2">
+                          <div class="text-xs text-muted-foreground mb-2">
+                            Allowed peers{#if !(vip.allowedClientIds?.length)}<span class="text-destructive"> — none yet (unreachable)</span>{/if}
+                          </div>
+                          {#if vipPeerChoices.length === 0}
+                            <div class="text-xs text-muted-foreground">No other peers to allow.</div>
+                          {:else}
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              {#each vipPeerChoices as peer (peer.id)}
+                                <label class="flex items-center gap-2 text-sm p-1.5 rounded hover:bg-muted/50 cursor-pointer">
+                                  <input type="checkbox" checked={(vip.allowedClientIds || []).includes(peer.id)} onchange={() => toggleVipPeer(vip, peer.id)} />
+                                  <span class="truncate">{peer.name}</span>
+                                  <span class="text-xs text-muted-foreground font-mono ml-auto">{peer.ip}</span>
+                                </label>
+                              {/each}
+                            </div>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                {/each}
               </div>
             {/if}
           </div>
