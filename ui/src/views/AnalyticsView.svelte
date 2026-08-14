@@ -66,13 +66,33 @@
     fw: null,
   })
 
-  // Semantic app colors + verified tabler icons (all present in existing views)
+  // Semantic app colors + verified tabler icons (all present in existing views).
+  // `plain` is a plain-English subtitle so the cards read without jargon.
   const typeMeta = {
-    inbound:  { label: 'Inbound',  icon: 'arrow-down', color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10' },
-    dns:      { label: 'DNS',      icon: 'globe',      color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10' },
-    outbound: { label: 'Outbound', icon: 'arrow-up',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10' },
-    fw:       { label: 'Firewall', icon: 'shield',     color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10' },
+    inbound:  { label: 'Inbound',  plain: 'Visits to your services', icon: 'arrow-down', color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10' },
+    dns:      { label: 'DNS',      plain: 'Domain lookups',          icon: 'globe',      color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10' },
+    outbound: { label: 'Outbound', plain: 'Traffic leaving',         icon: 'arrow-up',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10' },
+    fw:       { label: 'Firewall', plain: 'Blocked attacks',         icon: 'shield',     color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10' },
   }
+
+  // One plain-English sentence summarizing the current period across subsystems.
+  const summary = $derived.by(() => {
+    const fw = data.fw, inb = data.inbound, dns = data.dns
+    if (!fw && !inb && !dns) return ''
+    const parts = []
+    if (fw && !fw.error) {
+      const topC = fw.top_countries?.[0]?.country
+      parts.push(`${fmtNumber(fw.total_count || 0)} attacks blocked${fw.unique_visitors ? ` from ${fmtNumber(fw.unique_visitors)} IPs` : ''}${topC ? ` (top ${topC})` : ''}`)
+    }
+    if (inb && !inb.error && inb.unique_visitors != null) {
+      parts.push(`${fmtNumber(inb.unique_visitors)} visitors to your services`)
+    }
+    if (dns && !dns.error && dns.total_count) {
+      parts.push(`${fmtNumber(dns.total_count)} DNS lookups (${pct(dns.blocked_count, dns.total_count)}% blocked)`)
+    }
+    if (!parts.length) return ''
+    return parts.join(' · ')
+  })
 
   async function loadType(type) {
     try {
@@ -286,6 +306,16 @@
         </div>
       {:else if !selectedType}
         <!-- ═════════ OVERVIEW ═════════ -->
+        <!-- Plain-English summary of the selected period -->
+        {#if summary}
+          <div class="flex items-start gap-2.5 rounded-lg border border-border bg-card p-3 shadow-sm">
+            <Icon name="list-details" size={18} class="text-primary shrink-0 mt-0.5" />
+            <div class="text-sm">
+              <span class="text-muted-foreground">Last {periodLabel} —</span> {summary}.
+            </div>
+          </div>
+        {/if}
+
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {#each Object.entries(typeMeta) as [type, meta]}
             {@const d = data[type]}
@@ -301,9 +331,7 @@
                 </div>
                 <div class="flex-1 min-w-0">
                   <h2 class="text-sm font-semibold text-foreground">{meta.label}</h2>
-                  <p class="text-[11px] text-muted-foreground truncate">
-                    {d && d.total_count > 0 ? 'Click for details' : 'no events'}
-                  </p>
+                  <p class="text-[11px] text-muted-foreground truncate">{meta.plain}</p>
                 </div>
                 <Icon name="chevron-right" size={14} class="text-muted-foreground shrink-0" />
               </div>
