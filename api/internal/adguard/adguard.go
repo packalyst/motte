@@ -175,10 +175,15 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 	safeSearchCh := make(chan result, 1)
 	blockedCh := make(chan result, 1)
 	availableCh := make(chan result, 1)
+	dnsConfigCh := make(chan result, 1)
 
 	go func() {
 		data, err := s.fetchJSON("/control/status")
 		statusCh <- result{data, err}
+	}()
+	go func() {
+		data, err := s.fetchJSON("/control/dns_config")
+		dnsConfigCh <- result{data, err}
 	}()
 	go func() {
 		data, err := s.fetchJSON("/control/stats")
@@ -213,6 +218,7 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 	safeSearch := <-safeSearchCh
 	blocked := <-blockedCh
 	available := <-availableCh
+	dnsConfig := <-dnsConfigCh
 
 	// Check for critical errors (status is required)
 	if status.err != nil {
@@ -243,11 +249,14 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 	if available.err == nil {
 		response["availableServices"] = available.data
 	}
+	if dnsConfig.err == nil {
+		response["dnsConfig"] = dnsConfig.data // includes aaaa_disabled
+	}
 
 	router.JSON(w, response)
 }
 
-var validConfigTypes = []string{"protection", "safeBrowsing", "parental", "safeSearch", "blockedServices"}
+var validConfigTypes = []string{"protection", "blockAAAA", "safeBrowsing", "parental", "safeSearch", "blockedServices"}
 
 // handleConfig handles unified config updates
 func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +285,24 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body := `{"protection_enabled":` + strconv.FormatBool(*req.Enabled) + `}`
+		resp, err := s.doRequest("POST", "/control/dns_config", newStringReader(body))
+		if err != nil {
+			router.JSONError(w, err.Error(), http.StatusFailedDependency)
+			return
+		}
+		defer resp.Body.Close()
+		if proxyError(w, resp) {
+			return
+		}
+		router.JSON(w, map[string]interface{}{"type": req.Type, "enabled": *req.Enabled})
+
+	case "blockAAAA":
+		// Force IPv4-only DNS by making AdGuard drop AAAA (IPv6) answers.
+		if req.Enabled == nil {
+			router.JSONError(w, "enabled field required for type: blockAAAA", http.StatusBadRequest)
+			return
+		}
+		body := `{"aaaa_disabled":` + strconv.FormatBool(*req.Enabled) + `}`
 		resp, err := s.doRequest("POST", "/control/dns_config", newStringReader(body))
 		if err != nil {
 			router.JSONError(w, err.Error(), http.StatusFailedDependency)

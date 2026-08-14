@@ -31,6 +31,7 @@
   let safeBrowsing = $state(null)
   let parental = $state(null)
   let safeSearch = $state(null)
+  let dnsConfig = $state(null)
   let rewrites = $state([])
 
   // Track which tabs have been loaded
@@ -79,6 +80,7 @@
       safeBrowsing = data.safeBrowsing || null
       parental = data.parental || null
       safeSearch = data.safeSearch || null
+      dnsConfig = data.dnsConfig || null
       blockedServices = Array.isArray(data.blockedServices) ? data.blockedServices : (data.blockedServices?.ids || [])
       if (data.availableServices?.blocked_services) {
         allServices = data.availableServices.blocked_services
@@ -357,6 +359,16 @@
     }
   }
 
+  async function toggleBlockAAAA(enabled) {
+    try {
+      await apiPut('/api/adguard/config', { type: 'blockAAAA', enabled })
+      dnsConfig = { ...dnsConfig, aaaa_disabled: enabled }
+      toast(enabled ? 'IPv6 (AAAA) answers blocked' : 'IPv6 (AAAA) answers allowed', 'success')
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
+  }
+
   async function addRewrite() {
     const domain = newRewriteDomain.trim()
     const answer = newRewriteAnswer.trim()
@@ -485,6 +497,20 @@
                     variant="switch"
                     checked={status?.protection_enabled}
                     onchange={() => toggleProtection(!status?.protection_enabled)}
+                  />
+                </ContentBlock>
+
+                <!-- Block IPv6 (AAAA) -->
+                <ContentBlock
+                  icon="world-off"
+                  title="Block IPv6 (AAAA)"
+                  description="Force IPv4-only DNS — matches your IPv4-only firewall"
+                  active={dnsConfig?.aaaa_disabled}
+                >
+                  <Checkbox
+                    variant="switch"
+                    checked={dnsConfig?.aaaa_disabled}
+                    onchange={() => toggleBlockAAAA(!dnsConfig?.aaaa_disabled)}
                   />
                 </ContentBlock>
               </div>
