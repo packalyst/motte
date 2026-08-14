@@ -15,6 +15,7 @@
   import Select from '../components/Select.svelte'
   import Button from '../components/Button.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
+  import IpBadge from '../components/IpBadge.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -61,11 +62,12 @@
       types = res.types || []
       statuses = res.statuses || []
 
-      // Enrich with geo data - only lookup relevant IPs per log type
+      // Enrich with geo data — look up the *external* IP for each log, matching
+      // the Location column: dest for outbound/dns, src for inbound/fw/proxy.
       if (logs.length > 0) {
         const ips = logs.flatMap(l => {
-          if (l.logs_type === 'inbound') return [l.logs_src_ip]
-          return [l.logs_dest_ip] // dns, outbound: lookup dest IP
+          if (l.logs_type === 'outbound' || l.logs_type === 'dns') return [l.logs_dest_ip]
+          return [l.logs_src_ip]
         }).filter(Boolean)
         geoData = await lookupIPs(ips)
       }
@@ -346,6 +348,7 @@
                     {#if country}
                       <div class="flex items-center gap-2">
                         <CountryFlag code={country} />
+                        <IpBadge {geo} showOwner={false} />
                         <div class="hidden sm:flex items-center gap-2">
                           <div class="border-l border-dashed border-border h-6"></div>
                           <div>
@@ -356,6 +359,8 @@
                           </div>
                         </div>
                       </div>
+                    {:else if geo?.reputation}
+                      <IpBadge {geo} showOwner={false} />
                     {:else}
                       <span class="text-muted-foreground">—</span>
                     {/if}
@@ -365,6 +370,7 @@
                     {#if country}
                       <div class="flex items-center gap-2">
                         <CountryFlag code={country} />
+                        <IpBadge {geo} showOwner={false} />
                         <div class="hidden sm:flex items-center gap-2">
                           <div class="border-l border-dashed border-border h-6"></div>
                           <div>
@@ -375,6 +381,8 @@
                           </div>
                         </div>
                       </div>
+                    {:else if geo?.reputation}
+                      <IpBadge {geo} showOwner={false} />
                     {:else}
                       <span class="text-muted-foreground">—</span>
                     {/if}
