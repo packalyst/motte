@@ -1512,30 +1512,42 @@
                   />
                 </div>
               {/if}
-              <!-- Enrichment add-on toggles (IP2Location only) -->
+              <!-- Enrichment add-on toggles (IP2Location only) — two full-width rows -->
               {#if geoSettings.lookup_provider === 'ip2location'}
-                <div class="mt-3">
-                  <div class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Enrichment add-ons (owner + proxy on every lookup)</div>
-                  <div class="grid grid-cols-2 gap-2">
-                    <ContentBlock title="Owner (ASN)" description="Who owns each IP">
-                      <Checkbox variant="switch" bind:checked={geoSettings.asn_enabled} />
-                    </ContentBlock>
-                    <ContentBlock title="Proxy / VPN" description="Flag VPN / Tor / data-center">
-                      <Checkbox variant="switch" bind:checked={geoSettings.proxy_enabled} />
-                    </ContentBlock>
-                  </div>
-                  {#if geoSettings.proxy_enabled && geoProviders?.ip2location?.proxy_variants}
-                    <div class="mt-2">
-                      <Select
-                        label="Proxy detail level"
-                        bind:value={geoSettings.ip2proxy_variant}
-                        options={geoProviders.ip2location.proxy_variants.map(v => ({ value: v.id, label: v.name }))}
-                      />
-                      <div class="text-[10px] text-muted-foreground mt-1">
-                        {geoProviders.ip2location.proxy_variants.find(v => v.id === geoSettings.ip2proxy_variant)?.description || ''}
-                      </div>
+                <div class="mt-3 space-y-2">
+                  <div class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Enrichment add-ons (owner + proxy on every lookup)</div>
+
+                  <!-- ASN row -->
+                  <div class="border border-border rounded-lg p-3 flex items-center justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium">Owner (ASN)</div>
+                      <div class="text-xs text-muted-foreground">Who owns each IP</div>
                     </div>
-                  {/if}
+                    <Checkbox variant="switch" bind:checked={geoSettings.asn_enabled} />
+                  </div>
+
+                  <!-- Proxy row (tier dropdown nested inside when on) -->
+                  <div class="border border-border rounded-lg p-3">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium">Proxy / VPN</div>
+                        <div class="text-xs text-muted-foreground">Flag VPN / Tor / data-center</div>
+                      </div>
+                      <Checkbox variant="switch" bind:checked={geoSettings.proxy_enabled} />
+                    </div>
+                    {#if geoSettings.proxy_enabled && geoProviders?.ip2location?.proxy_variants}
+                      <div class="mt-3 pt-3 border-t border-border/50">
+                        <Select
+                          label="Detail level"
+                          bind:value={geoSettings.ip2proxy_variant}
+                          options={geoProviders.ip2location.proxy_variants.map(v => ({ value: v.id, label: v.name }))}
+                        />
+                        <div class="text-[10px] text-muted-foreground mt-1">
+                          {geoProviders.ip2location.proxy_variants.find(v => v.id === geoSettings.ip2proxy_variant)?.description || ''}
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
                 </div>
               {/if}
 
