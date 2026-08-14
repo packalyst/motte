@@ -505,6 +505,21 @@ func runMigrations(db *sql.DB) {
 		}
 	}
 
+	// Add target/quarantine columns to vpn_virtual_ips if missing (LAN device DNAT target + quarantine flag)
+	vipCols := []struct{ name, ddl string }{
+		{"target_ip", `ALTER TABLE vpn_virtual_ips ADD COLUMN target_ip TEXT DEFAULT ''`},
+		{"target_port", `ALTER TABLE vpn_virtual_ips ADD COLUMN target_port INTEGER DEFAULT 0`},
+		{"quarantine", `ALTER TABLE vpn_virtual_ips ADD COLUMN quarantine INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, c := range vipCols {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_virtual_ips') WHERE name = ?`, c.name).Scan(&count)
+		if err == nil && count == 0 {
+			if _, err := db.Exec(c.ddl); err == nil {
+				log.Printf("Migration: added %s column to vpn_virtual_ips", c.name)
+			}
+		}
+	}
+
 	// Allow the 'proxy' log type (turbotunnels connections). SQLite can't ALTER
 	// a CHECK constraint, so rebuild the logs table if it doesn't permit it yet.
 	// The table is capped by the logs cleanup job, so the copy is cheap.
