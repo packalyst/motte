@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/events"
 	"api/internal/nftables"
 	"api/internal/router"
 	"api/internal/ws"
@@ -93,6 +94,9 @@ func (s *Service) handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	s.syncConfig()
 
+	events.Log("wireguard", "peer_added", events.SeverityInfo,
+		fmt.Sprintf("Peer %q added (%s)", peer.Name, peer.IPAddress))
+
 	// Broadcast node stats update
 	ws.BroadcastNodeStats()
 
@@ -145,8 +149,14 @@ func (s *Service) handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 	id := router.ExtractPathParam(r, "/api/wg/peers/")
+	peer := s.peerStore.Get(id) // capture name/IP before removal for the activity feed
 	s.peerStore.Delete(id)
 	s.syncConfig()
+
+	if peer != nil {
+		events.Log("wireguard", "peer_removed", events.SeverityInfo,
+			fmt.Sprintf("Peer %q removed (%s)", peer.Name, peer.IPAddress))
+	}
 
 	// Drop the peer's IP from any nftables sets (e.g. no_internet_peers).
 	requestFirewallApply()

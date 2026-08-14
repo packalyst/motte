@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"api/internal/database"
+	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/nftables"
 	"api/internal/router"
@@ -199,6 +200,10 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, _ := result.LastInsertId()
+
+	// Activity feed: record the manual firewall change.
+	events.Log("firewall", "entry_"+req.Action, events.SeverityInfo,
+		fmt.Sprintf("%s %s %s (manual)", req.Action, req.Type, normalizedValue))
 
 	// For country entries, fetch zones async
 	if req.Type == nftables.EntryTypeCountry {

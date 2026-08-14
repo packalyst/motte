@@ -282,6 +282,13 @@
         {"path": "/location", "methods": ["POST"], "handler": "StoreLocation", "description": "Store device location"},
         {"path": "/test", "methods": ["POST"], "handler": "TestNotification", "description": "Send test notification"}
       ]
+    },
+    "events": {
+      "prefix": "/api/events",
+      "enabled": true,
+      "endpoints": [
+        {"path": "", "methods": ["GET"], "handler": "ListEvents", "description": "Recent cross-subsystem activity feed"}
+      ]
     }
   },
   "middleware": {

@@ -24,6 +24,7 @@
     docker: () => import('./DockerView.svelte'),
     logs: () => import('./LogsView.svelte'),
     analytics: () => import('./AnalyticsView.svelte'),
+    activity: () => import('./ActivityView.svelte'),
     settings: () => import('./SettingsView.svelte'),
     profile: () => import('./ProfileView.svelte'),
     about: () => import('./AboutView.svelte')
@@ -124,6 +125,7 @@
     { id: 'divider2', divider: true },
     { id: 'logs', label: 'Logs', icon: 'file-text' },
     { id: 'analytics', label: 'Analytics', icon: 'chart-bar' },
+    { id: 'activity', label: 'Activity', icon: 'activity' },
     { id: 'divider3', divider: true },
     { id: 'settings', label: 'Settings', icon: 'settings' },
     { id: 'about', label: 'About', icon: 'info-circle' }

@@ -179,6 +179,19 @@ func createSchema(db *sql.DB) error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	-- Activity events: one chronological feed across all subsystems
+	-- (blocks, peer changes, config edits, restarts…). Retention-capped by the
+	-- events package so it cannot grow without bound.
+	CREATE TABLE IF NOT EXISTS events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		type TEXT NOT NULL,
+		severity TEXT NOT NULL DEFAULT 'info',
+		subsystem TEXT NOT NULL DEFAULT '',
+		message TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX IF NOT EXISTS idx_events_id_desc ON events(id DESC);
+
 	-- Sessions table for login tokens
 	CREATE TABLE IF NOT EXISTS sessions (
 		id TEXT PRIMARY KEY,

@@ -17,6 +17,7 @@ import (
 	"api/internal/database"
 	"api/internal/docker"
 	"api/internal/domains"
+	"api/internal/events"
 	"api/internal/firewall"
 	"api/internal/geolocation"
 	"api/internal/headscale"
@@ -105,6 +106,10 @@ func main() {
 		r.RegisterService("setup", setupSvc.Handlers())
 		log.Println("Setup service registered")
 	}
+
+	// Events service: cross-subsystem activity feed (always on — cheap, no deps)
+	r.RegisterService("events", events.New().Handlers())
+	log.Println("Events service registered")
 
 	// Settings service (depends on auth for encryption)
 	if config.IsServiceEnabled("settings") {
