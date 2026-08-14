@@ -28,6 +28,11 @@ type Service struct {
 	lookupProvider   Provider     // MaxMind or IP2Location
 	blockingProvider CIDRProvider // ipdeny
 
+	// Optional enrichment range DBs (IP2Location LITE ASN + IP2Proxy). Loaded when the
+	// files are present; enrich every lookup with owner (ASN) and proxy flags. Nil-safe.
+	asnDB   *rangeTable[asnVal]
+	proxyDB *rangeTable[proxyVal]
+
 	// Country configs loaded from file
 	countryConfigs map[string]CountryConfig
 
@@ -98,6 +103,9 @@ func New(dataDir string) (*Service, error) {
 	if err := s.initProviders(); err != nil {
 		log.Printf("Warning: failed to initialize some providers: %v", err)
 	}
+
+	// Load optional ASN + proxy enrichment DBs (no-op if the files aren't present)
+	s.loadEnrichmentDBs()
 
 	// Migrate old firewall settings if they exist
 	s.migrateOldSettings()
@@ -322,6 +330,10 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetCountries":  s.handleGetCountries,
 		// Zone management
 		"RefreshZones": s.handleRefreshZones,
+		// ASN + proxy enrichment DBs
+		"GetEnrichmentStatus": s.handleGetEnrichmentStatus,
+		"DownloadEnrichment":  s.handleDownloadEnrichment,
+		"DeleteEnrichment":    s.handleDeleteEnrichment,
 	}
 }
 
@@ -418,5 +430,71 @@ func (s *Service) DisableBlocking() {
 	// Trigger nftables apply (will result in empty country sets)
 	if s.nft != nil {
 		s.nft.RequestApply()
+	}
+}
+
+// Enrichment DB filenames (extracted from the downloaded IP2Location LITE zips). The
+// IPV6 CSV variants are used so one table covers both IPv4 and IPv6.
+const (
+	asnDBFileName   = "IP2LOCATION-LITE-ASN.IPV6.CSV"
+	proxyDBFileName = "IP2PROXY-LITE-PX1.IPV6.CSV"
+)
+
+func (s *Service) asnDBPath() string {
+	return filepath.Join(s.dataDir, "ip2location", asnDBFileName)
+}
+func (s *Service) proxyDBPath() string {
+	return filepath.Join(s.dataDir, "ip2location", proxyDBFileName)
+}
+
+// loadEnrichmentDBs (re)loads the optional ASN + proxy range DBs from disk when present.
+// A missing file is not an error — that enrichment dimension is simply skipped. Each
+// load builds a fresh table and atomically replaces the old one (no accumulation).
+func (s *Service) loadEnrichmentDBs() {
+	if p := s.asnDBPath(); fileExists(p) {
+		tbl := &rangeTable[asnVal]{}
+		if err := tbl.load(p, parseASNRow(newInterner())); err != nil {
+			log.Printf("geolocation: failed to load ASN DB: %v", err)
+		} else {
+			s.mu.Lock()
+			s.asnDB = tbl
+			s.mu.Unlock()
+			log.Printf("geolocation: ASN DB loaded (%d ranges)", tbl.count())
+		}
+	}
+	if p := s.proxyDBPath(); fileExists(p) {
+		tbl := &rangeTable[proxyVal]{}
+		if err := tbl.load(p, parseProxyRow(newInterner())); err != nil {
+			log.Printf("geolocation: failed to load proxy DB: %v", err)
+		} else {
+			s.mu.Lock()
+			s.proxyDB = tbl
+			s.mu.Unlock()
+			log.Printf("geolocation: proxy DB loaded (%d proxy ranges)", tbl.count())
+		}
+	}
+}
+
+// enrich adds ASN + proxy fields to a lookup result when those DBs are loaded. Nil-safe:
+// with no enrichment DBs it does nothing, so lookups behave exactly as before.
+func (s *Service) enrich(ip string, res *GeoResult) {
+	if res == nil {
+		return
+	}
+	s.mu.RLock()
+	asnDB, proxyDB := s.asnDB, s.proxyDB
+	s.mu.RUnlock()
+
+	if asnDB != nil {
+		if v, ok := asnDB.lookup(ip); ok {
+			res.ASN = v.asn
+			res.ASName = v.name
+		}
+	}
+	if proxyDB != nil {
+		if v, ok := proxyDB.lookup(ip); ok {
+			res.IsProxy = true
+			res.ProxyType = v.ptype
+		}
 	}
 }

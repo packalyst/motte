@@ -7,6 +7,10 @@ type GeoResult struct {
 	IP          string                 `json:"ip"`
 	CountryCode string                 `json:"country_code"`
 	CountryName string                 `json:"country_name"`
+	ASN         uint32                 `json:"asn,omitempty"`
+	ASName      string                 `json:"as_name,omitempty"`
+	IsProxy     bool                   `json:"is_proxy,omitempty"`
+	ProxyType   string                 `json:"proxy_type,omitempty"`
 	Provider    string                 `json:"provider"`
 	Extra       map[string]interface{} `json:"extra,omitempty"`
 }
@@ -41,29 +45,29 @@ type CIDRProvider interface {
 
 // Config holds geolocation service configuration
 type Config struct {
-	DataDir             string
-	LookupProvider      string // none, maxmind, ip2location
-	BlockingEnabled     bool
-	BlockingProvider    string // ipdeny
-	AutoUpdate          bool
-	UpdateHour          int
-	UpdateServices      string // all, lookup, blocking
-	MaxMindLicenseKey   string
-	IP2LocationToken    string
-	IP2LocationVariant  string // DB1, DB3
+	DataDir            string
+	LookupProvider     string // none, maxmind, ip2location
+	BlockingEnabled    bool
+	BlockingProvider   string // ipdeny
+	AutoUpdate         bool
+	UpdateHour         int
+	UpdateServices     string // all, lookup, blocking
+	MaxMindLicenseKey  string
+	IP2LocationToken   string
+	IP2LocationVariant string // DB1, DB3
 }
 
 // Status represents the current status of the geolocation service
 type Status struct {
-	LookupProvider    string                    `json:"lookup_provider"`
-	BlockingEnabled   bool                      `json:"blocking_enabled"`
-	BlockingProvider  string                    `json:"blocking_provider"`
-	AutoUpdate        bool                      `json:"auto_update"`
-	UpdateHour        int                       `json:"update_hour"`
-	UpdateServices    string                    `json:"update_services"`
-	LastUpdateLookup  string                    `json:"last_update_lookup"`
-	LastUpdateBlocking string                   `json:"last_update_blocking"`
-	Providers         map[string]ProviderStatus `json:"providers"`
+	LookupProvider     string                    `json:"lookup_provider"`
+	BlockingEnabled    bool                      `json:"blocking_enabled"`
+	BlockingProvider   string                    `json:"blocking_provider"`
+	AutoUpdate         bool                      `json:"auto_update"`
+	UpdateHour         int                       `json:"update_hour"`
+	UpdateServices     string                    `json:"update_services"`
+	LastUpdateLookup   string                    `json:"last_update_lookup"`
+	LastUpdateBlocking string                    `json:"last_update_blocking"`
+	Providers          map[string]ProviderStatus `json:"providers"`
 }
 
 // ProviderStatus represents the status of a single provider
@@ -125,12 +129,12 @@ type BlockCountryRequest struct {
 
 // CountryBlockingStatus represents overall status of country blocking
 type CountryBlockingStatus struct {
-	Enabled       bool   `json:"enabled"`
-	BlockedCount  int    `json:"blocked_count"`
-	TotalRanges   int    `json:"total_ranges"`
-	LastUpdate    string `json:"last_update"`
-	AutoUpdate    bool   `json:"auto_update"`
-	UpdateHour    int    `json:"update_hour"`
+	Enabled      bool   `json:"enabled"`
+	BlockedCount int    `json:"blocked_count"`
+	TotalRanges  int    `json:"total_ranges"`
+	LastUpdate   string `json:"last_update"`
+	AutoUpdate   bool   `json:"auto_update"`
+	UpdateHour   int    `json:"update_hour"`
 }
 
 // ProviderVariant represents a database variant for a provider
@@ -153,6 +157,8 @@ type ProviderConfig struct {
 	BaseURL          string            `json:"base_url,omitempty"`
 	FileCodeTemplate string            `json:"file_code_template,omitempty"`
 	FileNameTemplate string            `json:"file_name_template,omitempty"`
+	ASNFileCode      string            `json:"asn_file_code,omitempty"`   // IP2Location LITE ASN download code
+	ProxyFileCode    string            `json:"proxy_file_code,omitempty"` // IP2Proxy LITE download code
 }
 
 // ProvidersConfig holds all provider configurations

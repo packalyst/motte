@@ -89,6 +89,27 @@
   })
   let geoStatus = $state(null)
   let geoProviders = $state(null)  // Provider configs from API
+  let enrichment = $state(null)    // ASN + proxy DB status
+  let enrichBusy = $state(null)    // 'asn' | 'proxy' while a download runs
+
+  async function loadEnrichment() {
+    try { enrichment = await apiGet('/api/geo/enrichment') } catch { enrichment = null }
+  }
+  async function downloadEnrichment(db) {
+    enrichBusy = db
+    try {
+      enrichment = await apiPost(`/api/geo/enrichment/download?db=${db}`, {})
+      toast(`${db.toUpperCase()} database downloaded`, 'success')
+    } catch (e) {
+      toast(e?.message || `Failed to download ${db} database`, 'error')
+    } finally { enrichBusy = null }
+  }
+  async function deleteEnrichment(db) {
+    try {
+      enrichment = await apiDelete(`/api/geo/enrichment?db=${db}`)
+      toast(`${db.toUpperCase()} database removed`, 'success')
+    } catch (e) { toast(e?.message || 'Failed to remove', 'error') }
+  }
   let savingGeo = $state(false)
   let originalGeoSettings = $state(null)
   let triggeringGeoUpdate = $state(false)
@@ -209,6 +230,7 @@
       if (settings.geo_status) {
         geoStatus = settings.geo_status
       }
+      loadEnrichment()
 
       // UI (from localStorage)
       itemsPerPage = localStorage.getItem('settings_items_per_page') || '25'
@@ -1498,6 +1520,38 @@
                       <span>Database not downloaded yet. Save settings and click "Update Now".</span>
                     </div>
                   {/if}
+                </div>
+              {/if}
+
+              <!-- Optional enrichment DBs: ASN (owner) + Proxy -->
+              {#if geoSettings.lookup_provider === 'ip2location'}
+                <div class="mt-3 space-y-2">
+                  <div class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Enrichment (adds owner + proxy to every lookup)</div>
+                  {#each [{ key: 'asn', label: 'ASN / owner database' }, { key: 'proxy', label: 'Proxy / VPN database' }] as e (e.key)}
+                    {@const st = enrichment?.[e.key]}
+                    <div class="p-2 bg-muted/50 rounded text-[10px]">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="font-medium">{e.label}</span>
+                        <div class="flex items-center gap-1">
+                          <Button size="xs" variant="outline" onclick={() => downloadEnrichment(e.key)} loading={enrichBusy === e.key}>
+                            {st?.available ? 'Update' : 'Download'}
+                          </Button>
+                          {#if st?.available}
+                            <Button size="xs" variant="ghost" icon="trash" onclick={() => deleteEnrichment(e.key)} />
+                          {/if}
+                        </div>
+                      </div>
+                      {#if st?.available}
+                        <div class="flex items-center gap-1 text-success mt-1">
+                          <Icon name="check" size={12} />
+                          <span>Available ({(st.file_size / 1024 / 1024).toFixed(1)}MB{#if st.loaded}, {st.ranges.toLocaleString()} ranges{/if})</span>
+                        </div>
+                        {#if st.last_update}<div class="text-muted-foreground mt-0.5">Last updated: {st.last_update}</div>{/if}
+                      {:else}
+                        <div class="text-muted-foreground mt-1">Not downloaded — needs your IP2Location token.</div>
+                      {/if}
+                    </div>
+                  {/each}
                 </div>
               {/if}
             </div>

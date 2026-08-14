@@ -23,8 +23,10 @@
       "signup_url": "https://www.ip2location.com/register",
       "update_frequency": "monthly",
       "requires_key": true,
-      "file_code_template": "{variant}LITEBIN",
-      "file_name_template": "IP2LOCATION-LITE-{variant}.BIN",
+      "file_code_template": "{variant}LITEBINIPV6",
+      "file_name_template": "IP2LOCATION-LITE-{variant}.IPV6.BIN",
+      "asn_file_code": "DBASNLITEIPV6",
+      "proxy_file_code": "PX1LITECSVIPV6",
       "variants": [
         {
           "id": "DB1",

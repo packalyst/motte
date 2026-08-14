@@ -233,7 +233,10 @@
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get service status"},
         {"path": "/update", "methods": ["POST"], "handler": "TriggerUpdate", "description": "Trigger database update"},
         {"path": "/countries", "methods": ["GET"], "handler": "GetCountries", "description": "Get available countries"},
-        {"path": "/zones/refresh", "methods": ["POST"], "handler": "RefreshZones", "description": "Refresh all country zones"}
+        {"path": "/zones/refresh", "methods": ["POST"], "handler": "RefreshZones", "description": "Refresh all country zones"},
+        {"path": "/enrichment", "methods": ["GET"], "handler": "GetEnrichmentStatus", "description": "ASN + proxy DB status"},
+        {"path": "/enrichment/download", "methods": ["POST"], "handler": "DownloadEnrichment", "description": "Download an enrichment DB (asn|proxy)"},
+        {"path": "/enrichment", "methods": ["DELETE"], "handler": "DeleteEnrichment", "description": "Delete an enrichment DB (asn|proxy)"}
       ]
     },
     "domains": {

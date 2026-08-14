@@ -18,7 +18,12 @@ func (s *Service) LookupIP(ip string) (*GeoResult, error) {
 		return nil, fmt.Errorf("lookup provider not available")
 	}
 
-	return provider.Lookup(ip)
+	res, err := provider.Lookup(ip)
+	if err != nil || res == nil {
+		return res, err
+	}
+	s.enrich(ip, res) // add ASN + proxy fields when those DBs are loaded (no-op otherwise)
+	return res, nil
 }
 
 // LookupBulk performs bulk IP geolocation lookups
@@ -68,4 +73,3 @@ func (s *Service) IsLookupAvailable() bool {
 	defer s.mu.RUnlock()
 	return s.lookupProvider != nil && s.lookupProvider.IsAvailable()
 }
-
