@@ -109,6 +109,7 @@
         {"path": "/peers/{id}/vips", "methods": ["POST"], "handler": "AddVirtualIP", "description": "Add a virtual IP to a peer"},
         {"path": "/vips/{vipId}", "methods": ["DELETE"], "handler": "DeleteVirtualIP", "description": "Delete a virtual IP"},
         {"path": "/vips/{vipId}/acl", "methods": ["PUT"], "handler": "SetVirtualIPACL", "description": "Set a virtual IP's access allow-list"},
+        {"path": "/vips/{vipId}/commands", "methods": ["GET"], "handler": "VirtualIPCommands", "description": "NAS forwarding commands for a virtual IP"},
         {"path": "/server", "methods": ["GET"], "handler": "GetServer", "description": "Get server info"}
       ]
     },

@@ -1,6 +1,7 @@
 package wireguard
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,15 +11,74 @@ import (
 	"api/internal/router"
 )
 
-// VirtualIP is an extra VPN /32 routed to a peer and mapped to a LAN device by a
-// DNAT on that peer. When Restricted, only AllowedClientIDs may reach it (enforced
-// on the server's forward chain by vpn_acl).
+// VirtualIP is an extra VPN /32 routed to a peer and (optionally) mapped to a LAN
+// device by a DNAT on that peer. When Restricted, only AllowedClientIDs may reach it;
+// when Quarantine, it can be reached but can't initiate to other peers — both enforced
+// on the server's forward chain by vpn_acl.
 type VirtualIP struct {
 	ID               int64   `json:"id"`
 	IP               string  `json:"ip"`
 	Label            string  `json:"label"`
+	TargetIP         string  `json:"targetIp,omitempty"`
+	TargetPort       int     `json:"targetPort,omitempty"`
 	Restricted       bool    `json:"restricted"`
+	Quarantine       bool    `json:"quarantine"`
 	AllowedClientIDs []int64 `json:"allowedClientIds"`
+}
+
+// allocateVirtualIP picks a free IP from the upper half of the WireGuard range, so
+// virtual IPs stay visually distinct from peer IPs (assigned from the low end).
+// Returns "" if the range is full. Excludes peers, the server IP, and existing vips.
+func (s *Service) allocateVirtualIP() string {
+	baseIP, maskBits := parseIPRange(s.config.IPRange)
+	if baseIP == nil {
+		return ""
+	}
+	base := binary.BigEndian.Uint32(baseIP)
+	numIPs := uint32(1) << uint(32-maskBits)
+
+	used := map[string]bool{s.config.ServerIP: true}
+	for _, p := range s.peerStore.List() {
+		used[p.IPAddress] = true
+	}
+	if db, err := database.GetDB(); err == nil {
+		if rows, err := db.Query(`SELECT ip FROM vpn_virtual_ips`); err == nil {
+			for rows.Next() {
+				var ip string
+				if rows.Scan(&ip) == nil {
+					used[ip] = true
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	start := numIPs / 2
+	if numIPs < 8 {
+		start = 2 // tiny range: fall back to scanning from the start
+	}
+	for i := start; i < numIPs-1; i++ {
+		var b [4]byte
+		binary.BigEndian.PutUint32(b[:], base+i)
+		ip := fmt.Sprintf("%d.%d.%d.%d", b[0], b[1], b[2], b[3])
+		if !used[ip] {
+			return ip
+		}
+	}
+	return ""
+}
+
+// generateVIPCommands returns the NAS commands that forward all traffic for a virtual
+// IP to its target device, matching the CAMERA_DNAT/CAMERA_SNAT chain layout used by
+// cam-forward.sh (nft-safe: DNAT and MASQUERADE live in separate hooked chains).
+func generateVIPCommands(vip, target string) string {
+	return fmt.Sprintf(`# Run on the peer that hosts %s (the machine on the device's LAN).
+# Forwards ALL traffic for %s to %s. ip_forward must be on (Docker hosts already are).
+sudo iptables -t nat -N CAMERA_DNAT 2>/dev/null; sudo iptables -t nat -N CAMERA_SNAT 2>/dev/null
+sudo iptables -t nat -C PREROUTING  -j CAMERA_DNAT 2>/dev/null || sudo iptables -t nat -A PREROUTING  -j CAMERA_DNAT
+sudo iptables -t nat -C POSTROUTING -j CAMERA_SNAT 2>/dev/null || sudo iptables -t nat -A POSTROUTING -j CAMERA_SNAT
+sudo iptables -t nat -A CAMERA_DNAT -d %s -j DNAT --to-destination %s
+sudo iptables -t nat -A CAMERA_SNAT -d %s -j MASQUERADE`, vip, vip, target, vip, target, target)
 }
 
 // clientIDForPeerIP returns the vpn_clients.id for a wireguard peer's VPN IP.
@@ -32,39 +92,6 @@ func clientIDForPeerIP(ip string) (int64, error) {
 		return 0, fmt.Errorf("peer not found in client table")
 	}
 	return id, nil
-}
-
-// validateVirtualIP verifies ipStr is a usable virtual IP and returns it normalized.
-// It must be a valid IPv4 inside the WireGuard range, not the server IP, and not
-// already used by a peer or another virtual IP.
-func (s *Service) validateVirtualIP(ipStr string) (string, error) {
-	ip := net.ParseIP(strings.TrimSpace(ipStr))
-	if ip == nil || ip.To4() == nil {
-		return "", fmt.Errorf("virtual IP must be a valid IPv4 address")
-	}
-	v4 := ip.To4()
-	norm := v4.String()
-
-	_, ipNet, err := net.ParseCIDR(s.config.IPRange)
-	if err != nil || !ipNet.Contains(v4) {
-		return "", fmt.Errorf("virtual IP must be inside the WireGuard range %s", s.config.IPRange)
-	}
-	if norm == s.config.ServerIP {
-		return "", fmt.Errorf("virtual IP cannot be the server IP")
-	}
-
-	db, err := database.GetDB()
-	if err != nil {
-		return "", fmt.Errorf("database unavailable")
-	}
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM vpn_clients WHERE ip = ?`, norm).Scan(&n); err == nil && n > 0 {
-		return "", fmt.Errorf("%s is already assigned to a peer", norm)
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM vpn_virtual_ips WHERE ip = ?`, norm).Scan(&n); err == nil && n > 0 {
-		return "", fmt.Errorf("%s is already a virtual IP", norm)
-	}
-	return norm, nil
 }
 
 // loadVIPAllowed returns the source client IDs allowed to reach a virtual IP.
@@ -98,19 +125,37 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		IP         string `json:"ip"`
 		Label      string `json:"label"`
+		TargetIP   string `json:"targetIp"`
+		TargetPort int    `json:"targetPort"`
 		Restricted *bool  `json:"restricted"`
+		Quarantine *bool  `json:"quarantine"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
-	vip, err := s.validateVirtualIP(req.IP)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+	// The virtual IP is auto-assigned from the upper half of the WG range.
+	vip := s.allocateVirtualIP()
+	if vip == "" {
+		router.JSONError(w, "no free virtual IP in the WireGuard range", http.StatusConflict)
 		return
 	}
+
+	// The target device (LAN IP + port) is optional — a bare virtual IP is fine.
+	target := strings.TrimSpace(req.TargetIP)
+	port := 0
+	if target != "" {
+		if ip := net.ParseIP(target); ip == nil || ip.To4() == nil {
+			router.JSONError(w, "device IP must be a valid IPv4 address", http.StatusBadRequest)
+			return
+		}
+		port = req.TargetPort
+		if port < 1 || port > 65535 {
+			port = 554 // sensible default (RTSP) when a device is set without a valid port
+		}
+	}
+
 	label := strings.TrimSpace(req.Label)
 	if len(label) > 64 {
 		label = label[:64]
@@ -119,6 +164,10 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 	if req.Restricted != nil && !*req.Restricted {
 		restricted = 0
 	}
+	quarantine := 0
+	if req.Quarantine != nil && *req.Quarantine {
+		quarantine = 1
+	}
 
 	clientID, err := clientIDForPeerIP(peer.IPAddress)
 	if err != nil {
@@ -126,8 +175,8 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db, _ := database.GetDB()
-	res, err := db.Exec(`INSERT INTO vpn_virtual_ips (client_id, ip, label, restricted) VALUES (?, ?, ?, ?)`,
-		clientID, vip, label, restricted)
+	res, err := db.Exec(`INSERT INTO vpn_virtual_ips (client_id, ip, label, target_ip, target_port, restricted, quarantine) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		clientID, vip, label, target, port, restricted, quarantine)
 	if err != nil {
 		router.JSONError(w, "failed to add virtual IP: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -135,9 +184,43 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 	vipID, _ := res.LastInsertId()
 
 	s.syncConfig()         // write the extra AllowedIPs into wg0.conf
-	requestFirewallApply() // rebuild the vpn_acl table (drop/accept for restricted vips)
+	requestFirewallApply() // rebuild the vpn_acl table (restricted/quarantine rules)
 
-	router.JSON(w, VirtualIP{ID: vipID, IP: vip, Label: label, Restricted: restricted == 1, AllowedClientIDs: []int64{}})
+	router.JSON(w, VirtualIP{
+		ID: vipID, IP: vip, Label: label, TargetIP: target, TargetPort: port,
+		Restricted: restricted == 1, Quarantine: quarantine == 1, AllowedClientIDs: []int64{},
+	})
+}
+
+// handleVirtualIPCommands  GET /api/wg/vips/{id}/commands
+// Returns the NAS commands to forward this virtual IP to its stored target device.
+func (s *Service) handleVirtualIPCommands(w http.ResponseWriter, r *http.Request) {
+	vipID := router.ExtractPathParam(r, "/api/wg/vips/")
+	if vipID == "" {
+		router.JSONError(w, "virtual IP id required", http.StatusBadRequest)
+		return
+	}
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
+	var vip, target string
+	var port int
+	if err := db.QueryRow(`SELECT ip, target_ip, target_port FROM vpn_virtual_ips WHERE id = ?`, vipID).Scan(&vip, &target, &port); err != nil {
+		router.JSONError(w, "virtual IP not found", http.StatusNotFound)
+		return
+	}
+	if target == "" {
+		router.JSONError(w, "this virtual IP has no target device set", http.StatusBadRequest)
+		return
+	}
+	router.JSON(w, map[string]interface{}{
+		"virtualIp": vip,
+		"targetIp":  target,
+		"port":      port,
+		"commands":  generateVIPCommands(vip, target),
+	})
 }
 
 // handleListVirtualIPs  GET /api/wg/peers/{id}/vips
@@ -158,7 +241,7 @@ func (s *Service) handleListVirtualIPs(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
-	rows, err := db.Query(`SELECT id, ip, label, restricted FROM vpn_virtual_ips WHERE client_id = ? ORDER BY ip`, clientID)
+	rows, err := db.Query(`SELECT id, ip, label, target_ip, target_port, restricted, quarantine FROM vpn_virtual_ips WHERE client_id = ? ORDER BY ip`, clientID)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -167,11 +250,12 @@ func (s *Service) handleListVirtualIPs(w http.ResponseWriter, r *http.Request) {
 	list := []VirtualIP{}
 	for rows.Next() {
 		var v VirtualIP
-		var restricted int
-		if err := rows.Scan(&v.ID, &v.IP, &v.Label, &restricted); err != nil {
+		var restricted, quarantine int
+		if err := rows.Scan(&v.ID, &v.IP, &v.Label, &v.TargetIP, &v.TargetPort, &restricted, &quarantine); err != nil {
 			continue
 		}
 		v.Restricted = restricted == 1
+		v.Quarantine = quarantine == 1
 		v.AllowedClientIDs = loadVIPAllowed(v.ID)
 		list = append(list, v)
 	}
@@ -188,6 +272,7 @@ func (s *Service) handleSetVirtualIPACL(w http.ResponseWriter, r *http.Request) 
 	}
 	var req struct {
 		Restricted       *bool   `json:"restricted"`
+		Quarantine       *bool   `json:"quarantine"`
 		AllowedClientIDs []int64 `json:"allowedClientIds"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
@@ -209,6 +294,16 @@ func (s *Service) handleSetVirtualIPACL(w http.ResponseWriter, r *http.Request) 
 			restricted = 1
 		}
 		if _, err := db.Exec(`UPDATE vpn_virtual_ips SET restricted = ? WHERE id = ?`, restricted, vipID); err != nil {
+			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.Quarantine != nil {
+		q := 0
+		if *req.Quarantine {
+			q = 1
+		}
+		if _, err := db.Exec(`UPDATE vpn_virtual_ips SET quarantine = ? WHERE id = ?`, q, vipID); err != nil {
 			router.JSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

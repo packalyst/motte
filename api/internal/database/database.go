@@ -266,7 +266,10 @@ func createSchema(db *sql.DB) error {
 		client_id INTEGER NOT NULL,
 		ip TEXT NOT NULL UNIQUE,
 		label TEXT DEFAULT '',
+		target_ip TEXT DEFAULT '',
+		target_port INTEGER DEFAULT 0,
 		restricted INTEGER NOT NULL DEFAULT 1,
+		quarantine INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE
 	);

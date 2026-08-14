@@ -103,6 +103,7 @@ func (t *VPNACLTable) loadRules() ([]aclRule, error) {
 type aclVirtualIP struct {
 	IP         string
 	Restricted bool
+	Quarantine bool     // may be reached, but can't initiate to other peers
 	Allowed    []string // allowed source peer IPs (only meaningful when Restricted)
 }
 
@@ -110,7 +111,7 @@ type aclVirtualIP struct {
 // allowed to reach them. The outer result is drained before the per-vip allow-list
 // queries run, so no cursor is held open across a nested query.
 func (t *VPNACLTable) loadVirtualIPs(clients map[int64]vpnClient) ([]aclVirtualIP, error) {
-	rows, err := t.db.Query(`SELECT id, ip, restricted FROM vpn_virtual_ips`)
+	rows, err := t.db.Query(`SELECT id, ip, restricted, quarantine FROM vpn_virtual_ips`)
 	if err != nil {
 		return nil, err
 	}
@@ -118,11 +119,12 @@ func (t *VPNACLTable) loadVirtualIPs(clients map[int64]vpnClient) ([]aclVirtualI
 		id         int64
 		ip         string
 		restricted int
+		quarantine int
 	}
 	var raw []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.ip, &r.restricted); err != nil {
+		if err := rows.Scan(&r.id, &r.ip, &r.restricted, &r.quarantine); err != nil {
 			continue
 		}
 		raw = append(raw, r)
@@ -131,7 +133,7 @@ func (t *VPNACLTable) loadVirtualIPs(clients map[int64]vpnClient) ([]aclVirtualI
 
 	out := make([]aclVirtualIP, 0, len(raw))
 	for _, r := range raw {
-		v := aclVirtualIP{IP: r.ip, Restricted: r.restricted == 1}
+		v := aclVirtualIP{IP: r.ip, Restricted: r.restricted == 1, Quarantine: r.quarantine == 1}
 		if v.Restricted {
 			arows, err := t.db.Query(`SELECT source_client_id FROM vpn_virtual_ip_acl WHERE virtual_ip_id = ?`, r.id)
 			if err == nil {
@@ -272,6 +274,20 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	// them: restricted -> only the listed source peers; open -> any peer. A restricted
 	// vip with no allowed sources emits nothing and stays unreachable (secure default).
 	sb.WriteString("        # === Virtual IPs ===\n")
+	// Quarantine: the device may be reached but must not initiate to other peers.
+	// Drops come before the accepts; ct established,related (top of chain) still lets
+	// replies to an inbound connection through.
+	for _, v := range vips {
+		if !v.Quarantine || !ValidateIPOrCIDR(v.IP) {
+			continue
+		}
+		if wgIPRange != "" {
+			sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", v.IP, wgIPRange))
+		}
+		if hsIPRange != "" {
+			sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", v.IP, hsIPRange))
+		}
+	}
 	for _, v := range vips {
 		if !ValidateIPOrCIDR(v.IP) {
 			continue
