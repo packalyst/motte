@@ -11,9 +11,18 @@ import (
 	"strconv"
 	"strings"
 
+	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
 )
+
+// enabledWord renders a bool as an activity-feed verb.
+func enabledWord(b bool) string {
+	if b {
+		return "enabled"
+	}
+	return "disabled"
+}
 
 // CredentialsProvider is a callback to get AdGuard credentials without importing settings
 var CredentialsProvider func() (username, password string)
@@ -294,6 +303,8 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if proxyError(w, resp) {
 			return
 		}
+		events.Log("adguard", "config_"+req.Type, events.SeverityInfo,
+			fmt.Sprintf("%s %s", req.Type, enabledWord(*req.Enabled)))
 		router.JSON(w, map[string]interface{}{"type": req.Type, "enabled": *req.Enabled})
 
 	case "blockAAAA":
@@ -312,6 +323,8 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if proxyError(w, resp) {
 			return
 		}
+		events.Log("adguard", "config_"+req.Type, events.SeverityInfo,
+			fmt.Sprintf("%s %s", req.Type, enabledWord(*req.Enabled)))
 		router.JSON(w, map[string]interface{}{"type": req.Type, "enabled": *req.Enabled})
 
 	case "safeBrowsing":
@@ -334,6 +347,8 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if proxyError(w, resp) {
 			return
 		}
+		events.Log("adguard", "config_"+req.Type, events.SeverityInfo,
+			fmt.Sprintf("%s %s", req.Type, enabledWord(*req.Enabled)))
 		router.JSON(w, map[string]interface{}{"type": req.Type, "enabled": *req.Enabled})
 
 	case "parental":
@@ -356,6 +371,8 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if proxyError(w, resp) {
 			return
 		}
+		events.Log("adguard", "config_"+req.Type, events.SeverityInfo,
+			fmt.Sprintf("%s %s", req.Type, enabledWord(*req.Enabled)))
 		router.JSON(w, map[string]interface{}{"type": req.Type, "enabled": *req.Enabled})
 
 	case "safeSearch":
@@ -373,6 +390,8 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if proxyError(w, resp) {
 			return
 		}
+		events.Log("adguard", "config_"+req.Type, events.SeverityInfo,
+			fmt.Sprintf("%s %s", req.Type, enabledWord(*req.Enabled)))
 		router.JSON(w, map[string]interface{}{"type": req.Type, "enabled": *req.Enabled})
 
 	case "blockedServices":
@@ -763,4 +782,3 @@ func SyncDomainRewrites(domains []DomainRoute, targetIP string) []string {
 func DeleteDomainRewrite(domain, targetIP string) error {
 	return DeleteRewrite(domain, targetIP)
 }
-

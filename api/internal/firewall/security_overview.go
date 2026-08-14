@@ -64,10 +64,11 @@ func (s *Service) handleSecurityOverview(w http.ResponseWriter, r *http.Request)
 		WHERE entry_type IN ('ip','range') AND action = 'block' AND enabled = 1
 		  AND expires_at IS NOT NULL AND expires_at > datetime('now')`).Scan(&out.AutoBans)
 
-	// Worst single offender this hour.
+	// Worst single offender this hour. MAX() keeps logs_src_country a proper
+	// aggregate (a given IP maps to one country, so any row's value is correct).
 	var ip, country sql.NullString
 	var count int
-	err := s.db.QueryRow(`SELECT logs_src_ip, logs_src_country, COUNT(*) c
+	err := s.db.QueryRow(`SELECT logs_src_ip, MAX(logs_src_country), COUNT(*) c
 		FROM logs WHERE logs_type = 'fw'
 		  AND logs_timestamp > datetime('now','-1 hour')
 		GROUP BY logs_src_ip ORDER BY c DESC LIMIT 1`).Scan(&ip, &country, &count)

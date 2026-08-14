@@ -57,7 +57,10 @@ func (s *Service) enrichmentFileCode(which string) string {
 			s.mu.RLock()
 			variant := s.config.IP2ProxyVariant
 			s.mu.RUnlock()
-			if variant == "" {
+			// Whitelist the tier (PX1–PX12) before it reaches the download URL; an
+			// out-of-range value falls back to the default rather than producing a
+			// malformed file= query parameter.
+			if !validProxyVariant(variant) {
 				variant = "12"
 			}
 			return strings.ReplaceAll(cfg.ProxyFileCodeTemplate, "{variant}", variant)
@@ -68,6 +71,15 @@ func (s *Service) enrichmentFileCode(which string) string {
 		return defaultProxyFileCode
 	}
 	return ""
+}
+
+// validProxyVariant reports whether v is a supported IP2Proxy tier ("1".."12").
+func validProxyVariant(v string) bool {
+	switch v {
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12":
+		return true
+	}
+	return false
 }
 
 // proxyColumnsFromConfig reads the configurable CSV column indices for the richer

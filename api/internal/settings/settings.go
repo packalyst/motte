@@ -11,6 +11,7 @@ import (
 	"api/internal/adguard"
 	"api/internal/config"
 	"api/internal/database"
+	"api/internal/events"
 	"api/internal/headscale"
 	"api/internal/helper"
 	"api/internal/router"
@@ -326,6 +327,8 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.ScannerTimeoutMs != nil {
 		setSettingInt("scanner_timeout_ms", *req.ScannerTimeoutMs)
 	}
+
+	events.Log("settings", "settings_updated", events.SeverityInfo, "Settings updated")
 
 	router.JSON(w, map[string]interface{}{
 		"status":                   "ok",

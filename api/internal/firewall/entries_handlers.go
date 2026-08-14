@@ -237,9 +237,10 @@ func (s *Service) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if essential
+	// Check if essential (capture value/type for the activity feed)
 	var essential bool
-	err = s.db.QueryRow("SELECT essential FROM firewall_entries WHERE id = ?", id).Scan(&essential)
+	var entryValue, entryType string
+	err = s.db.QueryRow("SELECT essential, value, entry_type FROM firewall_entries WHERE id = ?", id).Scan(&essential, &entryValue, &entryType)
 	if err == sql.ErrNoRows {
 		router.JSONError(w, "entry not found", http.StatusNotFound)
 		return
@@ -254,6 +255,9 @@ func (s *Service) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	events.Log("firewall", "entry_removed", events.SeverityInfo,
+		fmt.Sprintf("removed %s %s", entryType, entryValue))
 
 	s.RequestApply()
 	w.WriteHeader(http.StatusNoContent)

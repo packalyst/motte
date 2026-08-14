@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"api/internal/events"
 	"api/internal/router"
 )
 
@@ -399,6 +400,8 @@ func (s *Service) handleRestart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Container %s restarted successfully", name)
+	events.Log("docker", "container_restarted", events.SeverityWarning,
+		fmt.Sprintf("Container %s restarted", name))
 	router.JSON(w, map[string]string{"status": "restarted", "container": name})
 }
 

@@ -35,6 +35,12 @@ func (s *Service) allocateVirtualIP() string {
 	if baseIP == nil {
 		return ""
 	}
+	// Guard the shift/loop math against a pathological mask: maskBits==0 would make
+	// 1<<32 wrap to 0 and numIPs-1 underflow to ~4 billion (a hang). Real WG ranges
+	// are /16–/30.
+	if maskBits < 8 || maskBits > 30 {
+		return ""
+	}
 	base := binary.BigEndian.Uint32(baseIP)
 	numIPs := uint32(1) << uint(32-maskBits)
 
@@ -181,7 +187,11 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	db, _ := database.GetDB()
+	db, err := database.GetDB()
+	if err != nil {
+		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
 	res, err := db.Exec(`INSERT INTO vpn_virtual_ips (client_id, ip, label, target_ip, target_port, restricted, quarantine) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		clientID, vip, label, target, port, restricted, quarantine)
 	if err != nil {
@@ -347,6 +357,9 @@ func (s *Service) handleDeleteVirtualIP(w http.ResponseWriter, r *http.Request) 
 		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
+	var vipIP string // captured for the activity feed
+	_ = db.QueryRow(`SELECT ip FROM vpn_virtual_ips WHERE id = ?`, vipID).Scan(&vipIP)
+
 	res, err := db.Exec(`DELETE FROM vpn_virtual_ips WHERE id = ?`, vipID)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
@@ -358,5 +371,9 @@ func (s *Service) handleDeleteVirtualIP(w http.ResponseWriter, r *http.Request) 
 	}
 	s.syncConfig()
 	requestFirewallApply()
+
+	events.Log("wireguard", "vip_removed", events.SeverityInfo,
+		fmt.Sprintf("Virtual IP %s removed", vipIP))
+
 	router.JSON(w, map[string]string{"status": "deleted"})
 }
