@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"api/internal/database"
+	"api/internal/events"
 	"api/internal/router"
 )
 
@@ -191,6 +192,12 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 
 	s.syncConfig()         // write the extra AllowedIPs into wg0.conf
 	requestFirewallApply() // rebuild the vpn_acl table (restricted/quarantine rules)
+
+	vipMsg := fmt.Sprintf("Virtual IP %s added to %q", vip, peer.Name)
+	if target != "" {
+		vipMsg += " → " + target
+	}
+	events.Log("wireguard", "vip_added", events.SeverityInfo, vipMsg)
 
 	router.JSON(w, VirtualIP{
 		ID: vipID, IP: vip, Label: label, TargetIP: target, TargetPort: port,

@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, untrack } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob } from '../stores/app.js'
   import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
@@ -407,7 +407,7 @@
   // --- Virtual IPs (extra VPN /32s hosted by this peer, forwarded to a LAN device) ---
   let vips = $state([])
   let vipsLoading = $state(false)
-  let vipsLoadedFor = $state(null) // peer _wgId this vips list was loaded for
+  let vipsError = $state('')
   let newVipLabel = $state('')
   let newVipTargetIp = $state('')
   let newVipTargetPort = $state('')
@@ -415,26 +415,18 @@
   let vipCmdVip = $state(null)     // the vip whose commands are shown
   let vipCmdText = $state('')      // fetched NAS commands
 
-  // Load once per peer. Without the vipsLoadedFor guard the reactive effect
-  // below re-fires on every websocket-driven re-render, which spams the request
-  // and can leave vipsLoading stuck on "Loading…". Pass force=true after a
-  // mutation to bypass the guard and refresh.
-  async function loadVips(force = false) {
-    if (selectedNode?._type !== 'wireguard' || !selectedNode?._wgId) { vips = []; return }
-    const key = selectedNode._wgId
-    if (!force && (vipsLoading || vipsLoadedFor === key)) return
+  async function loadVips() {
+    const key = selectedNode?._wgId
+    if (selectedNode?._type !== 'wireguard' || !key) { vips = []; return }
     vipsLoading = true
+    vipsError = ''
     try {
       const res = (await apiGet(`/api/wg/peers/${key}/vips`)) || []
-      if (!mounted) return
-      vips = res
-      vipsLoadedFor = key
-    } catch {
-      if (!mounted) return
-      vips = []
-      vipsLoadedFor = null // allow retry
+      if (mounted) vips = res
+    } catch (e) {
+      if (mounted) { vips = []; vipsError = e?.message || 'Failed to load virtual IPs' }
     } finally {
-      vipsLoading = false
+      if (mounted) vipsLoading = false
     }
   }
 
@@ -448,7 +440,7 @@
       await apiPost(`/api/wg/peers/${selectedNode._wgId}/vips`, body)
       newVipLabel = ''; newVipTargetIp = ''; newVipTargetPort = ''
       toast('Virtual IP added', 'success')
-      await loadVips(true)
+      await loadVips()
     } catch (e) { toast(e?.message || 'Failed to add virtual IP', 'error') }
   }
 
@@ -456,14 +448,14 @@
     try {
       await apiDelete(`/api/wg/vips/${id}`)
       toast('Virtual IP removed', 'success')
-      await loadVips(true)
+      await loadVips()
     } catch (e) { toast(e?.message || 'Failed to remove', 'error') }
   }
 
   async function saveVipAcl(vip) {
     try {
       await apiPut(`/api/wg/vips/${vip.id}/acl`, { restricted: vip.restricted, quarantine: vip.quarantine, allowedClientIds: vip.allowedClientIds || [] })
-    } catch (e) { toast(e?.message || 'Failed to update', 'error'); await loadVips(true) }
+    } catch (e) { toast(e?.message || 'Failed to update', 'error'); await loadVips() }
   }
 
   function toggleVipRestrict(vip) { vip.restricted = !vip.restricted; saveVipAcl(vip) }
@@ -489,11 +481,17 @@
     (clients || []).filter(c => c.ip !== selectedNode?._ip).map(c => ({ id: c.id, name: c.name || c.ip, ip: c.ip }))
   )
 
-  // Load virtual IPs when the peer detail opens on the QR & Config tab.
+  // Key that identifies which peer's vips to show — a plain string, so it stays
+  // stable across the frequent websocket-driven re-renders of selectedNode.
+  const vipsKey = $derived(
+    activeTab === 'qr' && selectedNode?._type === 'wireguard' ? (selectedNode?._wgId || '') : ''
+  )
+
+  // Fetch only when the key actually changes (untrack keeps loadVips's internal
+  // state reads from feeding back into this effect and re-triggering it).
   $effect(() => {
-    if (activeTab === 'qr' && selectedNode?._type === 'wireguard') {
-      loadVips()
-    }
+    vipsKey // sole dependency
+    untrack(() => { if (vipsKey) loadVips() })
   })
 
   function closeModal() {
@@ -1096,6 +1094,10 @@
 
             {#if vipsLoading}
               <div class="text-center text-muted-foreground py-4 text-sm">Loading…</div>
+            {:else if vipsError}
+              <div class="text-center text-destructive py-4 text-sm">{vipsError}</div>
+            {:else if vips.length === 0}
+              <div class="text-center text-muted-foreground py-4 text-sm">No virtual IPs yet.</div>
             {:else if vips.length > 0}
               <div class="space-y-3 mt-3">
                 {#each vips as vip (vip.id)}
