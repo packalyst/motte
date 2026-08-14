@@ -82,8 +82,16 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 		geoSvc.SetNftService(nftSvc)
 	}
 
-	// Register firewall table with nftables service
-	firewallTable := nftables.NewFirewallTable(db, geoSvc)
+	// Register firewall table with nftables service (geo service provides both
+	// country and ASN range expansion). Guard against a nil *Service becoming a
+	// non-nil interface wrapping a nil pointer, which would panic when called.
+	var countryProv nftables.CountryZonesProvider
+	var asnProv nftables.ASNZonesProvider
+	if geoSvc != nil {
+		countryProv = geoSvc
+		asnProv = geoSvc
+	}
+	firewallTable := nftables.NewFirewallTable(db, countryProv, asnProv)
 	nftSvc.RegisterTable(firewallTable)
 
 	// Ensure default jails exist
@@ -220,9 +228,9 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"GetStatus":        s.handleStatus,
 		"SecurityOverview": s.handleSecurityOverview,
 		"GetConfig":        s.handleGetConfig,
-		"UpdateConfig": s.handleUpdateConfig,
-		"ApplyRules":   s.handleApplyRules,
-		"SyncStatus":   s.handleSyncStatus,
+		"UpdateConfig":     s.handleUpdateConfig,
+		"ApplyRules":       s.handleApplyRules,
+		"SyncStatus":       s.handleSyncStatus,
 
 		// Unified entries API
 		"GetEntries":     s.handleGetEntries,

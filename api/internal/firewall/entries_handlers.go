@@ -3,6 +3,7 @@ package firewall
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -123,6 +124,15 @@ func validateAndNormalizeEntry(entryType, value string) (string, string, error) 
 			return "", "", fmt.Errorf("country code must be 2 letters (ISO 3166-1 alpha-2)")
 		}
 		return nftables.EntryTypeCountry, code, nil
+	case nftables.EntryTypeASN:
+		// Accept "14061" or "AS14061"; store the bare decimal. 32-bit AS numbers.
+		v := strings.TrimSpace(value)
+		v = strings.TrimPrefix(strings.ToUpper(v), "AS")
+		n, err := strconv.ParseUint(v, 10, 32)
+		if err != nil || n == 0 {
+			return "", "", fmt.Errorf("invalid ASN (a number like 14061 or AS14061)")
+		}
+		return nftables.EntryTypeASN, strconv.FormatUint(n, 10), nil
 	case nftables.EntryTypePort:
 		port, err := strconv.Atoi(strings.TrimSpace(value))
 		if err != nil || port < 1 || port > 65535 {
@@ -130,7 +140,7 @@ func validateAndNormalizeEntry(entryType, value string) (string, string, error) 
 		}
 		return nftables.EntryTypePort, strconv.Itoa(port), nil
 	default:
-		return "", "", fmt.Errorf("invalid type: must be ip, range, country, or port")
+		return "", "", fmt.Errorf("invalid type: must be ip, range, country, asn, or port")
 	}
 }
 
@@ -204,6 +214,30 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	// Activity feed: record the manual firewall change.
 	events.Log("firewall", "entry_"+req.Action, events.SeverityInfo,
 		fmt.Sprintf("%s %s %s (manual)", req.Action, req.Type, normalizedValue))
+
+	// For ASN entries, expand + cache the provider's ranges, then apply. Done
+	// async because a large provider (AWS…) can be thousands of ranges; the set
+	// stays empty (harmless) until caching finishes.
+	if req.Type == nftables.EntryTypeASN {
+		router.JSON(w, map[string]interface{}{
+			"status": "queued", "id": id, "type": req.Type, "value": normalizedValue, "action": req.Action,
+		})
+		asnNum, _ := strconv.ParseUint(normalizedValue, 10, 32)
+		go func() {
+			if s.geo == nil {
+				return
+			}
+			n, err := s.geo.CacheASNZones(uint32(asnNum))
+			if err != nil {
+				log.Printf("firewall: failed to cache ASN %d ranges: %v", asnNum, err)
+			} else {
+				// Store the range count as hit_count for display (mirrors country).
+				s.db.Exec("UPDATE firewall_entries SET hit_count = ? WHERE entry_type = 'asn' AND value = ?", n, normalizedValue)
+			}
+			s.RequestApply()
+		}()
+		return
+	}
 
 	// For country entries, fetch zones async
 	if req.Type == nftables.EntryTypeCountry {

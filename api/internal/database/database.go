@@ -127,6 +127,14 @@ func createSchema(db *sql.DB) error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	-- Cached IPv4 CIDRs for blocked/allowed ASNs (expanded from the ASN DB once,
+	-- then joined at firewall-build time — mirrors country_zones_cache).
+	CREATE TABLE IF NOT EXISTS asn_zones_cache (
+		asn INTEGER PRIMARY KEY,
+		cidrs TEXT,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	-- Unified firewall entries table (IPs, ranges, countries, ports)
 	CREATE TABLE IF NOT EXISTS firewall_entries (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,

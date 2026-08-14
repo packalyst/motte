@@ -39,6 +39,12 @@ type CountryZonesProvider interface {
 	GetAllBlockedCIDRs(outboundOnly bool) ([]string, error)
 }
 
+// ASNZonesProvider provides the IPv4 CIDRs of blocked ASNs (implemented by
+// geolocation.Service). Mirrors CountryZonesProvider.
+type ASNZonesProvider interface {
+	GetBlockedASNCIDRs(outboundOnly bool) ([]string, error)
+}
+
 // SyncStatus represents sync state between DB and nftables
 type SyncStatus struct {
 	InSync         bool          `json:"inSync"`
@@ -61,6 +67,7 @@ const (
 	EntryTypeIP      = "ip"
 	EntryTypeRange   = "range"
 	EntryTypeCountry = "country"
+	EntryTypeASN     = "asn"
 	EntryTypePort    = "port"
 )
 

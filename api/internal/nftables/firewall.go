@@ -50,11 +50,12 @@ func loadNoInternetPeerIPs(db *database.DB) []string {
 type FirewallTable struct {
 	db              *database.DB
 	countryProvider CountryZonesProvider
+	asnProvider     ASNZonesProvider
 }
 
 // NewFirewallTable creates a new firewall table builder
-func NewFirewallTable(db *database.DB, countryProvider CountryZonesProvider) *FirewallTable {
-	return &FirewallTable{db: db, countryProvider: countryProvider}
+func NewFirewallTable(db *database.DB, countryProvider CountryZonesProvider, asnProvider ASNZonesProvider) *FirewallTable {
+	return &FirewallTable{db: db, countryProvider: countryProvider, asnProvider: asnProvider}
 }
 
 func (t *FirewallTable) Name() string   { return "wgadmin_firewall" }
@@ -131,6 +132,17 @@ func (t *FirewallTable) Build() (string, error) {
 		}
 	}
 
+	// Get blocked-ASN ranges from geolocation provider (same shape as countries)
+	var asnRangesIn, asnRangesOut []string
+	if t.asnProvider != nil {
+		if cidrs, err := t.asnProvider.GetBlockedASNCIDRs(false); err == nil {
+			asnRangesIn = cidrs
+		}
+		if cidrs, err := t.asnProvider.GetBlockedASNCIDRs(true); err == nil {
+			asnRangesOut = cidrs
+		}
+	}
+
 	// Per-peer WAN block: list of VPN peer IPs whose internet egress should be dropped.
 	// WAN interface (default-route NIC) is detected dynamically and reused for both the
 	// external-IPv6 drop and the per-peer WAN egress block. "" if detection fails.
@@ -145,6 +157,7 @@ func (t *FirewallTable) Build() (string, error) {
 		blockedRangesIn, blockedRangesOut,
 		allowedTCPPorts, allowedUDPPorts,
 		countryRangesIn, countryRangesOut,
+		asnRangesIn, asnRangesOut,
 		noInternetPeers, wanIface,
 	), nil
 }
@@ -269,7 +282,7 @@ func (t *FirewallTable) cleanOverlappingRanges() int {
 	return int(deleted)
 }
 
-func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn, blockedRangesOut, tcpPorts, udpPorts, countryIn, countryOut, noInternetPeers []string, wanIface string) string {
+func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn, blockedRangesOut, tcpPorts, udpPorts, countryIn, countryOut, asnIn, asnOut, noInternetPeers []string, wanIface string) string {
 	var sb strings.Builder
 
 	sb.WriteString(TableHeader("inet", "wgadmin_firewall"))
@@ -281,12 +294,16 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("blocked_countries", "ipv4_addr", []string{"interval"}, countryIn))
 	sb.WriteString("\n")
+	sb.WriteString(BuildSet("blocked_asn", "ipv4_addr", []string{"interval"}, asnIn))
+	sb.WriteString("\n")
 	// Sets - outbound
 	sb.WriteString(BuildSet("blocked_ips_out", "ipv4_addr", nil, blockedIPsOut))
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("blocked_ranges_out", "ipv4_addr", []string{"interval"}, blockedRangesOut))
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("blocked_countries_out", "ipv4_addr", []string{"interval"}, countryOut))
+	sb.WriteString("\n")
+	sb.WriteString(BuildSet("blocked_asn_out", "ipv4_addr", []string{"interval"}, asnOut))
 	sb.WriteString("\n")
 	// Sets - ports
 	sb.WriteString(BuildSet("allowed_tcp_ports", "inet_service", nil, tcpPorts))
@@ -331,6 +348,7 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 		"ip saddr @blocked_ips drop",
 		"ip saddr @blocked_ranges drop",
 		"ip saddr @blocked_countries drop",
+		"ip saddr @blocked_asn drop",
 		"",
 		"# Allow specific ports",
 		"tcp dport @allowed_tcp_ports accept",
@@ -357,11 +375,13 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 		"ip saddr @blocked_ips drop",
 		"ip saddr @blocked_ranges drop",
 		"ip saddr @blocked_countries drop",
+		"ip saddr @blocked_asn drop",
 		"",
 		"# Drop traffic TO blocked destinations (daddr)",
 		"ip daddr @blocked_ips_out drop",
 		"ip daddr @blocked_ranges_out drop",
 		"ip daddr @blocked_countries_out drop",
+		"ip daddr @blocked_asn_out drop",
 	}
 	// Per-peer WAN egress block. Skip silently if WAN couldn't be detected — emitting
 	// the rule without oifname would block *all* peer traffic, including peer↔peer.
@@ -392,6 +412,7 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 		"ip daddr @blocked_ips_out drop",
 		"ip daddr @blocked_ranges_out drop",
 		"ip daddr @blocked_countries_out drop",
+		"ip daddr @blocked_asn_out drop",
 	}))
 
 	sb.WriteString(TableFooter())
