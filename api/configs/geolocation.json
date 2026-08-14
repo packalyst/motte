@@ -25,7 +25,7 @@
       "requires_key": true,
       "file_code_template": "{variant}LITEBINIPV6",
       "file_name_template": "IP2LOCATION-LITE-{variant}.IPV6.BIN",
-      "asn_file_code": "DBASNLITECSVIPV6",
+      "asn_file_code": "DBASNLITECSV",
       "proxy_file_code": "PX1LITECSVIPV6",
       "proxy_file_code_template": "PX{variant}LITECSVIPV6",
       "proxy_columns": { "usage_type": 9, "threat": 13, "fraud_score": 14 },

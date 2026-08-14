@@ -478,9 +478,12 @@ func (s *Service) DisableBlocking() {
 }
 
 // Enrichment DB filenames (extracted from the downloaded IP2Location LITE zips). The
-// IPV6 CSV variants are used so one table covers both IPv4 and IPv6.
+// The ASN LITE IPv6 CSV lumps the whole IPv4 space into one unassigned ::/3 row,
+// so it carries no usable IPv4 ASN data — the IPv4 CSV (plain-integer numbering,
+// handled by v4From16/lookup) is what an IPv4-only firewall needs. Proxy stays on
+// the IPv6 CSV, which does include IPv4 (as ::ffff:).
 const (
-	asnDBFileName   = "IP2LOCATION-LITE-ASN.IPV6.CSV"
+	asnDBFileName   = "IP2LOCATION-LITE-ASN.CSV"
 	proxyDBFileName = "IP2PROXY-LITE-PX1.IPV6.CSV"
 )
 
