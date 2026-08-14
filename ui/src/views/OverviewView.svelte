@@ -6,6 +6,7 @@
   import AreaChart from '../components/AreaChart.svelte'
   import SecurityHero from '../components/SecurityHero.svelte'
   import ActivityFeed from '../components/ActivityFeed.svelte'
+  import LiveSessions from '../components/LiveSessions.svelte'
   import { currentView } from '../stores/app.js'
 
   let { loading = $bindable(true) } = $props()
@@ -95,6 +96,9 @@
       {/each}
     </div>
   {/if}
+
+  <!-- Live VPN sessions: who's connected right now -->
+  <LiveSessions />
 
   <!-- Live Traffic -->
   <div class="kt-panel">

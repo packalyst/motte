@@ -184,6 +184,7 @@ func New(dataDir string) (*Service, error) {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		"GetPeers":          s.handleGetPeers,
+		"GetSessions":       s.handleGetSessions,
 		"CreatePeer":        s.handleCreatePeer,
 		"GetPeer":           s.handleGetPeer,
 		"UpdatePeer":        s.handleUpdatePeer,

@@ -96,6 +96,7 @@
       "enabled": true,
       "endpoints": [
         {"path": "/peers", "methods": ["GET"], "handler": "GetPeers", "description": "List all peers"},
+        {"path": "/sessions", "methods": ["GET"], "handler": "GetSessions", "description": "Currently-connected peers (live sessions)"},
         {"path": "/peers", "methods": ["POST"], "handler": "CreatePeer", "description": "Create new peer"},
         {"path": "/peers/{id}", "methods": ["GET"], "handler": "GetPeer", "description": "Get peer details"},
         {"path": "/peers/{id}", "methods": ["PUT"], "handler": "UpdatePeer", "description": "Update peer"},

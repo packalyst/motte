@@ -222,6 +222,10 @@ func (s *Service) handleDisablePeer(w http.ResponseWriter, r *http.Request) {
 	peer.Enabled = false
 	s.peerStore.Add(peer)
 	s.syncConfig()
+
+	events.Log("wireguard", "peer_isolated", events.SeverityWarning,
+		fmt.Sprintf("Peer %q isolated (disabled)", peer.Name))
+
 	// Return peer without sensitive keys
 	stripSensitiveKeys(peer)
 	router.JSON(w, peer)
