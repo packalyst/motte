@@ -61,9 +61,15 @@ func TestRangeToCIDRsV4Covers(t *testing.T) {
 }
 
 func TestV4From16(t *testing.T) {
-	// IPv4 → mapped form must round-trip.
+	// IPv4-mapped form (::ffff:8.8.8.8) must round-trip.
 	if v, ok := v4From16(netip.MustParseAddr("8.8.8.8").As16()); !ok || v != ipv4(8, 8, 8, 8) {
-		t.Fatalf("v4From16(8.8.8.8) = %d,%v", v, ok)
+		t.Fatalf("v4From16(::ffff:8.8.8.8) = %d,%v", v, ok)
+	}
+	// Plain low-32 form (::8.8.8.8) — the other IP2Location IPv6 numbering — too.
+	var plain [16]byte
+	plain[12], plain[13], plain[14], plain[15] = 8, 8, 8, 8
+	if v, ok := v4From16(plain); !ok || v != ipv4(8, 8, 8, 8) {
+		t.Fatalf("v4From16(::8.8.8.8) = %d,%v", v, ok)
 	}
 	// Genuine IPv6 must be rejected (IPv4-only firewall).
 	if _, ok := v4From16(netip.MustParseAddr("2001:db8::1").As16()); ok {

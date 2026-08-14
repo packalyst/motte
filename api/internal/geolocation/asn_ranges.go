@@ -6,18 +6,23 @@ import (
 	"net/netip"
 )
 
-// v4From16 extracts the IPv4 address from a 16-byte range key when it is the
-// IPv4-mapped IPv6 form (::ffff:a.b.c.d) that rangeTable stores for IPv4 rows.
-// Returns (0,false) for genuine IPv6 keys — the firewall is IPv4-only, so those
-// are skipped. This is the same mapping netip.Addr.As16() produces, which is why
-// IPv4 lookups already match these rows.
+// v4From16 extracts the IPv4 address from a 16-byte range key. IP2Location's
+// IPv6 CSVs number the IPv4 space in one of two ways depending on the file:
+//   - IPv4-mapped ::ffff:a.b.c.d  (bytes 10-11 = 0xff), and
+//   - plain low 32 bits ::a.b.c.d (bytes 10-11 = 0).
+// Both keep bytes 0-9 zero, so we accept either and read the address from the
+// low four bytes. Returns (0,false) for genuine IPv6 keys (any non-zero byte in
+// 0-9, or a non-{0x0000,0xffff} pair at 10-11) — the firewall is IPv4-only.
+// The ::/96 block that the plain form overlaps holds no real ASN allocations.
 func v4From16(b [16]byte) (uint32, bool) {
 	for i := 0; i < 10; i++ {
 		if b[i] != 0 {
 			return 0, false
 		}
 	}
-	if b[10] != 0xff || b[11] != 0xff {
+	mapped := b[10] == 0xff && b[11] == 0xff
+	plain := b[10] == 0 && b[11] == 0
+	if !mapped && !plain {
 		return 0, false
 	}
 	return uint32(b[12])<<24 | uint32(b[13])<<16 | uint32(b[14])<<8 | uint32(b[15]), true

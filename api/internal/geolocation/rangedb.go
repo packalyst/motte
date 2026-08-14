@@ -65,7 +65,6 @@ func (t *rangeTable[T]) lookup(ip string) (T, bool) {
 	if err != nil {
 		return zero, false
 	}
-	key := addr.As16()
 
 	t.mu.RLock()
 	rows := t.rows
@@ -74,6 +73,27 @@ func (t *rangeTable[T]) lookup(ip string) (T, bool) {
 		return zero, false
 	}
 
+	// Try the IPv4-mapped key (::ffff:a.b.c.d) first.
+	if v, ok := searchRanges(rows, addr.As16()); ok {
+		return v, true
+	}
+	// Some IP2Location IPv6 CSVs number IPv4 as the plain low 32 bits
+	// (::a.b.c.d) rather than ::ffff:. For an IPv4 query, also try that form so
+	// enrichment works regardless of the file's numbering.
+	if addr.Is4() || addr.Is4In6() {
+		v4 := addr.As4()
+		var plain [16]byte
+		copy(plain[12:], v4[:])
+		if v, ok := searchRanges(rows, plain); ok {
+			return v, true
+		}
+	}
+	return zero, false
+}
+
+// searchRanges binary-searches sorted rows for the range containing key.
+func searchRanges[T any](rows []rangeRow[T], key [16]byte) (T, bool) {
+	var zero T
 	// Index of the last range whose lo <= key.
 	i := sort.Search(len(rows), func(i int) bool {
 		return compare16(rows[i].lo, key) > 0
