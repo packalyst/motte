@@ -1,5 +1,5 @@
 <script>
-  import Icon from '../components/Icon.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import ActivityFeed from '../components/ActivityFeed.svelte'
 
@@ -16,18 +16,17 @@
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between gap-3">
-    <div class="flex items-center gap-2">
-      <Icon name="activity" size={20} class="text-primary" />
-      <div>
-        <h1 class="text-lg font-semibold">Activity</h1>
-        <p class="text-xs text-muted-foreground">One feed across the firewall, peers, and settings — newest first.</p>
-      </div>
-    </div>
+  <InfoCard
+    icon="activity"
+    title="Activity"
+    description="One chronological feed across the firewall, peers, AdGuard and settings — newest first."
+  >
     <Button onclick={refresh} variant="secondary" size="sm" icon="refresh">Refresh</Button>
-  </div>
+  </InfoCard>
 
-  <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-    <ActivityFeed bind:this={feed} limit={200} />
+  <div class="kt-panel">
+    <div class="kt-panel-body">
+      <ActivityFeed bind:this={feed} limit={200} />
+    </div>
   </div>
 </div>
