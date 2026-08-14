@@ -6,7 +6,7 @@
   import AreaChart from '../components/AreaChart.svelte'
   import SecurityHero from '../components/SecurityHero.svelte'
   import ActivityFeed from '../components/ActivityFeed.svelte'
-  import LiveSessions from '../components/LiveSessions.svelte'
+  import PeersCard from '../components/PeersCard.svelte'
   import { currentView } from '../stores/app.js'
 
   let { loading = $bindable(true) } = $props()
@@ -97,8 +97,10 @@
     </div>
   {/if}
 
+  <!-- Traffic: live chart + cumulative totals -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
   <!-- Live Traffic -->
-  <div class="kt-panel">
+  <div class="kt-panel lg:col-span-2">
     <div class="kt-panel-header flex items-center justify-between">
       <h3 class="kt-panel-title">Live Traffic</h3>
       <div class="flex items-center gap-4 text-sm">
@@ -132,6 +134,30 @@
           <p class="text-sm">Collecting live traffic…</p>
         </div>
       {/if}
+    </div>
+  </div>
+
+    <!-- Total Transfer -->
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">Total Transfer</h3>
+      </div>
+      <div class="kt-panel-body space-y-3">
+        <div class="p-4 rounded-lg bg-success/10 border border-success/20">
+          <div class="flex items-center gap-2 mb-1">
+            <Icon name="arrow-up" size={16} class="text-success" />
+            <span class="text-xs text-muted-foreground">Uploaded</span>
+          </div>
+          <div class="text-2xl font-bold text-success">{formatBytes($statsStore?.traffic?.total_tx)}</div>
+        </div>
+        <div class="p-4 rounded-lg bg-info/10 border border-info/20">
+          <div class="flex items-center gap-2 mb-1">
+            <Icon name="arrow-down" size={16} class="text-info" />
+            <span class="text-xs text-muted-foreground">Downloaded</span>
+          </div>
+          <div class="text-2xl font-bold text-info">{formatBytes($statsStore?.traffic?.total_rx)}</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -194,74 +220,9 @@
     </div>
   </div>
 
-  <!-- Peers: who's connected now + who's used the most traffic -->
+  <!-- Peers (online + top traffic) alongside recent activity -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    <!-- Live VPN sessions -->
-    <LiveSessions />
-
-    <!-- Top Peers by Traffic -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">Top Peers by Traffic</h3>
-      </div>
-      <div class="kt-panel-body">
-        {#if $statsStore?.traffic?.by_peer?.length > 0}
-          <div class="space-y-2">
-            {#each $statsStore.traffic.by_peer.slice(0, 5) as peer}
-              <div class="flex items-center justify-between p-2 rounded-lg bg-muted/50">
-                <div class="flex items-center gap-3">
-                  <Icon name="device-laptop" size={18} class="text-primary" />
-                  <div>
-                    <div class="font-medium text-sm">{peer.name}</div>
-                    <div class="text-xs text-muted-foreground">{peer.ip}</div>
-                  </div>
-                </div>
-                <div class="text-right">
-                  <div class="text-xs">
-                    <span class="text-success">{formatBytes(peer.tx)}</span>
-                    <span class="text-muted-foreground"> / </span>
-                    <span class="text-info">{formatBytes(peer.rx)}</span>
-                  </div>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <div class="text-center text-muted-foreground py-8">
-            <Icon name="chart-bar" size={32} class="mx-auto mb-2 opacity-50" />
-            <p class="text-sm">No traffic data yet</p>
-          </div>
-        {/if}
-      </div>
-    </div>
-  </div>
-
-  <!-- Total transfer + recent activity -->
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    <!-- Traffic Totals -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">Total Transfer</h3>
-      </div>
-      <div class="kt-panel-body">
-        <div class="grid grid-cols-2 gap-4">
-          <div class="p-4 rounded-lg bg-success/10 border border-success/20">
-            <div class="flex items-center gap-2 mb-2">
-              <Icon name="arrow-up" size={18} class="text-success" />
-              <span class="text-sm text-muted-foreground">Uploaded</span>
-            </div>
-            <div class="text-2xl font-bold text-success">{formatBytes($statsStore?.traffic?.total_tx)}</div>
-          </div>
-          <div class="p-4 rounded-lg bg-info/10 border border-info/20">
-            <div class="flex items-center gap-2 mb-2">
-              <Icon name="arrow-down" size={18} class="text-info" />
-              <span class="text-sm text-muted-foreground">Downloaded</span>
-            </div>
-            <div class="text-2xl font-bold text-info">{formatBytes($statsStore?.traffic?.total_rx)}</div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <PeersCard />
 
     <!-- Recent activity (compact feed; full history on the Activity page) -->
     <div class="kt-panel">

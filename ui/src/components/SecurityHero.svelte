@@ -1,8 +1,8 @@
 <script>
   /**
    * SecurityHero - one-glance "am I under attack?" banner for the Overview.
-   * Reads /api/fw/overview (last hour) and renders a status light + plain-language
-   * counts + the worst offender with owner/reputation.
+   * Reads /api/fw/overview (last hour): a status strip, four stat tiles, and the
+   * worst offender. Designed to read cleanly on both desktop and mobile.
    */
   import { onMount, onDestroy } from 'svelte'
   import { apiGet } from '../stores/app.js'
@@ -15,12 +15,20 @@
   let timer
 
   const STATUS = {
-    calm:         { label: 'Calm',         icon: 'shield-check',   text: 'text-success',     ring: 'border-success/30 bg-success/5',         dot: 'bg-success' },
-    elevated:     { label: 'Elevated',     icon: 'alert-triangle', text: 'text-warning',     ring: 'border-warning/40 bg-warning/5',         dot: 'bg-warning' },
-    under_attack: { label: 'Under attack', icon: 'alert-triangle', text: 'text-destructive', ring: 'border-destructive/50 bg-destructive/5',  dot: 'bg-destructive animate-pulse' },
+    calm:         { label: 'Calm',         icon: 'shield-check',   text: 'text-success',     iconBg: 'bg-success/10',     strip: 'bg-success/5',     dot: 'bg-success' },
+    elevated:     { label: 'Elevated',     icon: 'alert-triangle', text: 'text-warning',     iconBg: 'bg-warning/10',     strip: 'bg-warning/5',     dot: 'bg-warning' },
+    under_attack: { label: 'Under attack', icon: 'alert-triangle', text: 'text-destructive', iconBg: 'bg-destructive/10', strip: 'bg-destructive/5', dot: 'bg-destructive animate-pulse' },
   }
   const meta = $derived(STATUS[data?.status] || STATUS.calm)
-  // Adapt the endpoint's top_attacker (owner + reputation) to the IpBadge shape.
+
+  // Stat tiles. "blocked" carries the status color; the rest stay neutral.
+  const tiles = $derived(data ? [
+    { value: data.blocked,   label: 'blocked',   color: meta.text },
+    { value: data.attackers, label: 'attackers', color: 'text-foreground' },
+    { value: data.countries, label: 'countries', color: 'text-foreground' },
+    { value: data.auto_bans, label: 'auto-bans', color: 'text-foreground' },
+  ] : [])
+
   const attackerGeo = $derived(data?.top_attacker
     ? { as_name: data.top_attacker.owner, reputation: data.top_attacker.reputation }
     : null)
@@ -36,46 +44,46 @@
 
   onMount(() => {
     load()
-    timer = setInterval(load, 60000) // refresh hourly-window stats each minute
+    timer = setInterval(load, 60000) // refresh the hourly window each minute
   })
   onDestroy(() => clearInterval(timer))
 </script>
 
 {#if data && !error}
-  <div class="rounded-lg border {meta.ring} p-4 shadow-sm">
-    <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
-      <!-- Status light -->
-      <div class="flex items-center gap-2.5">
-        <span class="flex h-9 w-9 items-center justify-center rounded-lg {meta.text} shrink-0">
-          <Icon name={meta.icon} size={22} />
-        </span>
-        <div>
-          <div class="flex items-center gap-1.5">
-            <span class="h-2 w-2 rounded-full {meta.dot}"></span>
-            <span class="text-sm font-semibold {meta.text}">{meta.label}</span>
-          </div>
-          <div class="text-[11px] text-muted-foreground">last hour</div>
-        </div>
+  <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+    <!-- Status strip -->
+    <div class="flex items-center gap-3 px-4 py-3 {meta.strip} border-b border-border">
+      <div class="flex h-11 w-11 items-center justify-center rounded-xl shrink-0 {meta.iconBg} {meta.text}">
+        <Icon name={meta.icon} size={24} />
       </div>
-
-      <!-- Counts -->
-      <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-        <span><span class="font-semibold tabular-nums">{data.blocked}</span> <span class="text-muted-foreground">blocked</span></span>
-        <span><span class="font-semibold tabular-nums">{data.attackers}</span> <span class="text-muted-foreground">attackers</span></span>
-        <span><span class="font-semibold tabular-nums">{data.countries}</span> <span class="text-muted-foreground">countries</span></span>
-        <span><span class="font-semibold tabular-nums">{data.auto_bans}</span> <span class="text-muted-foreground">auto-bans</span></span>
-      </div>
-
-      <!-- Top offender -->
-      {#if data.top_attacker}
-        <div class="flex items-center gap-2 text-xs min-w-0 sm:ml-auto pt-2 border-t border-border/40 sm:pt-0 sm:border-0">
-          <span class="text-muted-foreground shrink-0">Top:</span>
-          {#if data.top_attacker.country}<CountryFlag code={data.top_attacker.country} size="sm" />{/if}
-          <span class="font-mono truncate">{data.top_attacker.ip}</span>
-          <IpBadge geo={attackerGeo} />
-          <span class="text-muted-foreground tabular-nums shrink-0">×{data.top_attacker.count}</span>
+      <div class="min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="text-base font-semibold {meta.text}">{meta.label}</span>
+          <span class="h-2 w-2 rounded-full {meta.dot}"></span>
         </div>
-      {/if}
+        <div class="text-xs text-muted-foreground">Security · last hour</div>
+      </div>
     </div>
+
+    <!-- Stat tiles -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4">
+      {#each tiles as t}
+        <div class="rounded-lg bg-muted/40 px-3 py-2.5">
+          <div class="text-2xl font-bold tabular-nums {t.color}">{t.value}</div>
+          <div class="text-[11px] text-muted-foreground">{t.label}</div>
+        </div>
+      {/each}
+    </div>
+
+    <!-- Top offender -->
+    {#if data.top_attacker}
+      <div class="flex items-center gap-2 border-t border-border px-4 py-2.5 text-xs">
+        <span class="text-muted-foreground shrink-0">Top offender</span>
+        {#if data.top_attacker.country}<CountryFlag code={data.top_attacker.country} size="sm" />{/if}
+        <span class="font-mono truncate">{data.top_attacker.ip}</span>
+        <IpBadge geo={attackerGeo} />
+        <span class="ml-auto text-muted-foreground tabular-nums shrink-0">×{data.top_attacker.count} hits</span>
+      </div>
+    {/if}
   </div>
 {/if}

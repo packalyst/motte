@@ -1,27 +1,38 @@
 <script>
   /**
-   * LiveSessions - "who's on my VPN right now": peers that handshaked recently,
-   * where they dial in from (geo), transfer, and one-click isolate.
+   * PeersCard - one panel for peers, two views:
+   *  • Online now — live WireGuard sessions (where-from, transfer, isolate)
+   *  • Top traffic — cumulative transfer ranking from the stats stream
+   * Replaces the two separate peer cards that used to stack on the Overview.
    */
   import { onMount, onDestroy } from 'svelte'
   import { apiGet, apiPost } from '../stores/app.js'
+  import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
+  import Tabs from './Tabs.svelte'
   import CountryFlag from './CountryFlag.svelte'
   import IpBadge from './IpBadge.svelte'
+  import EmptyState from './EmptyState.svelte'
   import { lookupIPs, getGeoData } from '../stores/geo.js'
   import { formatBytes, timeAgo } from '$lib/utils/format.js'
 
   let sessions = $state([])
   let geoData = $state({})
-  let loaded = $state(false)
   let isolating = $state('')
   let timer
+
+  let activeTab = $state('online')
+  const tabs = $derived([
+    { id: 'online', label: 'Online now', badge: sessions.length },
+    { id: 'traffic', label: 'Top traffic' },
+  ])
+
+  const byPeer = $derived($statsStore?.traffic?.by_peer?.slice(0, 6) || [])
 
   async function load() {
     try {
       const res = await apiGet('/api/wg/sessions')
       sessions = res.sessions || []
-      // Enrich the public endpoints with geo (where-from + reputation).
       const ips = sessions.map(s => s.endpointIp).filter(Boolean)
       if (ips.length) {
         await lookupIPs(ips)
@@ -31,8 +42,6 @@
       }
     } catch {
       sessions = []
-    } finally {
-      loaded = true
     }
   }
 
@@ -54,20 +63,22 @@
   onDestroy(() => clearInterval(timer))
 </script>
 
-{#if loaded}
-  <div class="kt-panel">
-    <div class="kt-panel-header flex items-center justify-between">
-      <h3 class="kt-panel-title">On your VPN now</h3>
-      <span class="text-xs text-muted-foreground">{sessions.length} online</span>
-    </div>
-    <div class="kt-panel-body">
+<div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+  <div class="flex items-center gap-2 px-4 pt-3">
+    <Icon name="users" size={16} class="text-muted-foreground" />
+    <h3 class="text-sm font-semibold">Peers</h3>
+  </div>
+  <Tabs {tabs} bind:activeTab size="sm" class="px-4 mt-2" />
+
+  <div class="p-2 sm:p-3">
+    {#if activeTab === 'online'}
       {#if sessions.length === 0}
-        <div class="text-sm text-muted-foreground py-2">No peers connected right now.</div>
+        <EmptyState icon="plug-connected" title="No peers connected" description="Peers with a recent handshake appear here." compact />
       {:else}
         <ul class="divide-y divide-border">
           {#each sessions as s (s.id)}
             {@const geo = geoData[s.endpointIp]}
-            <li class="flex items-center gap-3 py-2.5">
+            <li class="flex items-center gap-3 px-2 py-2.5">
               <span class="shrink-0">
                 {#if geo?.country_code}<CountryFlag code={geo.country_code} size="sm" />{:else}<Icon name="world" size={16} class="text-muted-foreground" />{/if}
               </span>
@@ -85,7 +96,7 @@
                 <div>↑ {formatBytes(s.tx)}</div>
               </div>
               <button
-                class="shrink-0 text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition disabled:opacity-50 cursor-pointer disabled:cursor-default"
+                class="shrink-0 text-xs px-2 py-1 rounded-lg border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition disabled:opacity-50 cursor-pointer disabled:cursor-default"
                 onclick={() => isolate(s)}
                 disabled={isolating === s.id}
                 title="Disable this peer and disconnect it"
@@ -96,6 +107,26 @@
           {/each}
         </ul>
       {/if}
-    </div>
+    {:else if byPeer.length === 0}
+      <EmptyState icon="chart-bar" title="No traffic yet" description="Per-peer transfer totals appear here." compact />
+    {:else}
+      <ul class="divide-y divide-border">
+        {#each byPeer as peer}
+          <li class="flex items-center gap-3 px-2 py-2.5">
+            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Icon name="device-laptop" size={16} />
+            </span>
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium truncate">{peer.name}</div>
+              <div class="text-[11px] text-muted-foreground truncate font-mono">{peer.ip}</div>
+            </div>
+            <div class="text-right text-[11px] tabular-nums shrink-0">
+              <div class="text-success">↑ {formatBytes(peer.tx)}</div>
+              <div class="text-info">↓ {formatBytes(peer.rx)}</div>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
-{/if}
+</div>
