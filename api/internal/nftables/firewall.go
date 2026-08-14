@@ -78,6 +78,7 @@ func (t *FirewallTable) Build() (string, error) {
 	// Categorize entries by direction
 	var blockedIPsIn, blockedIPsOut []string
 	var blockedRangesIn, blockedRangesOut []string
+	var allowedIPs, allowedRanges []string // source allow-list (saddr accept)
 	var allowedTCPPorts, allowedUDPPorts []string
 
 	for _, e := range entries {
@@ -94,6 +95,8 @@ func (t *FirewallTable) Build() (string, error) {
 				if e.Direction == DirectionOutbound || e.Direction == DirectionBoth {
 					blockedIPsOut = append(blockedIPsOut, e.Value)
 				}
+			} else if e.Action == ActionAllow {
+				allowedIPs = append(allowedIPs, e.Value)
 			}
 		case EntryTypeRange:
 			if e.Action == ActionBlock {
@@ -103,6 +106,8 @@ func (t *FirewallTable) Build() (string, error) {
 				if e.Direction == DirectionOutbound || e.Direction == DirectionBoth {
 					blockedRangesOut = append(blockedRangesOut, e.Value)
 				}
+			} else if e.Action == ActionAllow {
+				allowedRanges = append(allowedRanges, e.Value)
 			}
 		case EntryTypePort:
 			if e.Action == ActionAllow {
@@ -121,8 +126,8 @@ func (t *FirewallTable) Build() (string, error) {
 		}
 	}
 
-	// Get country ranges from geolocation provider
-	var countryRangesIn, countryRangesOut []string
+	// Get country ranges from geolocation provider (blocked + allowed)
+	var countryRangesIn, countryRangesOut, allowedCountries []string
 	if t.countryProvider != nil {
 		if cidrs, err := t.countryProvider.GetAllBlockedCIDRs(false); err == nil {
 			countryRangesIn = cidrs
@@ -130,16 +135,22 @@ func (t *FirewallTable) Build() (string, error) {
 		if cidrs, err := t.countryProvider.GetAllBlockedCIDRs(true); err == nil {
 			countryRangesOut = cidrs
 		}
+		if cidrs, err := t.countryProvider.GetAllowedCountryCIDRs(); err == nil {
+			allowedCountries = cidrs
+		}
 	}
 
-	// Get blocked-ASN ranges from geolocation provider (same shape as countries)
-	var asnRangesIn, asnRangesOut []string
+	// Get ASN ranges from geolocation provider (blocked + allowed)
+	var asnRangesIn, asnRangesOut, allowedASN []string
 	if t.asnProvider != nil {
 		if cidrs, err := t.asnProvider.GetBlockedASNCIDRs(false); err == nil {
 			asnRangesIn = cidrs
 		}
 		if cidrs, err := t.asnProvider.GetBlockedASNCIDRs(true); err == nil {
 			asnRangesOut = cidrs
+		}
+		if cidrs, err := t.asnProvider.GetAllowedASNCIDRs(); err == nil {
+			allowedASN = cidrs
 		}
 	}
 
@@ -152,14 +163,16 @@ func (t *FirewallTable) Build() (string, error) {
 		log.Printf("nftables/firewall: %d peers flagged block_internet but WAN interface could not be detected; rule skipped", len(noInternetPeers))
 	}
 
-	return t.buildScript(
-		blockedIPsIn, blockedIPsOut,
-		blockedRangesIn, blockedRangesOut,
-		allowedTCPPorts, allowedUDPPorts,
-		countryRangesIn, countryRangesOut,
-		asnRangesIn, asnRangesOut,
-		noInternetPeers, wanIface,
-	), nil
+	return t.buildScript(scriptParams{
+		blockedIPsIn: blockedIPsIn, blockedIPsOut: blockedIPsOut,
+		blockedRangesIn: blockedRangesIn, blockedRangesOut: blockedRangesOut,
+		tcpPorts: allowedTCPPorts, udpPorts: allowedUDPPorts,
+		countryIn: countryRangesIn, countryOut: countryRangesOut,
+		asnIn: asnRangesIn, asnOut: asnRangesOut,
+		allowedIPs: allowedIPs, allowedRanges: allowedRanges,
+		allowedCountries: allowedCountries, allowedASN: allowedASN,
+		noInternetPeers: noInternetPeers, wanIface: wanIface,
+	}), nil
 }
 
 func (t *FirewallTable) loadEntries() ([]FirewallEntry, error) {
@@ -282,7 +295,29 @@ func (t *FirewallTable) cleanOverlappingRanges() int {
 	return int(deleted)
 }
 
-func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn, blockedRangesOut, tcpPorts, udpPorts, countryIn, countryOut, asnIn, asnOut, noInternetPeers []string, wanIface string) string {
+// scriptParams groups the many element slices for buildScript. Named fields
+// (rather than a long positional list) make argument-order mistakes impossible
+// in this security-critical builder.
+type scriptParams struct {
+	blockedIPsIn, blockedIPsOut       []string
+	blockedRangesIn, blockedRangesOut []string
+	tcpPorts, udpPorts                []string
+	countryIn, countryOut             []string
+	asnIn, asnOut                     []string
+	allowedIPs, allowedRanges         []string // source allow-list (saddr accept)
+	allowedCountries, allowedASN      []string
+	noInternetPeers                   []string
+	wanIface                          string
+}
+
+func (t *FirewallTable) buildScript(p scriptParams) string {
+	blockedIPsIn, blockedIPsOut := p.blockedIPsIn, p.blockedIPsOut
+	blockedRangesIn, blockedRangesOut := p.blockedRangesIn, p.blockedRangesOut
+	tcpPorts, udpPorts := p.tcpPorts, p.udpPorts
+	countryIn, countryOut := p.countryIn, p.countryOut
+	asnIn, asnOut := p.asnIn, p.asnOut
+	noInternetPeers, wanIface := p.noInternetPeers, p.wanIface
+
 	var sb strings.Builder
 
 	sb.WriteString(TableHeader("inet", "wgadmin_firewall"))
@@ -304,6 +339,15 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 	sb.WriteString(BuildSet("blocked_countries_out", "ipv4_addr", []string{"interval"}, countryOut))
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("blocked_asn_out", "ipv4_addr", []string{"interval"}, asnOut))
+	sb.WriteString("\n")
+	// Sets - source allow-list (the "VIP list": accepted before any drop)
+	sb.WriteString(BuildSet("allowed_ips", "ipv4_addr", nil, p.allowedIPs))
+	sb.WriteString("\n")
+	sb.WriteString(BuildSet("allowed_ranges", "ipv4_addr", []string{"interval"}, p.allowedRanges))
+	sb.WriteString("\n")
+	sb.WriteString(BuildSet("allowed_countries", "ipv4_addr", []string{"interval"}, p.allowedCountries))
+	sb.WriteString("\n")
+	sb.WriteString(BuildSet("allowed_asn", "ipv4_addr", []string{"interval"}, p.allowedASN))
 	sb.WriteString("\n")
 	// Sets - ports
 	sb.WriteString(BuildSet("allowed_tcp_ports", "inet_service", nil, tcpPorts))
@@ -344,6 +388,13 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 		)
 	}
 	inputRules = append(inputRules,
+		"# Always-allow trusted sources (VIP list) — evaluated BEFORE the drops so",
+		"# an allow-listed IP/range/country/ASN overrides a block.",
+		"ip saddr @allowed_ips accept",
+		"ip saddr @allowed_ranges accept",
+		"ip saddr @allowed_countries accept",
+		"ip saddr @allowed_asn accept",
+		"",
 		"# Drop traffic FROM blocked sources (saddr)",
 		"ip saddr @blocked_ips drop",
 		"ip saddr @blocked_ranges drop",
@@ -370,6 +421,12 @@ func (t *FirewallTable) buildScript(blockedIPsIn, blockedIPsOut, blockedRangesIn
 		"",
 		"# Allow established connections",
 		"ct state established,related accept",
+		"",
+		"# Always-allow trusted sources (VIP list) — before the drops so allow wins",
+		"ip saddr @allowed_ips accept",
+		"ip saddr @allowed_ranges accept",
+		"ip saddr @allowed_countries accept",
+		"ip saddr @allowed_asn accept",
 		"",
 		"# Drop traffic FROM blocked sources (saddr)",
 		"ip saddr @blocked_ips drop",

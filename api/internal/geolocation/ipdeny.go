@@ -219,15 +219,16 @@ func (p *IPDenyProvider) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error)
 	}
 
 	// Query firewall_entries for blocked countries and join with country_zones_cache
+	// action = 'block' so an allow-listed country never lands in the drop set.
 	var query string
 	if outboundOnly {
 		query = `SELECT c.zones FROM country_zones_cache c
 			INNER JOIN firewall_entries f ON c.country_code = f.value
-			WHERE f.entry_type = 'country' AND f.enabled = 1 AND f.direction = 'both'`
+			WHERE f.entry_type = 'country' AND f.action = 'block' AND f.enabled = 1 AND f.direction = 'both'`
 	} else {
 		query = `SELECT c.zones FROM country_zones_cache c
 			INNER JOIN firewall_entries f ON c.country_code = f.value
-			WHERE f.entry_type = 'country' AND f.enabled = 1`
+			WHERE f.entry_type = 'country' AND f.action = 'block' AND f.enabled = 1`
 	}
 
 	rows, err := p.db.Query(query)

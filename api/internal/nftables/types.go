@@ -37,12 +37,14 @@ type Service struct {
 // CountryZonesProvider provides country IP ranges (implemented by geolocation.Service)
 type CountryZonesProvider interface {
 	GetAllBlockedCIDRs(outboundOnly bool) ([]string, error)
+	GetAllowedCountryCIDRs() ([]string, error)
 }
 
-// ASNZonesProvider provides the IPv4 CIDRs of blocked ASNs (implemented by
+// ASNZonesProvider provides the IPv4 CIDRs of blocked/allowed ASNs (implemented by
 // geolocation.Service). Mirrors CountryZonesProvider.
 type ASNZonesProvider interface {
 	GetBlockedASNCIDRs(outboundOnly bool) ([]string, error)
+	GetAllowedASNCIDRs() ([]string, error)
 }
 
 // SyncStatus represents sync state between DB and nftables

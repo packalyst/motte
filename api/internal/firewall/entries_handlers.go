@@ -184,8 +184,9 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		req.Protocol = nftables.ProtocolBoth
 	}
 
-	// Self-protection: never let an admin block their own single IP.
-	if req.Type == nftables.EntryTypeIP {
+	// Self-protection: never let an admin block their own single IP. Only applies
+	// to block — allowing your own IP is harmless.
+	if req.Type == nftables.EntryTypeIP && req.Action == nftables.ActionBlock {
 		if err := s.validateIPNotProtected(normalizedValue, r); err != nil {
 			router.JSONError(w, err.Error(), http.StatusForbidden)
 			return

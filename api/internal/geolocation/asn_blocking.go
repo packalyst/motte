@@ -28,20 +28,33 @@ func (s *Service) CacheASNZones(asn uint32) (int, error) {
 // GetBlockedASNCIDRs returns the IPv4 CIDRs of every enabled, blocking ASN entry,
 // joined with its cached ranges. outboundOnly restricts to direction='both'
 // entries (the ones that also block outbound). Mirrors GetAllBlockedCIDRs for
-// countries. Only action='block' rows are returned — allow entries feed the
-// separate allow sets (Phase 2), never the drop sets.
+// countries.
 func (s *Service) GetBlockedASNCIDRs(outboundOnly bool) ([]string, error) {
+	return s.asnCIDRsByAction("block", outboundOnly)
+}
+
+// GetAllowedASNCIDRs returns the IPv4 CIDRs of every enabled, allowing ASN entry.
+// Allow is source-only (no outbound direction), so there is no outbound variant.
+func (s *Service) GetAllowedASNCIDRs() ([]string, error) {
+	return s.asnCIDRsByAction("allow", false)
+}
+
+// asnCIDRsByAction joins ASN entries of the given action with their cached ranges.
+// Keeping block and allow on one query (parameterized action) guarantees an entry
+// can only ever feed the matching set — a block never leaks into the allow set or
+// vice-versa.
+func (s *Service) asnCIDRsByAction(action string, outboundOnly bool) ([]string, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
 	query := `SELECT c.cidrs FROM asn_zones_cache c
 		INNER JOIN firewall_entries f ON c.asn = CAST(f.value AS INTEGER)
-		WHERE f.entry_type = 'asn' AND f.action = 'block' AND f.enabled = 1`
+		WHERE f.entry_type = 'asn' AND f.action = ? AND f.enabled = 1`
 	if outboundOnly {
 		query += ` AND f.direction = 'both'`
 	}
 
-	rows, err := s.db.Query(query)
+	rows, err := s.db.Query(query, action)
 	if err != nil {
 		return nil, err
 	}

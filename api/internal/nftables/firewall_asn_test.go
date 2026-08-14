@@ -12,20 +12,16 @@ import (
 // the ASN sets, so it's checked explicitly.
 func TestBuildScriptSetsAreDefined(t *testing.T) {
 	ft := &FirewallTable{} // buildScript uses only its arguments, not t
-	script := ft.buildScript(
-		[]string{"1.1.1.1"},    // blockedIPsIn
-		[]string{"2.2.2.2"},    // blockedIPsOut
-		[]string{"3.3.3.0/24"}, // blockedRangesIn
-		[]string{"4.4.4.0/24"}, // blockedRangesOut
-		[]string{"22"},         // tcpPorts
-		[]string{"51820"},      // udpPorts
-		[]string{"5.5.0.0/16"}, // countryIn
-		[]string{"6.6.0.0/16"}, // countryOut
-		[]string{"7.7.7.0/24"}, // asnIn
-		[]string{"8.8.8.0/24"}, // asnOut
-		[]string{"10.8.0.9"},   // noInternetPeers
-		"eth0",                 // wanIface
-	)
+	script := ft.buildScript(scriptParams{
+		blockedIPsIn: []string{"1.1.1.1"}, blockedIPsOut: []string{"2.2.2.2"},
+		blockedRangesIn: []string{"3.3.3.0/24"}, blockedRangesOut: []string{"4.4.4.0/24"},
+		tcpPorts: []string{"22"}, udpPorts: []string{"51820"},
+		countryIn: []string{"5.5.0.0/16"}, countryOut: []string{"6.6.0.0/16"},
+		asnIn: []string{"7.7.7.0/24"}, asnOut: []string{"8.8.8.0/24"},
+		allowedIPs: []string{"9.9.9.9"}, allowedRanges: []string{"11.11.0.0/16"},
+		allowedCountries: []string{"12.12.0.0/16"}, allowedASN: []string{"13.13.13.0/24"},
+		noInternetPeers: []string{"10.8.0.9"}, wanIface: "eth0",
+	})
 
 	defined := map[string]bool{}
 	for _, m := range regexp.MustCompile(`set (\w+) \{`).FindAllStringSubmatch(script, -1) {
@@ -37,15 +33,52 @@ func TestBuildScriptSetsAreDefined(t *testing.T) {
 		}
 	}
 
-	// The ASN sets and their drop rules must be present.
+	// The ASN + allow sets and their rules must be present.
 	for _, want := range []string{
 		"set blocked_asn {",
 		"set blocked_asn_out {",
 		"ip saddr @blocked_asn drop",
 		"ip daddr @blocked_asn_out drop",
+		"set allowed_ips {",
+		"set allowed_ranges {",
+		"set allowed_countries {",
+		"set allowed_asn {",
+		"ip saddr @allowed_asn accept",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("generated script missing %q", want)
+		}
+	}
+}
+
+// TestBuildScriptAllowBeforeDeny guards the security-critical ordering: in each
+// chain the source allow-list (accept) must appear BEFORE the block-list (drop),
+// otherwise a block would win over an intended allow-exception.
+func TestBuildScriptAllowBeforeDeny(t *testing.T) {
+	ft := &FirewallTable{}
+	script := ft.buildScript(scriptParams{
+		allowedIPs:   []string{"9.9.9.9"},
+		blockedIPsIn: []string{"1.1.1.1"},
+		wanIface:     "eth0",
+	})
+
+	// Split into the input and forward chains and check ordering within each.
+	for _, chain := range []string{"chain input", "chain forward"} {
+		start := strings.Index(script, chain)
+		if start < 0 {
+			t.Fatalf("missing %q", chain)
+		}
+		seg := script[start:]
+		if end := strings.Index(seg[len(chain):], "chain "); end >= 0 {
+			seg = seg[:len(chain)+end]
+		}
+		allow := strings.Index(seg, "ip saddr @allowed_ips accept")
+		deny := strings.Index(seg, "ip saddr @blocked_ips drop")
+		if allow < 0 || deny < 0 {
+			t.Fatalf("%s: missing allow/deny rule (allow=%d deny=%d)", chain, allow, deny)
+		}
+		if allow > deny {
+			t.Errorf("%s: allow rule (%d) must come BEFORE deny rule (%d)", chain, allow, deny)
 		}
 	}
 }
