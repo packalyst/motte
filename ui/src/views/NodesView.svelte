@@ -14,6 +14,8 @@
   import InfoCard from '../components/InfoCard.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
+  import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import Tabs from '../components/Tabs.svelte'
   import OptionCard from '../components/OptionCard.svelte'
   import BarList from '../components/BarList.svelte'
@@ -1093,46 +1095,49 @@
             <div class="text-xs text-muted-foreground mt-1">The VPN IP is auto-assigned. Leave Device IP blank for a bare routed IP.</div>
 
             {#if vipsLoading}
-              <div class="text-center text-muted-foreground py-4 text-sm">Loading…</div>
+              <div class="flex justify-center py-6"><LoadingSpinner /></div>
             {:else if vipsError}
-              <div class="text-center text-destructive py-4 text-sm">{vipsError}</div>
+              <div class="flex items-center justify-center gap-1.5 text-destructive py-4 text-sm">
+                <Icon name="alert-triangle" size={14} />{vipsError}
+              </div>
             {:else if vips.length === 0}
-              <div class="text-center text-muted-foreground py-4 text-sm">No virtual IPs yet.</div>
-            {:else if vips.length > 0}
-              <div class="space-y-3 mt-3">
+              <div class="mt-3">
+                <EmptyState icon="network" title="No virtual IPs yet" description="Expose a LAN device (camera, NAS…) to the VPN through this peer — add one above." compact />
+              </div>
+            {:else}
+              <div class="space-y-2.5 mt-3">
                 {#each vips as vip (vip.id)}
-                  <div class="kt-panel">
-                    <div class="kt-panel-body p-3 space-y-3">
-                      <div class="flex items-center justify-between gap-2">
-                        <div class="min-w-0">
-                          <div class="font-mono text-sm font-medium">
-                            {vip.ip}{#if vip.targetIp}<span class="text-muted-foreground"> → {vip.targetIp}{#if vip.targetPort}:{vip.targetPort}{/if}</span>{/if}
-                          </div>
-                          {#if vip.label}<div class="text-xs text-muted-foreground truncate">{vip.label}</div>{/if}
+                  <div class="rounded-lg border border-border bg-card overflow-hidden">
+                    <!-- Header: address + status + actions -->
+                    <div class="flex items-center gap-3 p-3">
+                      <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <Icon name="network" size={18} />
+                      </span>
+                      <div class="min-w-0 flex-1">
+                        <div class="font-mono text-sm font-medium truncate">
+                          {vip.ip}{#if vip.targetIp}<span class="text-muted-foreground"> → {vip.targetIp}{#if vip.targetPort}:{vip.targetPort}{/if}</span>{/if}
                         </div>
-                        <div class="flex items-center gap-1.5">
-                          {#if vip.quarantine}<Badge variant="destructive">Quarantined</Badge>{/if}
-                          <Badge variant={vip.restricted ? 'warning' : 'success'}>{vip.restricted ? 'Restricted' : 'Open'}</Badge>
-                          {#if vip.targetIp}
-                            <Button size="xs" variant="ghost" icon="code" title="Setup commands" onclick={() => openVipCommands(vip)} />
-                          {/if}
-                          <Button size="xs" variant="ghost" icon="trash" title="Remove" onclick={() => removeVip(vip.id)} />
-                        </div>
+                        {#if vip.label}<div class="text-xs text-muted-foreground truncate">{vip.label}</div>{/if}
                       </div>
+                      <div class="flex items-center gap-1.5 shrink-0">
+                        {#if vip.quarantine}<Badge variant="destructive">Quarantined</Badge>{/if}
+                        <Badge variant={vip.restricted ? 'warning' : 'success'}>{vip.restricted ? 'Restricted' : 'Open'}</Badge>
+                        {#if vip.targetIp}
+                          <Button size="xs" variant="ghost" icon="code" title="Setup commands" onclick={() => openVipCommands(vip)} />
+                        {/if}
+                        <Button size="xs" variant="ghost" icon="trash" title="Remove" onclick={() => removeVip(vip.id)} />
+                      </div>
+                    </div>
 
-                      <div class="flex flex-wrap gap-x-5 gap-y-1">
-                        <label class="flex items-center gap-2 text-sm cursor-pointer">
-                          <input type="checkbox" checked={vip.restricted} onchange={() => toggleVipRestrict(vip)} />
-                          <span>Restrict to selected peers</span>
-                        </label>
-                        <label class="flex items-center gap-2 text-sm cursor-pointer" title="Can be reached, but can't initiate to other peers">
-                          <input type="checkbox" checked={vip.quarantine} onchange={() => toggleVipQuarantine(vip)} />
-                          <span>Quarantine</span>
-                        </label>
+                    <!-- Controls -->
+                    <div class="border-t border-border bg-muted/20 px-3 py-2.5 space-y-2.5">
+                      <div class="flex flex-wrap gap-x-6 gap-y-2">
+                        <Checkbox variant="switch" label="Restrict to selected peers" checked={vip.restricted} onchange={() => toggleVipRestrict(vip)} />
+                        <Checkbox variant="switch" label="Quarantine" checked={vip.quarantine} onchange={() => toggleVipQuarantine(vip)} />
                       </div>
 
                       {#if vip.restricted}
-                        <div class="border-t border-border/50 pt-2">
+                        <div class="border-t border-border/50 pt-2.5">
                           <div class="text-xs text-muted-foreground mb-2">
                             Allowed peers{#if !(vip.allowedClientIds?.length)}<span class="text-destructive"> — none yet (unreachable)</span>{/if}
                           </div>
@@ -1141,11 +1146,11 @@
                           {:else}
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                               {#each vipPeerChoices as peer (peer.id)}
-                                <label class="flex items-center gap-2 text-sm p-1.5 rounded hover:bg-muted/50 cursor-pointer">
-                                  <input type="checkbox" checked={(vip.allowedClientIds || []).includes(peer.id)} onchange={() => toggleVipPeer(vip, peer.id)} />
+                                <div class="flex items-center gap-2 text-sm p-1.5 rounded-lg border border-transparent hover:border-border hover:bg-muted/50 transition">
+                                  <Checkbox checked={(vip.allowedClientIds || []).includes(peer.id)} onchange={() => toggleVipPeer(vip, peer.id)} />
                                   <span class="truncate">{peer.name}</span>
                                   <span class="text-xs text-muted-foreground font-mono ml-auto">{peer.ip}</span>
-                                </label>
+                                </div>
                               {/each}
                             </div>
                           {/if}
