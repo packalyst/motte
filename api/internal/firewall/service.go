@@ -217,8 +217,9 @@ func (s *Service) Stop() {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		// Status and config
-		"GetStatus":    s.handleStatus,
-		"GetConfig":    s.handleGetConfig,
+		"GetStatus":        s.handleStatus,
+		"SecurityOverview": s.handleSecurityOverview,
+		"GetConfig":        s.handleGetConfig,
 		"UpdateConfig": s.handleUpdateConfig,
 		"ApplyRules":   s.handleApplyRules,
 		"SyncStatus":   s.handleSyncStatus,

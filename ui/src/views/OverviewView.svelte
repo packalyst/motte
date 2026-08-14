@@ -4,6 +4,9 @@
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import AreaChart from '../components/AreaChart.svelte'
+  import SecurityHero from '../components/SecurityHero.svelte'
+  import ActivityFeed from '../components/ActivityFeed.svelte'
+  import { currentView } from '../stores/app.js'
 
   let { loading = $bindable(true) } = $props()
 
@@ -74,6 +77,9 @@
     title="Overview"
     description="System status, VPN traffic, and resource usage at a glance."
   />
+
+  <!-- Security status: am I under attack right now? -->
+  <SecurityHero />
 
   <!-- Service Health Row -->
   {#if $statsStore?.services?.length}
@@ -248,6 +254,17 @@
           </div>
         {/if}
       </div>
+    </div>
+  </div>
+
+  <!-- Recent activity (compact feed; full history on the Activity page) -->
+  <div class="kt-panel">
+    <div class="kt-panel-header flex items-center justify-between">
+      <h3 class="kt-panel-title">Recent activity</h3>
+      <button class="text-xs text-muted-foreground hover:text-foreground transition" onclick={() => currentView.set('activity')}>View all →</button>
+    </div>
+    <div class="kt-panel-body">
+      <ActivityFeed limit={8} compact />
     </div>
   </div>
 
