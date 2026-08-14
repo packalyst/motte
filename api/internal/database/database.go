@@ -139,7 +139,7 @@ func createSchema(db *sql.DB) error {
 	-- Unified firewall entries table (IPs, ranges, countries, ports)
 	CREATE TABLE IF NOT EXISTS firewall_entries (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		entry_type TEXT NOT NULL CHECK(entry_type IN ('ip', 'range', 'country', 'port')),
+		entry_type TEXT NOT NULL CHECK(entry_type IN ('ip', 'range', 'country', 'asn', 'port')),
 		value TEXT NOT NULL,
 		action TEXT DEFAULT 'block' CHECK(action IN ('block', 'allow')),
 		direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound', 'both')),
@@ -532,6 +532,60 @@ func runMigrations(db *sql.DB) {
 	if err == nil && count == 0 {
 		if _, err := db.Exec(`ALTER TABLE jails ADD COLUMN escalate_asn BOOLEAN DEFAULT 0`); err == nil {
 			log.Printf("Migration: added escalate_asn column to jails")
+		}
+	}
+
+	// Allow the 'asn' firewall entry type (provider blocking). SQLite can't ALTER a
+	// CHECK constraint, so rebuild firewall_entries if it doesn't permit 'asn' yet.
+	// Done in a transaction so the security-critical table is never left partial.
+	var fwSQL string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='firewall_entries'`).Scan(&fwSQL); err == nil {
+		if strings.Contains(fwSQL, "CHECK(entry_type IN") && !strings.Contains(fwSQL, "'asn'") {
+			stmts := []string{
+				`ALTER TABLE firewall_entries RENAME TO firewall_entries_old`,
+				`CREATE TABLE firewall_entries (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					entry_type TEXT NOT NULL CHECK(entry_type IN ('ip', 'range', 'country', 'asn', 'port')),
+					value TEXT NOT NULL,
+					action TEXT DEFAULT 'block' CHECK(action IN ('block', 'allow')),
+					direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound', 'both')),
+					protocol TEXT DEFAULT 'both' CHECK(protocol IN ('tcp', 'udp', 'both')),
+					source TEXT DEFAULT 'manual',
+					reason TEXT,
+					name TEXT,
+					essential BOOLEAN DEFAULT 0,
+					expires_at DATETIME,
+					enabled BOOLEAN DEFAULT 1,
+					hit_count INTEGER DEFAULT 0,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+				)`,
+				`INSERT INTO firewall_entries SELECT * FROM firewall_entries_old`,
+				`DROP TABLE firewall_entries_old`,
+				`CREATE UNIQUE INDEX IF NOT EXISTS idx_firewall_entries_unique ON firewall_entries(entry_type, value, protocol)`,
+				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_type ON firewall_entries(entry_type)`,
+				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_enabled ON firewall_entries(enabled)`,
+				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_expires ON firewall_entries(expires_at)`,
+				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_source ON firewall_entries(source)`,
+				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_type_enabled_direction ON firewall_entries(entry_type, enabled, direction)`,
+				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_type_action_enabled ON firewall_entries(entry_type, action, enabled)`,
+			}
+			if tx, err := db.Begin(); err == nil {
+				ok := true
+				for _, stmt := range stmts {
+					if _, err := tx.Exec(stmt); err != nil {
+						log.Printf("Migration: firewall_entries 'asn' type rebuild failed: %v", err)
+						ok = false
+						break
+					}
+				}
+				if ok {
+					if err := tx.Commit(); err == nil {
+						log.Printf("Migration: rebuilt firewall_entries to allow 'asn' type")
+					}
+				} else {
+					tx.Rollback()
+				}
+			}
 		}
 	}
 
