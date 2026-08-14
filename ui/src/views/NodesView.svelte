@@ -407,6 +407,7 @@
   // --- Virtual IPs (extra VPN /32s hosted by this peer, forwarded to a LAN device) ---
   let vips = $state([])
   let vipsLoading = $state(false)
+  let vipsLoadedFor = $state(null) // peer _wgId this vips list was loaded for
   let newVipLabel = $state('')
   let newVipTargetIp = $state('')
   let newVipTargetPort = $state('')
@@ -414,13 +415,27 @@
   let vipCmdVip = $state(null)     // the vip whose commands are shown
   let vipCmdText = $state('')      // fetched NAS commands
 
-  async function loadVips() {
+  // Load once per peer. Without the vipsLoadedFor guard the reactive effect
+  // below re-fires on every websocket-driven re-render, which spams the request
+  // and can leave vipsLoading stuck on "Loading…". Pass force=true after a
+  // mutation to bypass the guard and refresh.
+  async function loadVips(force = false) {
     if (selectedNode?._type !== 'wireguard' || !selectedNode?._wgId) { vips = []; return }
+    const key = selectedNode._wgId
+    if (!force && (vipsLoading || vipsLoadedFor === key)) return
     vipsLoading = true
     try {
-      vips = (await apiGet(`/api/wg/peers/${selectedNode._wgId}/vips`)) || []
-    } catch { vips = [] }
-    vipsLoading = false
+      const res = (await apiGet(`/api/wg/peers/${key}/vips`)) || []
+      if (!mounted) return
+      vips = res
+      vipsLoadedFor = key
+    } catch {
+      if (!mounted) return
+      vips = []
+      vipsLoadedFor = null // allow retry
+    } finally {
+      vipsLoading = false
+    }
   }
 
   async function addVip() {
@@ -433,7 +448,7 @@
       await apiPost(`/api/wg/peers/${selectedNode._wgId}/vips`, body)
       newVipLabel = ''; newVipTargetIp = ''; newVipTargetPort = ''
       toast('Virtual IP added', 'success')
-      await loadVips()
+      await loadVips(true)
     } catch (e) { toast(e?.message || 'Failed to add virtual IP', 'error') }
   }
 
@@ -441,14 +456,14 @@
     try {
       await apiDelete(`/api/wg/vips/${id}`)
       toast('Virtual IP removed', 'success')
-      await loadVips()
+      await loadVips(true)
     } catch (e) { toast(e?.message || 'Failed to remove', 'error') }
   }
 
   async function saveVipAcl(vip) {
     try {
       await apiPut(`/api/wg/vips/${vip.id}/acl`, { restricted: vip.restricted, quarantine: vip.quarantine, allowedClientIds: vip.allowedClientIds || [] })
-    } catch (e) { toast(e?.message || 'Failed to update', 'error'); await loadVips() }
+    } catch (e) { toast(e?.message || 'Failed to update', 'error'); await loadVips(true) }
   }
 
   function toggleVipRestrict(vip) { vip.restricted = !vip.restricted; saveVipAcl(vip) }

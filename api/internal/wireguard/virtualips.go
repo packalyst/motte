@@ -60,6 +60,12 @@ func (s *Service) allocateVirtualIP() string {
 	for i := start; i < numIPs-1; i++ {
 		var b [4]byte
 		binary.BigEndian.PutUint32(b[:], base+i)
+		// Skip addresses whose last octet is 0 or 255: even inside a larger
+		// prefix they look like network/broadcast addresses and some devices
+		// and tools refuse them, so keep vips to unambiguous host addresses.
+		if b[3] == 0 || b[3] == 255 {
+			continue
+		}
 		ip := fmt.Sprintf("%d.%d.%d.%d", b[0], b[1], b[2], b[3])
 		if !used[ip] {
 			return ip
