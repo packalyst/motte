@@ -101,7 +101,8 @@
       style="top: {height - padBottom + 4}px;"
     >
       <span class="truncate">{data[0]?.[labelKey] || ''}</span>
-      <span class="truncate">{data[Math.floor(data.length / 2)]?.[labelKey] || ''}</span>
+      <!-- Drop the middle label on narrow charts so the timestamps don't collide -->
+      <span class="truncate {containerWidth < 260 ? 'invisible' : ''}">{data[Math.floor(data.length / 2)]?.[labelKey] || ''}</span>
       <span class="truncate">{data[data.length - 1]?.[labelKey] || ''}</span>
     </div>
   {:else}

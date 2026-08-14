@@ -79,49 +79,32 @@
     description="System status, VPN traffic, and resource usage at a glance."
   />
 
-  <!-- Security status: am I under attack right now? -->
-  <SecurityHero />
-
-  <!-- Service Health Row -->
-  {#if $statsStore?.services?.length}
-    <div class="flex flex-wrap items-center gap-2">
-      {#each $statsStore.services as svc (svc.key)}
-        <div
-          class="flex items-center gap-2 px-3 py-1.5 rounded-lg border {svc.status === 'up' ? 'border-border bg-card' : 'border-destructive/40 bg-destructive/5'}"
-          title="{svc.name}: {svc.status === 'up' ? 'running' : 'not running'}"
-        >
-          <span class="inline-flex h-2 w-2 rounded-full {svc.status === 'up' ? 'bg-success' : 'bg-destructive animate-pulse'}"></span>
-          <span class="text-sm font-medium">{svc.name}</span>
-        </div>
-      {/each}
-    </div>
-  {/if}
+  <!-- Security status + service health: am I under attack, is everything up? -->
+  <SecurityHero services={$statsStore?.services || []} />
 
   <!-- Traffic: live chart + cumulative totals -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
   <!-- Live Traffic -->
   <div class="kt-panel lg:col-span-2">
-    <div class="kt-panel-header flex items-center justify-between">
+    <div class="kt-panel-header">
       <h3 class="kt-panel-title">Live Traffic</h3>
-      <div class="flex items-center gap-4 text-sm">
-        <span class="flex items-center gap-1.5 text-success"><Icon name="arrow-up" size={16} />{formatRate($statsStore?.traffic?.rate_tx)}</span>
-        <span class="flex items-center gap-1.5 text-info"><Icon name="arrow-down" size={16} />{formatRate($statsStore?.traffic?.rate_rx)}</span>
-      </div>
     </div>
     <div class="kt-panel-body">
       {#if samples.length > 1}
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          <div>
-            <div class="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
-              <Icon name="arrow-up" size={14} class="text-success" />Upload
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="rounded-lg border border-border bg-muted/20 p-3 overflow-hidden">
+            <div class="text-xs text-muted-foreground mb-2 flex items-center justify-between">
+              <span class="flex items-center gap-1.5"><Icon name="arrow-up" size={14} class="text-success" />Upload</span>
+              <span class="text-success font-medium tabular-nums">{formatRate($statsStore?.traffic?.rate_tx)}</span>
             </div>
             <div class="text-success">
               <AreaChart data={samples} valueKey="up" labelKey="t" height={120} format={formatRate} />
             </div>
           </div>
-          <div>
-            <div class="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
-              <Icon name="arrow-down" size={14} class="text-info" />Download
+          <div class="rounded-lg border border-border bg-muted/20 p-3 overflow-hidden">
+            <div class="text-xs text-muted-foreground mb-2 flex items-center justify-between">
+              <span class="flex items-center gap-1.5"><Icon name="arrow-down" size={14} class="text-info" />Download</span>
+              <span class="text-info font-medium tabular-nums">{formatRate($statsStore?.traffic?.rate_rx)}</span>
             </div>
             <div class="text-info">
               <AreaChart data={samples} valueKey="down" labelKey="t" height={120} format={formatRate} />
