@@ -478,7 +478,7 @@
 
   // Other peers that can be granted access to a virtual IP (exclude the host peer itself).
   const vipPeerChoices = $derived(
-    (clients || []).filter(c => c.ip !== selectedNode?._ip).map(c => ({ id: c.id, name: c.name || c.ip, ip: c.ip }))
+    (vpnClients || []).filter(c => c.ip !== selectedNode?._ip).map(c => ({ id: c.id, name: c.name || c.ip, ip: c.ip }))
   )
 
   // Key that identifies which peer's vips to show — a plain string, so it stays
