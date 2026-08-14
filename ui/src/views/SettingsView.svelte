@@ -85,7 +85,8 @@
     update_services: 'all',
     maxmind_license_key: '',
     ip2location_token: '',
-    ip2location_variant: 'DB1'
+    ip2location_variant: 'DB1',
+    ip2proxy_variant: '12'
   })
   let geoStatus = $state(null)
   let geoProviders = $state(null)  // Provider configs from API
@@ -222,7 +223,8 @@
           update_services: settings.geo.update_services || 'all',
           maxmind_license_key: settings.geo.maxmind_configured ? '••••••••' : '',
           ip2location_token: settings.geo.ip2location_configured ? '••••••••' : '',
-          ip2location_variant: settings.geo.ip2location_variant || 'DB1'
+          ip2location_variant: settings.geo.ip2location_variant || 'DB1',
+          ip2proxy_variant: settings.geo.ip2proxy_variant || '12'
         }
         originalGeoSettings = { ...geoSettings }
         geoProviders = settings.geo.providers || null
@@ -1549,6 +1551,20 @@
                         {#if st.last_update}<div class="text-muted-foreground mt-0.5">Last updated: {st.last_update}</div>{/if}
                       {:else}
                         <div class="text-muted-foreground mt-1">Not downloaded — needs your IP2Location token.</div>
+                      {/if}
+
+                      {#if e.key === 'proxy' && geoProviders?.ip2location?.proxy_variants}
+                        <div class="mt-2">
+                          <Select
+                            label="Detail level"
+                            bind:value={geoSettings.ip2proxy_variant}
+                            options={geoProviders.ip2location.proxy_variants.map(v => ({ value: v.id, label: v.name }))}
+                          />
+                          <div class="text-muted-foreground mt-1">
+                            {geoProviders.ip2location.proxy_variants.find(v => v.id === geoSettings.ip2proxy_variant)?.description || ''}
+                            — save settings, then click Download to fetch this tier.
+                          </div>
+                        </div>
                       {/if}
                     </div>
                   {/each}

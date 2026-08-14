@@ -11,6 +11,9 @@ type GeoResult struct {
 	ASName      string                 `json:"as_name,omitempty"`
 	IsProxy     bool                   `json:"is_proxy,omitempty"`
 	ProxyType   string                 `json:"proxy_type,omitempty"`
+	UsageType   string                 `json:"usage_type,omitempty"`  // DCH=data-center, ISP, MOB… (PX6+)
+	Threat      string                 `json:"threat,omitempty"`      // spam/botnet… (PX9+)
+	FraudScore  *uint8                 `json:"fraud_score,omitempty"` // 0-100 (PX12)
 	Provider    string                 `json:"provider"`
 	Extra       map[string]interface{} `json:"extra,omitempty"`
 }
@@ -55,6 +58,7 @@ type Config struct {
 	MaxMindLicenseKey  string
 	IP2LocationToken   string
 	IP2LocationVariant string // DB1, DB3
+	IP2ProxyVariant    string // IP2Proxy tier: 1, 6, 9, 11, 12
 }
 
 // Status represents the current status of the geolocation service
@@ -108,6 +112,7 @@ type GeoSettings struct {
 	MaxMindLicenseKey  string `json:"maxmind_license_key,omitempty"`
 	IP2LocationToken   string `json:"ip2location_token,omitempty"`
 	IP2LocationVariant string `json:"ip2location_variant"`
+	IP2ProxyVariant    string `json:"ip2proxy_variant,omitempty"`
 }
 
 // LookupRequest for bulk IP lookups
@@ -158,7 +163,11 @@ type ProviderConfig struct {
 	FileCodeTemplate string            `json:"file_code_template,omitempty"`
 	FileNameTemplate string            `json:"file_name_template,omitempty"`
 	ASNFileCode      string            `json:"asn_file_code,omitempty"`   // IP2Location LITE ASN download code
-	ProxyFileCode    string            `json:"proxy_file_code,omitempty"` // IP2Proxy LITE download code
+	ProxyFileCode    string            `json:"proxy_file_code,omitempty"` // IP2Proxy LITE download code (fallback)
+
+	ProxyFileCodeTemplate string            `json:"proxy_file_code_template,omitempty"` // e.g. PX{variant}LITECSVIPV6
+	ProxyColumns          map[string]int    `json:"proxy_columns,omitempty"`            // CSV column indices for the richer fields
+	ProxyVariants         []ProviderVariant `json:"proxy_variants,omitempty"`           // selectable IP2Proxy tiers (PX1…PX12)
 }
 
 // ProvidersConfig holds all provider configurations

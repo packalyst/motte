@@ -11,16 +11,17 @@ import (
 
 // GeoSettingsResponse holds geolocation settings for API response
 type GeoSettingsResponse struct {
-	LookupProvider        string                      `json:"lookup_provider"`
-	BlockingEnabled       bool                        `json:"blocking_enabled"`
-	BlockingProvider      string                      `json:"blocking_provider"`
-	AutoUpdate            bool                        `json:"auto_update"`
-	UpdateHour            int                         `json:"update_hour"`
-	UpdateServices        string                      `json:"update_services"`
-	IP2LocationVariant    string                      `json:"ip2location_variant"`
-	MaxmindConfigured     bool                        `json:"maxmind_configured"`
-	IP2LocationConfigured bool                        `json:"ip2location_configured"`
-	Providers             map[string]ProviderConfig   `json:"providers"`
+	LookupProvider        string                    `json:"lookup_provider"`
+	BlockingEnabled       bool                      `json:"blocking_enabled"`
+	BlockingProvider      string                    `json:"blocking_provider"`
+	AutoUpdate            bool                      `json:"auto_update"`
+	UpdateHour            int                       `json:"update_hour"`
+	UpdateServices        string                    `json:"update_services"`
+	IP2LocationVariant    string                    `json:"ip2location_variant"`
+	IP2ProxyVariant       string                    `json:"ip2proxy_variant"`
+	MaxmindConfigured     bool                      `json:"maxmind_configured"`
+	IP2LocationConfigured bool                      `json:"ip2location_configured"`
+	Providers             map[string]ProviderConfig `json:"providers"`
 }
 
 // GetSettings returns current geolocation settings
@@ -36,6 +37,7 @@ func (s *Service) GetSettings() *GeoSettingsResponse {
 		UpdateHour:            s.config.UpdateHour,
 		UpdateServices:        s.config.UpdateServices,
 		IP2LocationVariant:    s.config.IP2LocationVariant,
+		IP2ProxyVariant:       s.config.IP2ProxyVariant,
 		MaxmindConfigured:     s.config.MaxMindLicenseKey != "",
 		IP2LocationConfigured: s.config.IP2LocationToken != "",
 		Providers:             s.providersConfig.Providers,
@@ -58,6 +60,7 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		MaxMindLicenseKey  *string `json:"maxmind_license_key"`
 		IP2LocationToken   *string `json:"ip2location_token"`
 		IP2LocationVariant *string `json:"ip2location_variant"`
+		IP2ProxyVariant    *string `json:"ip2proxy_variant"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -104,6 +107,11 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	if req.IP2LocationVariant != nil {
 		settings.SetSetting("geo_ip2location_variant", *req.IP2LocationVariant)
+		needsReload = true
+	}
+
+	if req.IP2ProxyVariant != nil {
+		settings.SetSetting("geo_ip2proxy_variant", *req.IP2ProxyVariant)
 		needsReload = true
 	}
 

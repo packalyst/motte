@@ -228,6 +228,13 @@ func (s *Service) loadConfig() {
 		s.config.IP2LocationVariant = "DB1"
 	}
 
+	// IP2Proxy tier (default PX12 — richest, powers the reputation score)
+	if val, err := settings.GetSetting("geo_ip2proxy_variant"); err == nil && val != "" {
+		s.config.IP2ProxyVariant = val
+	} else {
+		s.config.IP2ProxyVariant = "12"
+	}
+
 	s.config.DataDir = s.dataDir
 }
 
@@ -401,7 +408,9 @@ func (s *Service) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error) {
 // ReloadConfig reloads configuration and reinitializes providers
 func (s *Service) ReloadConfig() error {
 	s.loadConfig()
-	return s.initProviders()
+	err := s.initProviders()
+	s.loadEnrichmentDBs() // re-read ASN/proxy files (e.g. after a tier change/re-download)
+	return err
 }
 
 // EnableBlocking enables country blocking and triggers nftables apply
@@ -464,7 +473,7 @@ func (s *Service) loadEnrichmentDBs() {
 	}
 	if p := s.proxyDBPath(); fileExists(p) {
 		tbl := &rangeTable[proxyVal]{}
-		if err := tbl.load(p, parseProxyRow(newInterner())); err != nil {
+		if err := tbl.load(p, parseProxyRow(newInterner(), s.proxyColumnsFromConfig())); err != nil {
 			log.Printf("geolocation: failed to load proxy DB: %v", err)
 		} else {
 			s.mu.Lock()
@@ -495,6 +504,12 @@ func (s *Service) enrich(ip string, res *GeoResult) {
 		if v, ok := proxyDB.lookup(ip); ok {
 			res.IsProxy = true
 			res.ProxyType = v.ptype
+			res.UsageType = v.usage
+			res.Threat = v.threat
+			if v.hasFraud {
+				f := v.fraud
+				res.FraudScore = &f
+			}
 		}
 	}
 }

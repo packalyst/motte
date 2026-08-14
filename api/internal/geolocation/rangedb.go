@@ -25,7 +25,21 @@ type asnVal struct {
 	name string
 }
 type proxyVal struct {
-	ptype string
+	ptype    string
+	usage    string // usage_type (DCH=data-center, ISP, MOB…), higher PX tiers only
+	threat   string // threat class (spam/botnet…), PX9+
+	fraud    uint8  // fraud score 0-100, PX12
+	hasFraud bool
+}
+
+// proxyColumns holds the CSV column indices for the optional richer proxy fields.
+// They vary by IP2Proxy tier and the CSV has no header, so the indices are configurable
+// (configs/geolocation.json) — a wrong guess is a config fix, not a rebuild. A value
+// <= 2 (i.e. at/before proxy_type) means "field not present, skip".
+type proxyColumns struct {
+	usageType int
+	threat    int
+	fraud     int
 }
 
 // rangeRow is one [lo,hi] IP range stored as 16-byte big-endian keys (so IPv4 and IPv6
@@ -178,10 +192,19 @@ func parseASNRow(intern func(string) string) func([]string) (string, string, asn
 	}
 }
 
-// parseProxyRow parses IP2Proxy LITE PX1 CSV rows: ip_from, ip_to, proxy_type, cc, cn.
-// Only actual proxy ranges are stored — a miss on lookup simply means "not a proxy",
-// which keeps the table to the flagged ranges only.
-func parseProxyRow(intern func(string) string) func([]string) (string, string, proxyVal, bool) {
+// parseProxyRow parses IP2Proxy LITE CSV rows. Columns 0,1 are the range and column 2
+// is proxy_type (present in every tier); the richer fields are read from configurable
+// indices when the row is long enough (higher tiers). Only actual proxy ranges are
+// stored — a lookup miss simply means "not a proxy", keeping the table to flagged ranges.
+func parseProxyRow(intern func(string) string, cols proxyColumns) func([]string) (string, string, proxyVal, bool) {
+	get := func(rec []string, idx int) string {
+		if idx > 2 && idx < len(rec) {
+			if s := strings.TrimSpace(rec[idx]); s != "" && s != "-" {
+				return s
+			}
+		}
+		return ""
+	}
 	return func(rec []string) (string, string, proxyVal, bool) {
 		if len(rec) < 3 {
 			return "", "", proxyVal{}, false
@@ -190,6 +213,19 @@ func parseProxyRow(intern func(string) string) func([]string) (string, string, p
 		if pt == "" || pt == "-" {
 			return "", "", proxyVal{}, false
 		}
-		return rec[0], rec[1], proxyVal{ptype: intern(pt)}, true
+		v := proxyVal{ptype: intern(pt)}
+		if s := get(rec, cols.usageType); s != "" {
+			v.usage = intern(s)
+		}
+		if s := get(rec, cols.threat); s != "" {
+			v.threat = intern(s)
+		}
+		if s := get(rec, cols.fraud); s != "" {
+			if n, err := strconv.Atoi(s); err == nil && n >= 0 && n <= 100 {
+				v.fraud = uint8(n)
+				v.hasFraud = true
+			}
+		}
+		return rec[0], rec[1], v, true
 	}
 }

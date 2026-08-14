@@ -25,8 +25,17 @@
       "requires_key": true,
       "file_code_template": "{variant}LITEBINIPV6",
       "file_name_template": "IP2LOCATION-LITE-{variant}.IPV6.BIN",
-      "asn_file_code": "DBASNLITEIPV6",
+      "asn_file_code": "DBASNLITECSVIPV6",
       "proxy_file_code": "PX1LITECSVIPV6",
+      "proxy_file_code_template": "PX{variant}LITECSVIPV6",
+      "proxy_columns": { "usage_type": 9, "threat": 13, "fraud_score": 14 },
+      "proxy_variants": [
+        { "id": "1",  "name": "PX1 — Proxy type only", "description": "Smallest download" },
+        { "id": "6",  "name": "PX6 — + Usage type", "description": "Flags data-center IPs" },
+        { "id": "9",  "name": "PX9 — + Threat", "description": "Threat classification" },
+        { "id": "11", "name": "PX11 — + Provider", "description": "VPN provider name" },
+        { "id": "12", "name": "PX12 — + Fraud score", "description": "0-100, best for reputation (largest)" }
+      ],
       "variants": [
         {
           "id": "DB1",

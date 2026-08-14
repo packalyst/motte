@@ -52,12 +52,40 @@ func (s *Service) enrichmentFileCode(which string) string {
 		}
 		return defaultASNFileCode
 	case "proxy":
+		// Prefer the tier template (PX{variant}LITECSVIPV6) with the selected tier.
+		if cfg.ProxyFileCodeTemplate != "" {
+			s.mu.RLock()
+			variant := s.config.IP2ProxyVariant
+			s.mu.RUnlock()
+			if variant == "" {
+				variant = "12"
+			}
+			return strings.ReplaceAll(cfg.ProxyFileCodeTemplate, "{variant}", variant)
+		}
 		if cfg.ProxyFileCode != "" {
 			return cfg.ProxyFileCode
 		}
 		return defaultProxyFileCode
 	}
 	return ""
+}
+
+// proxyColumnsFromConfig reads the configurable CSV column indices for the richer
+// proxy fields, defaulting to the standard IP2Proxy layout when unset.
+func (s *Service) proxyColumnsFromConfig() proxyColumns {
+	c := proxyColumns{usageType: 9, threat: 13, fraud: 14}
+	if m := s.providersConfig.Providers["ip2location"].ProxyColumns; m != nil {
+		if v, ok := m["usage_type"]; ok {
+			c.usageType = v
+		}
+		if v, ok := m["threat"]; ok {
+			c.threat = v
+		}
+		if v, ok := m["fraud_score"]; ok {
+			c.fraud = v
+		}
+	}
+	return c
 }
 
 // downloadEnrichmentCSV fetches an IP2Location LITE zip by file code and extracts its

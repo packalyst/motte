@@ -130,4 +130,3 @@ func (s *Service) TriggerUpdate(updateServices string) (map[string]string, error
 
 	return results, nil
 }
-
