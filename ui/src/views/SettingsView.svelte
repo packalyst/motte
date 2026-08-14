@@ -146,7 +146,8 @@
     action: 'drop',
     escalateEnabled: false,
     escalateThreshold: 3,
-    escalateWindow: 3600
+    escalateWindow: 3600,
+    escalateAsn: false
   })
 
   // Original values for change detection
@@ -608,7 +609,8 @@
       action: 'drop',
       escalateEnabled: false,
       escalateThreshold: 3,
-      escalateWindow: 3600
+      escalateWindow: 3600,
+      escalateAsn: false
     }
     showJailModal = true
   }
@@ -627,7 +629,8 @@
       action: jail.action,
       escalateEnabled: jail.escalateEnabled || false,
       escalateThreshold: jail.escalateThreshold || 3,
-      escalateWindow: jail.escalateWindow || 3600
+      escalateWindow: jail.escalateWindow || 3600,
+      escalateAsn: jail.escalateAsn || false
     }
     showJailModal = true
   }
@@ -655,7 +658,8 @@
         action: jailForm.action,
         escalateEnabled: jailForm.escalateEnabled,
         escalateThreshold: parseInt(jailForm.escalateThreshold) || 3,
-        escalateWindow: parseInt(jailForm.escalateWindow) || 3600
+        escalateWindow: parseInt(jailForm.escalateWindow) || 3600,
+        escalateAsn: jailForm.escalateAsn
       }
 
       if (jailForm.id) {
@@ -1779,6 +1783,15 @@
             <option value={14400}>4 hours</option>
             <option value={86400}>24 hours</option>
           </Select>
+        </div>
+
+        <!-- Escalate to the whole ASN (provider) -->
+        <div class="flex items-center justify-between gap-3 mt-3 p-3 rounded-lg border border-warning/30 bg-warning/5">
+          <div class="min-w-0">
+            <span class="text-sm font-medium">Also escalate to ASN (provider)</span>
+            <p class="text-[11px] text-muted-foreground">When the threshold is hit within one provider, block the <strong>whole provider</strong>, not just a /24. Powerful — off by default. Needs the ASN database downloaded.</p>
+          </div>
+          <Checkbox variant="switch" bind:checked={jailForm.escalateAsn} />
         </div>
       {/if}
     </div>

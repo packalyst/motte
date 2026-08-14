@@ -86,6 +86,58 @@
   let selectedCountries = $state([])
   let blockingCountries = $state(false)
 
+  // Access-rules view: 'block' (deny list) or 'allow' (VIP list)
+  let viewAction = $state('block')
+  function setViewAction(a) {
+    if (viewAction === a) return
+    viewAction = a
+    reloadBlocked()
+  }
+
+  // ASN (provider) blocking state
+  let showAsnModal = $state(false)
+  let asnQuery = $state('')
+  let asnResults = $state([])
+  let asnSearching = $state(false)
+  let addingAsn = $state(null)
+  let asnSearchTimer
+  function onAsnQueryInput() {
+    clearTimeout(asnSearchTimer)
+    const q = asnQuery.trim()
+    if (!q) { asnResults = []; asnSearching = false; return }
+    asnSearching = true
+    asnSearchTimer = setTimeout(searchAsn, 300)
+  }
+  async function searchAsn() {
+    const q = asnQuery.trim()
+    if (!q) { asnResults = []; asnSearching = false; return }
+    try {
+      const res = await apiGet(`/api/geo/asn/search?q=${encodeURIComponent(q)}&limit=20`)
+      asnResults = res.results || []
+    } catch { asnResults = [] }
+    finally { asnSearching = false }
+  }
+  async function addAsn(match) {
+    addingAsn = match.asn
+    try {
+      await apiPost('/api/fw/entries', {
+        type: 'asn',
+        value: String(match.asn),
+        action: viewAction,
+        direction: 'inbound',
+        reason: match.name || `AS${match.asn}`,
+      })
+      toast(`AS${match.asn} ${match.name ? '(' + match.name + ') ' : ''}${viewAction === 'allow' ? 'allowed' : 'blocked'}`, 'success')
+      showAsnModal = false
+      asnQuery = ''; asnResults = []
+      await reloadBlocked()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      addingAsn = null
+    }
+  }
+
   // Check sync status between DB and nftables
   async function checkSyncStatus() {
     checkingSyncStatus = true
@@ -136,16 +188,18 @@
       const params = new URLSearchParams({
         limit: blocked.perPage.toString(),
         offset: blocked.offset.toString(),
-        action: 'block' // Only show blocked entries (not allowed ports)
+        action: viewAction // 'block' = deny list, 'allow' = VIP list
       })
       if (blocked.search) params.set('search', blocked.search)
       if (blocked.filters.type) params.set('type', blocked.filters.type)
       if (blocked.filters.source) params.set('source', blocked.filters.source)
 
       const res = await apiGet(`/api/fw/entries?${params}`)
-      blockedEntries = res.entries || []
+      // Ports are action='allow' too but are managed in their own section — keep
+      // the Access Rules list to source rules (ip/range/country/asn).
+      blockedEntries = (res.entries || []).filter(e => e.entryType !== 'port')
       blockedTotal = res.total || 0
-      blockedTypes = res.types || []
+      blockedTypes = (res.types || []).filter(t => t !== 'port')
       blockedSources = res.sources || []
     } catch (e) {
       toast('Failed to load blocked entries: ' + e.message, 'error')
@@ -218,12 +272,13 @@
       const res = await apiPost('/api/fw/entries', {
         type: isRange ? 'range' : 'ip',
         value: blockForm.ip,
-        action: 'block',
+        action: viewAction,
         direction: 'inbound',
-        reason: blockForm.reason || 'Manual block',
+        reason: blockForm.reason || (viewAction === 'allow' ? 'Manual allow' : 'Manual block'),
         banTime
       })
-      const msg = isRange ? `Range ${blockForm.ip} blocked` : `IP ${blockForm.ip} blocked`
+      const verb = viewAction === 'allow' ? 'allowed' : 'blocked'
+      const msg = isRange ? `Range ${blockForm.ip} ${verb}` : `IP ${blockForm.ip} ${verb}`
       toast(msg, 'success')
       showBlockModal = false
       blockForm = { ip: '', reason: '', duration: '30d' }
@@ -500,12 +555,12 @@
           type: 'country',
           value: code,
           name: country?.name || code,
-          action: 'block',
+          action: viewAction,
           direction: 'inbound',
-          reason: 'Country block'
+          reason: viewAction === 'allow' ? 'Country allow' : 'Country block'
         })
       }
-      toast(`Blocking ${selectedCountries.length} countries...`, 'info')
+      toast(`${viewAction === 'allow' ? 'Allowing' : 'Blocking'} ${selectedCountries.length} countries...`, 'info')
       showBlockCountriesModal = false
       selectedCountries = []
       countrySearch = ''
@@ -564,16 +619,20 @@
           <Icon name="shield" size={18} class="text-primary" />
         </div>
         <div class="flex-1 min-w-0">
-          <h3 class="text-sm font-medium text-foreground mb-1">
-            Blocked IPs & Countries
-          </h3>
-          <p class="text-xs text-muted-foreground leading-relaxed">
-            Manage blocked IP addresses, ranges, and country-level blocking.
-          </p>
+          <h3 class="text-sm font-medium text-foreground mb-1">Access Rules</h3>
+          {#if viewAction === 'allow'}
+            <p class="text-xs text-muted-foreground leading-relaxed">
+              <span class="text-success font-medium">Allow list</span> — trusted sources (IP, range, country, ASN) are always let in and <strong>override blocks</strong>. Use sparingly.
+            </p>
+          {:else}
+            <p class="text-xs text-muted-foreground leading-relaxed">
+              <span class="text-destructive font-medium">Deny list</span> — block traffic by IP, range, country or ASN (provider).
+            </p>
+          {/if}
         </div>
         <div class="hidden sm:flex items-center gap-3 text-center">
           <div class="text-lg font-bold text-foreground">{blockedTotal}</div>
-          <div class="text-[10px] text-muted-foreground">Blocked</div>
+          <div class="text-[10px] text-muted-foreground">{viewAction === 'allow' ? 'Allowed' : 'Blocked'}</div>
         </div>
       </div>
     </div>
@@ -583,6 +642,17 @@
             <!-- Header -->
             <div class="data-table-header">
               <div class="data-table-header-start">
+                <!-- Deny / Allow view toggle -->
+                <div class="inline-flex rounded-lg border border-border overflow-hidden shrink-0">
+                  <button
+                    class="px-3 py-1.5 text-xs font-medium transition cursor-pointer {viewAction === 'block' ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground hover:bg-muted/50'}"
+                    onclick={() => setViewAction('block')}
+                  >Deny</button>
+                  <button
+                    class="px-3 py-1.5 text-xs font-medium border-l border-border transition cursor-pointer {viewAction === 'allow' ? 'bg-success/10 text-success' : 'text-muted-foreground hover:bg-muted/50'}"
+                    onclick={() => setViewAction('allow')}
+                  >Allow</button>
+                </div>
                 <Input
                   type="search"
                   value={blockedSearchQuery}
@@ -618,15 +688,15 @@
               </div>
               <div class="data-table-header-end">
                 <div class="kt-btn-group">
-                  <!-- Block dropdown -->
+                  <!-- Add dropdown (context: current Deny/Allow view) -->
                   <DropdownButton
-                    label="Block"
+                    label={viewAction === 'allow' ? 'Allow' : 'Block'}
                     icon="plus"
                     items={[
                       { label: 'IP / Range', icon: 'ban', onclick: () => showBlockModal = true },
-                      { label: 'Import Blocklist', icon: 'download', onclick: openImportModal },
-                      { divider: true },
-                      { label: 'Countries', icon: 'world', onclick: openBlockCountriesModal }
+                      { label: 'ASN (provider)', icon: 'cloud', onclick: () => { asnQuery = ''; asnResults = []; showAsnModal = true } },
+                      { label: 'Countries', icon: 'world', onclick: openBlockCountriesModal },
+                      ...(viewAction === 'block' ? [{ divider: true }, { label: 'Import Blocklist', icon: 'download', onclick: openImportModal }] : [])
                     ]}
                   />
 
@@ -725,6 +795,14 @@
                                 loading="lazy"
                               />
                               <span class="text-sm font-medium">{entry.name || entry.value}</span>
+                              <Badge variant="secondary" size="sm" title="{entry.hitCount || 0} IP ranges">
+                                <Icon name="network" size={10} class="mr-0.5" />
+                                {(entry.hitCount || 0).toLocaleString()}
+                              </Badge>
+                            {:else if entry.entryType === 'asn'}
+                              <Icon name="cloud" size={14} class="text-muted-foreground" />
+                              <code class="text-xs font-mono">AS{entry.value}</code>
+                              {#if entry.name}<span class="text-xs text-muted-foreground truncate max-w-40">{entry.name}</span>{/if}
                               <Badge variant="secondary" size="sm" title="{entry.hitCount || 0} IP ranges">
                                 <Icon name="network" size={10} class="mr-0.5" />
                                 {(entry.hitCount || 0).toLocaleString()}
@@ -1031,3 +1109,51 @@
   {/snippet}
 </Modal>
 
+
+<!-- ASN (provider) picker Modal -->
+<Modal bind:open={showAsnModal} title="{viewAction === 'allow' ? 'Allow' : 'Block'} a provider (ASN)" size="md">
+  <div class="space-y-3">
+    <Input
+      type="search"
+      bind:value={asnQuery}
+      oninput={onAsnQueryInput}
+      placeholder="Search provider name or AS number (e.g. DigitalOcean, 14061)"
+      prefixIcon="search"
+    />
+    <div class="max-h-80 overflow-y-auto border border-border rounded-lg divide-y divide-border">
+      {#if asnSearching}
+        <div class="flex justify-center py-6"><LoadingSpinner /></div>
+      {:else if asnResults.length === 0}
+        <div class="text-center py-6 text-sm text-muted-foreground px-4">
+          {asnQuery.trim() ? 'No providers match — is the ASN database downloaded (Settings → Geolocation)?' : 'Type a provider name or AS number.'}
+        </div>
+      {:else}
+        {#each asnResults as m (m.asn)}
+          <button
+            class="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/50 transition disabled:opacity-50 cursor-pointer"
+            onclick={() => addAsn(m)}
+            disabled={addingAsn === m.asn}
+          >
+            <Icon name="cloud" size={16} class="text-muted-foreground shrink-0" />
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium truncate">{m.name || 'AS' + m.asn}</div>
+              <div class="text-[11px] text-muted-foreground">
+                AS{m.asn} · ~{(m.ranges || 0).toLocaleString()} ranges{#if m.ranges > 1000} <span class="text-warning">⚠ large</span>{/if}
+              </div>
+            </div>
+            <span class="text-xs {viewAction === 'allow' ? 'text-success' : 'text-destructive'} shrink-0">
+              {addingAsn === m.asn ? '…' : (viewAction === 'allow' ? 'Allow' : 'Block')}
+            </span>
+          </button>
+        {/each}
+      {/if}
+    </div>
+    <p class="text-[11px] text-muted-foreground">
+      Expands the provider's IP ranges into the firewall (like country blocking). Large providers add many ranges — memory only, no per-packet slowdown.
+    </p>
+  </div>
+
+  {#snippet footer()}
+    <Button onclick={() => { showAsnModal = false }} variant="secondary">Close</Button>
+  {/snippet}
+</Modal>
