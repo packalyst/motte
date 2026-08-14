@@ -14,6 +14,9 @@
   import Sparkline from '../components/Sparkline.svelte'
   import AreaChart from '../components/AreaChart.svelte'
   import BarList from '../components/BarList.svelte'
+  import IpBadge from '../components/IpBadge.svelte'
+  import IpLookup from '../components/IpLookup.svelte'
+  import { lookupIPs, getGeoData } from '../stores/geo.js'
 
   let { loading = $bindable(true) } = $props()
 
@@ -135,6 +138,23 @@
   $effect(() => {
     selectedPeer; period; selectedType
     if (selectedType === 'outbound' && selectedPeer) loadPeerUsage()
+  })
+
+  // ── Reputation enrichment for the drill-in "Top source IPs" list ──
+  // Batch-lookup the visible source IPs once per drill view; badges read from
+  // this reactive snapshot (parent-batched, so no per-row request).
+  let geoData = $state({})
+  $effect(() => {
+    const ips = (data[selectedType]?.top_clients || []).map(r => r.ip).filter(Boolean)
+    if (ips.length === 0) return
+    lookupIPs(ips).then(() => {
+      const next = {}
+      for (const ip of ips) {
+        const g = getGeoData(ip)
+        if (g) next[ip] = g
+      }
+      geoData = next
+    })
   })
 
   // ── CSV export of the current drill-in view ──
@@ -378,6 +398,9 @@
           {/each}
         </div>
 
+        <!-- IP lookup: owner + proxy/VPN + reputation for any address -->
+        <IpLookup />
+
         <!-- Top talkers by bytes (conntrack) — click to drill into that node's outbound -->
         {#if topTalkers.length}
           {@const maxTalker = maxOf(topTalkers.map(t => ({ count: t.total })))}
@@ -567,6 +590,7 @@
                     >
                       <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
                       <span class="w-32 shrink-0 truncate text-xs font-mono">{row.ip}</span>
+                      <span class="hidden sm:inline-flex min-w-0 max-w-[40%]"><IpBadge geo={geoData[row.ip]} /></span>
                       <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                         <div class="h-full {typeMeta[selectedType].bar}" style="width: {(row.count / maxClient) * 100}%"></div>
                       </div>

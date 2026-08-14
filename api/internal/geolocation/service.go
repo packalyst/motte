@@ -520,4 +520,9 @@ func (s *Service) enrich(ip string, res *GeoResult) {
 			}
 		}
 	}
+
+	// Blend the enrichment signals into a single traffic-light verdict.
+	// proxyChecked=true when the proxy DB was consulted, so a non-match is a
+	// meaningful "clean" signal rather than "unknown".
+	scoreReputation(res, proxyDB != nil)
 }

@@ -52,15 +52,18 @@ func (s *Service) LookupBulk(ips []string) (map[string]*GeoResult, map[string]st
 	// Use provider's bulk lookup if available
 	providerResults := provider.LookupBulk(ips)
 	for _, ip := range ips {
-		if result, ok := providerResults[ip]; ok {
-			results[ip] = result
-		} else {
+		result, ok := providerResults[ip]
+		if !ok {
 			// Try individual lookup for missing results
-			if result, err := provider.Lookup(ip); err == nil {
-				results[ip] = result
-			} else {
+			var err error
+			if result, err = provider.Lookup(ip); err != nil {
 				errors[ip] = err.Error()
+				continue
 			}
+		}
+		if result != nil {
+			s.enrich(ip, result) // ASN/proxy/reputation — same enrichment as single lookups
+			results[ip] = result
 		}
 	}
 

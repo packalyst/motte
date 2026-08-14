@@ -1,9 +1,22 @@
 // Geo lookup helper - reusable across views
 import { apiGet, apiPost } from './app.js'
 
-// Cache for geo results (persists during session)
+// Cache for geo results (persists during session).
+// Capped so a long session that scans many distinct IPs can't grow without
+// bound; oldest entries are evicted first (object keys keep insertion order for
+// non-index string keys like IPs).
+const GEO_CACHE_MAX = 5000
 let geoCache = {}
 let geoEnabled = null
+
+// Evict oldest entries once the cache exceeds its cap.
+function trimGeoCache() {
+  const keys = Object.keys(geoCache)
+  if (keys.length <= GEO_CACHE_MAX) return
+  const next = {}
+  for (const k of keys.slice(keys.length - GEO_CACHE_MAX)) next[k] = geoCache[k]
+  geoCache = next
+}
 
 // Check if geo lookup is available
 export async function checkGeoEnabled() {
@@ -35,6 +48,7 @@ export async function lookupIPs(ips) {
     const res = await apiPost('/api/geo/lookup', { ips: uncachedIPs })
     if (res.results) {
       geoCache = { ...geoCache, ...res.results }
+      trimGeoCache()
     }
   } catch {
     // Ignore lookup errors

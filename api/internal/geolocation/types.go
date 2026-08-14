@@ -14,8 +14,20 @@ type GeoResult struct {
 	UsageType   string                 `json:"usage_type,omitempty"`  // DCH=data-center, ISP, MOB… (PX6+)
 	Threat      string                 `json:"threat,omitempty"`      // spam/botnet… (PX9+)
 	FraudScore  *uint8                 `json:"fraud_score,omitempty"` // 0-100 (PX12)
+	Reputation  *Reputation            `json:"reputation,omitempty"`  // blended risk verdict (nil until enrichment runs)
 	Provider    string                 `json:"provider"`
 	Extra       map[string]interface{} `json:"extra,omitempty"`
+}
+
+// Reputation is a blended, human-readable risk verdict derived from the
+// enrichment signals (proxy/VPN type, usage type, listed threat, fraud score).
+// Level is the traffic-light bucket the UI renders; Reasons explains it in plain
+// English. It is only populated when at least the proxy DB was consulted — an
+// absent Reputation means "we have no enrichment data", not "clean".
+type Reputation struct {
+	Score   uint8    `json:"score"`             // 0-100, higher = riskier
+	Level   string   `json:"level"`             // unknown | low | medium | high
+	Reasons []string `json:"reasons,omitempty"` // why it scored this way
 }
 
 // Provider interface for geolocation lookup providers
