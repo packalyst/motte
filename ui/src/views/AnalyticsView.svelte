@@ -76,22 +76,22 @@
   }
 
   // One plain-English sentence summarizing the current period across subsystems.
-  const summary = $derived.by(() => {
+  // Plain-English highlights for the period, as {num, text} so the banner can
+  // emphasize the numbers while keeping it a readable sentence.
+  const summaryParts = $derived.by(() => {
     const fw = data.fw, inb = data.inbound, dns = data.dns
-    if (!fw && !inb && !dns) return ''
     const parts = []
     if (fw && !fw.error) {
       const topC = fw.top_countries?.[0]?.country
-      parts.push(`${fmtNumber(fw.total_count || 0)} attacks blocked${fw.unique_visitors ? ` from ${fmtNumber(fw.unique_visitors)} IPs` : ''}${topC ? ` (top ${topC})` : ''}`)
+      parts.push({ num: fmtNumber(fw.total_count || 0), text: `attacks blocked${fw.unique_visitors ? ` from ${fmtNumber(fw.unique_visitors)} IPs` : ''}${topC ? ` (top ${topC})` : ''}` })
     }
     if (inb && !inb.error && inb.unique_visitors != null) {
-      parts.push(`${fmtNumber(inb.unique_visitors)} visitors to your services`)
+      parts.push({ num: fmtNumber(inb.unique_visitors), text: 'visitors to your services' })
     }
     if (dns && !dns.error && dns.total_count) {
-      parts.push(`${fmtNumber(dns.total_count)} DNS lookups (${pct(dns.blocked_count, dns.total_count)}% blocked)`)
+      parts.push({ num: fmtNumber(dns.total_count), text: `DNS lookups, ${pct(dns.blocked_count, dns.total_count)}% blocked` })
     }
-    if (!parts.length) return ''
-    return parts.join(' · ')
+    return parts
   })
 
   async function loadType(type) {
@@ -307,11 +307,19 @@
       {:else if !selectedType}
         <!-- ═════════ OVERVIEW ═════════ -->
         <!-- Plain-English summary of the selected period -->
-        {#if summary}
-          <div class="flex items-start gap-2.5 rounded-lg border border-border bg-card p-3 shadow-sm">
-            <Icon name="list-details" size={18} class="text-primary shrink-0 mt-0.5" />
-            <div class="text-sm">
-              <span class="text-muted-foreground">Last {periodLabel} —</span> {summary}.
+        {#if summaryParts.length}
+          <div class="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 to-info/5 p-4 shadow-sm">
+            <div class="flex items-start gap-3">
+              <div class="header-icon shrink-0"><Icon name="list-details" size={18} class="text-primary" /></div>
+              <div class="min-w-0">
+                <div class="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-1">Last {periodLabel} at a glance</div>
+                <div class="text-sm leading-relaxed text-muted-foreground">
+                  {#each summaryParts as p, i}
+                    {#if i > 0}<span class="mx-1 text-muted-foreground/50">·</span>{/if}
+                    <span class="font-semibold text-foreground tabular-nums">{p.num}</span> {p.text}
+                  {/each}
+                </div>
+              </div>
             </div>
           </div>
         {/if}
