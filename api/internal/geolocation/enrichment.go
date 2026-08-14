@@ -201,6 +201,28 @@ func (s *Service) enrichmentStatus() EnrichmentStatus {
 	}
 }
 
+// disableEnrichment removes an enrichment DB from disk and drops its in-memory table.
+// Used when its toggle is turned off.
+func (s *Service) disableEnrichment(db string) {
+	var path string
+	switch db {
+	case "asn":
+		path = s.asnDBPath()
+	case "proxy":
+		path = s.proxyDBPath()
+	default:
+		return
+	}
+	os.Remove(path)
+	s.mu.Lock()
+	if db == "asn" {
+		s.asnDB = nil
+	} else {
+		s.proxyDB = nil
+	}
+	s.mu.Unlock()
+}
+
 // handleGetEnrichmentStatus  GET /api/geo/enrichment
 func (s *Service) handleGetEnrichmentStatus(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, s.enrichmentStatus())

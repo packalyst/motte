@@ -49,13 +49,16 @@ func (s *Service) runScheduledUpdate(updateServices string) {
 	switch updateServices {
 	case "all":
 		s.updateLookupProvider()
+		s.updateEnrichmentDBs()
 		s.updateBlockingProvider()
 	case "lookup":
 		s.updateLookupProvider()
+		s.updateEnrichmentDBs()
 	case "blocking":
 		s.updateBlockingProvider()
 	default:
 		s.updateLookupProvider()
+		s.updateEnrichmentDBs()
 		s.updateBlockingProvider()
 	}
 }
@@ -110,6 +113,29 @@ func (s *Service) updateBlockingProvider() {
 	log.Printf("Blocking provider update complete: %d updated, %d errors", updated, errors)
 }
 
+// updateEnrichmentDBs downloads the enabled ASN/proxy add-on DBs and reloads them.
+// Called by both the manual "Update Now" and the auto-update scheduler, alongside the
+// lookup provider — so one action refreshes everything that's turned on.
+func (s *Service) updateEnrichmentDBs() {
+	s.mu.RLock()
+	asnOn, proxyOn := s.config.ASNEnabled, s.config.ProxyEnabled
+	s.mu.RUnlock()
+
+	if asnOn {
+		if err := s.downloadEnrichmentCSV(s.enrichmentFileCode("asn"), s.asnDBPath()); err != nil {
+			log.Printf("geolocation: ASN DB update failed: %v", err)
+		}
+	}
+	if proxyOn {
+		if err := s.downloadEnrichmentCSV(s.enrichmentFileCode("proxy"), s.proxyDBPath()); err != nil {
+			log.Printf("geolocation: proxy DB update failed: %v", err)
+		}
+	}
+	if asnOn || proxyOn {
+		s.loadEnrichmentDBs()
+	}
+}
+
 // TriggerUpdate manually triggers an update
 func (s *Service) TriggerUpdate(updateServices string) (map[string]string, error) {
 	results := make(map[string]string)
@@ -117,12 +143,14 @@ func (s *Service) TriggerUpdate(updateServices string) (map[string]string, error
 	switch updateServices {
 	case "lookup":
 		s.updateLookupProvider()
+		s.updateEnrichmentDBs()
 		results["lookup"] = "update triggered"
 	case "blocking":
 		s.updateBlockingProvider()
 		results["blocking"] = "update triggered"
 	default:
 		s.updateLookupProvider()
+		s.updateEnrichmentDBs()
 		s.updateBlockingProvider()
 		results["lookup"] = "update triggered"
 		results["blocking"] = "update triggered"

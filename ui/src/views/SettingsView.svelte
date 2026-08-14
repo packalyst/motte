@@ -86,7 +86,9 @@
     maxmind_license_key: '',
     ip2location_token: '',
     ip2location_variant: 'DB1',
-    ip2proxy_variant: '12'
+    ip2proxy_variant: '12',
+    asn_enabled: false,
+    proxy_enabled: false
   })
   let geoStatus = $state(null)
   let geoProviders = $state(null)  // Provider configs from API
@@ -224,7 +226,9 @@
           maxmind_license_key: settings.geo.maxmind_configured ? '••••••••' : '',
           ip2location_token: settings.geo.ip2location_configured ? '••••••••' : '',
           ip2location_variant: settings.geo.ip2location_variant || 'DB1',
-          ip2proxy_variant: settings.geo.ip2proxy_variant || '12'
+          ip2proxy_variant: settings.geo.ip2proxy_variant || '12',
+          asn_enabled: settings.geo.asn_enabled || false,
+          proxy_enabled: settings.geo.proxy_enabled || false
         }
         originalGeoSettings = { ...geoSettings }
         geoProviders = settings.geo.providers || null
@@ -470,6 +474,7 @@
       originalGeoSettings = { ...geoSettings }
       // Reload status to see updated provider info
       geoStatus = await apiGet('/api/geo/status')
+      loadEnrichment()
       toast('Geolocation settings saved', 'success')
     } catch (e) {
       toast('Failed to save: ' + e.message, 'error')
@@ -489,6 +494,7 @@
       }
       // Reload status
       geoStatus = await apiGet('/api/geo/status')
+      loadEnrichment()
     } catch (e) {
       toast('Failed to update: ' + e.message, 'error')
     } finally {
@@ -1506,70 +1512,69 @@
                   />
                 </div>
               {/if}
-              {#if geoStatus?.providers && geoSettings.lookup_provider !== 'none'}
-                <div class="mt-3 p-2 bg-muted/50 rounded text-[10px]">
-                  {#if geoStatus.providers[geoSettings.lookup_provider]?.available}
-                    <div class="flex items-center gap-1 text-success">
-                      <Icon name="check" size={12} />
-                      <span>Database available ({(geoStatus.providers[geoSettings.lookup_provider].file_size / 1024 / 1024).toFixed(1)}MB)</span>
-                    </div>
-                    {#if geoStatus.providers[geoSettings.lookup_provider].last_update}
-                      <div class="text-muted-foreground mt-1">Last updated: {geoStatus.providers[geoSettings.lookup_provider].last_update}</div>
-                    {/if}
-                  {:else}
-                    <div class="flex items-center gap-1 text-warning">
-                      <Icon name="alert-circle" size={12} />
-                      <span>Database not downloaded yet. Save settings and click "Update Now".</span>
+              <!-- Enrichment add-on toggles (IP2Location only) -->
+              {#if geoSettings.lookup_provider === 'ip2location'}
+                <div class="mt-3">
+                  <div class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Enrichment add-ons (owner + proxy on every lookup)</div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <ContentBlock title="Owner (ASN)" description="Who owns each IP">
+                      <Checkbox variant="switch" bind:checked={geoSettings.asn_enabled} />
+                    </ContentBlock>
+                    <ContentBlock title="Proxy / VPN" description="Flag VPN / Tor / data-center">
+                      <Checkbox variant="switch" bind:checked={geoSettings.proxy_enabled} />
+                    </ContentBlock>
+                  </div>
+                  {#if geoSettings.proxy_enabled && geoProviders?.ip2location?.proxy_variants}
+                    <div class="mt-2">
+                      <Select
+                        label="Proxy detail level"
+                        bind:value={geoSettings.ip2proxy_variant}
+                        options={geoProviders.ip2location.proxy_variants.map(v => ({ value: v.id, label: v.name }))}
+                      />
+                      <div class="text-[10px] text-muted-foreground mt-1">
+                        {geoProviders.ip2location.proxy_variants.find(v => v.id === geoSettings.ip2proxy_variant)?.description || ''}
+                      </div>
                     </div>
                   {/if}
                 </div>
               {/if}
 
-              <!-- Optional enrichment DBs: ASN (owner) + Proxy -->
-              {#if geoSettings.lookup_provider === 'ip2location'}
-                <div class="mt-3 space-y-2">
-                  <div class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Enrichment (adds owner + proxy to every lookup)</div>
-                  {#each [{ key: 'asn', label: 'ASN / owner database' }, { key: 'proxy', label: 'Proxy / VPN database' }] as e (e.key)}
-                    {@const st = enrichment?.[e.key]}
-                    <div class="p-2 bg-muted/50 rounded text-[10px]">
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="font-medium">{e.label}</span>
-                        <div class="flex items-center gap-1">
-                          <Button size="xs" variant="outline" onclick={() => downloadEnrichment(e.key)} loading={enrichBusy === e.key}>
-                            {st?.available ? 'Update' : 'Download'}
-                          </Button>
-                          {#if st?.available}
-                            <Button size="xs" variant="ghost" icon="trash" onclick={() => deleteEnrichment(e.key)} />
-                          {/if}
-                        </div>
-                      </div>
-                      {#if st?.available}
-                        <div class="flex items-center gap-1 text-success mt-1">
-                          <Icon name="check" size={12} />
-                          <span>Available ({(st.file_size / 1024 / 1024).toFixed(1)}MB{#if st.loaded}, {st.ranges.toLocaleString()} ranges{/if})</span>
-                        </div>
-                        {#if st.last_update}<div class="text-muted-foreground mt-0.5">Last updated: {st.last_update}</div>{/if}
+              <!-- All database statuses in one place -->
+              {#if geoSettings.lookup_provider !== 'none'}
+                <div class="mt-3 p-2 bg-muted/50 rounded text-[10px] space-y-1">
+                  <div class="font-medium text-muted-foreground uppercase tracking-wide">Databases</div>
+                  <div class="flex items-center justify-between gap-2">
+                    <span>Country</span>
+                    {#if geoStatus?.providers?.[geoSettings.lookup_provider]?.available}
+                      <span class="text-success">{(geoStatus.providers[geoSettings.lookup_provider].file_size / 1024 / 1024).toFixed(1)}MB{#if geoStatus.providers[geoSettings.lookup_provider].last_update} · {geoStatus.providers[geoSettings.lookup_provider].last_update}{/if}</span>
+                    {:else}
+                      <span class="text-warning">not downloaded</span>
+                    {/if}
+                  </div>
+                  {#if geoSettings.lookup_provider === 'ip2location' && geoSettings.asn_enabled}
+                    <div class="flex items-center justify-between gap-2">
+                      <span>Owner (ASN)</span>
+                      {#if enrichment?.asn?.available}
+                        <span class="text-success">{(enrichment.asn.file_size / 1024 / 1024).toFixed(1)}MB{#if enrichment.asn.loaded} · {enrichment.asn.ranges.toLocaleString()} ranges{/if}</span>
                       {:else}
-                        <div class="text-muted-foreground mt-1">Not downloaded — needs your IP2Location token.</div>
-                      {/if}
-
-                      {#if e.key === 'proxy' && geoProviders?.ip2location?.proxy_variants}
-                        <div class="mt-2">
-                          <Select
-                            label="Detail level"
-                            bind:value={geoSettings.ip2proxy_variant}
-                            options={geoProviders.ip2location.proxy_variants.map(v => ({ value: v.id, label: v.name }))}
-                          />
-                          <div class="text-muted-foreground mt-1">
-                            {geoProviders.ip2location.proxy_variants.find(v => v.id === geoSettings.ip2proxy_variant)?.description || ''}
-                            — save settings, then click Download to fetch this tier.
-                          </div>
-                        </div>
+                        <span class="text-warning">not downloaded</span>
                       {/if}
                     </div>
-                  {/each}
+                  {/if}
+                  {#if geoSettings.lookup_provider === 'ip2location' && geoSettings.proxy_enabled}
+                    <div class="flex items-center justify-between gap-2">
+                      <span>Proxy / VPN</span>
+                      {#if enrichment?.proxy?.available}
+                        <span class="text-success">{(enrichment.proxy.file_size / 1024 / 1024).toFixed(1)}MB{#if enrichment.proxy.loaded} · {enrichment.proxy.ranges.toLocaleString()} ranges{/if}</span>
+                      {:else}
+                        <span class="text-warning">not downloaded</span>
+                      {/if}
+                    </div>
+                  {/if}
+                  <div class="text-muted-foreground pt-0.5">Turn on what you want, Save, then "Update Now" downloads everything enabled.</div>
                 </div>
               {/if}
+
             </div>
 
             <!-- Toggles -->

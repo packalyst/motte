@@ -19,6 +19,8 @@ type GeoSettingsResponse struct {
 	UpdateServices        string                    `json:"update_services"`
 	IP2LocationVariant    string                    `json:"ip2location_variant"`
 	IP2ProxyVariant       string                    `json:"ip2proxy_variant"`
+	ASNEnabled            bool                      `json:"asn_enabled"`
+	ProxyEnabled          bool                      `json:"proxy_enabled"`
 	MaxmindConfigured     bool                      `json:"maxmind_configured"`
 	IP2LocationConfigured bool                      `json:"ip2location_configured"`
 	Providers             map[string]ProviderConfig `json:"providers"`
@@ -38,6 +40,8 @@ func (s *Service) GetSettings() *GeoSettingsResponse {
 		UpdateServices:        s.config.UpdateServices,
 		IP2LocationVariant:    s.config.IP2LocationVariant,
 		IP2ProxyVariant:       s.config.IP2ProxyVariant,
+		ASNEnabled:            s.config.ASNEnabled,
+		ProxyEnabled:          s.config.ProxyEnabled,
 		MaxmindConfigured:     s.config.MaxMindLicenseKey != "",
 		IP2LocationConfigured: s.config.IP2LocationToken != "",
 		Providers:             s.providersConfig.Providers,
@@ -61,6 +65,8 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		IP2LocationToken   *string `json:"ip2location_token"`
 		IP2LocationVariant *string `json:"ip2location_variant"`
 		IP2ProxyVariant    *string `json:"ip2proxy_variant"`
+		ASNEnabled         *bool   `json:"asn_enabled"`
+		ProxyEnabled       *bool   `json:"proxy_enabled"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -112,6 +118,22 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	if req.IP2ProxyVariant != nil {
 		settings.SetSetting("geo_ip2proxy_variant", *req.IP2ProxyVariant)
+		needsReload = true
+	}
+
+	if req.ASNEnabled != nil {
+		settings.SetSetting("geo_asn_enabled", strconv.FormatBool(*req.ASNEnabled))
+		if !*req.ASNEnabled {
+			s.disableEnrichment("asn")
+		}
+		needsReload = true
+	}
+
+	if req.ProxyEnabled != nil {
+		settings.SetSetting("geo_proxy_enabled", strconv.FormatBool(*req.ProxyEnabled))
+		if !*req.ProxyEnabled {
+			s.disableEnrichment("proxy")
+		}
 		needsReload = true
 	}
 

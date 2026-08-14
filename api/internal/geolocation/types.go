@@ -59,6 +59,8 @@ type Config struct {
 	IP2LocationToken   string
 	IP2LocationVariant string // DB1, DB3
 	IP2ProxyVariant    string // IP2Proxy tier: 1, 6, 9, 11, 12
+	ASNEnabled         bool   // download/use the ASN enrichment DB
+	ProxyEnabled       bool   // download/use the proxy enrichment DB
 }
 
 // Status represents the current status of the geolocation service

@@ -235,6 +235,14 @@ func (s *Service) loadConfig() {
 		s.config.IP2ProxyVariant = "12"
 	}
 
+	// Enrichment add-on toggles
+	if val, err := settings.GetSetting("geo_asn_enabled"); err == nil {
+		s.config.ASNEnabled, _ = strconv.ParseBool(val)
+	}
+	if val, err := settings.GetSetting("geo_proxy_enabled"); err == nil {
+		s.config.ProxyEnabled, _ = strconv.ParseBool(val)
+	}
+
 	s.config.DataDir = s.dataDir
 }
 
