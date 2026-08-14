@@ -97,9 +97,6 @@
     </div>
   {/if}
 
-  <!-- Live VPN sessions: who's connected right now -->
-  <LiveSessions />
-
   <!-- Live Traffic -->
   <div class="kt-panel">
     <div class="kt-panel-header flex items-center justify-between">
@@ -197,32 +194,10 @@
     </div>
   </div>
 
-  <!-- Traffic Totals & Top Peers -->
+  <!-- Peers: who's connected now + who's used the most traffic -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    <!-- Traffic Totals -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">Total Transfer</h3>
-      </div>
-      <div class="kt-panel-body">
-        <div class="grid grid-cols-2 gap-4">
-          <div class="p-4 rounded-lg bg-success/10 border border-success/20">
-            <div class="flex items-center gap-2 mb-2">
-              <Icon name="arrow-up" size={18} class="text-success" />
-              <span class="text-sm text-muted-foreground">Uploaded</span>
-            </div>
-            <div class="text-2xl font-bold text-success">{formatBytes($statsStore?.traffic?.total_tx)}</div>
-          </div>
-          <div class="p-4 rounded-lg bg-info/10 border border-info/20">
-            <div class="flex items-center gap-2 mb-2">
-              <Icon name="arrow-down" size={18} class="text-info" />
-              <span class="text-sm text-muted-foreground">Downloaded</span>
-            </div>
-            <div class="text-2xl font-bold text-info">{formatBytes($statsStore?.traffic?.total_rx)}</div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- Live VPN sessions -->
+    <LiveSessions />
 
     <!-- Top Peers by Traffic -->
     <div class="kt-panel">
@@ -261,14 +236,42 @@
     </div>
   </div>
 
-  <!-- Recent activity (compact feed; full history on the Activity page) -->
-  <div class="kt-panel">
-    <div class="kt-panel-header flex items-center justify-between">
-      <h3 class="kt-panel-title">Recent activity</h3>
-      <button class="text-xs text-muted-foreground hover:text-foreground transition" onclick={() => currentView.set('activity')}>View all →</button>
+  <!-- Total transfer + recent activity -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <!-- Traffic Totals -->
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">Total Transfer</h3>
+      </div>
+      <div class="kt-panel-body">
+        <div class="grid grid-cols-2 gap-4">
+          <div class="p-4 rounded-lg bg-success/10 border border-success/20">
+            <div class="flex items-center gap-2 mb-2">
+              <Icon name="arrow-up" size={18} class="text-success" />
+              <span class="text-sm text-muted-foreground">Uploaded</span>
+            </div>
+            <div class="text-2xl font-bold text-success">{formatBytes($statsStore?.traffic?.total_tx)}</div>
+          </div>
+          <div class="p-4 rounded-lg bg-info/10 border border-info/20">
+            <div class="flex items-center gap-2 mb-2">
+              <Icon name="arrow-down" size={18} class="text-info" />
+              <span class="text-sm text-muted-foreground">Downloaded</span>
+            </div>
+            <div class="text-2xl font-bold text-info">{formatBytes($statsStore?.traffic?.total_rx)}</div>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="kt-panel-body">
-      <ActivityFeed limit={8} compact />
+
+    <!-- Recent activity (compact feed; full history on the Activity page) -->
+    <div class="kt-panel">
+      <div class="kt-panel-header flex items-center justify-between">
+        <h3 class="kt-panel-title">Recent activity</h3>
+        <button class="text-xs text-muted-foreground hover:text-foreground transition cursor-pointer" onclick={() => currentView.set('activity')}>View all →</button>
+      </div>
+      <div class="kt-panel-body">
+        <ActivityFeed limit={8} compact />
+      </div>
     </div>
   </div>
 

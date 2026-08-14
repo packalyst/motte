@@ -43,10 +43,10 @@
 
 {#if data && !error}
   <div class="rounded-lg border {meta.ring} p-4 shadow-sm">
-    <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+    <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
       <!-- Status light -->
       <div class="flex items-center gap-2.5">
-        <span class="flex h-9 w-9 items-center justify-center rounded-lg {meta.text}">
+        <span class="flex h-9 w-9 items-center justify-center rounded-lg {meta.text} shrink-0">
           <Icon name={meta.icon} size={22} />
         </span>
         <div>
@@ -68,7 +68,7 @@
 
       <!-- Top offender -->
       {#if data.top_attacker}
-        <div class="flex items-center gap-2 text-xs ml-auto min-w-0">
+        <div class="flex items-center gap-2 text-xs min-w-0 sm:ml-auto pt-2 border-t border-border/40 sm:pt-0 sm:border-0">
           <span class="text-muted-foreground shrink-0">Top:</span>
           {#if data.top_attacker.country}<CountryFlag code={data.top_attacker.country} size="sm" />{/if}
           <span class="font-mono truncate">{data.top_attacker.ip}</span>

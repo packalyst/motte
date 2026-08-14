@@ -85,7 +85,7 @@
                 <div>↑ {formatBytes(s.tx)}</div>
               </div>
               <button
-                class="shrink-0 text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition disabled:opacity-50"
+                class="shrink-0 text-xs px-2 py-1 rounded border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition disabled:opacity-50 cursor-pointer disabled:cursor-default"
                 onclick={() => isolate(s)}
                 disabled={isolating === s.id}
                 title="Disable this peer and disconnect it"
