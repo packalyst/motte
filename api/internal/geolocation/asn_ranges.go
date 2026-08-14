@@ -88,3 +88,18 @@ func (s *Service) ASNRangesV4(asn uint32) []string {
 	s.mu.RUnlock()
 	return asnV4CIDRs(db, asn)
 }
+
+// ASNForIP returns the ASN that owns ip, or 0 if unknown or the ASN DB isn't
+// loaded. Zero-allocation binary search — safe on the ban hot path.
+func (s *Service) ASNForIP(ip string) uint32 {
+	s.mu.RLock()
+	db := s.asnDB
+	s.mu.RUnlock()
+	if db == nil {
+		return 0
+	}
+	if v, ok := db.lookup(ip); ok {
+		return v.asn
+	}
+	return 0
+}

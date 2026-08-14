@@ -13,13 +13,14 @@ const jailQueryBase = `
 	SELECT j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
 		COUNT(CASE WHEN f.id IS NOT NULL AND f.enabled = 1 AND (f.expires_at IS NULL OR f.expires_at > datetime('now')) THEN 1 END) as currently_banned,
 		COUNT(f.id) as total_banned,
-		COALESCE(j.escalate_enabled, 0), COALESCE(j.escalate_threshold, 3), COALESCE(j.escalate_window, 3600)
+		COALESCE(j.escalate_enabled, 0), COALESCE(j.escalate_threshold, 3), COALESCE(j.escalate_window, 3600),
+		COALESCE(j.escalate_asn, 0)
 	FROM jails j
 	LEFT JOIN firewall_entries f ON j.name = f.name AND f.entry_type IN ('ip', 'range') AND f.action = 'block'`
 
 const jailGroupBy = `
 	GROUP BY j.id, j.name, j.enabled, j.log_file, j.filter_regex, j.max_retry, j.find_time, j.ban_time, j.port, j.action,
-		j.escalate_enabled, j.escalate_threshold, j.escalate_window`
+		j.escalate_enabled, j.escalate_threshold, j.escalate_window, j.escalate_asn`
 
 // handleGetJails returns all jails
 func (s *Service) handleGetJails(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +35,7 @@ func (s *Service) handleGetJails(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var j Jail
 		if err := rows.Scan(&j.ID, &j.Name, &j.Enabled, &j.LogFile, &j.FilterRegex, &j.MaxRetry, &j.FindTime, &j.BanTime, &j.Port, &j.Action,
-			&j.CurrentlyBanned, &j.TotalBanned, &j.EscalateEnabled, &j.EscalateThreshold, &j.EscalateWindow); err != nil {
+			&j.CurrentlyBanned, &j.TotalBanned, &j.EscalateEnabled, &j.EscalateThreshold, &j.EscalateWindow, &j.EscalateASN); err != nil {
 			continue
 		}
 		jails = append(jails, j)
@@ -72,10 +73,10 @@ func (s *Service) handleCreateJail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.db.Exec(`INSERT INTO jails (name, enabled, log_file, filter_regex, max_retry, find_time, ban_time, port, action,
-		escalate_enabled, escalate_threshold, escalate_window)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		escalate_enabled, escalate_threshold, escalate_window, escalate_asn)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jail.Name, jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action,
-		jail.EscalateEnabled, jail.EscalateThreshold, jail.EscalateWindow)
+		jail.EscalateEnabled, jail.EscalateThreshold, jail.EscalateWindow, jail.EscalateASN)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -98,7 +99,7 @@ func (s *Service) handleGetJail(w http.ResponseWriter, r *http.Request) {
 		&jail.ID, &jail.Name, &jail.Enabled, &jail.LogFile, &jail.FilterRegex,
 		&jail.MaxRetry, &jail.FindTime, &jail.BanTime, &jail.Port, &jail.Action,
 		&jail.CurrentlyBanned, &jail.TotalBanned,
-		&jail.EscalateEnabled, &jail.EscalateThreshold, &jail.EscalateWindow)
+		&jail.EscalateEnabled, &jail.EscalateThreshold, &jail.EscalateWindow, &jail.EscalateASN)
 	if err != nil {
 		router.JSONError(w, "jail not found", http.StatusNotFound)
 		return
@@ -134,9 +135,9 @@ func (s *Service) handleUpdateJail(w http.ResponseWriter, r *http.Request) {
 
 	_, err := s.db.Exec(`UPDATE jails SET enabled = ?, log_file = ?, filter_regex = ?, max_retry = ?,
 		find_time = ?, ban_time = ?, port = ?, action = ?,
-		escalate_enabled = ?, escalate_threshold = ?, escalate_window = ? WHERE name = ?`,
+		escalate_enabled = ?, escalate_threshold = ?, escalate_window = ?, escalate_asn = ? WHERE name = ?`,
 		jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action,
-		jail.EscalateEnabled, jail.EscalateThreshold, jail.EscalateWindow, name)
+		jail.EscalateEnabled, jail.EscalateThreshold, jail.EscalateWindow, jail.EscalateASN, name)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return

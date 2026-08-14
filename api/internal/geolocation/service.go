@@ -339,6 +339,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		// Lookups
 		"LookupIP":   s.handleLookupIP,
 		"LookupBulk": s.handleLookupBulk,
+		"SearchASN":  s.handleSearchASN,
 		// Status and data
 		"GetStatus":     s.handleGetStatus,
 		"TriggerUpdate": s.handleTriggerUpdate,

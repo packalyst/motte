@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"api/internal/events"
 	"api/internal/logs/sources"
 	"api/internal/nftables"
 )
@@ -80,8 +82,84 @@ func (s *Service) blockIPWithOptions(ip, jailName, reason string, banTime int, i
 		// Check for auto-escalation (only for individual IPs, not ranges)
 		if entryType == nftables.EntryTypeIP {
 			s.checkEscalation(ip, jailName, banTime)
+			s.checkASNEscalation(ip, jailName, banTime)
 		}
 	}
+}
+
+// checkASNEscalation blocks the whole ASN when enough distinct IPs from it have
+// been banned by this jail within the escalation window. Off unless the jail has
+// escalate_asn set. Each banned IP's ASN is resolved on demand (bans are rare),
+// which avoids adding an asn column to the large firewall_entries table.
+func (s *Service) checkASNEscalation(ip, jailName string, banTime int) {
+	if s.geo == nil {
+		return
+	}
+
+	var escalateASN bool
+	var threshold, window int
+	err := s.db.QueryRow(`SELECT COALESCE(escalate_asn, 0), COALESCE(escalate_threshold, 3), COALESCE(escalate_window, 3600)
+		FROM jails WHERE name = ?`, jailName).Scan(&escalateASN, &threshold, &window)
+	if err != nil || !escalateASN {
+		return
+	}
+
+	asn := s.geo.ASNForIP(ip)
+	if asn == 0 {
+		return // unknown owner — cannot escalate
+	}
+
+	// Count distinct IPs banned by this jail in the window that belong to this ASN.
+	rows, err := s.db.Query(`SELECT DISTINCT value FROM firewall_entries
+		WHERE entry_type = 'ip' AND action = 'block' AND name = ?
+		  AND created_at > datetime('now', '-' || ? || ' seconds')`, jailName, window)
+	if err != nil {
+		return
+	}
+	count := 0
+	for rows.Next() {
+		var v string
+		if rows.Scan(&v) == nil && s.geo.ASNForIP(v) == asn {
+			count++
+		}
+	}
+	rows.Close()
+	if count < threshold {
+		return
+	}
+
+	// Already escalated? Skip so we don't re-cache + re-apply on every later ban.
+	asnStr := strconv.FormatUint(uint64(asn), 10)
+	var already int
+	s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
+		WHERE entry_type = 'asn' AND value = ? AND action = 'block' AND enabled = 1`, asnStr).Scan(&already)
+	if already > 0 {
+		return
+	}
+
+	// Escalate: block the whole ASN.
+	var expiresAt interface{}
+	if banTime > 0 {
+		expiresAt = time.Now().Add(time.Duration(banTime) * time.Second)
+	}
+	_, err = s.db.Exec(`INSERT INTO firewall_entries
+		(entry_type, value, action, direction, protocol, source, reason, name, expires_at, enabled)
+		VALUES ('asn', ?, 'block', 'inbound', 'both', 'escalated', ?, ?, ?, 1)
+		ON CONFLICT(entry_type, value, protocol) DO NOTHING`,
+		asnStr, fmt.Sprintf("Auto-escalated: %d IPs from AS%d banned", count, asn), jailName, expiresAt)
+	if err != nil {
+		log.Printf("Error inserting escalated ASN: %v", err)
+		return
+	}
+	log.Printf("Auto-escalating: blocking AS%d (jail: %s, IPs: %d)", asn, jailName, count)
+
+	// Expand + cache the provider's ranges so the next apply drops them.
+	if n, err := s.geo.CacheASNZones(asn); err == nil {
+		s.db.Exec("UPDATE firewall_entries SET hit_count = ? WHERE entry_type = 'asn' AND value = ?", n, asnStr)
+	}
+	events.Log("firewall", "asn_escalated", events.SeverityWarning,
+		fmt.Sprintf("Escalated to AS%d — %d IPs from this provider banned by %s", asn, count, jailName))
+	s.RequestApply()
 }
 
 // checkEscalation checks if we should escalate to blocking an entire /24 range

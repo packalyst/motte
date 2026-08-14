@@ -2,8 +2,82 @@ package geolocation
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 )
+
+// ASNMatch is one provider in an ASN search result.
+type ASNMatch struct {
+	ASN    uint32 `json:"asn"`
+	Name   string `json:"name"`
+	Ranges int    `json:"ranges"` // approximate IPv4 range/CIDR count
+}
+
+// SearchASN finds providers whose name contains the query, or whose AS number
+// equals it. One bounded linear pass over the loaded table (no persistent index,
+// so no steady-state memory); called only interactively while adding a rule.
+// Results are the top `limit` by range count. IPv6-only ASNs are ignored.
+func (s *Service) SearchASN(query string, limit int) []ASNMatch {
+	s.mu.RLock()
+	db := s.asnDB
+	s.mu.RUnlock()
+	if db == nil {
+		return nil
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+
+	// A purely numeric query (optionally "AS1234") also matches that AS number.
+	var qNum uint32
+	var isNum bool
+	if n, err := strconv.ParseUint(strings.TrimPrefix(strings.ToUpper(q), "AS"), 10, 32); err == nil {
+		qNum, isNum = uint32(n), true
+	}
+
+	db.mu.RLock()
+	rows := db.rows
+	db.mu.RUnlock()
+
+	agg := make(map[uint32]*ASNMatch)
+	for i := range rows {
+		v := rows[i].val
+		if v.asn == 0 {
+			continue
+		}
+		if _, ok := v4From16(rows[i].lo); !ok {
+			continue // IPv4-only firewall
+		}
+		if !((isNum && v.asn == qNum) || strings.Contains(strings.ToLower(v.name), q)) {
+			continue
+		}
+		if m := agg[v.asn]; m != nil {
+			m.Ranges++
+		} else {
+			agg[v.asn] = &ASNMatch{ASN: v.asn, Name: v.name, Ranges: 1}
+		}
+	}
+
+	out := make([]ASNMatch, 0, len(agg))
+	for _, m := range agg {
+		out = append(out, *m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Ranges != out[j].Ranges {
+			return out[i].Ranges > out[j].Ranges
+		}
+		return out[i].ASN < out[j].ASN
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
 
 // CacheASNZones expands an ASN into its IPv4 CIDRs (from the loaded ASN DB) and
 // stores them in asn_zones_cache, so the firewall builder can join them cheaply.

@@ -87,6 +87,7 @@ type Jail struct {
 	EscalateEnabled   bool   `json:"escalateEnabled"`
 	EscalateThreshold int    `json:"escalateThreshold"`
 	EscalateWindow    int    `json:"escalateWindow"`
+	EscalateASN       bool   `json:"escalateAsn"`
 }
 
 // BlocklistSource represents a blocklist source configuration

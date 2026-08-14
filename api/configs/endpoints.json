@@ -233,6 +233,7 @@
         {"path": "/settings", "methods": ["PUT"], "handler": "UpdateSettings", "description": "Update geolocation settings"},
         {"path": "/lookup", "methods": ["GET"], "handler": "LookupIP", "description": "Lookup single IP"},
         {"path": "/lookup", "methods": ["POST"], "handler": "LookupBulk", "description": "Lookup multiple IPs"},
+        {"path": "/asn/search", "methods": ["GET"], "handler": "SearchASN", "description": "Search ASNs (providers) by name or number"},
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get service status"},
         {"path": "/update", "methods": ["POST"], "handler": "TriggerUpdate", "description": "Trigger database update"},
         {"path": "/countries", "methods": ["GET"], "handler": "GetCountries", "description": "Get available countries"},

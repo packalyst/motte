@@ -117,6 +117,7 @@ func createSchema(db *sql.DB) error {
 		escalate_enabled BOOLEAN DEFAULT 0,
 		escalate_threshold INTEGER DEFAULT 3,
 		escalate_window INTEGER DEFAULT 3600,
+		escalate_asn BOOLEAN DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -523,6 +524,14 @@ func runMigrations(db *sql.DB) {
 	if err == nil && count == 0 {
 		if _, err := db.Exec(`ALTER TABLE domain_routes ADD COLUMN skip_cert_verify BOOLEAN DEFAULT 0`); err == nil {
 			log.Printf("Migration: added skip_cert_verify column to domain_routes")
+		}
+	}
+
+	// Add escalate_asn column to jails if missing (escalate a jail ban to the whole ASN)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('jails') WHERE name = 'escalate_asn'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE jails ADD COLUMN escalate_asn BOOLEAN DEFAULT 0`); err == nil {
+			log.Printf("Migration: added escalate_asn column to jails")
 		}
 	}
 
