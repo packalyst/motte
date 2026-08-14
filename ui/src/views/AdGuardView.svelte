@@ -14,6 +14,7 @@
   import Tabs from '../components/Tabs.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
+  import Explain from '../components/Explain.svelte'
   import blocklists from '../data/blocklists.json'
 
   let { loading = $bindable(true) } = $props()
@@ -504,9 +505,13 @@
                 <ContentBlock
                   icon="world-off"
                   title="Block IPv6 (AAAA)"
-                  description="Force IPv4-only DNS — matches your IPv4-only firewall"
                   active={dnsConfig?.aaaa_disabled}
                 >
+                  {#snippet descriptionSlot()}
+                    <div class="text-xs text-muted-foreground">
+                      Drops <Explain term="AAAA" /> answers — forces IPv4-only DNS
+                    </div>
+                  {/snippet}
                   <Checkbox
                     variant="switch"
                     checked={dnsConfig?.aaaa_disabled}

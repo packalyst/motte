@@ -8,6 +8,7 @@
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
   import CountryFlag from './CountryFlag.svelte'
+  import Explain from './Explain.svelte'
   import { lookupIPs, getGeoData, checkGeoEnabled } from '../stores/geo.js'
   import { reputationMeta, proxyTypeLabel, usageTypeLabel } from '../lib/reputation.js'
 
@@ -100,7 +101,7 @@
           <div class="flex items-center gap-1.5"><span class="text-muted-foreground">Network</span><span>{usageTypeLabel(result.usage_type)}</span></div>
         {/if}
         {#if result.is_proxy}
-          <div class="flex items-center gap-1.5"><span class="text-muted-foreground">Proxy</span><span class="text-warning">{proxyTypeLabel(result.proxy_type) || 'Yes'}</span></div>
+          <div class="flex items-center gap-1.5"><span class="text-muted-foreground"><Explain term="proxy" label="Proxy" /></span><span class="text-warning">{proxyTypeLabel(result.proxy_type) || 'Yes'}</span></div>
         {/if}
         {#if result.threat && result.threat !== '-'}
           <div class="flex items-center gap-1.5"><span class="text-muted-foreground">Threat</span><span class="text-destructive">{result.threat}</span></div>
