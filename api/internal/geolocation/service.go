@@ -418,26 +418,9 @@ func (s *Service) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error) {
 // entry (the allow/VIP direction). Source-only, so no outbound variant. Reads the
 // cached zones directly so it works regardless of the blocking provider state.
 func (s *Service) GetAllowedCountryCIDRs() ([]string, error) {
-	if s.db == nil {
-		return nil, fmt.Errorf("database not available")
-	}
-	rows, err := s.db.Query(`SELECT c.zones FROM country_zones_cache c
-		INNER JOIN firewall_entries f ON c.country_code = f.value
-		WHERE f.entry_type = 'country' AND f.action = 'allow' AND f.enabled = 1`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []string
-	for rows.Next() {
-		var zones string
-		if err := rows.Scan(&zones); err != nil {
-			continue
-		}
-		out = append(out, parseZonesToCIDRs(zones)...)
-	}
-	return out, rows.Err()
+	// Allow is source-only (no outbound variant). Shares the parameterized helper with
+	// GetAllBlockedCIDRs so block/allow can never drift.
+	return countryCIDRsByAction(s.db, "allow", false)
 }
 
 // ReloadConfig reloads configuration and reinitializes providers

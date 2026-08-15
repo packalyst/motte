@@ -212,26 +212,24 @@ func (p *IPDenyProvider) GetCountryCIDRs(countryCode string) ([]string, error) {
 	return parseZonesToCIDRs(zones), nil
 }
 
-// GetAllBlockedCIDRs returns all CIDRs for enabled blocked countries
-func (p *IPDenyProvider) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error) {
-	if p.db == nil {
+// countryCIDRsByAction joins enabled country entries of the given action ('block' or
+// 'allow') with their cached zones and returns the CIDRs. Keeping block and allow on one
+// parameterized query guarantees an entry can only ever feed the matching set — a block
+// never leaks into the allow set or vice-versa. outboundOnly restricts to direction='both'
+// entries (allow is source-only, so callers pass false). Mirrors asnCIDRsByAction.
+// Package-level (takes the db) so both IPDenyProvider and Service can share it.
+func countryCIDRsByAction(db *database.DB, action string, outboundOnly bool) ([]string, error) {
+	if db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-
-	// Query firewall_entries for blocked countries and join with country_zones_cache
-	// action = 'block' so an allow-listed country never lands in the drop set.
-	var query string
+	query := `SELECT c.zones FROM country_zones_cache c
+		INNER JOIN firewall_entries f ON c.country_code = f.value
+		WHERE f.entry_type = 'country' AND f.action = ? AND f.enabled = 1`
 	if outboundOnly {
-		query = `SELECT c.zones FROM country_zones_cache c
-			INNER JOIN firewall_entries f ON c.country_code = f.value
-			WHERE f.entry_type = 'country' AND f.action = 'block' AND f.enabled = 1 AND f.direction = 'both'`
-	} else {
-		query = `SELECT c.zones FROM country_zones_cache c
-			INNER JOIN firewall_entries f ON c.country_code = f.value
-			WHERE f.entry_type = 'country' AND f.action = 'block' AND f.enabled = 1`
+		query += ` AND f.direction = 'both'`
 	}
 
-	rows, err := p.db.Query(query)
+	rows, err := db.Query(query, action)
 	if err != nil {
 		return nil, err
 	}
@@ -245,8 +243,12 @@ func (p *IPDenyProvider) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error)
 		}
 		allCIDRs = append(allCIDRs, parseZonesToCIDRs(zones)...)
 	}
+	return allCIDRs, rows.Err()
+}
 
-	return allCIDRs, nil
+// GetAllBlockedCIDRs returns all CIDRs for enabled blocked countries.
+func (p *IPDenyProvider) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error) {
+	return countryCIDRsByAction(p.db, "block", outboundOnly)
 }
 
 // GetCachedZones returns cached zones for a country
