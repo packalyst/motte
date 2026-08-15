@@ -222,9 +222,12 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 			router.JSONError(w, "device IP must be a valid IPv4 address", http.StatusBadRequest)
 			return
 		}
+		// port 0 = forward every port (e.g. ONVIF, which needs 554 + HTTP + dynamic RTP);
+		// a non-zero port must be a valid TCP port — never silently coerce.
 		port = req.TargetPort
-		if port < 1 || port > 65535 {
-			port = 554 // sensible default (RTSP) when a device is set without a valid port
+		if port < 0 || port > 65535 {
+			router.JSONError(w, "port must be between 1 and 65535 (leave empty to forward all ports)", http.StatusBadRequest)
+			return
 		}
 	}
 
