@@ -47,11 +47,17 @@
     }
   }
 
-  // Expand menu only if current view is a child of it
-  const headscaleChildren = ['nodes', 'routes', 'users', 'authkeys', 'apikeys']
-  let expandedMenus = $state({
-    headscale: headscaleChildren.includes($currentView)
-  })
+  // Submenu groups → their child view ids. Drives auto-expand + collapse so the
+  // logic works for every group, not one hardcoded menu.
+  const menuGroups = {
+    'grp-access': ['routes', 'users', 'authkeys', 'apikeys'],
+    'grp-web': ['traefik', 'domains', 'tunnels'],
+    'grp-services': ['adguard', 'docker', 'logs', 'analytics'],
+  }
+  // Expand the group that contains the current view on load.
+  let expandedMenus = $state(
+    Object.fromEntries(Object.entries(menuGroups).map(([g, kids]) => [g, kids.includes($currentView)]))
+  )
 
   // Stats from WebSocket
   let stats = $state({ online: 0, offline: 0, hsNodes: 0, wgPeers: 0 })
@@ -102,12 +108,14 @@
   }
 
   const navItems = [
+    // Daily-driver items stay one click away
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'nodes', label: 'Nodes', icon: 'server' },
+    { id: 'firewall', label: 'Firewall', icon: 'shield' },
+    { id: 'activity', label: 'Activity', icon: 'activity' },
+    { id: 'divider1', divider: true },
     {
-      id: 'headscale',
-      label: 'Headscale',
-      icon: 'cloud',
+      id: 'grp-access', label: 'Access', icon: 'key',
       children: [
         { id: 'routes', label: 'Routes', icon: 'git-branch' },
         { id: 'users', label: 'Users', icon: 'users' },
@@ -115,18 +123,24 @@
         { id: 'apikeys', label: 'API Keys', icon: 'key' },
       ]
     },
-    { id: 'firewall', label: 'Firewall', icon: 'shield' },
-    { id: 'divider1', divider: true },
-    { id: 'traefik', label: 'Traefik', icon: 'world' },
-    { id: 'domains', label: 'Domain Routes', icon: 'world-www' },
-    { id: 'tunnels', label: 'Tunnels', icon: 'arrows-right-left' },
-    { id: 'adguard', label: 'AdGuard', icon: 'shield-check' },
-    { id: 'docker', label: 'Docker', icon: 'box' },
+    {
+      id: 'grp-web', label: 'Web & Proxy', icon: 'world-www',
+      children: [
+        { id: 'traefik', label: 'Traefik', icon: 'world' },
+        { id: 'domains', label: 'Domain Routes', icon: 'world-www' },
+        { id: 'tunnels', label: 'Tunnels', icon: 'arrows-right-left' },
+      ]
+    },
+    {
+      id: 'grp-services', label: 'Services', icon: 'cloud',
+      children: [
+        { id: 'adguard', label: 'AdGuard', icon: 'shield-check' },
+        { id: 'docker', label: 'Docker', icon: 'box' },
+        { id: 'logs', label: 'Logs', icon: 'file-text' },
+        { id: 'analytics', label: 'Analytics', icon: 'chart-bar' },
+      ]
+    },
     { id: 'divider2', divider: true },
-    { id: 'logs', label: 'Logs', icon: 'file-text' },
-    { id: 'analytics', label: 'Analytics', icon: 'chart-bar' },
-    { id: 'activity', label: 'Activity', icon: 'activity' },
-    { id: 'divider3', divider: true },
     { id: 'settings', label: 'Settings', icon: 'settings' },
     { id: 'about', label: 'About', icon: 'info-circle' }
   ]
@@ -154,9 +168,9 @@
     currentView.set(id)
     sidebarOpen = false
     loading = true
-    // Close all dropdowns when navigating to non-child items
+    // Close all submenus when navigating to a top-level (non-child) item
     if (!isChild) {
-      expandedMenus = { headscale: false }
+      expandedMenus = Object.fromEntries(Object.keys(menuGroups).map(g => [g, false]))
     }
   }
 
