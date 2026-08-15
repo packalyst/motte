@@ -20,9 +20,9 @@
   let timer
 
   const STATUS = {
-    calm:         { label: 'Calm',         icon: 'shield-check',   text: 'text-success',     iconBg: 'bg-success/10',     strip: 'bg-success/5',     dot: 'bg-success' },
-    elevated:     { label: 'Elevated',     icon: 'alert-triangle', text: 'text-warning',     iconBg: 'bg-warning/10',     strip: 'bg-warning/5',     dot: 'bg-warning' },
-    under_attack: { label: 'Under attack', icon: 'alert-triangle', text: 'text-destructive', iconBg: 'bg-destructive/10', strip: 'bg-destructive/5', dot: 'bg-destructive animate-pulse' },
+    calm:         { label: 'Calm',         icon: 'shield-check',   text: 'text-success',     dot: 'bg-success' },
+    elevated:     { label: 'Elevated',     icon: 'alert-triangle', text: 'text-warning',     dot: 'bg-warning' },
+    under_attack: { label: 'Under attack', icon: 'alert-triangle', text: 'text-destructive', dot: 'bg-destructive animate-pulse' },
   }
   const meta = $derived(STATUS[data?.status] || STATUS.calm)
 
@@ -55,52 +55,52 @@
 </script>
 
 {#if data && !error}
-  <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-    <!-- Status strip -->
-    <div class="flex items-center gap-3 px-4 py-3 {meta.strip} border-b border-border">
-      <div class="flex h-9 w-9 items-center justify-center rounded-lg shrink-0 {meta.iconBg} {meta.text}">
-        <Icon name={meta.icon} size={20} />
-      </div>
-      <div class="min-w-0 flex items-center gap-2">
-        <span class="text-sm font-semibold {meta.text}">{meta.label}</span>
+  <div class="kt-panel">
+    <!-- Status as the panel title (reuses kt-panel-title sizing) -->
+    <div class="kt-panel-header">
+      <h3 class="kt-panel-title">
+        <Icon name={meta.icon} size={16} class={meta.text} />
+        <span class={meta.text}>{meta.label}</span>
         <span class="h-1.5 w-1.5 rounded-full {meta.dot}"></span>
-      </div>
-      <span class="ml-auto text-[11px] text-muted-foreground">last hour</span>
+      </h3>
+      <span class="text-[11px] text-muted-foreground">last hour</span>
     </div>
 
-    <!-- Stat tiles -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3">
-      {#each tiles as t}
-        <div class="rounded-lg bg-muted/40 px-3 py-2.5">
-          <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1">
-            <Icon name={t.icon} size={13} class={t.iconColor} />{t.label}
+    <div class="kt-panel-body space-y-3">
+      <!-- Stat tiles -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        {#each tiles as t}
+          <div class="rounded-lg bg-muted/40 px-3 py-2.5">
+            <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1">
+              <Icon name={t.icon} size={13} class={t.iconColor} />{t.label}
+            </div>
+            <div class="text-2xl font-bold tabular-nums {t.color}">{t.value}</div>
           </div>
-          <div class="text-2xl font-bold tabular-nums {t.color}">{t.value}</div>
-        </div>
-      {/each}
-    </div>
-
-    <!-- Top offender -->
-    {#if data.top_attacker}
-      <div class="flex items-center gap-2 border-t border-border px-4 py-2.5 text-xs">
-        <span class="text-muted-foreground shrink-0">Top offender</span>
-        {#if data.top_attacker.country}<CountryFlag code={data.top_attacker.country} size="sm" />{/if}
-        <span class="font-mono truncate">{data.top_attacker.ip}</span>
-        <IpBadge geo={attackerGeo} />
-        <span class="ml-auto text-muted-foreground tabular-nums shrink-0">×{data.top_attacker.count} hits</span>
-      </div>
-    {/if}
-
-    <!-- Service health (folded in) -->
-    {#if services?.length}
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border px-4 py-2.5">
-        {#each services as svc (svc.key)}
-          <span class="flex items-center gap-1.5 text-xs" title="{svc.name}: {svc.status === 'up' ? 'running' : 'not running'}">
-            <span class="h-1.5 w-1.5 rounded-full {svc.status === 'up' ? 'bg-success' : 'bg-destructive animate-pulse'}"></span>
-            <span class="{svc.status === 'up' ? 'text-muted-foreground' : 'text-destructive font-medium'}">{svc.name}</span>
-          </span>
         {/each}
       </div>
-    {/if}
+
+      <!-- Top offender -->
+      {#if data.top_attacker}
+        <div class="flex items-center gap-2 border-t border-border pt-2.5 text-xs">
+          <span class="text-muted-foreground shrink-0">Top offender</span>
+          {#if data.top_attacker.country}<CountryFlag code={data.top_attacker.country} size="sm" />{/if}
+          <span class="font-mono truncate">{data.top_attacker.ip}</span>
+          <IpBadge geo={attackerGeo} />
+          <span class="ml-auto text-muted-foreground tabular-nums shrink-0">×{data.top_attacker.count} hits</span>
+        </div>
+      {/if}
+
+      <!-- Service health (folded in) -->
+      {#if services?.length}
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border pt-2.5">
+          {#each services as svc (svc.key)}
+            <span class="flex items-center gap-1.5 text-xs" title="{svc.name}: {svc.status === 'up' ? 'running' : 'not running'}">
+              <span class="h-1.5 w-1.5 rounded-full {svc.status === 'up' ? 'bg-success' : 'bg-destructive animate-pulse'}"></span>
+              <span class="{svc.status === 'up' ? 'text-muted-foreground' : 'text-destructive font-medium'}">{svc.name}</span>
+            </span>
+          {/each}
+        </div>
+      {/if}
+    </div>
   </div>
 {/if}
