@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob, confirm } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob } from '../stores/app.js'
   import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
@@ -412,7 +412,6 @@
   let vipsError = $state('')
   let newVipLabel = $state('')
   let newVipTargetIp = $state('')
-  let newVipTargetPort = $state('')
   let expandedVipCmd = $state(null) // vip id whose forwarding commands are inline-expanded
   let vipCmdText = $state('')       // fetched NAS commands
   let vipCmdLoading = $state(false)
@@ -437,33 +436,30 @@
     if (!label) { toast('Give the virtual IP a name — it names the forwarding rule', 'error'); return }
     try {
       const body = { label, restricted: true }
-      if (newVipTargetIp.trim()) {
-        body.targetIp = newVipTargetIp.trim()
-        // Port is optional: the forward covers ALL ports. Only send it if given.
-        const p = parseInt(newVipTargetPort)
-        if (p > 0) body.targetPort = p
-      }
+      // The forward covers ALL ports, so only the device IP is needed.
+      if (newVipTargetIp.trim()) body.targetIp = newVipTargetIp.trim()
       await apiPost(`/api/wg/peers/${selectedNode._wgId}/vips`, body)
-      newVipLabel = ''; newVipTargetIp = ''; newVipTargetPort = ''
+      newVipLabel = ''; newVipTargetIp = ''
       toast('Virtual IP added', 'success')
       await loadVips()
     } catch (e) { toast(e?.message || 'Failed to add virtual IP', 'error') }
   }
 
-  async function removeVip(vip) {
-    const ok = await confirm({
-      title: 'Remove virtual IP',
-      message: `Remove ${vip.ip}${vip.label ? ` (${vip.label})` : ''}?`,
-      description: 'It will be unrouted from this peer immediately.',
-      confirmText: 'Remove',
-      variant: 'destructive',
-    })
-    if (!ok) return
+  // Inline (in-modal) confirm — a stacked confirm modal breaks the parent modal.
+  let confirmRemoveVipId = $state(null)
+  let removingVip = $state(false)
+  async function doRemoveVip(vip) {
+    removingVip = true
     try {
       await apiDelete(`/api/wg/vips/${vip.id}`)
       toast('Virtual IP removed', 'success')
+      confirmRemoveVipId = null
       await loadVips()
-    } catch (e) { toast(e?.message || 'Failed to remove', 'error') }
+    } catch (e) {
+      toast(e?.message || 'Failed to remove', 'error')
+    } finally {
+      removingVip = false
+    }
   }
 
   async function saveVipAcl(vip) {
@@ -1109,7 +1105,6 @@
             <div class="flex flex-col sm:flex-row gap-2 mt-2">
               <Input bind:value={newVipLabel} placeholder="Name (required, e.g. Tapo camera)" prefixIcon="tag" class="flex-1" />
               <Input bind:value={newVipTargetIp} placeholder="Device IP (optional)" prefixIcon="device-laptop" class="flex-1" />
-              <Input bind:value={newVipTargetPort} placeholder="Port" class="w-full sm:w-20" />
               <Button onclick={addVip} icon="plus">Add</Button>
             </div>
             <div class="text-xs text-muted-foreground mt-1">The VPN IP is auto-assigned; the name labels the forwarding rule. Add a Device IP to forward to a LAN device (all ports) — leave it blank for a bare routed IP.</div>
@@ -1135,7 +1130,7 @@
                       </span>
                       <div class="min-w-0 flex-1">
                         <div class="font-mono text-sm font-medium truncate">
-                          {vip.ip}{#if vip.targetIp}<span class="text-muted-foreground"> → {vip.targetIp}{#if vip.targetPort}:{vip.targetPort}{/if}</span>{/if}
+                          {vip.ip}{#if vip.targetIp}<span class="text-muted-foreground"> → {vip.targetIp}</span>{/if}
                         </div>
                         {#if vip.label}<div class="text-xs text-muted-foreground truncate">{vip.label}</div>{/if}
                       </div>
@@ -1145,9 +1140,20 @@
                         {#if vip.targetIp}
                           <Button size="xs" variant={expandedVipCmd === vip.id ? 'secondary' : 'ghost'} icon="code" title="Forwarding commands" onclick={() => toggleVipCommands(vip)} />
                         {/if}
-                        <Button size="xs" variant="ghost" icon="trash" title="Remove" onclick={() => removeVip(vip)} />
+                        <Button size="xs" variant="ghost" icon="trash" title="Remove" onclick={() => confirmRemoveVipId = vip.id} />
                       </div>
                     </div>
+
+                    <!-- Inline remove confirm (no stacked modal) -->
+                    {#if confirmRemoveVipId === vip.id}
+                      <div class="flex items-center justify-between gap-3 border-t border-destructive/30 bg-destructive/5 px-3 py-2.5">
+                        <span class="text-xs text-foreground">Remove <span class="font-mono">{vip.ip}</span>? It's unrouted from this peer immediately.</span>
+                        <div class="flex items-center gap-2 shrink-0">
+                          <Button size="xs" variant="secondary" disabled={removingVip} onclick={() => confirmRemoveVipId = null}>Cancel</Button>
+                          <Button size="xs" variant="destructive" disabled={removingVip} icon={removingVip ? undefined : 'trash'} onclick={() => doRemoveVip(vip)}>{removingVip ? 'Removing…' : 'Remove'}</Button>
+                        </div>
+                      </div>
+                    {/if}
 
                     <!-- Forwarding commands (inline, expandable) -->
                     {#if expandedVipCmd === vip.id}
