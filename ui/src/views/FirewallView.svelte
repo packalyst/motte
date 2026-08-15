@@ -117,7 +117,12 @@
     } catch { asnResults = [] }
     finally { asnSearching = false }
   }
+  // AS numbers already present in the current (deny/allow) list, so the picker
+  // can show "Added" instead of offering to add a duplicate.
+  const addedAsns = $derived(new Set((blockedEntries || []).filter(e => e.entryType === 'asn').map(e => String(e.value))))
+
   async function addAsn(match) {
+    if (addedAsns.has(String(match.asn))) return
     addingAsn = match.asn
     try {
       await apiPost('/api/fw/entries', {
@@ -289,19 +294,26 @@
   }
 
   async function confirmUnblock(entry) {
-    const label = entry.entryType === 'country' ? (entry.name || entry.value) : entry.value
-    const description = entry.entryType === 'country'
-      ? 'Traffic from this country will be allowed again.'
-      : entry.entryType === 'range'
-        ? 'This IP range will be able to connect again.'
-        : 'This IP will be able to connect again.'
+    const isAllow = entry.action === 'allow'
+    const label = entry.entryType === 'asn'
+      ? `AS${entry.value}${entry.name ? ' (' + entry.name + ')' : ''}`
+      : entry.entryType === 'country' ? (entry.name || entry.value) : entry.value
+    const description = isAllow
+      ? 'This source will no longer be exempt from the block rules.'
+      : entry.entryType === 'country'
+        ? 'Traffic from this country will be allowed again.'
+        : entry.entryType === 'asn'
+          ? 'Traffic from this provider will be allowed again.'
+          : entry.entryType === 'range'
+            ? 'This IP range will be able to connect again.'
+            : 'This IP will be able to connect again.'
 
     const confirmed = await confirm({
-      title: 'Unblock Entry',
-      message: `Unblock ${label}?`,
+      title: isAllow ? 'Remove allow rule' : 'Unblock entry',
+      message: `${isAllow ? 'Remove allow rule for' : 'Unblock'} ${label}?`,
       description,
-      confirmText: 'Unblock',
-      variant: 'success'
+      confirmText: isAllow ? 'Remove' : 'Unblock',
+      variant: isAllow ? 'destructive' : 'success'
     })
     if (!confirmed) return
 
@@ -309,7 +321,7 @@
     setConfirmLoading(true)
     try {
       await apiDelete(`/api/fw/entries/${entry.id}`)
-      toast(`${label} unblocked`, 'success')
+      toast(`${label} ${isAllow ? 'removed' : 'unblocked'}`, 'success')
       await reloadBlocked()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
@@ -418,10 +430,11 @@
 
   // Delete all entries
   async function confirmDeleteAll() {
+    const listName = viewAction === 'allow' ? 'allow' : 'deny'
     const confirmed = await confirm({
-      title: 'Delete All Entries',
-      message: `This will permanently delete ${blockedTotal} blocked entries.`,
-      description: 'All IPs, ranges, and countries will be removed. Essential entries (system ports) will not be deleted.',
+      title: `Delete all ${listName} rules`,
+      message: `This will permanently delete all ${blockedTotal} ${listName}-list rules.`,
+      description: `All IPs, ranges, countries and ASNs in the ${listName} list will be removed. Ports and essential entries are not affected.`,
       warning: 'This action cannot be undone!',
       confirmText: 'Delete All'
     })
@@ -429,7 +442,7 @@
 
     setConfirmLoading(true)
     try {
-      const result = await apiDelete('/api/fw/entries/all')
+      const result = await apiDelete(`/api/fw/entries/all?action=${viewAction}`)
       await loadBlocked()
       toast(`Deleted ${result.deleted} entries`, 'success')
     } catch (e) {
@@ -642,14 +655,14 @@
             <!-- Header -->
             <div class="data-table-header">
               <div class="data-table-header-start">
-                <!-- Deny / Allow view toggle -->
-                <div class="inline-flex rounded-lg border border-border overflow-hidden shrink-0">
+                <!-- Deny / Allow view toggle (full-width 50/50 on mobile) -->
+                <div class="flex w-full sm:w-auto rounded-lg border border-border overflow-hidden shrink-0">
                   <button
-                    class="px-3 py-1.5 text-xs font-medium transition cursor-pointer {viewAction === 'block' ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground hover:bg-muted/50'}"
+                    class="flex-1 sm:flex-none px-3 py-1.5 text-xs font-medium transition cursor-pointer {viewAction === 'block' ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground hover:bg-muted/50'}"
                     onclick={() => setViewAction('block')}
                   >Deny</button>
                   <button
-                    class="px-3 py-1.5 text-xs font-medium border-l border-border transition cursor-pointer {viewAction === 'allow' ? 'bg-success/10 text-success' : 'text-muted-foreground hover:bg-muted/50'}"
+                    class="flex-1 sm:flex-none px-3 py-1.5 text-xs font-medium border-l border-border transition cursor-pointer {viewAction === 'allow' ? 'bg-success/10 text-success' : 'text-muted-foreground hover:bg-muted/50'}"
                     onclick={() => setViewAction('allow')}
                   >Allow</button>
                 </div>
@@ -706,10 +719,10 @@
                     icon="settings"
                     variant="outline"
                     items={[
-                      { label: refreshingZones ? 'Refreshing...' : 'Refresh Zones', icon: 'refresh', iconClass: refreshingZones ? 'animate-spin' : '', onclick: refreshZones, disabled: refreshingZones },
+                      { label: refreshingZones ? 'Updating...' : 'Update Country Zones', icon: 'refresh', iconClass: refreshingZones ? 'animate-spin' : '', onclick: refreshZones, disabled: refreshingZones },
                       { label: checkingSyncStatus ? 'Checking...' : 'Check Sync', icon: 'circle-check', onclick: checkSyncStatus, disabled: checkingSyncStatus },
                       { divider: true },
-                      { label: 'Delete All...', icon: 'trash', variant: 'destructive', onclick: confirmDeleteAll, disabled: blockedTotal === 0 }
+                      { label: `Delete all ${viewAction === 'allow' ? 'allow' : 'deny'} rules...`, icon: 'trash', variant: 'destructive', onclick: confirmDeleteAll, disabled: blockedTotal === 0 }
                     ]}
                   />
 
@@ -721,9 +734,11 @@
                       variant="destructive"
                       items={[
                         { label: 'Delete', icon: 'trash', variant: 'destructive', onclick: deleteSelectedBlockedEntries },
-                        { divider: true },
-                        { label: 'Set Inbound', icon: 'arrow-down', onclick: () => setSelectedDirection('inbound') },
-                        { label: 'Set Both', icon: 'arrows-vertical', onclick: () => setSelectedDirection('both') }
+                        ...(viewAction === 'block' ? [
+                          { divider: true },
+                          { label: 'Set Inbound', icon: 'arrow-down', onclick: () => setSelectedDirection('inbound') },
+                          { label: 'Set Both', icon: 'arrows-vertical', onclick: () => setSelectedDirection('both') }
+                        ] : [])
                       ]}
                     />
                   {/if}
@@ -859,8 +874,8 @@
                               <Icon name="lock" size={14} />
                             </span>
                           {:else}
-                            <button onclick={() => confirmUnblock(entry)} class="icon-btn" title="Unblock">
-                              <Icon name="lock-open" size={14} />
+                            <button onclick={() => confirmUnblock(entry)} class="icon-btn" title={entry.action === 'allow' ? 'Remove allow rule' : 'Unblock'}>
+                              <Icon name={entry.action === 'allow' ? 'trash' : 'lock-open'} size={14} />
                             </button>
                           {/if}
                         </td>
@@ -886,36 +901,42 @@
 {/if}
 
 <!-- Block IP Modal -->
-<Modal bind:open={showBlockModal} title="Block IP or Range" size="sm">
+<Modal bind:open={showBlockModal} title="{viewAction === 'allow' ? 'Allow' : 'Block'} IP or Range" size="sm">
   <div class="space-y-4">
     <Input
       label="IP Address or CIDR Range"
       bind:value={blockForm.ip}
       placeholder="e.g. 192.168.1.100 or 192.168.1.0/24"
-      helperText="Use CIDR notation (e.g., /24) to block an entire range"
+      helperText="Use CIDR notation (e.g., /24) for an entire range"
     />
-    <Input
-      label="Reason"
-      bind:value={blockForm.reason}
-      placeholder="Manual block (optional)"
-    />
-    <Select
-      label="Duration"
-      bind:value={blockForm.duration}
-      options={[
-        { value: '1h', label: '1 hour' },
-        { value: '24h', label: '24 hours' },
-        { value: '7d', label: '7 days' },
-        { value: '30d', label: '30 days' },
-        { value: '90d', label: '90 days' },
-        { value: 'permanent', label: 'Permanent' }
-      ]}
-    />
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <Input
+        label="Reason"
+        bind:value={blockForm.reason}
+        placeholder={viewAction === 'allow' ? 'Manual allow (optional)' : 'Manual block (optional)'}
+      />
+      <Select
+        label="Duration"
+        bind:value={blockForm.duration}
+        options={[
+          { value: '1h', label: '1 hour' },
+          { value: '24h', label: '24 hours' },
+          { value: '7d', label: '7 days' },
+          { value: '30d', label: '30 days' },
+          { value: '90d', label: '90 days' },
+          { value: 'permanent', label: 'Permanent' }
+        ]}
+      />
+    </div>
   </div>
 
   {#snippet footer()}
     <Button onclick={() => showBlockModal = false} variant="secondary">Cancel</Button>
-    <Button onclick={blockIP} variant="destructive" icon="ban">Block</Button>
+    {#if viewAction === 'allow'}
+      <Button onclick={blockIP} variant="success" icon="check">Allow</Button>
+    {:else}
+      <Button onclick={blockIP} variant="destructive" icon="ban">Block</Button>
+    {/if}
   {/snippet}
 </Modal>
 
@@ -1000,8 +1021,8 @@
   {/snippet}
 </Modal>
 
-<!-- Block Countries Modal -->
-<Modal bind:open={showBlockCountriesModal} title="Block Countries" size="lg">
+<!-- Block/Allow Countries Modal -->
+<Modal bind:open={showBlockCountriesModal} title="{viewAction === 'allow' ? 'Allow' : 'Block'} Countries" size="lg">
   <div class="space-y-4">
     <!-- Search and actions -->
     <div class="flex flex-wrap items-center gap-3">
@@ -1096,14 +1117,15 @@
     </Button>
     <Button
       onclick={blockSelectedCountries}
-      icon="ban"
+      icon={viewAction === 'allow' ? 'check' : 'ban'}
+      variant={viewAction === 'allow' ? 'success' : 'destructive'}
       disabled={selectedCountries.length === 0 || blockingCountries}
     >
       {#if blockingCountries}
         <div class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></div>
-        Blocking...
+        {viewAction === 'allow' ? 'Allowing...' : 'Blocking...'}
       {:else}
-        Block {selectedCountries.length > 0 ? `${selectedCountries.length} Countries` : 'Countries'}
+        {viewAction === 'allow' ? 'Allow' : 'Block'} {selectedCountries.length > 0 ? `${selectedCountries.length} Countries` : 'Countries'}
       {/if}
     </Button>
   {/snippet}
@@ -1129,10 +1151,11 @@
         </div>
       {:else}
         {#each asnResults as m (m.asn)}
+          {@const added = addedAsns.has(String(m.asn))}
           <button
-            class="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/50 transition disabled:opacity-50 cursor-pointer"
+            class="w-full flex items-center gap-3 px-3 py-2.5 text-left transition cursor-pointer {added ? 'opacity-60 cursor-default' : 'hover:bg-muted/50'}"
             onclick={() => addAsn(m)}
-            disabled={addingAsn === m.asn}
+            disabled={addingAsn === m.asn || added}
           >
             <Icon name="cloud" size={16} class="text-muted-foreground shrink-0" />
             <div class="min-w-0 flex-1">
@@ -1141,9 +1164,13 @@
                 AS{m.asn} · ~{(m.ranges || 0).toLocaleString()} ranges{#if m.ranges > 1000} <span class="text-warning">⚠ large</span>{/if}
               </div>
             </div>
-            <span class="text-xs {viewAction === 'allow' ? 'text-success' : 'text-destructive'} shrink-0">
-              {addingAsn === m.asn ? '…' : (viewAction === 'allow' ? 'Allow' : 'Block')}
-            </span>
+            {#if added}
+              <span class="text-xs text-muted-foreground shrink-0 flex items-center gap-1"><Icon name="check" size={13} />{viewAction === 'allow' ? 'Allowed' : 'Blocked'}</span>
+            {:else}
+              <span class="text-xs {viewAction === 'allow' ? 'text-success' : 'text-destructive'} shrink-0">
+                {addingAsn === m.asn ? '…' : (viewAction === 'allow' ? 'Allow' : 'Block')}
+              </span>
+            {/if}
           </button>
         {/each}
       {/if}

@@ -117,28 +117,57 @@ func (s *Service) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		AND direction IN ('outbound', 'both')
 		AND (expires_at IS NULL OR expires_at > datetime('now'))`).Scan(&dbBlockedRangesOut)
 
-	// Get DB counts - ports and countries
-	var dbAllowedTCPPorts, dbAllowedUDPPorts, dbCountries int
+	// Get DB counts - ports
+	var dbAllowedTCPPorts, dbAllowedUDPPorts int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
 		WHERE entry_type = 'port' AND action = 'allow' AND enabled = 1
 		AND protocol IN ('tcp', 'both')`).Scan(&dbAllowedTCPPorts)
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
 		WHERE entry_type = 'port' AND action = 'allow' AND enabled = 1
 		AND protocol IN ('udp', 'both')`).Scan(&dbAllowedUDPPorts)
+
+	// Allow source-list: exact for 1:1 sets (ip/range).
+	var dbAllowedIPs, dbAllowedRanges int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
-		WHERE entry_type = 'country' AND enabled = 1`).Scan(&dbCountries)
+		WHERE entry_type = 'ip' AND action = 'allow' AND enabled = 1
+		AND (expires_at IS NULL OR expires_at > datetime('now'))`).Scan(&dbAllowedIPs)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
+		WHERE entry_type = 'range' AND action = 'allow' AND enabled = 1
+		AND (expires_at IS NULL OR expires_at > datetime('now'))`).Scan(&dbAllowedRanges)
+
+	// Expanded interval sets (country/asn, block+allow) hold thousands of CIDRs
+	// that nftables may merge, so exact counts aren't reliable. Presence check:
+	// the set must be non-empty exactly when the DB has such rules.
+	countEntries := func(entryType, action string) int {
+		var n int
+		_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries
+			WHERE entry_type = ? AND action = ? AND enabled = 1`, entryType, action).Scan(&n)
+		return n
+	}
+	dbBlockedCountries := countEntries("country", "block")
+	dbBlockedASN := countEntries("asn", "block")
+	dbAllowedCountries := countEntries("country", "allow")
+	dbAllowedASN := countEntries("asn", "allow")
 
 	// Get nftables set counts
 	nftCounts := s.nft.GetFirewallSetCounts()
 
-	// Compare counts to determine sync status
+	present := func(dbCount, nftCount int) bool { return (dbCount > 0) == (nftCount > 0) }
+
+	// Compare to determine sync status: exact for 1:1 sets, presence for expanded.
 	inSync := nftStatus.InSync &&
 		nftCounts["blocked_ips"] == dbBlockedIPsIn &&
 		nftCounts["blocked_ranges"] == dbBlockedRangesIn &&
 		nftCounts["blocked_ips_out"] == dbBlockedIPsOut &&
 		nftCounts["blocked_ranges_out"] == dbBlockedRangesOut &&
 		nftCounts["allowed_tcp_ports"] == dbAllowedTCPPorts &&
-		nftCounts["allowed_udp_ports"] == dbAllowedUDPPorts
+		nftCounts["allowed_udp_ports"] == dbAllowedUDPPorts &&
+		nftCounts["allowed_ips"] == dbAllowedIPs &&
+		present(dbAllowedRanges, nftCounts["allowed_ranges"]) &&
+		present(dbBlockedCountries, nftCounts["blocked_countries"]) &&
+		present(dbBlockedASN, nftCounts["blocked_asn"]) &&
+		present(dbAllowedCountries, nftCounts["allowed_countries"]) &&
+		present(dbAllowedASN, nftCounts["allowed_asn"])
 
 	router.JSON(w, map[string]interface{}{
 		"inSync":           inSync,
@@ -149,9 +178,12 @@ func (s *Service) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		"dbBlockedIPs":     dbBlockedIPsIn,
 		"dbBlockedRanges":  dbBlockedRangesIn,
 		"dbAllowedPorts":   dbAllowedTCPPorts + dbAllowedUDPPorts,
-		"dbCountryRanges":  dbCountries,
+		"dbCountryRanges":  dbBlockedCountries,
+		"dbBlockedASN":     dbBlockedASN,
+		"dbAllowedSources": dbAllowedIPs + dbAllowedRanges + dbAllowedCountries + dbAllowedASN,
 		"nftBlockedIPs":    nftCounts["blocked_ips"],
 		"nftBlockedRanges": nftCounts["blocked_ranges"],
+		"nftBlockedASN":    nftCounts["blocked_asn"],
 		"nftAllowedPorts":  nftCounts["allowed_tcp_ports"] + nftCounts["allowed_udp_ports"],
 	})
 }

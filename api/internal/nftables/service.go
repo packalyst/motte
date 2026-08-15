@@ -215,6 +215,10 @@ func (s *Service) GetFirewallSetCounts() map[string]int {
 		"blocked_asn_out":       s.CountSetElements("inet", "wgadmin_firewall", "blocked_asn_out"),
 		"allowed_tcp_ports":     s.CountSetElements("inet", "wgadmin_firewall", "allowed_tcp_ports"),
 		"allowed_udp_ports":     s.CountSetElements("inet", "wgadmin_firewall", "allowed_udp_ports"),
+		"allowed_ips":           s.CountSetElements("inet", "wgadmin_firewall", "allowed_ips"),
+		"allowed_ranges":        s.CountSetElements("inet", "wgadmin_firewall", "allowed_ranges"),
+		"allowed_countries":     s.CountSetElements("inet", "wgadmin_firewall", "allowed_countries"),
+		"allowed_asn":           s.CountSetElements("inet", "wgadmin_firewall", "allowed_asn"),
 	}
 }
 

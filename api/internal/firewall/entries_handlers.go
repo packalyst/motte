@@ -56,7 +56,7 @@ func (s *Service) handleGetEntries(w http.ResponseWriter, r *http.Request) {
 	// Sources are scoped to the current action so the blocked-entries filter only
 	// offers sources that actually appear on blocks (not allow-only sources like
 	// 'system'/'docker', which would always return an empty list).
-	types := []string{"ip", "range", "country", "port"}
+	types := []string{"ip", "range", "country", "asn", "port"}
 	sources := s.getDistinctEntrySources(actionFilter)
 
 	query := fmt.Sprintf(`SELECT id, entry_type, value, action, direction, protocol, source,
@@ -549,7 +549,17 @@ func (s *Service) handleDeleteBySource(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteAll deletes all non-essential entries
 func (s *Service) handleDeleteAll(w http.ResponseWriter, r *http.Request) {
-	result, err := s.db.Exec("DELETE FROM firewall_entries WHERE essential = 0")
+	// Scope to the Access Rules the caller is looking at: an optional action
+	// (block/allow) and always the source types only — never touch ports, which
+	// have their own management. Without an action it clears both lists' source
+	// rules (legacy callers).
+	query := "DELETE FROM firewall_entries WHERE essential = 0 AND entry_type IN ('ip', 'range', 'country', 'asn')"
+	var args []interface{}
+	if action := r.URL.Query().Get("action"); action == "block" || action == "allow" {
+		query += " AND action = ?"
+		args = append(args, action)
+	}
+	result, err := s.db.Exec(query, args...)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
