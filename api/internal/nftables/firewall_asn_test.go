@@ -37,16 +37,29 @@ func TestBuildScriptSetsAreDefined(t *testing.T) {
 	for _, want := range []string{
 		"set blocked_asn {",
 		"set blocked_asn_out {",
-		"ip saddr @blocked_asn drop",
 		"ip daddr @blocked_asn_out drop",
 		"set allowed_ips {",
 		"set allowed_ranges {",
 		"set allowed_countries {",
 		"set allowed_asn {",
-		"ip saddr @allowed_asn accept",
+		// A country/ASN allow exempts its IPs from the geo/ASN drop but stays port-gated.
+		"ip saddr @blocked_asn ip saddr != @allowed_countries ip saddr != @allowed_asn drop",
+		"ip saddr @blocked_countries ip saddr != @allowed_countries ip saddr != @allowed_asn drop",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("generated script missing %q", want)
+		}
+	}
+
+	// Security regression guard: a whole-country/ASN allow must NEVER become an
+	// unconditional all-port accept in a default-drop chain (would expose SSH/admin to
+	// an entire country). Only explicit @allowed_ips/@allowed_ranges may full-accept.
+	for _, forbidden := range []string{
+		"ip saddr @allowed_countries accept",
+		"ip saddr @allowed_asn accept",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("generated script must NOT contain unconditional country/ASN accept %q", forbidden)
 		}
 	}
 }

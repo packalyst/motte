@@ -179,10 +179,15 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	sb.WriteString("table inet wgadmin_vpn_acl {\n")
 	sb.WriteString("    chain forward {\n")
 	sb.WriteString("        type filter hook forward priority 0; policy accept;\n\n")
-	sb.WriteString("        # Allow established/related\n")
+	sb.WriteString("        # Allow established/related (lets replies to inbound-initiated\n")
+	sb.WriteString("        # flows through, including ICMP errors for PMTUD)\n")
 	sb.WriteString("        ct state established,related accept\n\n")
-	sb.WriteString("        # Allow ICMP\n")
-	sb.WriteString("        ip protocol icmp accept\n\n")
+	// There is deliberately NO blanket `ip protocol icmp accept` here. Placed above the
+	// drops it let quarantined/block_all/restricted devices be pinged or ping out,
+	// defeating isolation. ICMP is now governed by the same ACL as every other protocol:
+	// allowed peer pairs (and open/allowed vips) get ICMP via their protocol-agnostic
+	// accept rules below; replies ride ct established,related above; everything else is
+	// caught by the drops. Isolated peers therefore cannot be pinged and cannot ping out.
 	sb.WriteString("        # === VPN ACL Rules ===\n\n")
 
 	// Handle block_all clients first - explicit drop before any accept

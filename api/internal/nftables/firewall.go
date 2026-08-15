@@ -313,6 +313,32 @@ type scriptParams struct {
 	wanIface                          string
 }
 
+// allowAndSaddrDropRules emits the shared "trusted-source allow + blocked-source drop"
+// block used by BOTH the input and forward chains, so the two can never drift apart.
+//
+// Precedence and, crucially, SCOPE differ by allow type:
+//   - @allowed_ips / @allowed_ranges are explicit single hosts/ranges an admin chose to
+//     trust — a full accept (all ports) is the intent.
+//   - A country/ASN *allow* entry may span millions of IPs, so it must NEVER become an
+//     all-port accept in a default-drop chain (that would expose SSH/admin to a whole
+//     country). Instead it only EXEMPTS its sources from the geo/ASN drops — the traffic
+//     then falls through to the port allow-list. Specific IP/range blocks still win over
+//     a broad country/ASN allow.
+func allowAndSaddrDropRules() []string {
+	return []string{
+		"# Always-allow explicit trusted hosts/ranges (VIP list) — full accept, before drops",
+		"ip saddr @allowed_ips accept",
+		"ip saddr @allowed_ranges accept",
+		"",
+		"# Drop blocked sources (saddr). A country/ASN allow exempts its IPs from the geo/ASN",
+		"# drops ONLY (still port-gated) — it is deliberately not an all-port accept.",
+		"ip saddr @blocked_ips drop",
+		"ip saddr @blocked_ranges drop",
+		"ip saddr @blocked_countries ip saddr != @allowed_countries ip saddr != @allowed_asn drop",
+		"ip saddr @blocked_asn ip saddr != @allowed_countries ip saddr != @allowed_asn drop",
+	}
+}
+
 func (t *FirewallTable) buildScript(p scriptParams) string {
 	blockedIPsIn, blockedIPsOut := p.blockedIPsIn, p.blockedIPsOut
 	blockedRangesIn, blockedRangesOut := p.blockedRangesIn, p.blockedRangesOut
@@ -369,11 +395,14 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 		"# Allow loopback interface",
 		"iif lo accept",
 		"",
-		"# Allow ICMP/ping",
-		"ip protocol icmp accept",
+		"# Allow ICMPv6 (neighbour discovery) — required for IPv6 to function; harmless on",
+		"# an IPv4-only panel and never a source-based leak.",
 		"ip6 nexthdr icmpv6 accept",
 		"",
 	}
+	// NOTE: IPv4 `ip protocol icmp accept` is intentionally emitted AFTER the block drops
+	// (below), so a blocked IP/country/ASN can't even ping the server. Established/related
+	// ICMP (incl. PMTUD errors) still rides the ct rule at the top of the chain.
 	// Drop all inbound IPv6 arriving on the public interface. This panel is IPv4-only:
 	// the blocklist/country sets are ipv4_addr, so an IPv6 packet to an open port would
 	// otherwise be accepted unfiltered (the port rules below are protocol-agnostic).
@@ -390,19 +419,12 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 			"",
 		)
 	}
+	inputRules = append(inputRules, allowAndSaddrDropRules()...)
 	inputRules = append(inputRules,
-		"# Always-allow trusted sources (VIP list) — evaluated BEFORE the drops so",
-		"# an allow-listed IP/range/country/ASN overrides a block.",
-		"ip saddr @allowed_ips accept",
-		"ip saddr @allowed_ranges accept",
-		"ip saddr @allowed_countries accept",
-		"ip saddr @allowed_asn accept",
 		"",
-		"# Drop traffic FROM blocked sources (saddr)",
-		"ip saddr @blocked_ips drop",
-		"ip saddr @blocked_ranges drop",
-		"ip saddr @blocked_countries drop",
-		"ip saddr @blocked_asn drop",
+		"# Allow ICMP/ping from non-blocked sources (after the drops, so a blocked",
+		"# IP/country/ASN gets no response at all)",
+		"ip protocol icmp accept",
 		"",
 		"# Allow specific ports",
 		"tcp dport @allowed_tcp_ports accept",
@@ -425,24 +447,16 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 		"# Allow established connections",
 		"ct state established,related accept",
 		"",
-		"# Always-allow trusted sources (VIP list) — before the drops so allow wins",
-		"ip saddr @allowed_ips accept",
-		"ip saddr @allowed_ranges accept",
-		"ip saddr @allowed_countries accept",
-		"ip saddr @allowed_asn accept",
-		"",
-		"# Drop traffic FROM blocked sources (saddr)",
-		"ip saddr @blocked_ips drop",
-		"ip saddr @blocked_ranges drop",
-		"ip saddr @blocked_countries drop",
-		"ip saddr @blocked_asn drop",
+	}
+	forwardRules = append(forwardRules, allowAndSaddrDropRules()...)
+	forwardRules = append(forwardRules,
 		"",
 		"# Drop traffic TO blocked destinations (daddr)",
 		"ip daddr @blocked_ips_out drop",
 		"ip daddr @blocked_ranges_out drop",
 		"ip daddr @blocked_countries_out drop",
 		"ip daddr @blocked_asn_out drop",
-	}
+	)
 	// Per-peer WAN egress block. Skip silently if WAN couldn't be detected — emitting
 	// the rule without oifname would block *all* peer traffic, including peer↔peer.
 	if wanIface != "" && len(noInternetPeers) > 0 {
