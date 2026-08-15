@@ -72,22 +72,24 @@ type Config struct {
 
 // Jail represents a blocking rule configuration (fail2ban-style)
 type Jail struct {
-	ID                int64  `json:"id"`
-	Name              string `json:"name"`
-	Enabled           bool   `json:"enabled"`
-	LogFile           string `json:"logFile"`
-	FilterRegex       string `json:"filterRegex"`
-	MaxRetry          int    `json:"maxRetry"`
-	FindTime          int    `json:"findTime"`
-	BanTime           int    `json:"banTime"`
-	Port              string `json:"port"`
-	Action            string `json:"action"`
-	CurrentlyBanned   int    `json:"currentlyBanned"`
-	TotalBanned       int    `json:"totalBanned"`
-	EscalateEnabled   bool   `json:"escalateEnabled"`
-	EscalateThreshold int    `json:"escalateThreshold"`
-	EscalateWindow    int    `json:"escalateWindow"`
-	EscalateASN       bool   `json:"escalateAsn"`
+	ID                   int64  `json:"id"`
+	Name                 string `json:"name"`
+	Enabled              bool   `json:"enabled"`
+	LogFile              string `json:"logFile"`
+	FilterRegex          string `json:"filterRegex"`
+	MaxRetry             int    `json:"maxRetry"`
+	FindTime             int    `json:"findTime"`
+	BanTime              int    `json:"banTime"`
+	Port                 string `json:"port"`
+	Action               string `json:"action"`
+	CurrentlyBanned      int    `json:"currentlyBanned"`
+	TotalBanned          int    `json:"totalBanned"`
+	EscalateEnabled      bool   `json:"escalateEnabled"`
+	EscalateThreshold    int    `json:"escalateThreshold"`
+	EscalateWindow       int    `json:"escalateWindow"`
+	EscalateASN          bool   `json:"escalateAsn"`
+	EscalateASNThreshold int    `json:"escalateAsnThreshold"`
+	EscalateASNWindow    int    `json:"escalateAsnWindow"`
 }
 
 // BlocklistSource represents a blocklist source configuration

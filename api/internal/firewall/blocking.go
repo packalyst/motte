@@ -98,7 +98,7 @@ func (s *Service) checkASNEscalation(ip, jailName string, banTime int) {
 
 	var escalateASN bool
 	var threshold, window int
-	err := s.db.QueryRow(`SELECT COALESCE(escalate_asn, 0), COALESCE(escalate_threshold, 3), COALESCE(escalate_window, 3600)
+	err := s.db.QueryRow(`SELECT COALESCE(escalate_asn, 0), COALESCE(escalate_asn_threshold, 15), COALESCE(escalate_asn_window, 3600)
 		FROM jails WHERE name = ?`, jailName).Scan(&escalateASN, &threshold, &window)
 	if err != nil || !escalateASN {
 		return

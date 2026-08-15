@@ -118,6 +118,8 @@ func createSchema(db *sql.DB) error {
 		escalate_threshold INTEGER DEFAULT 3,
 		escalate_window INTEGER DEFAULT 3600,
 		escalate_asn BOOLEAN DEFAULT 0,
+		escalate_asn_threshold INTEGER DEFAULT 15,
+		escalate_asn_window INTEGER DEFAULT 3600,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -527,11 +529,19 @@ func runMigrations(db *sql.DB) {
 		}
 	}
 
-	// Add escalate_asn column to jails if missing (escalate a jail ban to the whole ASN)
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('jails') WHERE name = 'escalate_asn'`).Scan(&count)
-	if err == nil && count == 0 {
-		if _, err := db.Exec(`ALTER TABLE jails ADD COLUMN escalate_asn BOOLEAN DEFAULT 0`); err == nil {
-			log.Printf("Migration: added escalate_asn column to jails")
+	// Add escalate_asn columns to jails if missing (escalate a jail ban to the whole
+	// ASN, with its own threshold/window since a provider is much broader than a /24).
+	jailASNCols := []struct{ name, ddl string }{
+		{"escalate_asn", `ALTER TABLE jails ADD COLUMN escalate_asn BOOLEAN DEFAULT 0`},
+		{"escalate_asn_threshold", `ALTER TABLE jails ADD COLUMN escalate_asn_threshold INTEGER DEFAULT 15`},
+		{"escalate_asn_window", `ALTER TABLE jails ADD COLUMN escalate_asn_window INTEGER DEFAULT 3600`},
+	}
+	for _, c := range jailASNCols {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('jails') WHERE name = ?`, c.name).Scan(&count)
+		if err == nil && count == 0 {
+			if _, err := db.Exec(c.ddl); err == nil {
+				log.Printf("Migration: added %s column to jails", c.name)
+			}
 		}
 	}
 
