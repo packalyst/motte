@@ -129,6 +129,19 @@ sudo iptables -t nat -A %s -d %s -j MASQUERADE`,
 		snat, target)
 }
 
+// generateVIPRemoveCommands undoes generateVIPCommands: unhook the chains from
+// PREROUTING/POSTROUTING, then flush and delete them.
+func generateVIPRemoveCommands(label string) string {
+	base := vipChainName(label)
+	dnat, snat := base+"_DNAT", base+"_SNAT"
+	return fmt.Sprintf(`# Undo the forward (run on the same peer).
+sudo iptables -t nat -D PREROUTING  -j %s 2>/dev/null
+sudo iptables -t nat -D POSTROUTING -j %s 2>/dev/null
+sudo iptables -t nat -F %s 2>/dev/null; sudo iptables -t nat -X %s 2>/dev/null
+sudo iptables -t nat -F %s 2>/dev/null; sudo iptables -t nat -X %s 2>/dev/null`,
+		dnat, snat, dnat, dnat, snat, snat)
+}
+
 // clientIDForPeerIP returns the vpn_clients.id for a wireguard peer's VPN IP.
 func clientIDForPeerIP(ip string) (int64, error) {
 	db, err := database.GetDB()
@@ -276,10 +289,11 @@ func (s *Service) handleVirtualIPCommands(w http.ResponseWriter, r *http.Request
 		return
 	}
 	router.JSON(w, map[string]interface{}{
-		"virtualIp": vip,
-		"targetIp":  target,
-		"port":      port,
-		"commands":  generateVIPCommands(vip, target, label, peerName),
+		"virtualIp":      vip,
+		"targetIp":       target,
+		"port":           port,
+		"commands":       generateVIPCommands(vip, target, label, peerName),
+		"removeCommands": generateVIPRemoveCommands(label),
 	})
 }
 

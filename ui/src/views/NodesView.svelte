@@ -413,7 +413,9 @@
   let newVipLabel = $state('')
   let newVipTargetIp = $state('')
   let expandedVipCmd = $state(null) // vip id whose forwarding commands are inline-expanded
-  let vipCmdText = $state('')       // fetched NAS commands
+  let vipCmdText = $state('')       // fetched setup commands
+  let vipRemoveText = $state('')    // fetched teardown commands
+  let vipCmdMode = $state('add')    // 'add' | 'remove'
   let vipCmdLoading = $state(false)
 
   async function loadVips() {
@@ -482,11 +484,12 @@
   async function toggleVipCommands(vip) {
     if (expandedVipCmd === vip.id) { expandedVipCmd = null; return }
     expandedVipCmd = vip.id
-    vipCmdText = ''
+    vipCmdText = ''; vipRemoveText = ''; vipCmdMode = 'add'
     vipCmdLoading = true
     try {
       const res = await apiGet(`/api/wg/vips/${vip.id}/commands`)
       vipCmdText = res.commands
+      vipRemoveText = res.removeCommands || ''
     } catch (e) {
       vipCmdText = '# ' + (e?.message || 'Failed to load commands')
     } finally {
@@ -1157,13 +1160,18 @@
 
                     <!-- Forwarding commands (inline, expandable) -->
                     {#if expandedVipCmd === vip.id}
+                      {@const cmdText = vipCmdMode === 'remove' ? vipRemoveText : vipCmdText}
                       <div class="border-t border-border bg-secondary/40 px-3 py-2.5 space-y-2">
                         {#if vipCmdLoading}
                           <div class="flex justify-center py-3"><LoadingSpinner /></div>
                         {:else}
+                          <div class="inline-flex rounded-lg border border-border overflow-hidden">
+                            <button class="px-2.5 py-1 text-xs font-medium transition cursor-pointer {vipCmdMode === 'add' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50'}" onclick={() => vipCmdMode = 'add'}>Set up</button>
+                            <button class="px-2.5 py-1 text-xs font-medium border-l border-border transition cursor-pointer {vipCmdMode === 'remove' ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground hover:bg-muted/50'}" onclick={() => vipCmdMode = 'remove'}>Remove</button>
+                          </div>
                           <div class="relative">
-                            <pre class="bg-secondary text-secondary-foreground p-3 pr-14 rounded-lg text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{vipCmdText}</pre>
-                            <Button size="xs" variant="outline" icon="copy" class="absolute top-2 right-2" onclick={() => copyWithToast(vipCmdText, toast)}>Copy</Button>
+                            <pre class="bg-secondary text-secondary-foreground p-3 pr-14 rounded-lg text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{cmdText}</pre>
+                            <Button size="xs" variant="outline" icon="copy" class="absolute top-2 right-2" onclick={() => copyWithToast(cmdText, toast)}>Copy</Button>
                           </div>
                           <p class="text-[11px] text-muted-foreground">
                             Runtime-only — persist with <span class="font-mono">iptables-save</span> or a boot task. Reach it from any allowed peer at <span class="font-mono">{vip.ip}</span>.
