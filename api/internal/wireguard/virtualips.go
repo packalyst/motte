@@ -81,17 +81,52 @@ func (s *Service) allocateVirtualIP() string {
 	return ""
 }
 
-// generateVIPCommands returns the NAS commands that forward all traffic for a virtual
-// IP to its target device, matching the CAMERA_DNAT/CAMERA_SNAT chain layout used by
-// cam-forward.sh (nft-safe: DNAT and MASQUERADE live in separate hooked chains).
-func generateVIPCommands(vip, target string) string {
-	return fmt.Sprintf(`# Run on the peer that hosts %s (the machine on the device's LAN).
-# Forwards ALL traffic for %s to %s. ip_forward must be on (Docker hosts already are).
-sudo iptables -t nat -N CAMERA_DNAT 2>/dev/null; sudo iptables -t nat -N CAMERA_SNAT 2>/dev/null
-sudo iptables -t nat -C PREROUTING  -j CAMERA_DNAT 2>/dev/null || sudo iptables -t nat -A PREROUTING  -j CAMERA_DNAT
-sudo iptables -t nat -C POSTROUTING -j CAMERA_SNAT 2>/dev/null || sudo iptables -t nat -A POSTROUTING -j CAMERA_SNAT
-sudo iptables -t nat -A CAMERA_DNAT -d %s -j DNAT --to-destination %s
-sudo iptables -t nat -A CAMERA_SNAT -d %s -j MASQUERADE`, vip, vip, target, vip, target, target)
+// vipChainName turns a virtual-IP label into a valid, unique iptables chain base
+// (uppercase [A-Z0-9_], length-capped). Two labelled vips get distinct chains
+// instead of everyone sharing CAMERA_*.
+func vipChainName(label string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(label) {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '_':
+			b.WriteByte('_')
+		}
+	}
+	name := strings.Trim(b.String(), "_")
+	if name == "" {
+		name = "VIP"
+	}
+	if len(name) > 20 {
+		name = name[:20]
+	}
+	return name
+}
+
+// generateVIPCommands returns the NAS commands that forward all traffic for a
+// virtual IP to its target device. Chains are named after the vip's label, and
+// the comment names the peer it must run on (nft-safe: DNAT and MASQUERADE live
+// in separate hooked chains).
+func generateVIPCommands(vip, target, label, peerName string) string {
+	base := vipChainName(label)
+	dnat, snat := base+"_DNAT", base+"_SNAT"
+	peer := peerName
+	if peer == "" {
+		peer = "the device's host"
+	}
+	return fmt.Sprintf(`# Run on peer %q — forwards all traffic for %s to %s.
+sudo iptables -t nat -N %s 2>/dev/null; sudo iptables -t nat -N %s 2>/dev/null
+sudo iptables -t nat -C PREROUTING  -j %s 2>/dev/null || sudo iptables -t nat -A PREROUTING  -j %s
+sudo iptables -t nat -C POSTROUTING -j %s 2>/dev/null || sudo iptables -t nat -A POSTROUTING -j %s
+sudo iptables -t nat -A %s -d %s -j DNAT --to-destination %s
+sudo iptables -t nat -A %s -d %s -j MASQUERADE`,
+		peer, vip, target,
+		dnat, snat,
+		dnat, dnat,
+		snat, snat,
+		dnat, vip, target,
+		snat, target)
 }
 
 // clientIDForPeerIP returns the vpn_clients.id for a wireguard peer's VPN IP.
@@ -228,9 +263,11 @@ func (s *Service) handleVirtualIPCommands(w http.ResponseWriter, r *http.Request
 		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
-	var vip, target string
+	var vip, target, label, peerName string
 	var port int
-	if err := db.QueryRow(`SELECT ip, target_ip, target_port FROM vpn_virtual_ips WHERE id = ?`, vipID).Scan(&vip, &target, &port); err != nil {
+	if err := db.QueryRow(`SELECT v.ip, v.target_ip, v.target_port, v.label, COALESCE(c.name, '')
+		FROM vpn_virtual_ips v LEFT JOIN vpn_clients c ON v.client_id = c.id
+		WHERE v.id = ?`, vipID).Scan(&vip, &target, &port, &label, &peerName); err != nil {
 		router.JSONError(w, "virtual IP not found", http.StatusNotFound)
 		return
 	}
@@ -242,7 +279,7 @@ func (s *Service) handleVirtualIPCommands(w http.ResponseWriter, r *http.Request
 		"virtualIp": vip,
 		"targetIp":  target,
 		"port":      port,
-		"commands":  generateVIPCommands(vip, target),
+		"commands":  generateVIPCommands(vip, target, label, peerName),
 	})
 }
 

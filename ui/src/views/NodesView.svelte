@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob, confirm } from '../stores/app.js'
   import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
@@ -413,9 +413,9 @@
   let newVipLabel = $state('')
   let newVipTargetIp = $state('')
   let newVipTargetPort = $state('')
-  let vipCmdOpen = $state(false)   // commands modal open
-  let vipCmdVip = $state(null)     // the vip whose commands are shown
-  let vipCmdText = $state('')      // fetched NAS commands
+  let expandedVipCmd = $state(null) // vip id whose forwarding commands are inline-expanded
+  let vipCmdText = $state('')       // fetched NAS commands
+  let vipCmdLoading = $state(false)
 
   async function loadVips() {
     const key = selectedNode?._wgId
@@ -433,11 +433,15 @@
   }
 
   async function addVip() {
+    const label = newVipLabel.trim()
+    if (!label) { toast('Give the virtual IP a name — it names the forwarding rule', 'error'); return }
     try {
-      const body = { label: newVipLabel.trim(), restricted: true }
+      const body = { label, restricted: true }
       if (newVipTargetIp.trim()) {
         body.targetIp = newVipTargetIp.trim()
-        body.targetPort = parseInt(newVipTargetPort) || 554
+        // Port is optional: the forward covers ALL ports. Only send it if given.
+        const p = parseInt(newVipTargetPort)
+        if (p > 0) body.targetPort = p
       }
       await apiPost(`/api/wg/peers/${selectedNode._wgId}/vips`, body)
       newVipLabel = ''; newVipTargetIp = ''; newVipTargetPort = ''
@@ -446,9 +450,17 @@
     } catch (e) { toast(e?.message || 'Failed to add virtual IP', 'error') }
   }
 
-  async function removeVip(id) {
+  async function removeVip(vip) {
+    const ok = await confirm({
+      title: 'Remove virtual IP',
+      message: `Remove ${vip.ip}${vip.label ? ` (${vip.label})` : ''}?`,
+      description: 'It will be unrouted from this peer immediately.',
+      confirmText: 'Remove',
+      variant: 'destructive',
+    })
+    if (!ok) return
     try {
-      await apiDelete(`/api/wg/vips/${id}`)
+      await apiDelete(`/api/wg/vips/${vip.id}`)
       toast('Virtual IP removed', 'success')
       await loadVips()
     } catch (e) { toast(e?.message || 'Failed to remove', 'error') }
@@ -470,12 +482,20 @@
     saveVipAcl(vip)
   }
 
-  async function openVipCommands(vip) {
-    vipCmdVip = vip; vipCmdOpen = true; vipCmdText = 'Loading…'
+  // Inline-expand a vip's forwarding commands (no nested modal → no stacking bug).
+  async function toggleVipCommands(vip) {
+    if (expandedVipCmd === vip.id) { expandedVipCmd = null; return }
+    expandedVipCmd = vip.id
+    vipCmdText = ''
+    vipCmdLoading = true
     try {
       const res = await apiGet(`/api/wg/vips/${vip.id}/commands`)
       vipCmdText = res.commands
-    } catch (e) { vipCmdText = '# ' + (e?.message || 'Failed to load commands') }
+    } catch (e) {
+      vipCmdText = '# ' + (e?.message || 'Failed to load commands')
+    } finally {
+      vipCmdLoading = false
+    }
   }
 
   // Other peers that can be granted access to a virtual IP (exclude the host peer itself).
@@ -1087,12 +1107,12 @@
               <span class="text-xs text-muted-foreground">expose a LAN device through this peer</span>
             </div>
             <div class="flex flex-col sm:flex-row gap-2 mt-2">
-              <Input bind:value={newVipLabel} placeholder="Label (e.g. Tapo camera)" prefixIcon="tag" class="flex-1" />
+              <Input bind:value={newVipLabel} placeholder="Name (required, e.g. Tapo camera)" prefixIcon="tag" class="flex-1" />
               <Input bind:value={newVipTargetIp} placeholder="Device IP (optional)" prefixIcon="device-laptop" class="flex-1" />
               <Input bind:value={newVipTargetPort} placeholder="Port" class="w-full sm:w-20" />
               <Button onclick={addVip} icon="plus">Add</Button>
             </div>
-            <div class="text-xs text-muted-foreground mt-1">The VPN IP is auto-assigned. Leave Device IP blank for a bare routed IP.</div>
+            <div class="text-xs text-muted-foreground mt-1">The VPN IP is auto-assigned; the name labels the forwarding rule. Add a Device IP to forward to a LAN device (all ports) — leave it blank for a bare routed IP.</div>
 
             {#if vipsLoading}
               <div class="flex justify-center py-6"><LoadingSpinner /></div>
@@ -1123,11 +1143,28 @@
                         {#if vip.quarantine}<Badge variant="destructive">Quarantined</Badge>{/if}
                         <Badge variant={vip.restricted ? 'warning' : 'success'}>{vip.restricted ? 'Restricted' : 'Open'}</Badge>
                         {#if vip.targetIp}
-                          <Button size="xs" variant="ghost" icon="code" title="Setup commands" onclick={() => openVipCommands(vip)} />
+                          <Button size="xs" variant={expandedVipCmd === vip.id ? 'secondary' : 'ghost'} icon="code" title="Forwarding commands" onclick={() => toggleVipCommands(vip)} />
                         {/if}
-                        <Button size="xs" variant="ghost" icon="trash" title="Remove" onclick={() => removeVip(vip.id)} />
+                        <Button size="xs" variant="ghost" icon="trash" title="Remove" onclick={() => removeVip(vip)} />
                       </div>
                     </div>
+
+                    <!-- Forwarding commands (inline, expandable) -->
+                    {#if expandedVipCmd === vip.id}
+                      <div class="border-t border-border bg-secondary/40 px-3 py-2.5 space-y-2">
+                        {#if vipCmdLoading}
+                          <div class="flex justify-center py-3"><LoadingSpinner /></div>
+                        {:else}
+                          <div class="relative">
+                            <pre class="bg-secondary text-secondary-foreground p-3 pr-14 rounded-lg text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{vipCmdText}</pre>
+                            <Button size="xs" variant="outline" icon="copy" class="absolute top-2 right-2" onclick={() => copyWithToast(vipCmdText, toast)}>Copy</Button>
+                          </div>
+                          <p class="text-[11px] text-muted-foreground">
+                            Runtime-only — persist with <span class="font-mono">iptables-save</span> or a boot task. Reach it from any allowed peer at <span class="font-mono">{vip.ip}</span>.
+                          </p>
+                        {/if}
+                      </div>
+                    {/if}
 
                     <!-- Controls -->
                     <div class="border-t border-border bg-muted/20 px-3 py-2.5 space-y-2.5">
@@ -1418,24 +1455,6 @@
 </Modal>
 
 <!-- Virtual IP setup-commands Modal -->
-<Modal bind:open={vipCmdOpen} title="Forwarding commands" size="md">
-  {#if vipCmdVip}
-    <div class="space-y-3">
-      <p class="text-sm text-muted-foreground">
-        Run these on the peer that hosts <span class="font-mono">{vipCmdVip.ip}</span> (the machine on the device's LAN) — it forwards all traffic to
-        <span class="font-mono">{vipCmdVip.targetIp}{#if vipCmdVip.targetPort}:{vipCmdVip.targetPort}{/if}</span>.
-      </p>
-      <div class="relative">
-        <pre class="bg-secondary text-secondary-foreground p-3 pr-16 rounded-lg text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{vipCmdText}</pre>
-        <Button size="xs" variant="outline" icon="copy" class="absolute top-2 right-2" onclick={() => copyToClipboard(vipCmdText)}>Copy</Button>
-      </div>
-      <p class="text-xs text-muted-foreground">
-        Then reach it from any allowed VPN peer at <span class="font-mono">{vipCmdVip.ip}</span>. Rules are runtime-only — save them (<span class="font-mono">iptables-save</span>) or use a boot task to persist.
-      </p>
-    </div>
-  {/if}
-</Modal>
-
 <!-- Create WireGuard Peer Modal -->
 <Modal bind:open={showCreateModal} title="Add WireGuard Node" size="md">
   {#if createdPeer}
