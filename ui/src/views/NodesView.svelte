@@ -1147,7 +1147,7 @@
                             <div class="text-xs text-muted-foreground truncate"><span class="font-mono">{vip.ip}</span>{#if vip.label} · {vip.label}{/if} — unrouted from this peer immediately.</div>
                           </div>
                         </div>
-                        <div class="flex justify-end gap-2">
+                        <div class="flex justify-between gap-2">
                           <Button size="sm" variant="secondary" disabled={removingVip} onclick={() => confirmRemoveVipId = null}>Cancel</Button>
                           <Button size="sm" variant="destructive" disabled={removingVip} icon={removingVip ? undefined : 'trash'} onclick={() => doRemoveVip(vip)}>{removingVip ? 'Removing…' : 'Remove'}</Button>
                         </div>
@@ -1169,13 +1169,22 @@
                         <div class="flex items-center gap-2 shrink-0">
                           {#if vip.quarantine}<Badge variant="destructive">Quarantined</Badge>{/if}
                           <Badge variant={vip.restricted ? 'warning' : 'success'}>{vip.restricted ? 'Restricted' : 'Open'}</Badge>
-                          <!-- Grouped actions (Docker-style) -->
-                          <div class="flex items-center rounded-lg border border-border overflow-hidden text-xs shrink-0">
+                          <!-- Grouped actions (Docker-style: btn-group / custom_btns) -->
+                          <div class="btn-group shrink-0">
                             {#if vip.targetIp}
-                              <button class="flex items-center gap-1 px-2.5 py-1.5 transition cursor-pointer {expandedVipCmd === vip.id && vipCmdMode === 'add' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'}" onclick={() => showVipCmd(vip, 'add')}><Icon name="code" size={13} />Set up</button>
-                              <button class="px-2.5 py-1.5 border-l border-border transition cursor-pointer {expandedVipCmd === vip.id && vipCmdMode === 'remove' ? 'bg-warning/10 text-warning' : 'text-muted-foreground hover:bg-muted'}" onclick={() => showVipCmd(vip, 'remove')}>Remove</button>
+                              <button class="custom_btns text-primary! hover:bg-primary/10! {expandedVipCmd === vip.id && vipCmdMode === 'add' ? 'bg-primary/15!' : ''}" data-kt-tooltip onclick={() => showVipCmd(vip, 'add')}>
+                                <Icon name="code" size={14} />
+                                <span data-kt-tooltip-content class="kt-tooltip hidden">Set-up commands</span>
+                              </button>
+                              <button class="custom_btns text-warning! hover:bg-warning/10! {expandedVipCmd === vip.id && vipCmdMode === 'remove' ? 'bg-warning/15!' : ''}" data-kt-tooltip onclick={() => showVipCmd(vip, 'remove')}>
+                                <Icon name="plug" size={14} />
+                                <span data-kt-tooltip-content class="kt-tooltip hidden">Tear-down commands</span>
+                              </button>
                             {/if}
-                            <button class="flex items-center px-2 py-1.5 {vip.targetIp ? 'border-l border-border' : ''} text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition cursor-pointer" title="Delete virtual IP" onclick={() => confirmRemoveVipId = vip.id}><Icon name="trash" size={14} /></button>
+                            <button class="custom_btns text-destructive! hover:bg-destructive/10!" data-kt-tooltip onclick={() => confirmRemoveVipId = vip.id}>
+                              <Icon name="trash" size={14} />
+                              <span data-kt-tooltip-content class="kt-tooltip hidden">Delete virtual IP</span>
+                            </button>
                           </div>
                         </div>
                       </div>
