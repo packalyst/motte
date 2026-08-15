@@ -1145,6 +1145,9 @@
                           <div class="min-w-0">
                             <div class="text-sm font-medium">Remove this virtual IP?</div>
                             <div class="text-xs text-muted-foreground truncate"><span class="font-mono">{vip.ip}</span>{#if vip.label} · {vip.label}{/if} — unrouted from this peer immediately.</div>
+                            {#if vip.targetIp}
+                              <div class="text-xs text-warning mt-1">Run the <span class="font-medium">Tear-down commands</span> on the peer first — deleting here won't remove the iptables rule on the NAS.</div>
+                            {/if}
                           </div>
                         </div>
                         <div class="flex justify-between gap-2">

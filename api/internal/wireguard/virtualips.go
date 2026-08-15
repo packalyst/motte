@@ -268,6 +268,17 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
+	// A peer's NAS can DNAT a given device IP only once — a second vip to the same
+	// device on the same peer is redundant and would add a duplicate forward. (The
+	// same device IP behind a *different* peer is fine: private ranges repeat per-LAN.)
+	if target != "" {
+		var dup int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM vpn_virtual_ips WHERE client_id = ? AND target_ip = ?`, clientID, target).Scan(&dup)
+		if dup > 0 {
+			router.JSONError(w, "this peer already forwards to "+target+" — a device can be mapped once per peer", http.StatusConflict)
+			return
+		}
+	}
 	res, err := db.Exec(`INSERT INTO vpn_virtual_ips (client_id, ip, label, target_ip, target_port, restricted, quarantine) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		clientID, vip, label, target, port, restricted, quarantine)
 	if err != nil {
