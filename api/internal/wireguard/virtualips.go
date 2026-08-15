@@ -81,9 +81,9 @@ func (s *Service) allocateVirtualIP() string {
 	return ""
 }
 
-// vipChainName turns a virtual-IP label into a valid, unique iptables chain base
-// (uppercase [A-Z0-9_], length-capped). Two labelled vips get distinct chains
-// instead of everyone sharing CAMERA_*.
+// vipChainName sanitizes a virtual-IP label into a valid iptables chain fragment
+// (uppercase [A-Z0-9_], length-capped). It is NOT unique on its own — labels can
+// repeat or collide after sanitizing; vipChainBase adds the vip id for uniqueness.
 func vipChainName(label string) string {
 	var b strings.Builder
 	for _, r := range strings.ToUpper(label) {
@@ -104,13 +104,27 @@ func vipChainName(label string) string {
 	return name
 }
 
+// vipChainBase builds a per-vip-unique iptables chain base: the sanitized label
+// plus the vip's row id. Without the id, two vips whose labels are identical, blank,
+// or collide after sanitizing/truncation would share a chain — and tearing one down
+// (-F/-X) would flush the other's forward too. The id makes every vip's chain its own.
+// Kept ≤ 23 chars so base+"_DNAT" stays within the 28-char iptables chain-name limit.
+func vipChainBase(id int64, label string) string {
+	name := vipChainName(label)
+	suffix := fmt.Sprintf("_%d", id)
+	if max := 23 - len(suffix); len(name) > max {
+		name = name[:max]
+	}
+	return name + suffix
+}
+
 // generateVIPCommands returns the NAS commands that forward a virtual IP to its
 // target device. With a port it forwards only that TCP port (tighter — e.g. just
 // the camera's RTSP); with port 0 it forwards all traffic. Chains are named after
 // the vip's label, and the comment names the peer (nft-safe: DNAT and MASQUERADE
 // live in separate hooked chains).
-func generateVIPCommands(vip, target string, port int, label, peerName string) string {
-	base := vipChainName(label)
+func generateVIPCommands(id int64, vip, target string, port int, label, peerName string) string {
+	base := vipChainBase(id, label)
 	dnat, snat := base+"_DNAT", base+"_SNAT"
 	peer := peerName
 	if peer == "" {
@@ -142,8 +156,8 @@ sudo iptables -t nat -A %s -d %s -j MASQUERADE`,
 
 // generateVIPRemoveCommands undoes generateVIPCommands: unhook the chains from
 // PREROUTING/POSTROUTING, then flush and delete them.
-func generateVIPRemoveCommands(label string) string {
-	base := vipChainName(label)
+func generateVIPRemoveCommands(id int64, label string) string {
+	base := vipChainBase(id, label)
 	dnat, snat := base+"_DNAT", base+"_SNAT"
 	return fmt.Sprintf(`# Undo the forward (run on the same peer).
 sudo iptables -t nat -D PREROUTING  -j %s 2>/dev/null
@@ -290,11 +304,12 @@ func (s *Service) handleVirtualIPCommands(w http.ResponseWriter, r *http.Request
 		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
+	var idNum int64
 	var vip, target, label, peerName string
 	var port int
-	if err := db.QueryRow(`SELECT v.ip, v.target_ip, v.target_port, v.label, COALESCE(c.name, '')
+	if err := db.QueryRow(`SELECT v.id, v.ip, v.target_ip, v.target_port, v.label, COALESCE(c.name, '')
 		FROM vpn_virtual_ips v LEFT JOIN vpn_clients c ON v.client_id = c.id
-		WHERE v.id = ?`, vipID).Scan(&vip, &target, &port, &label, &peerName); err != nil {
+		WHERE v.id = ?`, vipID).Scan(&idNum, &vip, &target, &port, &label, &peerName); err != nil {
 		router.JSONError(w, "virtual IP not found", http.StatusNotFound)
 		return
 	}
@@ -306,8 +321,8 @@ func (s *Service) handleVirtualIPCommands(w http.ResponseWriter, r *http.Request
 		"virtualIp":      vip,
 		"targetIp":       target,
 		"port":           port,
-		"commands":       generateVIPCommands(vip, target, port, label, peerName),
-		"removeCommands": generateVIPRemoveCommands(label),
+		"commands":       generateVIPCommands(idNum, vip, target, port, label, peerName),
+		"removeCommands": generateVIPRemoveCommands(idNum, label),
 	})
 }
 
