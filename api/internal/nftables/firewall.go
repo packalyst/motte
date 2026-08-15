@@ -88,6 +88,12 @@ func (t *FirewallTable) Build() (string, error) {
 
 		switch e.EntryType {
 		case EntryTypeIP:
+			// The firewall sets are ipv4_addr; an IPv6 value would produce an invalid
+			// element and wedge the whole atomic table. Skip it — external IPv6 is
+			// already dropped wholesale on the WAN, so an IPv6 block entry is a no-op anyway.
+			if !ValidateIPv4OrCIDR(e.Value) {
+				continue
+			}
 			if e.Action == ActionBlock {
 				if e.Direction == DirectionInbound || e.Direction == DirectionBoth {
 					blockedIPsIn = append(blockedIPsIn, e.Value)
@@ -99,6 +105,9 @@ func (t *FirewallTable) Build() (string, error) {
 				allowedIPs = append(allowedIPs, e.Value)
 			}
 		case EntryTypeRange:
+			if !ValidateIPv4OrCIDR(e.Value) {
+				continue
+			}
 			if e.Action == ActionBlock {
 				if e.Direction == DirectionInbound || e.Direction == DirectionBoth {
 					blockedRangesIn = append(blockedRangesIn, e.Value)

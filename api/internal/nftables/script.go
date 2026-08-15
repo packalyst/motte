@@ -40,6 +40,26 @@ func ValidateIPOrCIDR(s string) bool {
 	return false
 }
 
+// ValidateIPv4OrCIDR is like ValidateIPOrCIDR but rejects IPv6. The firewall and vpn_acl
+// tables emit IPv4-only matchers (ip saddr/daddr) and ipv4_addr sets, so an IPv6 address
+// reaching a rule produces invalid nftables and — because the table is applied atomically
+// (delete + recreate in one script) — wedges the ENTIRE table, silently dropping all its
+// rules (for vpn_acl that flips peer isolation from default-deny to default-allow). Every
+// address that flows into a rule must pass this, so a stray IPv6 value is skipped, never emitted.
+func ValidateIPv4OrCIDR(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if ip, _, err := net.ParseCIDR(s); err == nil {
+		return ip.To4() != nil
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		return ip.To4() != nil
+	}
+	return false
+}
+
 // SanitizeElement sanitizes a set element (IP, port, etc.)
 func SanitizeElement(s string) string {
 	// Remove any characters that could break nftables syntax

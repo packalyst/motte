@@ -157,13 +157,13 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	var sb strings.Builder
 
 	// Validate IP ranges before use
-	if !ValidateIPOrCIDR(wgIPRange) {
+	if !ValidateIPv4OrCIDR(wgIPRange) {
 		wgIPRange = ""
 	}
-	if !ValidateIPOrCIDR(hsIPRange) {
+	if !ValidateIPv4OrCIDR(hsIPRange) {
 		hsIPRange = ""
 	}
-	if serverIP != "" && !ValidateIPOrCIDR(serverIP) {
+	if serverIP != "" && !ValidateIPv4OrCIDR(serverIP) {
 		serverIP = ""
 	}
 
@@ -192,7 +192,7 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 
 	// Handle block_all clients first - explicit drop before any accept
 	for _, c := range clients {
-		if !ValidateIPOrCIDR(c.IP) {
+		if !ValidateIPv4OrCIDR(c.IP) {
 			continue
 		}
 		if c.Policy == helper.ACLPolicyBlockAll {
@@ -208,7 +208,7 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	// Handle allow_all policy clients
 	// allow_all = can reach everyone AND everyone can reach them
 	for _, c := range clients {
-		if !ValidateIPOrCIDR(c.IP) {
+		if !ValidateIPv4OrCIDR(c.IP) {
 			continue
 		}
 		if c.Policy == helper.ACLPolicyAllowAll {
@@ -239,7 +239,7 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 			continue
 		}
 
-		if !ValidateIPOrCIDR(src.IP) || !ValidateIPOrCIDR(dst.IP) {
+		if !ValidateIPv4OrCIDR(src.IP) || !ValidateIPv4OrCIDR(dst.IP) {
 			continue
 		}
 
@@ -283,7 +283,7 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	// Drops come before the accepts; ct established,related (top of chain) still lets
 	// replies to an inbound connection through.
 	for _, v := range vips {
-		if !v.Quarantine || !ValidateIPOrCIDR(v.IP) {
+		if !v.Quarantine || !ValidateIPv4OrCIDR(v.IP) {
 			continue
 		}
 		if wgIPRange != "" {
@@ -294,12 +294,12 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 		}
 	}
 	for _, v := range vips {
-		if !ValidateIPOrCIDR(v.IP) {
+		if !ValidateIPv4OrCIDR(v.IP) {
 			continue
 		}
 		if v.Restricted {
 			for _, src := range v.Allowed {
-				if !ValidateIPOrCIDR(src) {
+				if !ValidateIPv4OrCIDR(src) {
 					continue
 				}
 				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", src, v.IP))

@@ -35,11 +35,13 @@ func TestDumpScriptsForLint(t *testing.T) {
 		1: {ID: 1, Name: "phone", IP: "10.8.0.2", Type: "wireguard", Policy: "default"},
 		2: {ID: 2, Name: "laptop", IP: "10.8.0.3", Type: "wireguard", Policy: "allow_all"},
 		3: {ID: 3, Name: "iot", IP: "10.8.0.4", Type: "wireguard", Policy: "block_all"},
+		4: {ID: 4, Name: "hs-v6", IP: "fd7a:115c:a1e0::5", Type: "headscale", Policy: "allow_all"}, // IPv6 must be skipped, not wedge
 	}
 	rules := []aclRule{{SourceID: 1, TargetID: 2, Bidirectional: true}}
 	vips := []aclVirtualIP{
 		{IP: "10.8.128.5", Restricted: true, Quarantine: true, Allowed: []string{"10.8.0.2"}},
 		{IP: "10.8.128.6", Restricted: false, Quarantine: false},
+		{IP: "fd7a:115c:a1e0::7", Restricted: false}, // IPv6 vip must be skipped
 	}
 	// WG range is /16 so the upper-half vips (10.8.128.x) sit INSIDE it (that's what
 	// makes the catch-all wg->wg drop cover restricted vips). Headscale range is the
