@@ -209,11 +209,14 @@ func (t *FirewallTable) loadEntries() ([]FirewallEntry, error) {
 	return entries, nil
 }
 
-// cleanOverlappingRanges removes CIDR ranges fully contained in larger ranges
+// cleanOverlappingRanges removes blocked CIDR ranges fully contained in a larger
+// blocked range (redundant in the drop set). Scoped to action='block': an allow
+// range is an intentional exception that may deliberately sit inside a broader
+// block, so it must never be merged/deleted.
 func (t *FirewallTable) cleanOverlappingRanges() int {
 	rows, err := t.db.Query(`
 		SELECT id, value FROM firewall_entries
-		WHERE entry_type = 'range' AND enabled = 1
+		WHERE entry_type = 'range' AND action = 'block' AND enabled = 1
 		AND (expires_at IS NULL OR expires_at > datetime('now'))
 	`)
 	if err != nil {
