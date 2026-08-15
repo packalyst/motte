@@ -104,28 +104,39 @@ func vipChainName(label string) string {
 	return name
 }
 
-// generateVIPCommands returns the NAS commands that forward all traffic for a
-// virtual IP to its target device. Chains are named after the vip's label, and
-// the comment names the peer it must run on (nft-safe: DNAT and MASQUERADE live
-// in separate hooked chains).
-func generateVIPCommands(vip, target, label, peerName string) string {
+// generateVIPCommands returns the NAS commands that forward a virtual IP to its
+// target device. With a port it forwards only that TCP port (tighter — e.g. just
+// the camera's RTSP); with port 0 it forwards all traffic. Chains are named after
+// the vip's label, and the comment names the peer (nft-safe: DNAT and MASQUERADE
+// live in separate hooked chains).
+func generateVIPCommands(vip, target string, port int, label, peerName string) string {
 	base := vipChainName(label)
 	dnat, snat := base+"_DNAT", base+"_SNAT"
 	peer := peerName
 	if peer == "" {
 		peer = "the device's host"
 	}
-	return fmt.Sprintf(`# Run on peer %q — forwards all traffic for %s to %s.
+
+	var dnatRule, desc string
+	if port > 0 {
+		dnatRule = fmt.Sprintf("sudo iptables -t nat -A %s -d %s -p tcp --dport %d -j DNAT --to-destination %s:%d", dnat, vip, port, target, port)
+		desc = fmt.Sprintf("TCP %s:%d to %s:%d", vip, port, target, port)
+	} else {
+		dnatRule = fmt.Sprintf("sudo iptables -t nat -A %s -d %s -j DNAT --to-destination %s", dnat, vip, target)
+		desc = fmt.Sprintf("all traffic for %s to %s", vip, target)
+	}
+
+	return fmt.Sprintf(`# Run on peer %q — forwards %s.
 sudo iptables -t nat -N %s 2>/dev/null; sudo iptables -t nat -N %s 2>/dev/null
 sudo iptables -t nat -C PREROUTING  -j %s 2>/dev/null || sudo iptables -t nat -A PREROUTING  -j %s
 sudo iptables -t nat -C POSTROUTING -j %s 2>/dev/null || sudo iptables -t nat -A POSTROUTING -j %s
-sudo iptables -t nat -A %s -d %s -j DNAT --to-destination %s
+%s
 sudo iptables -t nat -A %s -d %s -j MASQUERADE`,
-		peer, vip, target,
+		peer, desc,
 		dnat, snat,
 		dnat, dnat,
 		snat, snat,
-		dnat, vip, target,
+		dnatRule,
 		snat, target)
 }
 
@@ -292,7 +303,7 @@ func (s *Service) handleVirtualIPCommands(w http.ResponseWriter, r *http.Request
 		"virtualIp":      vip,
 		"targetIp":       target,
 		"port":           port,
-		"commands":       generateVIPCommands(vip, target, label, peerName),
+		"commands":       generateVIPCommands(vip, target, port, label, peerName),
 		"removeCommands": generateVIPRemoveCommands(label),
 	})
 }

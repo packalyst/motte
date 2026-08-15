@@ -412,6 +412,7 @@
   let vipsError = $state('')
   let newVipLabel = $state('')
   let newVipTargetIp = $state('')
+  let newVipTargetPort = $state('')
   let expandedVipCmd = $state(null) // vip id whose forwarding commands are inline-expanded
   let vipCmdText = $state('')       // fetched setup commands
   let vipRemoveText = $state('')    // fetched teardown commands
@@ -438,10 +439,14 @@
     if (!label) { toast('Give the virtual IP a name — it names the forwarding rule', 'error'); return }
     try {
       const body = { label, restricted: true }
-      // The forward covers ALL ports, so only the device IP is needed.
-      if (newVipTargetIp.trim()) body.targetIp = newVipTargetIp.trim()
+      if (newVipTargetIp.trim()) {
+        body.targetIp = newVipTargetIp.trim()
+        // Optional: a port forwards only that TCP port; blank forwards all ports.
+        const p = parseInt(newVipTargetPort)
+        if (p > 0) body.targetPort = p
+      }
       await apiPost(`/api/wg/peers/${selectedNode._wgId}/vips`, body)
-      newVipLabel = ''; newVipTargetIp = ''
+      newVipLabel = ''; newVipTargetIp = ''; newVipTargetPort = ''
       toast('Virtual IP added', 'success')
       await loadVips()
     } catch (e) { toast(e?.message || 'Failed to add virtual IP', 'error') }
@@ -480,11 +485,15 @@
     saveVipAcl(vip)
   }
 
-  // Inline-expand a vip's forwarding commands (no nested modal → no stacking bug).
-  async function toggleVipCommands(vip) {
-    if (expandedVipCmd === vip.id) { expandedVipCmd = null; return }
+  // Show a vip's setup/remove commands inline (no nested modal → no stacking bug).
+  // The Set up / Remove buttons drive the mode; clicking the active one collapses.
+  async function showVipCmd(vip, mode) {
+    if (expandedVipCmd === vip.id && vipCmdMode === mode) { expandedVipCmd = null; return }
+    const needFetch = expandedVipCmd !== vip.id
     expandedVipCmd = vip.id
-    vipCmdText = ''; vipRemoveText = ''; vipCmdMode = 'add'
+    vipCmdMode = mode
+    if (!needFetch) return
+    vipCmdText = ''; vipRemoveText = ''
     vipCmdLoading = true
     try {
       const res = await apiGet(`/api/wg/vips/${vip.id}/commands`)
@@ -1108,9 +1117,10 @@
             <div class="flex flex-col sm:flex-row gap-2 mt-2">
               <Input bind:value={newVipLabel} placeholder="Name (required, e.g. Tapo camera)" prefixIcon="tag" class="flex-1" />
               <Input bind:value={newVipTargetIp} placeholder="Device IP (optional)" prefixIcon="device-laptop" class="flex-1" />
+              <Input bind:value={newVipTargetPort} placeholder="Port" class="w-full sm:w-20" />
               <Button onclick={addVip} icon="plus">Add</Button>
             </div>
-            <div class="text-xs text-muted-foreground mt-1">The VPN IP is auto-assigned; the name labels the forwarding rule. Add a Device IP to forward to a LAN device (all ports) — leave it blank for a bare routed IP.</div>
+            <div class="text-xs text-muted-foreground mt-1">The VPN IP is auto-assigned; the name labels the forwarding rule. Device IP forwards to a LAN device — with a Port it exposes only that TCP port, blank forwards all. No Device IP = a bare routed IP.</div>
 
             {#if vipsLoading}
               <div class="flex justify-center py-6"><LoadingSpinner /></div>
@@ -1127,87 +1137,97 @@
                 {#each vips as vip (vip.id)}
                   <div class="rounded-lg border border-border bg-card overflow-hidden">
                     <!-- Header: address + status + actions -->
-                    <div class="flex items-center gap-3 p-3">
-                      <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                        <Icon name="network" size={18} />
-                      </span>
-                      <div class="min-w-0 flex-1">
-                        <div class="font-mono text-sm font-medium truncate">
-                          {vip.ip}{#if vip.targetIp}<span class="text-muted-foreground"> → {vip.targetIp}</span>{/if}
-                        </div>
-                        {#if vip.label}<div class="text-xs text-muted-foreground truncate">{vip.label}</div>{/if}
-                      </div>
-                      <div class="flex items-center gap-1.5 shrink-0">
-                        {#if vip.quarantine}<Badge variant="destructive">Quarantined</Badge>{/if}
-                        <Badge variant={vip.restricted ? 'warning' : 'success'}>{vip.restricted ? 'Restricted' : 'Open'}</Badge>
-                        {#if vip.targetIp}
-                          <Button size="xs" variant={expandedVipCmd === vip.id ? 'secondary' : 'ghost'} icon="code" title="Forwarding commands" onclick={() => toggleVipCommands(vip)} />
-                        {/if}
-                        <Button size="xs" variant="ghost" icon="trash" title="Remove" onclick={() => confirmRemoveVipId = vip.id} />
-                      </div>
-                    </div>
-
-                    <!-- Inline remove confirm (no stacked modal) -->
                     {#if confirmRemoveVipId === vip.id}
-                      <div class="flex items-center justify-between gap-3 border-t border-destructive/30 bg-destructive/5 px-3 py-2.5">
-                        <span class="text-xs text-foreground">Remove <span class="font-mono">{vip.ip}</span>? It's unrouted from this peer immediately.</span>
-                        <div class="flex items-center gap-2 shrink-0">
-                          <Button size="xs" variant="secondary" disabled={removingVip} onclick={() => confirmRemoveVipId = null}>Cancel</Button>
-                          <Button size="xs" variant="destructive" disabled={removingVip} icon={removingVip ? undefined : 'trash'} onclick={() => doRemoveVip(vip)}>{removingVip ? 'Removing…' : 'Remove'}</Button>
+                      <!-- Delete mode: replaces the whole card body (like the node actions delete) -->
+                      <div class="p-3 space-y-3 bg-destructive/5">
+                        <div class="flex items-start gap-2.5">
+                          <Icon name="alert-triangle" size={18} class="text-destructive shrink-0 mt-0.5" />
+                          <div class="min-w-0">
+                            <div class="text-sm font-medium">Remove this virtual IP?</div>
+                            <div class="text-xs text-muted-foreground truncate"><span class="font-mono">{vip.ip}</span>{#if vip.label} · {vip.label}{/if} — unrouted from this peer immediately.</div>
+                          </div>
+                        </div>
+                        <div class="flex justify-end gap-2">
+                          <Button size="sm" variant="secondary" disabled={removingVip} onclick={() => confirmRemoveVipId = null}>Cancel</Button>
+                          <Button size="sm" variant="destructive" disabled={removingVip} icon={removingVip ? undefined : 'trash'} onclick={() => doRemoveVip(vip)}>{removingVip ? 'Removing…' : 'Remove'}</Button>
                         </div>
                       </div>
-                    {/if}
-
-                    <!-- Forwarding commands (inline, expandable) -->
-                    {#if expandedVipCmd === vip.id}
-                      {@const cmdText = vipCmdMode === 'remove' ? vipRemoveText : vipCmdText}
-                      <div class="border-t border-border bg-secondary/40 px-3 py-2.5 space-y-2">
-                        {#if vipCmdLoading}
-                          <div class="flex justify-center py-3"><LoadingSpinner /></div>
-                        {:else}
-                          <div class="inline-flex rounded-lg border border-border overflow-hidden">
-                            <button class="px-2.5 py-1 text-xs font-medium transition cursor-pointer {vipCmdMode === 'add' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50'}" onclick={() => vipCmdMode = 'add'}>Set up</button>
-                            <button class="px-2.5 py-1 text-xs font-medium border-l border-border transition cursor-pointer {vipCmdMode === 'remove' ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground hover:bg-muted/50'}" onclick={() => vipCmdMode = 'remove'}>Remove</button>
-                          </div>
-                          <div class="relative">
-                            <pre class="bg-secondary text-secondary-foreground p-3 pr-14 rounded-lg text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{cmdText}</pre>
-                            <Button size="xs" variant="outline" icon="copy" class="absolute top-2 right-2" onclick={() => copyWithToast(cmdText, toast)}>Copy</Button>
-                          </div>
-                          <p class="text-[11px] text-muted-foreground">
-                            Runtime-only — persist with <span class="font-mono">iptables-save</span> or a boot task. Reach it from any allowed peer at <span class="font-mono">{vip.ip}</span>.
-                          </p>
-                        {/if}
-                      </div>
-                    {/if}
-
-                    <!-- Controls -->
-                    <div class="border-t border-border bg-muted/20 px-3 py-2.5 space-y-2.5">
-                      <div class="flex flex-wrap gap-x-6 gap-y-2">
-                        <Checkbox variant="switch" label="Restrict to selected peers" checked={vip.restricted} onchange={() => toggleVipRestrict(vip)} />
-                        <Checkbox variant="switch" label="Quarantine" checked={vip.quarantine} onchange={() => toggleVipQuarantine(vip)} />
-                      </div>
-
-                      {#if vip.restricted}
-                        <div class="border-t border-border/50 pt-2.5">
-                          <div class="text-xs text-muted-foreground mb-2">
-                            Allowed peers{#if !(vip.allowedClientIds?.length)}<span class="text-destructive"> — none yet (unreachable)</span>{/if}
-                          </div>
-                          {#if vipPeerChoices.length === 0}
-                            <div class="text-xs text-muted-foreground">No other peers to allow.</div>
-                          {:else}
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                              {#each vipPeerChoices as peer (peer.id)}
-                                <div class="flex items-center gap-2 text-sm p-1.5 rounded-lg border border-transparent hover:border-border hover:bg-muted/50 transition">
-                                  <Checkbox checked={(vip.allowedClientIds || []).includes(peer.id)} onchange={() => toggleVipPeer(vip, peer.id)} />
-                                  <span class="truncate">{peer.name}</span>
-                                  <span class="text-xs text-muted-foreground font-mono ml-auto">{peer.ip}</span>
-                                </div>
-                              {/each}
+                    {:else}
+                      <!-- Header: title, then badges + action group (own line on mobile) -->
+                      <div class="flex flex-col sm:flex-row sm:items-center gap-2.5 p-3">
+                        <div class="flex items-center gap-3 min-w-0 flex-1">
+                          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                            <Icon name="network" size={18} />
+                          </span>
+                          <div class="min-w-0">
+                            <div class="font-mono text-sm font-medium truncate">
+                              {vip.ip}{#if vip.targetIp}<span class="text-muted-foreground"> → {vip.targetIp}{#if vip.targetPort}:{vip.targetPort}{/if}</span>{/if}
                             </div>
+                            {#if vip.label}<div class="text-xs text-muted-foreground truncate">{vip.label}</div>{/if}
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                          {#if vip.quarantine}<Badge variant="destructive">Quarantined</Badge>{/if}
+                          <Badge variant={vip.restricted ? 'warning' : 'success'}>{vip.restricted ? 'Restricted' : 'Open'}</Badge>
+                          <!-- Grouped actions (Docker-style) -->
+                          <div class="flex items-center rounded-lg border border-border overflow-hidden text-xs shrink-0">
+                            {#if vip.targetIp}
+                              <button class="flex items-center gap-1 px-2.5 py-1.5 transition cursor-pointer {expandedVipCmd === vip.id && vipCmdMode === 'add' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'}" onclick={() => showVipCmd(vip, 'add')}><Icon name="code" size={13} />Set up</button>
+                              <button class="px-2.5 py-1.5 border-l border-border transition cursor-pointer {expandedVipCmd === vip.id && vipCmdMode === 'remove' ? 'bg-warning/10 text-warning' : 'text-muted-foreground hover:bg-muted'}" onclick={() => showVipCmd(vip, 'remove')}>Remove</button>
+                            {/if}
+                            <button class="flex items-center px-2 py-1.5 {vip.targetIp ? 'border-l border-border' : ''} text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition cursor-pointer" title="Delete virtual IP" onclick={() => confirmRemoveVipId = vip.id}><Icon name="trash" size={14} /></button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Forwarding commands (driven by the Set up / Remove buttons) -->
+                      {#if expandedVipCmd === vip.id}
+                        {@const cmdText = vipCmdMode === 'remove' ? vipRemoveText : vipCmdText}
+                        <div class="border-t border-border bg-secondary/40 px-3 py-2.5 space-y-2">
+                          {#if vipCmdLoading}
+                            <div class="flex justify-center py-3"><LoadingSpinner /></div>
+                          {:else}
+                            <div class="text-[11px] font-medium text-muted-foreground">{vipCmdMode === 'remove' ? 'Remove the forward — run on the peer' : 'Set up the forward — run on the peer'}</div>
+                            <div class="relative">
+                              <pre class="bg-secondary text-secondary-foreground p-3 pr-14 rounded-lg text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{cmdText}</pre>
+                              <Button size="xs" variant="outline" icon="copy" class="absolute top-2 right-2" onclick={() => copyWithToast(cmdText, toast)}>Copy</Button>
+                            </div>
+                            <p class="text-[11px] text-muted-foreground">
+                              Runtime-only — persist with <span class="font-mono">iptables-save</span> or a boot task. Reach it from any allowed peer at <span class="font-mono">{vip.ip}</span>.
+                            </p>
                           {/if}
                         </div>
                       {/if}
-                    </div>
+
+                      <!-- Controls -->
+                      <div class="border-t border-border bg-muted/20 px-3 py-2.5 space-y-2.5">
+                        <div class="flex flex-wrap gap-x-6 gap-y-2">
+                          <Checkbox variant="switch" label="Restrict to selected peers" checked={vip.restricted} onchange={() => toggleVipRestrict(vip)} />
+                          <Checkbox variant="switch" label="Quarantine" checked={vip.quarantine} onchange={() => toggleVipQuarantine(vip)} />
+                        </div>
+
+                        {#if vip.restricted}
+                          <div class="border-t border-border/50 pt-2.5">
+                            <div class="text-xs text-muted-foreground mb-2">
+                              Allowed peers{#if !(vip.allowedClientIds?.length)}<span class="text-destructive"> — none yet (unreachable)</span>{/if}
+                            </div>
+                            {#if vipPeerChoices.length === 0}
+                              <div class="text-xs text-muted-foreground">No other peers to allow.</div>
+                            {:else}
+                              <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                {#each vipPeerChoices as peer (peer.id)}
+                                  <div class="flex items-center gap-2 text-sm p-1.5 rounded-lg border border-transparent hover:border-border hover:bg-muted/50 transition">
+                                    <Checkbox checked={(vip.allowedClientIds || []).includes(peer.id)} onchange={() => toggleVipPeer(vip, peer.id)} />
+                                    <span class="truncate">{peer.name}</span>
+                                    <span class="text-xs text-muted-foreground font-mono ml-auto">{peer.ip}</span>
+                                  </div>
+                                {/each}
+                              </div>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                    {/if}
                   </div>
                 {/each}
               </div>
