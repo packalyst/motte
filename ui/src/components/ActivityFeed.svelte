@@ -15,7 +15,7 @@
   import LoadingSpinner from './LoadingSpinner.svelte'
   import { timeAgo, parseDate } from '$lib/utils/format.js'
 
-  let { limit = 50, compact = false } = $props()
+  let { limit = 50, compact = false, subsystem = '' } = $props()
 
   let events = $state([])
   let loading = $state(true)
@@ -40,12 +40,15 @@
   const iconFor = e => SUBSYSTEM_ICON[e.subsystem] || 'activity'
   const sevFor = e => SEVERITY[e.severity] || SEVERITY.info
 
+  // Apply the optional subsystem filter.
+  const filtered = $derived(subsystem ? events.filter(e => e.subsystem === subsystem) : events)
+
   // Group events by day (full view only).
   const groups = $derived.by(() => {
-    if (compact) return [{ day: '', items: events }]
+    if (compact) return [{ day: '', items: filtered }]
     const out = []
     let cur = null
-    for (const e of events) {
+    for (const e of filtered) {
       const day = dayLabel(e.created_at)
       if (!cur || cur.day !== day) { cur = { day, items: [] }; out.push(cur) }
       cur.items.push(e)
@@ -84,8 +87,8 @@
   <div class="text-xs text-warning flex items-center gap-1.5 py-4">
     <Icon name="alert-triangle" size={13} />{error}
   </div>
-{:else if events.length === 0}
-  <EmptyState icon="activity" title="No activity yet" description="Blocks, peer changes and config edits will appear here." compact />
+{:else if filtered.length === 0}
+  <EmptyState icon="activity" title={subsystem ? 'No activity for this filter' : 'No activity yet'} description={subsystem ? 'Try a different source or clear the filter.' : 'Blocks, peer changes and config edits will appear here.'} compact />
 {:else}
   <div class="space-y-4">
     {#each groups as group}
