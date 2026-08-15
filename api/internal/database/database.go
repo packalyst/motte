@@ -614,6 +614,24 @@ func runMigrations(db *sql.DB) {
 		}
 	}
 
+	// Enforce "a peer maps a device IP+port once" durably (race-proof) with a partial
+	// unique index. Bare-routed vips (target_ip='') are exempt. Existing exact-duplicate
+	// rows would make the index creation fail, so dedupe first — keep the lowest id in
+	// each (client_id, target_ip, target_port) group; also clear now-orphaned ACL rows
+	// (FK CASCADE isn't guaranteed without PRAGMA foreign_keys).
+	if _, err := db.Exec(`DELETE FROM vpn_virtual_ips
+		WHERE target_ip != '' AND id NOT IN (
+			SELECT MIN(id) FROM vpn_virtual_ips WHERE target_ip != ''
+			GROUP BY client_id, target_ip, target_port
+		)`); err != nil {
+		log.Printf("Migration: vip dedupe failed: %v", err)
+	}
+	db.Exec(`DELETE FROM vpn_virtual_ip_acl WHERE virtual_ip_id NOT IN (SELECT id FROM vpn_virtual_ips)`)
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vpn_vip_peer_target
+		ON vpn_virtual_ips(client_id, target_ip, target_port) WHERE target_ip != ''`); err != nil {
+		log.Printf("Migration: vip unique index failed: %v", err)
+	}
+
 	// Allow the 'proxy' log type (turbotunnels connections). SQLite can't ALTER
 	// a CHECK constraint, so rebuild the logs table if it doesn't permit it yet.
 	// The table is capped by the logs cleanup job, so the copy is cheap.

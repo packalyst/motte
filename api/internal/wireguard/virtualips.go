@@ -268,20 +268,33 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
-	// A peer's NAS can DNAT a given device IP only once — a second vip to the same
-	// device on the same peer is redundant and would add a duplicate forward. (The
-	// same device IP behind a *different* peer is fine: private ranges repeat per-LAN.)
+	// A peer's NAS can DNAT a given device IP+port only once — a second vip to the same
+	// device *and* port on the same peer is an exact duplicate. Different ports on the
+	// same device are allowed (each vip has its own vip IP, so they never collide), and
+	// the same device behind a *different* peer is fine (private ranges repeat per-LAN).
 	if target != "" {
 		var dup int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM vpn_virtual_ips WHERE client_id = ? AND target_ip = ?`, clientID, target).Scan(&dup)
+		_ = db.QueryRow(`SELECT COUNT(*) FROM vpn_virtual_ips WHERE client_id = ? AND target_ip = ? AND target_port = ?`, clientID, target, port).Scan(&dup)
 		if dup > 0 {
-			router.JSONError(w, "this peer already forwards to "+target+" — a device can be mapped once per peer", http.StatusConflict)
+			where := target
+			if port > 0 {
+				where = fmt.Sprintf("%s:%d", target, port)
+			} else {
+				where = "all ports of " + target
+			}
+			router.JSONError(w, "this peer already forwards to "+where, http.StatusConflict)
 			return
 		}
 	}
 	res, err := db.Exec(`INSERT INTO vpn_virtual_ips (client_id, ip, label, target_ip, target_port, restricted, quarantine) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		clientID, vip, label, target, port, restricted, quarantine)
 	if err != nil {
+		// The partial unique index is the durable guard; a concurrent create can pass
+		// the pre-check above and still trip it here — report it as a conflict, not a 500.
+		if strings.Contains(err.Error(), "UNIQUE constraint") && strings.Contains(err.Error(), "idx_vpn_vip_peer_target") {
+			router.JSONError(w, "this peer already forwards to that device and port", http.StatusConflict)
+			return
+		}
 		router.JSONError(w, "failed to add virtual IP: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
