@@ -91,6 +91,11 @@
   function setViewAction(a) {
     if (viewAction === a) return
     viewAction = a
+    // Clear selection + reset pagination: the two lists are different sets of IDs,
+    // so a stale selection would bulk-delete rules from the list we just left, and a
+    // stale page could land past the end of a shorter list (blank table).
+    selectedBlockedEntries = []
+    blocked.resetPage()
     reloadBlocked()
   }
 
