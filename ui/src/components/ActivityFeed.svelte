@@ -90,26 +90,27 @@
 {:else if filtered.length === 0}
   <EmptyState icon="activity" title={subsystem ? 'No activity for this filter' : 'No activity yet'} description={subsystem ? 'Try a different source or clear the filter.' : 'Blocks, peer changes and config edits will appear here.'} compact />
 {:else}
-  <div class="space-y-4">
+  <div class="space-y-3">
     {#each groups as group}
       <div>
         {#if group.day}
-          <div class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground px-1 pb-1">{group.day}</div>
+          <div class="flex items-center gap-2 px-1 pb-1.5">
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{group.day}</span>
+            <span class="h-px flex-1 bg-border"></span>
+          </div>
         {/if}
-        <ul class="divide-y divide-border">
+        <ul class="space-y-0.5">
           {#each group.items as e (e.id)}
             {@const sev = sevFor(e)}
-            <li class="flex items-center gap-3 {compact ? 'py-1.5' : 'py-2.5 pl-2 border-l-2 ' + sev.accent} hover:bg-muted/30 transition">
+            <li class="group flex items-center gap-2.5 rounded-md px-2 hover:bg-muted/40 transition {compact ? 'py-1.5' : 'py-2 border-l-2 ' + sev.accent}">
               <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg {sev.bg} {sev.icon}">
-                <Icon name={iconFor(e)} size={15} />
+                <Icon name={iconFor(e)} size={14} />
               </span>
-              <div class="min-w-0 flex-1">
-                <div class="text-sm text-foreground truncate">{e.message}</div>
-                {#if !compact}
-                  <div class="text-[11px] text-muted-foreground capitalize">{e.subsystem}</div>
-                {/if}
-              </div>
-              <span class="shrink-0 text-[11px] text-muted-foreground tabular-nums" title={e.created_at}>{timeAgo(e.created_at)}</span>
+              <span class="min-w-0 flex-1 text-[13px] leading-tight text-foreground truncate">{e.message}</span>
+              {#if !compact}
+                <span class="hidden sm:inline-flex shrink-0 items-center rounded bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{e.subsystem}</span>
+              {/if}
+              <span class="shrink-0 w-14 text-right text-[11px] text-muted-foreground tabular-nums" title={e.created_at}>{timeAgo(e.created_at)}</span>
             </li>
           {/each}
         </ul>

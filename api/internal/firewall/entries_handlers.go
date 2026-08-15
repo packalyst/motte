@@ -32,6 +32,23 @@ func (s *Service) handleGetEntries(w http.ResponseWriter, r *http.Request) {
 		args = append(args, typeFilter)
 	}
 
+	// Optional whitelist of entry types (comma-separated), e.g. the Access Rules
+	// view requests "ip,range,country,asn" to exclude ports server-side so the
+	// total count matches what's shown. Only known types are honored (no injection).
+	if typesFilter := r.URL.Query().Get("types"); typesFilter != "" {
+		var placeholders []string
+		for _, t := range strings.Split(typesFilter, ",") {
+			switch strings.TrimSpace(t) {
+			case "ip", "range", "country", "asn", "port":
+				placeholders = append(placeholders, "?")
+				args = append(args, strings.TrimSpace(t))
+			}
+		}
+		if len(placeholders) > 0 {
+			where += " AND entry_type IN (" + strings.Join(placeholders, ",") + ")"
+		}
+	}
+
 	if sourceFilter != "" {
 		where += " AND source = ?"
 		args = append(args, sourceFilter)

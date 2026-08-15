@@ -193,16 +193,16 @@
       const params = new URLSearchParams({
         limit: blocked.perPage.toString(),
         offset: blocked.offset.toString(),
-        action: viewAction // 'block' = deny list, 'allow' = VIP list
+        action: viewAction, // 'block' = deny list, 'allow' = VIP list
+        types: 'ip,range,country,asn' // Access Rules = source rules only, no ports
       })
       if (blocked.search) params.set('search', blocked.search)
       if (blocked.filters.type) params.set('type', blocked.filters.type)
       if (blocked.filters.source) params.set('source', blocked.filters.source)
 
       const res = await apiGet(`/api/fw/entries?${params}`)
-      // Ports are action='allow' too but are managed in their own section — keep
-      // the Access Rules list to source rules (ip/range/country/asn).
-      blockedEntries = (res.entries || []).filter(e => e.entryType !== 'port')
+      // Ports are excluded server-side (types=…), so the total is accurate.
+      blockedEntries = res.entries || []
       blockedTotal = res.total || 0
       blockedTypes = (res.types || []).filter(t => t !== 'port')
       blockedSources = res.sources || []
