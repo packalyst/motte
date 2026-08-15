@@ -141,6 +141,11 @@ func (s *Service) ensureEssentialPorts() error {
 
 // RequestApply schedules a debounced apply via nftables service
 func (s *Service) RequestApply() {
+	// Drop orphaned ASN cache rows before the (debounced) rebuild reads them, so the
+	// cache converges as ASN entries come and go. Cheap; the cache table is tiny.
+	if s.geo != nil {
+		s.geo.PruneASNZonesCache()
+	}
 	if s.nft != nil {
 		s.nft.RequestApply()
 	}

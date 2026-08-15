@@ -569,7 +569,12 @@ func runMigrations(db *sql.DB) {
 					hit_count INTEGER DEFAULT 0,
 					created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 				)`,
-				`INSERT INTO firewall_entries SELECT * FROM firewall_entries_old`,
+				// Enumerate columns explicitly: a positional SELECT * would silently
+				// misalign if a future schema adds/reorders a column between the two tables.
+				`INSERT INTO firewall_entries
+					(id, entry_type, value, action, direction, protocol, source, reason, name, essential, expires_at, enabled, hit_count, created_at)
+					SELECT id, entry_type, value, action, direction, protocol, source, reason, name, essential, expires_at, enabled, hit_count, created_at
+					FROM firewall_entries_old`,
 				`DROP TABLE firewall_entries_old`,
 				`CREATE UNIQUE INDEX IF NOT EXISTS idx_firewall_entries_unique ON firewall_entries(entry_type, value, protocol)`,
 				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_type ON firewall_entries(entry_type)`,
@@ -579,22 +584,29 @@ func runMigrations(db *sql.DB) {
 				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_type_enabled_direction ON firewall_entries(entry_type, enabled, direction)`,
 				`CREATE INDEX IF NOT EXISTS idx_firewall_entries_type_action_enabled ON firewall_entries(entry_type, action, enabled)`,
 			}
+			// A swallowed failure here means the firewall silently can't store 'asn'
+			// entries and the rebuild is re-attempted every boot — so log every failure
+			// path loudly (ERROR), not silently.
 			if tx, err := db.Begin(); err == nil {
 				ok := true
 				for _, stmt := range stmts {
 					if _, err := tx.Exec(stmt); err != nil {
-						log.Printf("Migration: firewall_entries 'asn' type rebuild failed: %v", err)
+						log.Printf("ERROR Migration: firewall_entries 'asn' rebuild failed (will retry next boot): %v", err)
 						ok = false
 						break
 					}
 				}
 				if ok {
-					if err := tx.Commit(); err == nil {
+					if err := tx.Commit(); err != nil {
+						log.Printf("ERROR Migration: firewall_entries 'asn' rebuild commit failed (will retry next boot): %v", err)
+					} else {
 						log.Printf("Migration: rebuilt firewall_entries to allow 'asn' type")
 					}
 				} else {
 					tx.Rollback()
 				}
+			} else {
+				log.Printf("ERROR Migration: could not begin firewall_entries 'asn' rebuild (will retry next boot): %v", err)
 			}
 		}
 	}
@@ -626,7 +638,9 @@ func runMigrations(db *sql.DB) {
 		)`); err != nil {
 		log.Printf("Migration: vip dedupe failed: %v", err)
 	}
-	db.Exec(`DELETE FROM vpn_virtual_ip_acl WHERE virtual_ip_id NOT IN (SELECT id FROM vpn_virtual_ips)`)
+	if _, err := db.Exec(`DELETE FROM vpn_virtual_ip_acl WHERE virtual_ip_id NOT IN (SELECT id FROM vpn_virtual_ips)`); err != nil {
+		log.Printf("Migration: vip orphan-ACL cleanup failed: %v", err)
+	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vpn_vip_peer_target
 		ON vpn_virtual_ips(client_id, target_ip, target_port) WHERE target_ip != ''`); err != nil {
 		log.Printf("Migration: vip unique index failed: %v", err)

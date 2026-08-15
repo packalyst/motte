@@ -110,8 +110,13 @@ func (s *Service) checkASNEscalation(ip, jailName string, banTime int) {
 	}
 
 	// Count distinct IPs banned by this jail in the window that belong to this ASN.
+	// Only currently-active bans count (enabled + unexpired) — a manually-unblocked or
+	// expired entry is not evidence, and escalating a whole ASN (millions of IPs) on
+	// stale bans would be an over-block. Matches the "currently banned" semantics used
+	// by the jail count queries.
 	rows, err := s.db.Query(`SELECT DISTINCT value FROM firewall_entries
 		WHERE entry_type = 'ip' AND action = 'block' AND name = ?
+		  AND enabled = 1 AND (expires_at IS NULL OR expires_at > datetime('now'))
 		  AND created_at > datetime('now', '-' || ? || ' seconds')`, jailName, window)
 	if err != nil {
 		return

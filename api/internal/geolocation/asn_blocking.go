@@ -2,6 +2,7 @@ package geolocation
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,6 +98,19 @@ func (s *Service) CacheASNZones(asn uint32) (int, error) {
 		return 0, err
 	}
 	return len(cidrs), nil
+}
+
+// PruneASNZonesCache drops cached ASN expansions that no longer back a firewall entry,
+// so the cache can't grow without bound as ASNs are added and removed over time. Cheap
+// (the cache is tiny); safe to call on every apply. Mirrors the country-cache cleanup.
+func (s *Service) PruneASNZonesCache() {
+	if s.db == nil {
+		return
+	}
+	if _, err := s.db.Exec(`DELETE FROM asn_zones_cache
+		WHERE asn NOT IN (SELECT CAST(value AS INTEGER) FROM firewall_entries WHERE entry_type = 'asn')`); err != nil {
+		log.Printf("geolocation: prune asn_zones_cache: %v", err)
+	}
 }
 
 // GetBlockedASNCIDRs returns the IPv4 CIDRs of every enabled, blocking ASN entry,

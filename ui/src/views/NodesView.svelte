@@ -493,16 +493,21 @@
     expandedVipCmd = vip.id
     vipCmdMode = mode
     if (!needFetch) return
+    // Capture the target id: if the user switches to another vip mid-flight, a stale
+    // response must not overwrite the now-active vip's commands or clear its spinner.
+    const reqId = vip.id
     vipCmdText = ''; vipRemoveText = ''
     vipCmdLoading = true
     try {
       const res = await apiGet(`/api/wg/vips/${vip.id}/commands`)
+      if (expandedVipCmd !== reqId) return
       vipCmdText = res.commands
       vipRemoveText = res.removeCommands || ''
     } catch (e) {
+      if (expandedVipCmd !== reqId) return
       vipCmdText = '# ' + (e?.message || 'Failed to load commands')
     } finally {
-      vipCmdLoading = false
+      if (expandedVipCmd === reqId) vipCmdLoading = false
     }
   }
 

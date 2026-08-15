@@ -136,6 +136,21 @@ func (s *Service) handleUpdateJail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Same zero-clamp as handleCreateJail, so an update can't persist a 0 threshold/window
+	// (which checkASNEscalation would read as "escalate on the very first ban").
+	if jail.EscalateThreshold == 0 {
+		jail.EscalateThreshold = 3
+	}
+	if jail.EscalateWindow == 0 {
+		jail.EscalateWindow = 3600
+	}
+	if jail.EscalateASNThreshold == 0 {
+		jail.EscalateASNThreshold = 15
+	}
+	if jail.EscalateASNWindow == 0 {
+		jail.EscalateASNWindow = 3600
+	}
+
 	var jailID int64
 	_ = s.db.QueryRow("SELECT id FROM jails WHERE name = ?", name).Scan(&jailID)
 

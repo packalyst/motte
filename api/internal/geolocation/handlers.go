@@ -152,19 +152,20 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleLookupIP performs a single IP lookup
 // handleSearchASN searches providers by name or AS number: GET /api/geo/asn/search?q=&limit=
 func (s *Service) handleSearchASN(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	limit := 20
 	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
+		// Clamp to [1,100]: a negative limit would panic in SearchASN's out[:limit] slice.
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 100 {
 			limit = n
 		}
 	}
 	router.JSON(w, map[string]any{"results": s.SearchASN(q, limit)})
 }
 
+// handleLookupIP performs a single IP lookup
 func (s *Service) handleLookupIP(w http.ResponseWriter, r *http.Request) {
 	ip := r.URL.Query().Get("ip")
 	if ip == "" {

@@ -2,9 +2,17 @@ package geolocation
 
 import (
 	"fmt"
+	"log"
 	"math/bits"
 	"net/netip"
 )
+
+// maxASNv4CIDRs is a runaway backstop on how many CIDRs one ASN may expand to. It is
+// set far above any real-world ASN (even large clouds are only a few thousand CIDRs),
+// so it never truncates a legitimate block — it only stops a pathological/corrupt DB
+// from exhausting memory or bloating the nft set. Truncation is logged loudly because,
+// for a *block*, a partial expansion would be a coverage gap.
+const maxASNv4CIDRs = 131072
 
 // v4From16 extracts the IPv4 address from a 16-byte range key. IP2Location's
 // IPv6 CSVs number the IPv4 space in one of two ways depending on the file:
@@ -81,6 +89,10 @@ func asnV4CIDRs(t *rangeTable[asnVal], asn uint32) []string {
 			continue
 		}
 		out = append(out, rangeToCIDRsV4(lo, hi)...)
+		if len(out) > maxASNv4CIDRs {
+			log.Printf("geolocation: ASN %d expands beyond %d CIDRs — truncating (block may be incomplete; check the ASN DB)", asn, maxASNv4CIDRs)
+			return out[:maxASNv4CIDRs]
+		}
 	}
 	return out
 }
