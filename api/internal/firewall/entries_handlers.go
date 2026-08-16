@@ -161,6 +161,27 @@ func validateAndNormalizeEntry(entryType, value string) (string, string, error) 
 	}
 }
 
+// validateEntryEnums rejects out-of-range action/direction/protocol so a typo'd row can't
+// be stored as an "active" rule that the nftables builder silently ignores.
+func validateEntryEnums(action, direction, protocol string) error {
+	switch action {
+	case nftables.ActionBlock, nftables.ActionAllow:
+	default:
+		return fmt.Errorf("action must be 'block' or 'allow'")
+	}
+	switch direction {
+	case nftables.DirectionInbound, nftables.DirectionOutbound, nftables.DirectionBoth:
+	default:
+		return fmt.Errorf("direction must be 'inbound', 'outbound', or 'both'")
+	}
+	switch protocol {
+	case nftables.ProtocolTCP, nftables.ProtocolUDP, nftables.ProtocolBoth:
+	default:
+		return fmt.Errorf("protocol must be 'tcp', 'udp', or 'both'")
+	}
+	return nil
+}
+
 // handleCreateEntry creates a new firewall entry
 func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -199,6 +220,14 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Protocol == "" {
 		req.Protocol = nftables.ProtocolBoth
+	}
+
+	// Reject out-of-enum action/direction/protocol. Without this a typo'd value ("blcok")
+	// is stored and shown as an active rule, but the nftables builder only matches the
+	// canonical constants — so it silently never enters any set: a false sense of blocking.
+	if err := validateEntryEnums(req.Action, req.Direction, req.Protocol); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Self-protection: never let an admin block their own single IP. Only applies
@@ -362,6 +391,7 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 		created := 0
 		skipped := 0
 		var countryEntries []string
+		var asnEntries []string
 
 		for _, e := range req.Entries {
 			// Same validation as the single-entry path — skip invalid rows instead of
@@ -380,6 +410,12 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 			if direction == "" {
 				direction = nftables.DirectionInbound
 			}
+			// Skip rows with an invalid action/direction (protocol is fixed 'both' here),
+			// same as the single-entry path rejects them — don't store a dead rule.
+			if err := validateEntryEnums(action, direction, nftables.ProtocolBoth); err != nil {
+				skipped++
+				continue
+			}
 
 			// Insert entry immediately (zones will be fetched async for countries)
 			_, err = s.db.Exec(`INSERT OR IGNORE INTO firewall_entries
@@ -388,9 +424,11 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 				normType, normValue, action, direction, e.Name)
 			if err == nil {
 				created++
-				// Track country entries for async zone fetching
+				// Track country + ASN entries for async range expansion.
 				if normType == nftables.EntryTypeCountry {
 					countryEntries = append(countryEntries, normValue)
+				} else if normType == nftables.EntryTypeASN {
+					asnEntries = append(asnEntries, normValue)
 				}
 			} else {
 				skipped++
@@ -402,10 +440,30 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 			"status":   "queued",
 			"created":  created,
 			"skipped":  skipped,
-			"fetching": len(countryEntries),
+			"fetching": len(countryEntries) + len(asnEntries),
 		})
 
-		// Async: fetch country zones and apply rules
+		// Async: expand ASN ranges (bulk-add previously skipped this, leaving the set empty
+		// until an unrelated reload), then fetch country zones and apply.
+		if len(asnEntries) > 0 {
+			go func(asns []string) {
+				if s.geo == nil {
+					return
+				}
+				for _, v := range asns {
+					n, perr := strconv.ParseUint(v, 10, 32)
+					if perr != nil {
+						continue
+					}
+					if cnt, err := s.geo.CacheASNZones(uint32(n)); err == nil {
+						s.db.Exec("UPDATE firewall_entries SET hit_count = ? WHERE entry_type = 'asn' AND value = ?", cnt, v)
+					} else {
+						log.Printf("firewall: bulk ASN %s cache failed: %v", v, err)
+					}
+				}
+				s.RequestApply()
+			}(asnEntries)
+		}
 		s.FetchCountryZonesAsync(countryEntries)
 		return
 	}
