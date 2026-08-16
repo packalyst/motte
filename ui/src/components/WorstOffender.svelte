@@ -4,7 +4,7 @@
    * with a one-click ban. Data from /api/fw/overview.top_attacker.
    */
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import CountryFlag from './CountryFlag.svelte'
@@ -19,6 +19,8 @@
 
   async function ban() {
     if (!a?.ip) return
+    const ok = await confirm({ title: `Block ${a.ip}`, message: `Add a firewall block rule for ${a.ip}?`, confirmText: 'Block', variant: 'destructive' })
+    if (!ok) return
     banning = true
     try {
       await apiPost('/api/fw/entries', { type: 'ip', value: a.ip, action: 'block', direction: 'inbound', reason: 'Worst offender (manual)' })

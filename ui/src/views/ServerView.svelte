@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, apiDelete, toast } from '../stores/app.js'
+  import { apiGet, apiPost, apiDelete, toast, confirm } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import StatCard from '../components/StatCard.svelte'
@@ -20,6 +20,8 @@
 
   async function banIP(ip) {
     if (!ip) return
+    const ok = await confirm({ title: `Block ${ip}`, message: `Add a firewall block rule for ${ip}? It came from a sudo-escalation attempt.`, confirmText: 'Block', variant: 'destructive' })
+    if (!ok) return
     try {
       await apiPost('/api/fw/entries', { type: 'ip', value: ip, action: 'block', direction: 'inbound', reason: 'server escalation (manual)' })
       toast(`Blocked ${ip}`, 'success')

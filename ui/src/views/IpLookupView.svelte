@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import InfoCard from '../components/InfoCard.svelte'
@@ -62,6 +62,15 @@
   }
 
   async function act(entry, label) {
+    const isBlock = entry.action === 'block'
+    const target = entry.type === 'country' ? (entry.name || entry.value) : entry.type === 'asn' ? `AS${entry.value}` : entry.value
+    const ok = await confirm({
+      title: `${isBlock ? 'Block' : 'Allow'} ${target}`,
+      message: `Add a firewall ${isBlock ? 'block' : 'allow'} rule for ${target}?`,
+      confirmText: isBlock ? 'Block' : 'Allow',
+      variant: isBlock ? 'destructive' : 'success',
+    })
+    if (!ok) return
     try {
       await apiPost('/api/fw/entries', { direction: 'inbound', ...entry })
       toast(label, 'success')
