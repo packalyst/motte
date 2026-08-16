@@ -1,13 +1,9 @@
 <script>
-  import { onMount } from 'svelte'
-  import { apiGet } from '../stores/app.js'
+  import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
 
-  let d = $state(null)
-  async function load() {
-    try { d = await apiGet('/api/logs/stats?type=inbound&period=hour') } catch {}
-  }
-  onMount(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) })
+  // From the WS stats stream (no polling).
+  const d = $derived($statsStore?.security?.visitors)
 </script>
 
 <div class="bg-card border border-border rounded-xl p-4">
@@ -19,7 +15,7 @@
       <div class="text-xs text-muted-foreground mt-0.5">unique visitors</div>
     </div>
     <div>
-      <div class="text-2xl font-bold tabular-nums text-foreground">{d?.top_countries?.length ?? 0}</div>
+      <div class="text-2xl font-bold tabular-nums text-foreground">{d?.countries ?? 0}</div>
       <div class="text-xs text-muted-foreground mt-0.5">countries</div>
     </div>
   </div>

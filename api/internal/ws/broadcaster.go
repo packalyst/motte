@@ -36,6 +36,16 @@ type OverviewStats struct {
 	Services   []ServiceHealth    `json:"services,omitempty"`
 	DockerInfo *docker.DockerInfo `json:"dockerInfo,omitempty"`
 	DiskUsage  *docker.DiskUsage  `json:"diskUsage,omitempty"`
+	Security   *SecurityStats     `json:"security,omitempty"`
+}
+
+// SecurityStats is the last-hour security summary pushed on the stats stream so the
+// Overview security widgets don't each poll. Fields mirror the /api/fw/overview,
+// /api/fw/layers and public-visitors JSON shapes so the widgets read them as-is.
+type SecurityStats struct {
+	Overview interface{} `json:"overview"` // /api/fw/overview shape
+	Layers   interface{} `json:"layers"`   // /api/fw/layers shape (last hour)
+	Visitors interface{} `json:"visitors"` // { unique_visitors, countries }
 }
 
 // ServiceHealth is one core service's up/down status for the dashboard health row.

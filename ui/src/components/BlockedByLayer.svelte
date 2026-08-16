@@ -1,18 +1,26 @@
 <script>
   import { onMount } from 'svelte'
   import { apiGet } from '../stores/app.js'
+  import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
 
-  // period: hour | day | week | month | all
-  let { period = 'hour' } = $props()
+  // period: hour | day | week | month | all. live=true reads the WS stats stream
+  // (Overview, fixed last hour); otherwise poll by period (Analytics).
+  let { period = 'hour', live = false } = $props()
 
   let d = $state(null)
 
   async function load() {
     try { d = await apiGet(`/api/fw/layers?period=${period}`) } catch {}
   }
-  $effect(() => { period; load() })
-  onMount(() => { const t = setInterval(load, 30000); return () => clearInterval(t) })
+  $effect(() => {
+    if (live) { d = $statsStore?.security?.layers }
+    else { period; load() }
+  })
+  onMount(() => {
+    if (live) return
+    const t = setInterval(load, 30000); return () => clearInterval(t)
+  })
 
   const fmt = (n) => (n ?? 0).toLocaleString()
 </script>

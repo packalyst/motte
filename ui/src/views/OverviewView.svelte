@@ -88,7 +88,7 @@
   <!-- Is my defense working — blocked by layer (last hour) -->
   <div>
     <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2">Is my defense working — blocked by layer</h2>
-    <BlockedByLayer period="hour" />
+    <BlockedByLayer live />
   </div>
 
   <!-- Threats & visitors right now -->

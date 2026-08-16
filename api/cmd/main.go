@@ -424,6 +424,12 @@ func main() {
 			}
 		}
 
+		// Last-hour security summary for the Overview widgets (cached 30s inside).
+		var security *ws.SecurityStats
+		if fwSvc != nil {
+			security = fwSvc.DashboardSecurity()
+		}
+
 		return ws.OverviewStats{
 			System: ws.SystemStats{
 				Uptime:       sysStats.Uptime,
@@ -449,6 +455,7 @@ func main() {
 			Services:   services,
 			DockerInfo: dockerInfo,
 			DiskUsage:  diskUsage,
+			Security:   security,
 		}
 	})
 

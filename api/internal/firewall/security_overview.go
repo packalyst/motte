@@ -41,6 +41,12 @@ type securityOverview struct {
 // hour: how much was blocked, from where, the worst offender, and a single
 // status light. Everything is derived from data the panel already stores.
 func (s *Service) handleSecurityOverview(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, s.securityOverviewData())
+}
+
+// securityOverviewData computes the last-hour security summary (also reused by the
+// WebSocket dashboard-security broadcast, so it isn't re-fetched per HTTP poll).
+func (s *Service) securityOverviewData() securityOverview {
 	out := securityOverview{Window: "1h", Status: "calm"}
 
 	// Blocks this hour and the hour before (for spike detection).
@@ -88,7 +94,7 @@ func (s *Service) handleSecurityOverview(w http.ResponseWriter, r *http.Request)
 	}
 
 	out.Status = classifyStatus(out.Blocked, out.BlockedPrev)
-	router.JSON(w, out)
+	return out
 }
 
 // classifyStatus turns block counts into the traffic-light status.

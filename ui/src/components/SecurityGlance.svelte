@@ -6,23 +6,19 @@
    */
   import { onMount } from 'svelte'
   import { apiGet, currentView } from '../stores/app.js'
+  import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
 
-  let fw = $state(null)       // /api/fw/overview
-  let sessions = $state(null) // /api/auth/sessions
-  let host = $state(null)     // /api/server/security
-
-  async function load() {
-    const [a, b, c] = await Promise.allSettled([
-      apiGet('/api/fw/overview'),
-      apiGet('/api/auth/sessions'),
-      apiGet('/api/server/security'),
-    ])
-    if (a.status === 'fulfilled') fw = a.value
+  // Firewall verdict / attackers / bans come from the WS stats stream (no polling).
+  const fw = $derived($statsStore?.security?.overview)
+  // Panel sessions + server logins change slowly — fetch once on mount.
+  let sessions = $state(null)
+  let host = $state(null)
+  onMount(async () => {
+    const [b, c] = await Promise.allSettled([apiGet('/api/auth/sessions'), apiGet('/api/server/security')])
     if (b.status === 'fulfilled') sessions = b.value
     if (c.status === 'fulfilled') host = c.value
-  }
-  onMount(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) })
+  })
 
   function isLocal(ip) {
     return !ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.')

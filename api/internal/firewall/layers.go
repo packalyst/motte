@@ -28,7 +28,12 @@ func periodToInterval(p string) (interval, label string) {
 // GET /api/fw/layers?period=hour|day|week|month|all
 func (s *Service) handleLayers(w http.ResponseWriter, r *http.Request) {
 	interval, label := periodToInterval(r.URL.Query().Get("period"))
+	router.JSON(w, s.layersData(interval, label))
+}
 
+// layersData computes the blocked-by-layer summary for a window (reused by the
+// WebSocket dashboard-security broadcast for the fixed last-hour window).
+func (s *Service) layersData(interval, label string) map[string]interface{} {
 	l3 := s.L3BlockedWindow(interval) // sampled nftables packet drops
 	l7 := s.L7BlockedWindow(interval) // sentinel proxy drops
 
@@ -49,12 +54,12 @@ func (s *Service) handleLayers(w http.ResponseWriter, r *http.Request) {
 		pct = float64(inboundAllowed) / float64(inboundAllowed+blockedTotal) * 100
 	}
 
-	router.JSON(w, map[string]interface{}{
+	return map[string]interface{}{
 		"window":        label,
 		"l3":            map[string]int64{"blocked": l3},
 		"dns":           map[string]int{"blocked": dnsBlocked, "total": dnsTotal},
 		"l7":            map[string]int{"blocked": l7},
 		"allowed":       map[string]interface{}{"requests": inboundAllowed, "percent": pct},
 		"total_blocked": blockedTotal,
-	})
+	}
 }

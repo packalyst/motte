@@ -3,19 +3,16 @@
    * WorstOffender — the single IP generating the most hostile traffic this hour,
    * with a one-click ban. Data from /api/fw/overview.top_attacker.
    */
-  import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { apiPost, toast, confirm } from '../stores/app.js'
+  import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import CountryFlag from './CountryFlag.svelte'
 
+  // Fed by the WS stats stream (no polling); local state so ban() can clear it.
   let a = $state(null)
   let banning = $state(false)
-
-  async function load() {
-    try { const d = await apiGet('/api/fw/overview'); a = d?.top_attacker || null } catch {}
-  }
-  onMount(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) })
+  $effect(() => { a = $statsStore?.security?.overview?.top_attacker || null })
 
   async function ban() {
     if (!a?.ip) return
