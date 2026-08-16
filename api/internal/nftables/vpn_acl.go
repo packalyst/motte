@@ -173,10 +173,23 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 		sb.WriteString(fmt.Sprintf("# Server: %s\n\n", SanitizeComment(serverIP)))
 	}
 
+	// Collect IPv4 vip addresses into a set so the allow_all blanket accepts can carve
+	// them out — a vip must obey ONLY its own restricted/quarantine rules, never an
+	// allow_all peer's range-wide accept. An empty set makes `!= @vips` always true, so
+	// setups without vips behave exactly as before.
+	var vipIPs []string
+	for _, v := range vips {
+		if ValidateIPv4OrCIDR(v.IP) {
+			vipIPs = append(vipIPs, v.IP)
+		}
+	}
+
 	// Delete existing table
 	sb.WriteString("table inet wgadmin_vpn_acl\ndelete table inet wgadmin_vpn_acl\n\n")
 
 	sb.WriteString("table inet wgadmin_vpn_acl {\n")
+	sb.WriteString(BuildSet("vips", "ipv4_addr", nil, vipIPs))
+	sb.WriteString("\n")
 	sb.WriteString("    chain forward {\n")
 	sb.WriteString("        type filter hook forward priority 0; policy accept;\n\n")
 	sb.WriteString("        # Allow established/related (lets replies to inbound-initiated\n")
@@ -215,14 +228,18 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 			safeName := SanitizeComment(c.Name)
 			sb.WriteString(fmt.Sprintf("        # %s [allow_all] - outbound\n", safeName))
 			if wgIPRange != "" {
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", c.IP, wgIPRange))
+				// != @vips: an allow_all peer must NOT auto-reach a vip; the vip's own
+				// restricted/open rules decide instead. (vips live in the WG range.)
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s ip daddr != @vips accept\n", c.IP, wgIPRange))
 			}
 			if hsIPRange != "" {
 				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", c.IP, hsIPRange))
 			}
 			sb.WriteString(fmt.Sprintf("        # %s [allow_all] - inbound\n", safeName))
 			if wgIPRange != "" {
-				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", wgIPRange, c.IP))
+				// != @vips: a quarantined vip must NOT ride this accept out to the peer;
+				// its quarantine drop governs instead.
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip saddr != @vips ip daddr %s accept\n", wgIPRange, c.IP))
 			}
 			if hsIPRange != "" {
 				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s accept\n", hsIPRange, c.IP))

@@ -88,6 +88,29 @@ func TestVPNACLSkipsIPv6(t *testing.T) {
 	}
 }
 
+// TestVPNACLAllowAllExcludesVips guards that an allow_all peer's range-wide accepts carve
+// out the @vips set, so a restricted vip stays unreachable and a quarantined vip can't
+// ride the accept out to the allow_all peer.
+func TestVPNACLAllowAllExcludesVips(t *testing.T) {
+	at := &VPNACLTable{}
+	clients := map[int64]vpnClient{
+		1: {ID: 1, Name: "trusted", IP: "10.8.0.9", Type: "wireguard", Policy: "allow_all"},
+	}
+	vips := []aclVirtualIP{
+		{IP: "10.8.128.5", Restricted: true, Quarantine: true, Allowed: []string{"10.8.0.2"}},
+	}
+	script := at.buildScript(clients, nil, vips, "10.8.0.0/16", "100.64.0.0/16", "10.8.0.1")
+	if !strings.Contains(script, "set vips {") || !strings.Contains(script, "10.8.128.5") {
+		t.Fatal("vips set not defined/populated")
+	}
+	if !strings.Contains(script, "ip saddr 10.8.0.9 ip daddr 10.8.0.0/16 ip daddr != @vips accept") {
+		t.Error("allow_all outbound does not exclude @vips — restricted vip would be reachable")
+	}
+	if !strings.Contains(script, "ip saddr 10.8.0.0/16 ip saddr != @vips ip daddr 10.8.0.9 accept") {
+		t.Error("allow_all inbound does not exclude @vips — quarantined vip could initiate out")
+	}
+}
+
 // TestBuildScriptAllowBeforeDeny guards the security-critical ordering: in each
 // chain the source allow-list (accept) must appear BEFORE the block-list (drop),
 // otherwise a block would win over an intended allow-exception.
