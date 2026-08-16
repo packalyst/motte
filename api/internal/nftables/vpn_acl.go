@@ -327,7 +327,9 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	}
 	sb.WriteString("\n")
 
-	// Drop unallowed VPN-to-VPN traffic
+	// Drop unallowed VPN-to-VPN traffic (default-deny backstop, symmetric across both
+	// ranges: wg<->wg, wg<->hs, hs<->hs). Explicit allow rules and allow_all peers are
+	// emitted earlier in the chain, so only *unallowed* peer-to-peer traffic is dropped.
 	sb.WriteString("        # Drop unallowed VPN traffic\n")
 	if wgIPRange != "" && hsIPRange != "" {
 		sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", wgIPRange, hsIPRange))
@@ -335,6 +337,9 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	}
 	if wgIPRange != "" {
 		sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", wgIPRange, wgIPRange))
+	}
+	if hsIPRange != "" {
+		sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", hsIPRange, hsIPRange))
 	}
 
 	sb.WriteString("    }\n")
