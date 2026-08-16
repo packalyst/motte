@@ -30,9 +30,12 @@ func (s *Service) ensureSudoTable() {
 		tty         TEXT,
 		ip          TEXT,
 		command     TEXT,
+		dismissed   INTEGER DEFAULT 0,
 		inserted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(ts, tty)
 	)`)
+	// Add the column on installs that created the table before it existed (no-op otherwise).
+	s.db.Exec(`ALTER TABLE sudo_failures ADD COLUMN dismissed INTEGER DEFAULT 0`)
 }
 
 // runSudoWatcher polls the auth log for sudo failures, resolving each to its
@@ -76,6 +79,7 @@ func (s *Service) recentSudoFailures(now time.Time) []sudoFail {
 	s.ensureSudoTable()
 	out := []sudoFail{}
 	rows, err := s.db.Query(`SELECT rowid, ts, user, tty, ip, command FROM sudo_failures
+		WHERE COALESCE(dismissed, 0) = 0
 		ORDER BY inserted_at DESC LIMIT 15`)
 	if err != nil {
 		return out
@@ -106,7 +110,10 @@ func (s *Service) handleForgetSudoFailure(w http.ResponseWriter, r *http.Request
 		router.JSONError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	s.db.Exec(`DELETE FROM sudo_failures WHERE rowid = ?`, id)
+	// Mark dismissed rather than delete: the failure line is still in the auth log, so a
+	// deleted row would be re-inserted on the next watcher pass. Keeping the (dismissed)
+	// row makes the watcher's INSERT OR IGNORE keep skipping it.
+	s.db.Exec(`UPDATE sudo_failures SET dismissed = 1 WHERE rowid = ?`, id)
 	router.JSON(w, map[string]bool{"ok": true})
 }
 
