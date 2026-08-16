@@ -689,7 +689,15 @@
   }
 
   async function deleteJail(jail) {
-    if (!confirm(`Delete jail "${jail.name}"?`)) return
+    // confirm() is async and takes an options object — a bare `if (!confirm('...'))` never
+    // returns (a Promise is always truthy), so it would delete without ever asking.
+    const confirmed = await confirm({
+      title: 'Delete jail',
+      message: `Delete jail "${jail.name}"?`,
+      description: 'Its ban rules will be removed.',
+      confirmText: 'Delete'
+    })
+    if (!confirmed) return
     try {
       await apiDelete(`/api/fw/jails/${jail.name}`)
       toast(`Jail "${jail.name}" deleted`, 'success')
