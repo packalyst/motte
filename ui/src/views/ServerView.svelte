@@ -86,6 +86,10 @@
     </div>
 
     <!-- Breach watch: SSH / shell logins -->
+    <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mt-2 mb-2 flex items-center gap-2">
+      Logins to the server (SSH / shell)
+      <span class="normal-case tracking-normal text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive font-semibold">breach watch</span>
+    </h2>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
         <h3 class="text-sm font-semibold text-foreground mb-0.5 flex items-center gap-2"><Icon name="terminal-2" size={16} class="text-primary" />Successful shell logins</h3>
@@ -124,6 +128,10 @@
     </div>
 
     <!-- Privilege & accounts -->
+    <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mt-4 mb-2 flex items-center gap-2">
+      Privilege &amp; persistence
+      <span class="normal-case tracking-normal text-[10px] px-1.5 py-0.5 rounded-full bg-success/10 text-success font-semibold">from logs you already have</span>
+    </h2>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="bg-card border border-border rounded-xl p-4">
         <h3 class="text-sm font-semibold text-foreground mb-0.5 flex items-center gap-2"><Icon name="key" size={16} class="text-primary" />Privileged actions</h3>
@@ -179,6 +187,7 @@
     </div>
 
     <!-- Exposure: listening ports -->
+    <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mt-4 mb-2">Exposure</h2>
     <div class="bg-card border border-border rounded-xl p-4">
       <h3 class="text-sm font-semibold text-foreground mb-0.5 flex items-center gap-2"><Icon name="door" size={16} class="text-primary" />Exposure — listening ports</h3>
       <p class="text-[11px] text-muted-foreground mb-3">{data.ports.public} public-facing · {data.ports.listening.length} total. Public listeners are reachable from other machines — make sure each is intentional.</p>
@@ -208,6 +217,7 @@
     </div>
 
     <!-- Health & history -->
+    <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mt-4 mb-2">Health &amp; history</h2>
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       <StatCard icon="clock" color="primary" value={fmtUptime(data.host.uptime_seconds)} label="Host uptime" />
       <StatCard icon="refresh" color={data.host.reboot_recent ? 'warning' : 'info'} value={data.host.boot_time ? timeAgo(data.host.boot_time) : '—'} label="Last reboot" />
