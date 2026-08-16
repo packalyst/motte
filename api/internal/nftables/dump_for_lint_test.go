@@ -41,7 +41,7 @@ func TestDumpScriptsForLint(t *testing.T) {
 	}
 	rules := []aclRule{{SourceID: 1, TargetID: 2, Bidirectional: true}}
 	vips := []aclVirtualIP{
-		{IP: "10.8.128.5", Restricted: true, Quarantine: true, Allowed: []string{"10.8.0.2"}},
+		{IP: "10.8.128.5", Target: "192.168.68.108", Restricted: true, Quarantine: true, Allowed: []string{"10.8.0.2"}},
 		{IP: "10.8.128.6", Restricted: false, Quarantine: false},
 		{IP: "fd7a:115c:a1e0::7", Restricted: false}, // IPv6 vip must be skipped
 	}

@@ -103,6 +103,7 @@ func (t *VPNACLTable) loadRules() ([]aclRule, error) {
 // aclVirtualIP is a virtual IP plus the source peer IPs allowed to reach it.
 type aclVirtualIP struct {
 	IP         string
+	Target     string   // DNAT target device IP, if this vip forwards to a LAN device
 	Restricted bool
 	Quarantine bool     // may be reached, but can't initiate to other peers
 	Allowed    []string // allowed source peer IPs (only meaningful when Restricted)
@@ -112,20 +113,21 @@ type aclVirtualIP struct {
 // allowed to reach them. The outer result is drained before the per-vip allow-list
 // queries run, so no cursor is held open across a nested query.
 func (t *VPNACLTable) loadVirtualIPs(clients map[int64]vpnClient) ([]aclVirtualIP, error) {
-	rows, err := t.db.Query(`SELECT id, ip, restricted, quarantine FROM vpn_virtual_ips`)
+	rows, err := t.db.Query(`SELECT id, ip, COALESCE(target_ip, ''), restricted, quarantine FROM vpn_virtual_ips`)
 	if err != nil {
 		return nil, err
 	}
 	type row struct {
 		id         int64
 		ip         string
+		target     string
 		restricted int
 		quarantine int
 	}
 	var raw []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.ip, &r.restricted, &r.quarantine); err != nil {
+		if err := rows.Scan(&r.id, &r.ip, &r.target, &r.restricted, &r.quarantine); err != nil {
 			continue
 		}
 		raw = append(raw, r)
@@ -134,7 +136,7 @@ func (t *VPNACLTable) loadVirtualIPs(clients map[int64]vpnClient) ([]aclVirtualI
 
 	out := make([]aclVirtualIP, 0, len(raw))
 	for _, r := range raw {
-		v := aclVirtualIP{IP: r.ip, Restricted: r.restricted == 1, Quarantine: r.quarantine == 1}
+		v := aclVirtualIP{IP: r.ip, Target: r.target, Restricted: r.restricted == 1, Quarantine: r.quarantine == 1}
 		if v.Restricted {
 			arows, err := t.db.Query(`SELECT source_client_id FROM vpn_virtual_ip_acl WHERE virtual_ip_id = ?`, r.id)
 			if err == nil {
@@ -309,6 +311,19 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 		}
 		if hsIPRange != "" {
 			sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", v.IP, hsIPRange))
+		}
+		// Also drop traffic the DNAT'd device INITIATES by its own source IP. The vip IP is
+		// only the DNAT *destination*, so device-originated packets carry the device's LAN
+		// IP, not the vip — without this, a forwarded device could initiate to any peer.
+		// (If the peer's NAS MASQUERADEs the device to the peer's own IP, the server can't
+		// tell it apart from the peer itself; that case must be enforced on the NAS.)
+		if v.Target != "" && ValidateIPv4OrCIDR(v.Target) {
+			if wgIPRange != "" {
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", v.Target, wgIPRange))
+			}
+			if hsIPRange != "" {
+				sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", v.Target, hsIPRange))
+			}
 		}
 	}
 	for _, v := range vips {
