@@ -653,13 +653,17 @@ func runMigrations(db *sql.DB) {
 	// Enforce "a peer maps a device IP+port once" durably (race-proof) with a partial
 	// unique index. Bare-routed vips (target_ip='') are exempt. Existing exact-duplicate
 	// rows would make the index creation fail, so dedupe first — keep the lowest id in
-	// each (client_id, target_ip, target_port) group.
-	if _, err := db.Exec(`DELETE FROM vpn_virtual_ips
+	// each (client_id, target_ip, target_port) group. Deleting a duplicate also removes its
+	// allow-list grants (FK cascade / the orphan sweep below), so LOG the count — this must
+	// not be a silent, unauditable data change.
+	if res, err := db.Exec(`DELETE FROM vpn_virtual_ips
 		WHERE target_ip != '' AND id NOT IN (
 			SELECT MIN(id) FROM vpn_virtual_ips WHERE target_ip != ''
 			GROUP BY client_id, target_ip, target_port
 		)`); err != nil {
 		log.Printf("Migration: vip dedupe failed: %v", err)
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("Migration: removed %d duplicate forwarding vip(s) (same peer+device+port); their allow-list grants were removed with them", n)
 	}
 	// One-time sweep of pre-existing orphans: peers deleted while FK enforcement was OFF
 	// left vips (and, transitively, ACL rows) behind. Enabling FK doesn't remove them

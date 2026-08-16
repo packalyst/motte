@@ -466,6 +466,18 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 		"ct state established,related accept",
 		"",
 	}
+	// Drop forwarded IPv6 heading to the internet. This panel is IPv4-only: the geo/ASN/
+	// block-internet rules are all ipv4_addr, so without this a peer (or a block_internet
+	// peer) reaches the internet over IPv6 and bypasses every egress control. Scoped to the
+	// WAN NIC so intra-host/VPN IPv6 is untouched; skipped if the WAN NIC can't be detected
+	// (same as the per-peer WAN block below — never emit an unscoped forward drop).
+	if wanIface != "" {
+		forwardRules = append(forwardRules,
+			"# Drop forwarded IPv6 to the internet (IPv4-only egress controls)",
+			"meta nfproto ipv6 oifname \""+SanitizeElement(wanIface)+"\" drop",
+			"",
+		)
+	}
 	forwardRules = append(forwardRules, allowAndSaddrDropRules()...)
 	forwardRules = append(forwardRules,
 		"",
