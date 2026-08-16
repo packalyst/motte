@@ -7,12 +7,12 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import { timeAgo } from '$lib/utils/format.js'
 
+  // loading is bound by the Dashboard shell — clear it once we've loaded (or failed).
+  let { loading = $bindable(true), onLogout } = $props()
   let data = $state(null)
-  let loading = $state(true)
   let error = $state(null)
 
   async function load() {
-    loading = !data
     try {
       data = await apiGet('/api/server/security')
       error = null
@@ -71,9 +71,7 @@
     description="What's happening on the host itself: who logged in, privileged actions, what's exposed, and system health. Read-only, from the server's own logs."
   />
 
-  {#if loading && !data}
-    <div class="flex justify-center py-16"><LoadingSpinner /></div>
-  {:else if error}
+  {#if error && !data}
     <div class="bg-destructive/10 border border-destructive/30 rounded-xl p-4 text-sm text-destructive">
       Couldn't load server security data: {error}
     </div>
