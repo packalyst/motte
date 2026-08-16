@@ -67,6 +67,7 @@
       "endpoints": [
         {"path": "/status", "methods": ["GET"], "handler": "GetStatus", "description": "Get firewall status"},
         {"path": "/overview", "methods": ["GET"], "handler": "SecurityOverview", "description": "Plain-language security summary (last hour)"},
+        {"path": "/layers", "methods": ["GET"], "handler": "GetLayers", "description": "Blocked-by-layer summary (L3/DNS/L7 + allowed) for a period"},
         {"path": "/entries", "methods": ["GET"], "handler": "GetEntries", "description": "List firewall entries (IPs, ranges, countries, ports)"},
         {"path": "/entries", "methods": ["POST"], "handler": "CreateEntry", "description": "Create firewall entry"},
         {"path": "/entries/{id}", "methods": ["DELETE"], "handler": "DeleteEntry", "description": "Delete firewall entry"},

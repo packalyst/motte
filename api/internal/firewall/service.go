@@ -233,6 +233,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		// Status and config
 		"GetStatus":        s.handleStatus,
 		"SecurityOverview": s.handleSecurityOverview,
+		"GetLayers":        s.handleLayers,
 		"GetConfig":        s.handleGetConfig,
 		"UpdateConfig":     s.handleUpdateConfig,
 		"ApplyRules":       s.handleApplyRules,
