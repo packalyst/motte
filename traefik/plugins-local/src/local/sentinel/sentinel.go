@@ -57,8 +57,65 @@ type Config struct {
 
 // IPFilterConfig configures IP-based filtering.
 type IPFilterConfig struct {
-	// SourceRange is a list of allowed IP ranges in CIDR notation
+	// SourceRange is a list of allowed IP ranges in CIDR notation (allow-list).
 	SourceRange []string `json:"sourceRange,omitempty"`
+
+	// DenyListURL is fetched (and cached) for a block-list of IPs/CIDRs. A request whose
+	// real client IP is in the list is blocked. Fail-open: if the list can't be fetched,
+	// nothing is denied. Used to enforce the panel's firewall block list on proxied (L7)
+	// traffic, where nftables (L3) only sees the reverse-proxy/edge IP.
+	DenyListURL string `json:"denyListURL,omitempty"`
+
+	// DenyCacheTTL is the deny-list cache lifetime in seconds (default 24h in newCache).
+	DenyCacheTTL int `json:"denyCacheTTL,omitempty"`
+}
+
+// ipDenySet is a fast lookup for the fetched block-list: exact IPs in a map (O(1)) and
+// CIDR ranges in a slice (usually few). Built once per fetch by parseDenyList.
+type ipDenySet struct {
+	exact map[string]bool
+	nets  []*net.IPNet
+}
+
+func (d *ipDenySet) contains(ip net.IP) bool {
+	if d == nil || ip == nil {
+		return false
+	}
+	if d.exact[ip.String()] {
+		return true
+	}
+	for _, n := range d.nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseDenyList turns the plain-text block list (one IP/CIDR per line) into an ipDenySet.
+// /32 and /128 collapse to the exact-IP map; broader CIDRs go to the ranges slice.
+func parseDenyList(body []byte) interface{} {
+	d := &ipDenySet{exact: make(map[string]bool)}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.Contains(line, "/") {
+			ip, network, err := net.ParseCIDR(line)
+			if err != nil {
+				continue
+			}
+			if ones, bits := network.Mask.Size(); ones == bits {
+				d.exact[ip.String()] = true
+			} else {
+				d.nets = append(d.nets, network)
+			}
+		} else if ip := net.ParseIP(line); ip != nil {
+			d.exact[ip.String()] = true
+		}
+	}
+	return d
 }
 
 // MaintenanceConfig configures maintenance mode.
@@ -309,6 +366,7 @@ type Sentinel struct {
 	headerRegex  []*regexp.Regexp
 	robotsCache  *remoteCache
 	agentsCache  *remoteCache
+	denyCache    *remoteCache
 	blockRegex   []*regexp.Regexp
 	allowRegex   []*regexp.Regexp
 	timeLocation *time.Location
@@ -362,6 +420,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 				continue
 			}
 			s.networks = append(s.networks, network)
+		}
+		// Block-list (deny) cache — enforces the panel's firewall block list at L7.
+		if config.IPFilter.DenyListURL != "" {
+			s.denyCache = newCache(config.IPFilter.DenyListURL, config.IPFilter.DenyCacheTTL)
 		}
 	}
 
@@ -445,13 +507,29 @@ func (s *Sentinel) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// 3. IP filter check
+	// 3. IP filter check (allow-list)
 	if s.config.IPFilter != nil && len(s.networks) > 0 {
 		clientIP := s.getClientIP(req)
 		if clientIP == nil || !s.isIPAllowed(clientIP) {
 			s.log("IP blocked: %v", clientIP)
 			s.blockRequest(rw, req, BlockReasonIP)
 			return
+		}
+	}
+
+	// 3b. IP deny-list check (block-list). Enforces the panel's firewall block list on
+	// proxied/L7 traffic — matched against the REAL client IP (getClientIP is Cloudflare-
+	// aware). Fail-open: if the list can't be fetched, fetch() returns nil and nothing is
+	// denied, so a list outage never locks anyone out.
+	if s.denyCache != nil {
+		if clientIP := s.getClientIP(req); clientIP != nil {
+			if data := s.denyCache.fetch(parseDenyList); data != nil {
+				if d, ok := data.(*ipDenySet); ok && d.contains(clientIP) {
+					s.log("IP deny-listed: %v", clientIP)
+					s.blockRequest(rw, req, BlockReasonIP)
+					return
+				}
+			}
 		}
 	}
 

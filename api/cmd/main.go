@@ -166,11 +166,13 @@ func main() {
 		log.Println("nftables service initialized")
 	}
 
+	var fwSvc *firewall.Service
 	if config.IsServiceEnabled("firewall") {
-		fwSvc, err := firewall.New(dataDir, nftSvc)
+		svc, err := firewall.New(dataDir, nftSvc)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize firewall service: %v", err)
 		} else {
+			fwSvc = svc
 			r.RegisterService("firewall", fwSvc.Handlers())
 			log.Println("Firewall service registered")
 		}
@@ -427,6 +429,13 @@ func main() {
 	// Add WebSocket endpoint (needs special handling, not REST)
 	mux := http.NewServeMux()
 	mux.Handle("/api/ws", http.HandlerFunc(wsSvc.HandleWebSocket))
+
+	// Internal-only block-list feed for the Traefik sentinel plugin (fetched container-to-
+	// container over the Docker network, never routed by Traefik). Registered on the mux
+	// directly so it bypasses the auth middleware; the handler refuses proxied requests.
+	if fwSvc != nil {
+		mux.Handle("/internal/blocklist", http.HandlerFunc(fwSvc.HandleInternalBlocklist))
+	}
 
 	mux.Handle("/", handler)
 
