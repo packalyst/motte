@@ -42,10 +42,8 @@ func (s *Service) runJailMonitors() {
 
 // startJailMonitor starts a jail monitor with its own cancellable context
 func (s *Service) startJailMonitor(jailID int64, name, logFile, filterRegex string, maxRetry, findTime, banTime int, lastLogPos int64) {
-	s.stopJailMonitor(jailID)
-
-	// Validate BEFORE registering, so a jail that can't run never leaves a stale
-	// monitor entry pointing at an already-returned goroutine.
+	// Validate BEFORE registering, so a jail that can't run never leaves a stale monitor
+	// entry pointing at an already-returned goroutine. (No lock held during file I/O.)
 	if err := helper.ValidateLogFilePath(logFile); err != nil {
 		log.Printf("Jail %s: invalid log file path %s: %v", name, logFile, err)
 		return
@@ -57,7 +55,14 @@ func (s *Service) startJailMonitor(jailID int64, name, logFile, filterRegex stri
 
 	ctx, cancel := context.WithCancel(s.ctx)
 
+	// Stop-existing + register-new atomically under one lock. Doing stop and register as
+	// two separately-locked steps let a concurrent start for the same jail slip in between,
+	// leaving an un-cancellable monitor goroutine leaked.
 	s.jailMutex.Lock()
+	if existing, ok := s.jailMonitors[jailID]; ok {
+		log.Printf("Stopping jail monitor: %s (ID: %d)", existing.name, jailID)
+		existing.cancel()
+	}
 	s.jailMonitors[jailID] = &jailMonitor{
 		cancel: cancel,
 		name:   name,

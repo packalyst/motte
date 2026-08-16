@@ -184,7 +184,11 @@ func (s *Service) handleDeleteJail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.db.Exec("DELETE FROM jails WHERE name = ?", name)
-	s.db.Exec("DELETE FROM firewall_entries WHERE source = ? AND entry_type IN ('ip', 'range')", name)
+	// Remove everything this jail created so nothing is orphaned: its IP/range bans
+	// (source "jail:<name>") and its auto-escalated range/ASN blocks (source 'escalated',
+	// name = jail). The old `source = <name>` match caught neither.
+	s.db.Exec("DELETE FROM firewall_entries WHERE source = ?", "jail:"+name)
+	s.db.Exec("DELETE FROM firewall_entries WHERE source = 'escalated' AND name = ?", name)
 	s.RequestApply()
 	w.WriteHeader(http.StatusNoContent)
 }

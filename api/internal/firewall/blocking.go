@@ -44,6 +44,14 @@ func (s *Service) blockIPWithOptions(ip, jailName, reason string, banTime int, i
 		return
 	}
 
+	// Self-protection on the automated path (the manual path has validateIPNotProtected):
+	// never auto-ban the server's own IP or loopback — a spoofed/misparsed log line must not
+	// lock the panel out of its own services.
+	if (s.config.ServerIP != "" && ip == s.config.ServerIP) || strings.HasPrefix(ip, "127.") {
+		log.Printf("firewall: refusing to auto-block protected IP %s (jail: %s)", ip, jailName)
+		return
+	}
+
 	var expiresAt interface{}
 	if banTime > 0 {
 		expiresAt = time.Now().Add(time.Duration(banTime) * time.Second)
@@ -184,12 +192,15 @@ func (s *Service) checkEscalation(ip, jailName string, banTime int) {
 		return
 	}
 
-	// Count distinct IPs from this subnet blocked within the escalation window
+	// Count distinct IPs from this subnet blocked within the escalation window. Only
+	// currently-active bans count (enabled + unexpired) — matching checkASNEscalation, so a
+	// manually-unblocked or expired ban isn't evidence for escalating to a whole /24.
 	var count int
 	err = s.db.QueryRow(`
 		SELECT COUNT(DISTINCT value) FROM firewall_entries
 		WHERE name = ?
 		AND entry_type = 'ip'
+		AND enabled = 1 AND (expires_at IS NULL OR expires_at > datetime('now'))
 		AND value LIKE ?
 		AND created_at > datetime('now', '-' || ? || ' seconds')
 	`, jailName, strings.TrimSuffix(subnet, ".0/24")+".%", escalateWindow).Scan(&count)
