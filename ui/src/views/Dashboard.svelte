@@ -15,6 +15,7 @@
     users: () => import('./UsersView.svelte'),
     firewall: () => import('./FirewallView.svelte'),
     server: () => import('./ServerView.svelte'),
+    iplookup: () => import('./IpLookupView.svelte'),
     routes: () => import('./RoutesView.svelte'),
     authkeys: () => import('./AuthKeysView.svelte'),
     apikeys: () => import('./ApiKeysView.svelte'),
@@ -114,6 +115,7 @@
     { id: 'nodes', label: 'Nodes', icon: 'server' },
     { id: 'firewall', label: 'Firewall', icon: 'shield' },
     { id: 'server', label: 'Server', icon: 'shield-lock' },
+    { id: 'iplookup', label: 'IP Lookup', icon: 'map-search' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
     { id: 'divider1', divider: true },
     {
