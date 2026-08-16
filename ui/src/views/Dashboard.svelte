@@ -14,6 +14,7 @@
     nodes: () => import('./NodesView.svelte'),
     users: () => import('./UsersView.svelte'),
     firewall: () => import('./FirewallView.svelte'),
+    server: () => import('./ServerView.svelte'),
     routes: () => import('./RoutesView.svelte'),
     authkeys: () => import('./AuthKeysView.svelte'),
     apikeys: () => import('./ApiKeysView.svelte'),
@@ -112,6 +113,7 @@
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'nodes', label: 'Nodes', icon: 'server' },
     { id: 'firewall', label: 'Firewall', icon: 'shield' },
+    { id: 'server', label: 'Server', icon: 'shield-lock' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
     { id: 'divider1', divider: true },
     {
