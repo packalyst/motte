@@ -461,8 +461,14 @@ func (s *Service) handleDeleteVirtualIP(w http.ResponseWriter, r *http.Request) 
 		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
-	var vipIP string // captured for the activity feed
-	_ = db.QueryRow(`SELECT ip FROM vpn_virtual_ips WHERE id = ?`, vipID).Scan(&vipIP)
+	// Capture id/label/target BEFORE deleting: after the row is gone we can no longer
+	// reconstruct the peer-side teardown chain name (LABEL_<id>), so build the removal
+	// commands now and hand them back — otherwise a forgotten teardown leaves an orphan
+	// DNAT chain on the NAS that a recycled vip IP could inherit.
+	var idNum int64
+	var vipIP, label, target string
+	_ = db.QueryRow(`SELECT id, ip, label, target_ip FROM vpn_virtual_ips WHERE id = ?`, vipID).
+		Scan(&idNum, &vipIP, &label, &target)
 
 	res, err := db.Exec(`DELETE FROM vpn_virtual_ips WHERE id = ?`, vipID)
 	if err != nil {
@@ -479,5 +485,10 @@ func (s *Service) handleDeleteVirtualIP(w http.ResponseWriter, r *http.Request) 
 	events.Log("wireguard", "vip_removed", events.SeverityInfo,
 		fmt.Sprintf("Virtual IP %s removed", vipIP))
 
-	router.JSON(w, map[string]string{"status": "deleted"})
+	resp := map[string]string{"status": "deleted", "ip": vipIP}
+	if target != "" {
+		// Only forwards need teardown; a bare routed vip leaves nothing on the NAS.
+		resp["removeCommands"] = generateVIPRemoveCommands(idNum, label)
+	}
+	router.JSON(w, resp)
 }

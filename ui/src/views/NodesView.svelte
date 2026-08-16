@@ -418,6 +418,7 @@
   let vipRemoveText = $state('')    // fetched teardown commands
   let vipCmdMode = $state('add')    // 'add' | 'remove'
   let vipCmdLoading = $state(false)
+  let postDeleteTeardown = $state(null) // { ip, commands } shown after deleting a forwarding vip
 
   async function loadVips() {
     const key = selectedNode?._wgId
@@ -458,9 +459,14 @@
   async function doRemoveVip(vip) {
     removingVip = true
     try {
-      await apiDelete(`/api/wg/vips/${vip.id}`)
+      const res = await apiDelete(`/api/wg/vips/${vip.id}`)
       toast('Virtual IP removed', 'success')
       confirmRemoveVipId = null
+      // If the vip had a forward, surface the peer-side teardown so a forgotten cleanup
+      // can't leave an orphan DNAT chain a recycled vip IP would inherit.
+      if (res?.removeCommands) {
+        postDeleteTeardown = { ip: res.ip || vip.ip, commands: res.removeCommands }
+      }
       await loadVips()
     } catch (e) {
       toast(e?.message || 'Failed to remove', 'error')
@@ -1126,6 +1132,24 @@
               <Button onclick={addVip} icon="plus">Add</Button>
             </div>
             <div class="text-xs text-muted-foreground mt-1">The VPN IP is auto-assigned; the name labels the forwarding rule. Device IP forwards to a LAN device — with a Port it exposes only that TCP port, blank forwards all. No Device IP = a bare routed IP.</div>
+
+            {#if postDeleteTeardown}
+              <!-- Post-delete: hand over the peer-side teardown so a forgotten cleanup can't leave an orphan chain -->
+              <div class="mt-3 rounded-lg border border-warning/40 bg-warning/5 p-3 space-y-2">
+                <div class="flex items-start gap-2">
+                  <Icon name="alert-triangle" size={16} class="text-warning shrink-0 mt-0.5" />
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-medium">Removed {postDeleteTeardown.ip} — clear the forward on the peer</div>
+                    <div class="text-xs text-muted-foreground">Run these on the peer to remove the leftover DNAT chain (skip if you already tore it down).</div>
+                  </div>
+                  <button class="text-muted-foreground hover:text-foreground shrink-0" title="Dismiss" onclick={() => postDeleteTeardown = null}><Icon name="x" size={16} /></button>
+                </div>
+                <div class="relative">
+                  <pre class="text-[11px] bg-secondary/60 rounded-md p-2.5 overflow-x-auto font-mono whitespace-pre">{postDeleteTeardown.commands}</pre>
+                  <Button size="xs" variant="outline" icon="copy" class="absolute top-2 right-2" onclick={() => copyWithToast(postDeleteTeardown.commands, toast)}>Copy</Button>
+                </div>
+              </div>
+            {/if}
 
             {#if vipsLoading}
               <div class="flex justify-center py-6"><LoadingSpinner /></div>
