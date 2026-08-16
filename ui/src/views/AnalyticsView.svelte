@@ -16,7 +16,6 @@
   import AreaChart from '../components/AreaChart.svelte'
   import BarList from '../components/BarList.svelte'
   import IpBadge from '../components/IpBadge.svelte'
-  import IpLookup from '../components/IpLookup.svelte'
   import { lookupIPs, getGeoData } from '../stores/geo.js'
 
   let { loading = $bindable(true) } = $props()
@@ -438,9 +437,6 @@
             </button>
           {/each}
         </div>
-
-        <!-- IP lookup: owner + proxy/VPN + reputation for any address -->
-        <IpLookup />
 
         <!-- Top talkers by bytes (conntrack) — click to drill into that node's outbound -->
         {#if topTalkers.length}

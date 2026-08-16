@@ -9,7 +9,21 @@
 
   // The Dashboard shell binds `loading`.
   let { loading = $bindable(true), onLogout } = $props()
-  onMount(() => { loading = false })
+
+  function isPrivate(ip) {
+    return !ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.')
+  }
+
+  // Default to the admin's own IP (from the current session) and look it up.
+  onMount(async () => {
+    loading = false
+    try {
+      const res = await apiGet('/api/auth/sessions')
+      const list = Array.isArray(res) ? res : (res?.sessions || [])
+      const ip = (list.find(s => s.current) || list[0])?.ipAddress
+      if (ip && looksLikeIP(ip) && !isPrivate(ip)) lookup(ip)
+    } catch {}
+  })
 
   let query = $state('')
   let result = $state(null)
@@ -106,7 +120,10 @@
           <div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Owner (ASN)</span><span class="font-medium text-right">{result.as_name || '—'}{#if result.asn} · AS{result.asn}{/if}</span></div>
           <div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Country</span><span class="font-medium">{result.country_name || result.country_code || '—'}</span></div>
           {#if usageTypeLabel(result.usage_type)}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Network</span><span class="font-medium">{usageTypeLabel(result.usage_type)}</span></div>{/if}
-          <div class="flex justify-between text-sm py-1.5"><span class="text-muted-foreground">Hits here</span><span class="font-medium tabular-nums">{hits == null ? '—' : hits.toLocaleString()}</span></div>
+          {#if result.fraud_score != null}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Fraud score</span><span class="font-medium tabular-nums {result.fraud_score >= 75 ? 'text-destructive' : result.fraud_score >= 40 ? 'text-warning' : 'text-foreground'}">{result.fraud_score}/100</span></div>{/if}
+          {#if result.threat && result.threat !== '-'}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Threat</span><span class="font-medium text-destructive">{result.threat}</span></div>{/if}
+          <div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Hits here</span><span class="font-medium tabular-nums">{hits == null ? '—' : hits.toLocaleString()}</span></div>
+          {#if result.provider}<div class="flex justify-between text-sm py-1.5"><span class="text-muted-foreground">Source</span><span class="font-medium text-xs">{result.provider}</span></div>{/if}
         </div>
         {#if result.reputation?.reasons?.length}
           <div class="text-[11px] text-muted-foreground mt-3 pt-2 border-t border-dashed border-border">{result.reputation.reasons.join(' · ')}</div>
