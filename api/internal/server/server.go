@@ -194,11 +194,12 @@ type authScan struct {
 type authAccum struct {
 	out                                   authScan
 	failedIPs                             map[string]struct{}
-	oneHour, twoHour, dayAgo, cutoff time.Time
+	now, oneHour, twoHour, dayAgo, cutoff time.Time
 }
 
 func newAuthAccum(now time.Time) *authAccum {
 	a := &authAccum{
+		now:       now,
 		oneHour:   now.Add(-time.Hour),
 		twoHour:   now.Add(-2 * time.Hour),
 		dayAgo:    now.Add(-24 * time.Hour),
@@ -224,38 +225,49 @@ func (a *authAccum) line(line string, ts time.Time, ok bool) {
 		}
 		return
 	}
+	// For the list events (logins, sudo, account changes) an unparseable timestamp
+	// must NOT drop the event — better to show it with the current time than hide a
+	// real login. Only skip when we KNOW it's older than the window.
 	if m := reAccepted.FindStringSubmatch(line); m != nil {
-		if !ok || ts.Before(a.cutoff) {
+		if ok && ts.Before(a.cutoff) {
 			return
 		}
-		a.out.logins.Recent = append(a.out.logins.Recent, loginEvent{Method: m[1], User: m[2], IP: m[3], When: ts, Root: m[2] == "root"})
+		a.out.logins.Recent = append(a.out.logins.Recent, loginEvent{Method: m[1], User: m[2], IP: m[3], When: a.when(ts, ok), Root: m[2] == "root"})
 		return
 	}
 	if m := reSudoCmd.FindStringSubmatch(line); m != nil {
-		if !ok || ts.Before(a.cutoff) {
+		if ok && ts.Before(a.cutoff) {
 			return
 		}
-		a.out.sudo.Recent = append(a.out.sudo.Recent, sudoEvent{User: m[1], Command: strings.TrimSpace(m[2]), When: ts})
+		a.out.sudo.Recent = append(a.out.sudo.Recent, sudoEvent{User: m[1], Command: strings.TrimSpace(m[2]), When: a.when(ts, ok)})
 		return
 	}
 	if reSudoFail.MatchString(line) {
-		if ok && ts.After(a.dayAgo) {
+		if !ok || ts.After(a.dayAgo) {
 			a.out.sudo.Failures24h++
 		}
 		return
 	}
 	if m := reNewUser.FindStringSubmatch(line); m != nil {
-		if ok && !ts.Before(a.cutoff) {
-			a.out.accounts.NewUsers = append(a.out.accounts.NewUsers, acctEvent{Name: m[1], When: ts})
+		if !ok || !ts.Before(a.cutoff) {
+			a.out.accounts.NewUsers = append(a.out.accounts.NewUsers, acctEvent{Name: m[1], When: a.when(ts, ok)})
 		}
 		return
 	}
 	if m := reNewGroup.FindStringSubmatch(line); m != nil {
-		if ok && !ts.Before(a.cutoff) {
-			a.out.accounts.NewGroups = append(a.out.accounts.NewGroups, acctEvent{Name: m[1], When: ts})
+		if !ok || !ts.Before(a.cutoff) {
+			a.out.accounts.NewGroups = append(a.out.accounts.NewGroups, acctEvent{Name: m[1], When: a.when(ts, ok)})
 		}
 		return
 	}
+}
+
+// when returns the parsed time, or "now" when the line's timestamp couldn't be parsed.
+func (a *authAccum) when(ts time.Time, ok bool) time.Time {
+	if ok {
+		return ts
+	}
+	return a.now
 }
 
 func (a *authAccum) finish() authScan {
@@ -269,14 +281,21 @@ func (a *authAccum) finish() authScan {
 // /var/log/auth.log by default — sshd logs only to the journal) and falling back to
 // the log file when the journal isn't reachable.
 func (s *Service) scanLogins(now time.Time) authScan {
+	// Prefer the log file when it exists and has content (Debian/Ubuntu with rsyslog).
+	acc := newAuthAccum(now)
+	lines := 0
+	forEachTailLine(s.authLogPath, func(line string) {
+		lines++
+		ts, ok := parseAnyTime(line, now)
+		acc.line(line, ts, ok)
+	})
+	if lines > 0 {
+		return acc.finish()
+	}
+	// No log file (systemd-only hosts like Ubuntu 24.04) — read the journal instead.
 	if sc, ok := s.scanJournal(now); ok {
 		return sc
 	}
-	acc := newAuthAccum(now)
-	forEachTailLine(s.authLogPath, func(line string) {
-		ts, ok := parseSyslogTime(line, now)
-		acc.line(line, ts, ok)
-	})
 	return acc.finish()
 }
 
@@ -446,18 +465,30 @@ func parseSyslogTime(line string, now time.Time) (time.Time, bool) {
 	return t, true
 }
 
-// parseISOTime parses the leading ISO timestamp of a `journalctl -o short-iso`
-// line, e.g. "2026-08-16T18:42:01+0200 host sshd[1]: ...".
+// parseAnyTime tries the syslog format first, then ISO — auth.log timestamps vary by
+// distro/rsyslog config (classic "Aug 16 18:42:01" vs high-precision ISO8601).
+func parseAnyTime(line string, now time.Time) (time.Time, bool) {
+	if t, ok := parseSyslogTime(line, now); ok {
+		return t, true
+	}
+	return parseISOTime(line)
+}
+
+// parseISOTime parses a leading ISO-8601 timestamp, e.g. journald `-o short-iso`
+// ("2026-08-16T18:42:01+0200 ...") or rsyslog high-precision
+// ("2026-08-16T18:42:01.123456+00:00 ...").
 func parseISOTime(line string) (time.Time, bool) {
 	i := strings.IndexByte(line, ' ')
 	if i <= 0 {
 		return time.Time{}, false
 	}
-	t, err := time.Parse("2006-01-02T15:04:05-0700", line[:i])
-	if err != nil {
-		return time.Time{}, false
+	tok := line[:i]
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05-0700", "2006-01-02T15:04:05"} {
+		if t, err := time.Parse(layout, tok); err == nil {
+			return t, true
+		}
 	}
-	return t, true
+	return time.Time{}, false
 }
 
 // forEachTailLine reads at most the last maxTailBytes of path and calls fn for
