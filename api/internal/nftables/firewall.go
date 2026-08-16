@@ -417,14 +417,23 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 	// otherwise be accepted unfiltered (the port rules below are protocol-agnostic).
 	// Loopback (::1) and ICMPv6 neighbour discovery are already accepted above; the VPN
 	// (wg0) and Headscale overlay (fd7a::) ride other interfaces, so scoping the drop to
-	// the WAN NIC blocks only external IPv6 and leaves internal IPv6 intact. Skipped when
-	// the WAN interface can't be detected, so we never emit an unscoped drop.
+	// the WAN NIC blocks only external IPv6 and leaves internal IPv6 intact.
 	// NOTE: Docker-published container ports use their own DNAT/forward path and are NOT
 	// governed by this chain — revisit this if the host ever gains real public IPv6.
 	if wanIface != "" {
 		inputRules = append(inputRules,
 			"# Drop external IPv6 (IPv4-only panel)",
 			"meta nfproto ipv6 iifname \""+SanitizeElement(wanIface)+"\" drop",
+			"",
+		)
+	} else {
+		// WAN NIC couldn't be detected — fail CLOSED rather than open: drop all other
+		// inbound IPv6 unscoped. Loopback and ICMPv6 ND are accepted above, and the panel
+		// is IPv4-only (no legitimate inbound IPv6-to-server path), so this closes the
+		// leak (external IPv6 reaching an open port unfiltered) without losing anything.
+		inputRules = append(inputRules,
+			"# WAN NIC undetected — drop external IPv6 unscoped (fail closed, IPv4-only panel)",
+			"meta nfproto ipv6 drop",
 			"",
 		)
 	}

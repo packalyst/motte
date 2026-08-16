@@ -111,6 +111,24 @@ func TestVPNACLAllowAllExcludesVips(t *testing.T) {
 	}
 }
 
+// TestFirewallFailsClosedOnUnknownWAN guards that when the WAN NIC can't be detected the
+// input chain drops external IPv6 UNSCOPED (fail closed), rather than skipping the drop and
+// letting IPv6 reach open ports unfiltered.
+func TestFirewallFailsClosedOnUnknownWAN(t *testing.T) {
+	ft := &FirewallTable{}
+	noWAN := ft.buildScript(scriptParams{tcpPorts: []string{"22"}, wanIface: ""})
+	if !strings.Contains(noWAN, "meta nfproto ipv6 drop") {
+		t.Error("WAN undetected must emit an unscoped IPv6 drop (fail closed)")
+	}
+	withWAN := ft.buildScript(scriptParams{tcpPorts: []string{"22"}, wanIface: "eth0"})
+	if !strings.Contains(withWAN, `meta nfproto ipv6 iifname "eth0" drop`) {
+		t.Error("with a WAN iface, the IPv6 drop must be scoped to it")
+	}
+	if strings.Contains(withWAN, "meta nfproto ipv6 drop") {
+		t.Error("with a WAN iface, the drop must be scoped, not unscoped")
+	}
+}
+
 // TestBuildScriptAllowBeforeDeny guards the security-critical ordering: in each
 // chain the source allow-list (accept) must appear BEFORE the block-list (drop),
 // otherwise a block would win over an intended allow-exception.
