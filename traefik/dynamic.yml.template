@@ -162,7 +162,7 @@ ${VPN_SOURCE_RANGE}
       plugin:
         sentinel:
           ipFilter:
-            denyListURL: "http://api:${API_PORT}/internal/blocklist"
+            denyListURL: "http://host.docker.internal:${API_PORT}/internal/blocklist"
             denyCacheTTL: 300
           errorMode: "silent"
 
