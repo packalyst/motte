@@ -48,11 +48,13 @@ type Service struct {
 }
 
 func New(db *sql.DB) *Service {
-	return &Service{
+	s := &Service{
 		db:          db,
 		authLogPath: envOr("AUTH_LOG", "/var/log/auth.log"),
 		dpkgLogPath: envOr("DPKG_LOG", "/var/log/dpkg.log"),
 	}
+	go s.runSudoWatcher() // capture sudo failures live and persist their session IP
+	return s
 }
 
 func (s *Service) Handlers() router.ServiceHandlers {
@@ -83,9 +85,17 @@ type sudoEvent struct {
 	Command string    `json:"command"`
 	When    time.Time `json:"when"`
 }
+type sudoFail struct {
+	User    string    `json:"user"`
+	TTY     string    `json:"tty,omitempty"`
+	IP      string    `json:"ip,omitempty"` // resolved from `who` at failure time
+	Command string    `json:"command,omitempty"`
+	When    time.Time `json:"when"`
+}
 type sudoBlock struct {
 	Recent      []sudoEvent `json:"recent"`
 	Failures24h int         `json:"failures_24h"`
+	Failed      []sudoFail  `json:"failed"` // persisted failures with session IP
 }
 type acctEvent struct {
 	Name string    `json:"name"`
@@ -118,14 +128,16 @@ type hostBlock struct {
 	RebootRecent  bool      `json:"reboot_recent"` // booted < 24h ago
 }
 type securityReport struct {
-	Status   string        `json:"status"` // calm | elevated | under_attack
-	Logins   loginsBlock   `json:"logins"`
-	Sudo     sudoBlock     `json:"sudo"`
-	Accounts accountsBlock `json:"accounts"`
-	Packages []pkgEvent    `json:"packages"`
-	Ports    portsBlock    `json:"ports"`
-	Host     hostBlock     `json:"host"`
-	Certs    []CertInfo    `json:"certs"`
+	Status      string        `json:"status"` // calm | elevated | under_attack
+	Logins      loginsBlock   `json:"logins"`
+	Sudo        sudoBlock     `json:"sudo"`
+	Accounts    accountsBlock `json:"accounts"`
+	Packages    []pkgEvent    `json:"packages"`
+	PhoneHome   phoneBlock    `json:"phone_home"`
+	Persistence persistBlock  `json:"persistence"`
+	Ports       portsBlock    `json:"ports"`
+	Host        hostBlock     `json:"host"`
+	Certs       []CertInfo    `json:"certs"`
 }
 
 func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +167,18 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rep.Packages = s.recentPackages(now)
+	rep.Sudo.Failed = s.recentSudoFailures(now) // persisted failures with session IP
+
+	rep.PhoneHome = phoneHome()
+	if s.GeoLookup != nil {
+		for i := range rep.PhoneHome.Destinations {
+			if owner, country := s.GeoLookup(rep.PhoneHome.Destinations[i].IP); owner != "" || country != "" {
+				rep.PhoneHome.Destinations[i].Owner = owner
+				rep.PhoneHome.Destinations[i].Country = country
+			}
+		}
+	}
+	rep.Persistence = persistBlock{PackagesInstalled: len(rep.Packages), CronRecent: cronRecentChanges()}
 	rep.Ports = listeningPorts()
 	rep.Host = hostUptime(now)
 	if s.Certs != nil {
@@ -174,9 +198,12 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 // format the prefix differently. The content phrasing is stable and SSH-specific.
 var (
 	reAccepted = regexp.MustCompile(`Accepted\s+(\S+)\s+for\s+(\S+)\s+from\s+(\S+)\s+port\s+(\d+)`)
-	reFailed   = regexp.MustCompile(`Failed\s+password\s+for\s+(?:invalid user\s+)?\S+\s+from\s+(\S+)\s+port`)
+	// Brute-force at the door: password guesses, invalid-user probes, max-attempts.
+	reFailed   = regexp.MustCompile(`(?:Failed password|Invalid user|maximum authentication attempts exceeded).*?from\s+(\S+)\s+port`)
 	reSudoCmd  = regexp.MustCompile(`sudo(?:\[\d+\])?:\s+(\S+)\s+:.*COMMAND=(.+)$`)
 	reSudoFail = regexp.MustCompile(`sudo(?:\[\d+\])?:.*(authentication failure|incorrect password attempt)`)
+	reSudoUser = regexp.MustCompile(`sudo(?:\[\d+\])?:\s+(\S+)\s+:`) // invoking user before " :"
+	reTTY      = regexp.MustCompile(`TTY=(\S+?)\s*;`)                // the session that ran sudo
 	reNewUser  = regexp.MustCompile(`new user:\s+name=([A-Za-z0-9_.-]+)`)
 	reNewGroup = regexp.MustCompile(`new group:\s+name=([A-Za-z0-9_.-]+)`)
 	// Leading syslog timestamp "Aug  5 18:42:01" (day may be space-padded).
