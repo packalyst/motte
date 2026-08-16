@@ -4,9 +4,10 @@
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import AreaChart from '../components/AreaChart.svelte'
-  import SecurityHero from '../components/SecurityHero.svelte'
+  import SecurityGlance from '../components/SecurityGlance.svelte'
   import BlockedByLayer from '../components/BlockedByLayer.svelte'
   import PublicVisitors from '../components/PublicVisitors.svelte'
+  import WorstOffender from '../components/WorstOffender.svelte'
   import ActivityFeed from '../components/ActivityFeed.svelte'
   import PeersCard from '../components/PeersCard.svelte'
   import { currentView } from '../stores/app.js'
@@ -81,14 +82,38 @@
     description="System status, VPN traffic, and resource usage at a glance."
   />
 
-  <!-- Security status + service health: am I under attack, is everything up? -->
-  <SecurityHero services={$statsStore?.services || []} />
+  <!-- Security lead: verdict + "did anyone get in?" glance -->
+  <SecurityGlance />
 
   <!-- Is my defense working — blocked by layer (last hour) -->
-  <BlockedByLayer period="hour" />
+  <div>
+    <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2">Is my defense working — blocked by layer</h2>
+    <BlockedByLayer period="hour" />
+  </div>
 
-  <!-- Worst offender is in SecurityHero; pair it with live public visitors -->
-  <PublicVisitors />
+  <!-- Threats & visitors right now -->
+  <div>
+    <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2">Threats &amp; visitors right now</h2>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <WorstOffender />
+      <PublicVisitors />
+    </div>
+  </div>
+
+  <!-- Service health -->
+  {#if $statsStore?.services?.length}
+    <div>
+      <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2">Service health</h2>
+      <div class="bg-card border border-border rounded-xl p-4 flex flex-wrap gap-2">
+        {#each $statsStore.services as svc (svc.key)}
+          <span class="inline-flex items-center gap-1.5 text-xs bg-muted/40 border border-border rounded-full px-2.5 py-1">
+            <span class="h-1.5 w-1.5 rounded-full {svc.status === 'up' ? 'bg-success' : 'bg-destructive animate-pulse'}"></span>
+            <span class="{svc.status === 'up' ? 'text-muted-foreground' : 'text-destructive font-medium'}">{svc.name}</span>
+          </span>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <!-- Traffic: live chart + cumulative totals -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
