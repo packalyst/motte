@@ -131,22 +131,31 @@ type phoneBlock struct {
 	Destinations []destRow `json:"destinations"`
 }
 
-// phoneHome lists the external hosts the server currently holds connections to —
-// a live snapshot from `ss`. Catches an obvious reverse shell / beacon endpoint;
-// it's a snapshot, not a full baseline, so we report destinations, not verdicts.
+// phoneHome lists the external hosts the server itself reached OUT to — a live
+// snapshot from `ss`. `ss` shows both directions, so we skip inbound connections
+// (those whose local port is one of our listening service ports); what's left is
+// outbound (we initiated), which is where a reverse shell / beacon shows up. It's
+// a snapshot, not a baseline, so we report destinations, not verdicts.
 func phoneHome() phoneBlock {
 	pb := phoneBlock{Destinations: []destRow{}}
 	out, err := exec.Command("ss", "-tunH", "state", "established").Output()
 	if err != nil {
 		return pb
 	}
+	listening := listeningPortSet()
 	seen := map[string]bool{}
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
 		if len(f) < 5 {
 			continue
 		}
-		addr, _ := splitHostPort(f[4]) // remote addr:port
+		// established rows (state pre-filtered): f[3]=local addr:port, f[4]=peer.
+		if _, lp := splitHostPort(f[3]); lp != "" {
+			if p, _ := strconv.Atoi(lp); listening[p] {
+				continue // inbound connection to one of our services — not phone-home
+			}
+		}
+		addr, _ := splitHostPort(f[4])
 		if addr == "" || isPrivateOrLocal(addr) || seen[addr] {
 			continue
 		}
@@ -155,6 +164,28 @@ func phoneHome() phoneBlock {
 	}
 	pb.External = len(pb.Destinations)
 	return pb
+}
+
+// listeningPortSet returns the local ports the host has services listening on, so
+// phoneHome can tell inbound connections from outbound ones.
+func listeningPortSet() map[int]bool {
+	set := map[int]bool{}
+	out, err := exec.Command("ss", "-tlnH").Output()
+	if err != nil {
+		return set
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 {
+			continue
+		}
+		if _, lp := splitHostPort(f[3]); lp != "" { // f[3]=local for listening rows
+			if p, _ := strconv.Atoi(lp); p > 0 {
+				set[p] = true
+			}
+		}
+	}
+	return set
 }
 
 // ---------- persistence watch ----------
