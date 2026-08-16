@@ -53,13 +53,14 @@ var (
 	dbWrapper *DB
 	once      sync.Once
 	dbPath    string
+	// initErr is package-level (not local) so a repeat Init after a failed first init
+	// returns the recorded failure instead of (nil DB, nil error) — once.Do never re-runs.
+	initErr error
 )
 
 // Init initializes the shared database connection
 // Database file persists in Docker volume - survives container restarts
 func Init(dataDir string) (*DB, error) {
-	var initErr error
-
 	once.Do(func() {
 		dbPath = dataDir + "/app.db"
 
@@ -712,7 +713,12 @@ func runMigrations(db *sql.DB) {
 					logs_upstream TEXT,
 					logs_rule TEXT
 				)`,
-				`INSERT INTO logs SELECT * FROM logs_old`,
+				// Enumerate columns explicitly (like the firewall_entries rebuild) so a
+				// future column add/reorder can't silently misalign this positional copy.
+				`INSERT INTO logs
+					(logs_id, logs_timestamp, logs_type, logs_src_ip, logs_src_country, logs_dest_ip, logs_dest_port, logs_dest_country, logs_domain, logs_protocol, logs_status, logs_duration, logs_bytes, logs_cached, logs_method, logs_path, logs_router, logs_service, logs_query_type, logs_upstream, logs_rule)
+					SELECT logs_id, logs_timestamp, logs_type, logs_src_ip, logs_src_country, logs_dest_ip, logs_dest_port, logs_dest_country, logs_domain, logs_protocol, logs_status, logs_duration, logs_bytes, logs_cached, logs_method, logs_path, logs_router, logs_service, logs_query_type, logs_upstream, logs_rule
+					FROM logs_old`,
 				`DROP TABLE logs_old`,
 				`CREATE INDEX IF NOT EXISTS idx_logs_type_time ON logs(logs_type, logs_timestamp DESC)`,
 				`CREATE INDEX IF NOT EXISTS idx_logs_src ON logs(logs_src_ip, logs_timestamp DESC)`,
