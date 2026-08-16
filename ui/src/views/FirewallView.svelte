@@ -171,9 +171,9 @@
           if (syncStatus.dbAllowedPorts !== syncStatus.nftAllowedPorts) {
             mismatches.push(`Ports: DB=${syncStatus.dbAllowedPorts} vs NFT=${syncStatus.nftAllowedPorts}`)
           }
-          if (syncStatus.dbCountryRanges !== syncStatus.nftCountryRanges) {
-            mismatches.push(`Countries: DB=${syncStatus.dbCountryRanges} vs NFT=${syncStatus.nftCountryRanges}`)
-          }
+          // No country/ASN line here: the API doesn't return an nft country/ASN count, so
+          // comparing dbCountryRanges to an undefined field always shows a false mismatch.
+          // Country/ASN sync is already reflected in the server's inSync flag.
           if (syncStatus.applyPending) {
             mismatches.push('Apply pending')
           }

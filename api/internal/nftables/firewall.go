@@ -444,10 +444,6 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 		"# Allow loopback interface",
 		"iif lo accept",
 		"",
-		"# Allow ICMPv6 (neighbour discovery) — required for IPv6 to function; harmless on",
-		"# an IPv4-only panel and never a source-based leak.",
-		"ip6 nexthdr icmpv6 accept",
-		"",
 	}
 	// NOTE: IPv4 `ip protocol icmp accept` is intentionally emitted AFTER the block drops
 	// (below), so a blocked IP/country/ASN can't even ping the server. Established/related
@@ -455,9 +451,10 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 	// Drop all inbound IPv6 arriving on the public interface. This panel is IPv4-only:
 	// the blocklist/country sets are ipv4_addr, so an IPv6 packet to an open port would
 	// otherwise be accepted unfiltered (the port rules below are protocol-agnostic).
-	// Loopback (::1) and ICMPv6 neighbour discovery are already accepted above; the VPN
-	// (wg0) and Headscale overlay (fd7a::) ride other interfaces, so scoping the drop to
-	// the WAN NIC blocks only external IPv6 and leaves internal IPv6 intact.
+	// Loopback (::1) is accepted above; ICMPv6 neighbour discovery is accepted just BELOW
+	// this drop (so external ICMPv6 is dropped but internal ND still works); the VPN (wg0)
+	// and Headscale overlay (fd7a::) ride other interfaces, so scoping the drop to the WAN
+	// NIC blocks only external IPv6 and leaves internal IPv6 intact.
 	// NOTE: Docker-published container ports use their own DNAT/forward path and are NOT
 	// governed by this chain — revisit this if the host ever gains real public IPv6.
 	if wanIface != "" {
@@ -477,6 +474,13 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 			"",
 		)
 	}
+	// Accept ICMPv6 (neighbour discovery) AFTER the external-IPv6 drop above — so internal
+	// ND keeps working, but external ICMPv6 is dropped rather than accepted unconditionally.
+	inputRules = append(inputRules,
+		"# Allow internal ICMPv6 (neighbour discovery) — external ICMPv6 dropped above",
+		"ip6 nexthdr icmpv6 accept",
+		"",
+	)
 	inputRules = append(inputRules, allowAndSaddrDropRules()...)
 	inputRules = append(inputRules,
 		"",
