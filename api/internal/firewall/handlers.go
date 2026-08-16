@@ -188,15 +188,24 @@ func (s *Service) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 	present := func(dbCount, nftCount int) bool { return (dbCount > 0) == (nftCount > 0) }
 
-	// Compare to determine sync status: exact for 1:1 sets, presence for expanded.
+	// Sync status: the apply pipeline is authoritative. The firewall reload is atomic
+	// (all-or-nothing) and any failure/pending state is tracked in nftStatus. Raw element
+	// counts are NOT a reliable equality signal: interval sets auto-merge overlapping or
+	// adjacent CIDRs (so N configured ranges become <N kernel elements — e.g. 229 -> 185),
+	// the firewall is IPv4-only (IPv6 rows count in the DB but never land in nft), and
+	// essential built-in entries live in nft without a DB row. Comparing exact counts
+	// therefore false-alarms "out of sync" on a perfectly-enforced firewall. Compare by
+	// PRESENCE instead: a category is in sync when the DB wanting it enforced matches the
+	// kernel actually having it (both >0 or both 0). Real drift (apply failed/pending, a
+	// table missing, or a set unexpectedly empty) is still caught.
 	inSync := nftStatus.InSync &&
-		nftCounts["blocked_ips"] == dbBlockedIPsIn &&
-		nftCounts["blocked_ranges"] == dbBlockedRangesIn &&
-		nftCounts["blocked_ips_out"] == dbBlockedIPsOut &&
-		nftCounts["blocked_ranges_out"] == dbBlockedRangesOut &&
-		nftCounts["allowed_tcp_ports"] == dbAllowedTCPPorts &&
-		nftCounts["allowed_udp_ports"] == dbAllowedUDPPorts &&
-		nftCounts["allowed_ips"] == dbAllowedIPs &&
+		present(dbBlockedIPsIn, nftCounts["blocked_ips"]) &&
+		present(dbBlockedRangesIn, nftCounts["blocked_ranges"]) &&
+		present(dbBlockedIPsOut, nftCounts["blocked_ips_out"]) &&
+		present(dbBlockedRangesOut, nftCounts["blocked_ranges_out"]) &&
+		present(dbAllowedTCPPorts, nftCounts["allowed_tcp_ports"]) &&
+		present(dbAllowedUDPPorts, nftCounts["allowed_udp_ports"]) &&
+		present(dbAllowedIPs, nftCounts["allowed_ips"]) &&
 		present(dbAllowedRanges, nftCounts["allowed_ranges"]) &&
 		present(dbBlockedCountries, nftCounts["blocked_countries"]) &&
 		present(dbBlockedASN, nftCounts["blocked_asn"]) &&
