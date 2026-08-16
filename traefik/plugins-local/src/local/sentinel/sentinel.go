@@ -68,6 +68,11 @@ type IPFilterConfig struct {
 
 	// DenyCacheTTL is the deny-list cache lifetime in seconds (default 24h in newCache).
 	DenyCacheTTL int `json:"denyCacheTTL,omitempty"`
+
+	// BlockReportURL, if set, receives a periodic best-effort POST {"count":N} of how many
+	// requests this middleware blocked since the last report — so the panel can show an
+	// "L7 blocked" number. Fire-and-forget; failures are ignored (never affects blocking).
+	BlockReportURL string `json:"blockReportURL,omitempty"`
 }
 
 // ipDenySet is a fast lookup for the fetched block-list: exact IPs in a map (O(1)) and
@@ -372,6 +377,47 @@ type Sentinel struct {
 	timeLocation *time.Location
 	timeAllow    *timeRange
 	timeDeny     *timeRange
+
+	// L7 block reporting (optional) — best-effort periodic count of blocked requests.
+	blockReportURL string
+	dropMu         sync.Mutex
+	dropCount      int
+	lastReport     time.Time
+}
+
+// blockReportInterval is the minimum gap between block-count reports.
+const blockReportInterval = 20 * time.Second
+
+// recordDrop counts a blocked request and, if enough time has passed, flushes the
+// running count to the panel in the background. Never blocks request handling.
+func (s *Sentinel) recordDrop() {
+	if s.blockReportURL == "" {
+		return
+	}
+	s.dropMu.Lock()
+	s.dropCount++
+	now := time.Now()
+	if now.Sub(s.lastReport) < blockReportInterval || s.dropCount == 0 {
+		s.dropMu.Unlock()
+		return
+	}
+	n := s.dropCount
+	s.dropCount = 0
+	s.lastReport = now
+	url := s.blockReportURL
+	s.dropMu.Unlock()
+
+	go func() {
+		client := &http.Client{Timeout: 5 * time.Second}
+		req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(fmt.Sprintf(`{"count":%d}`, n)))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if resp, err := client.Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}()
 }
 
 // timeRange represents a parsed time range
@@ -425,6 +471,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		if config.IPFilter.DenyListURL != "" {
 			s.denyCache = newCache(config.IPFilter.DenyListURL, config.IPFilter.DenyCacheTTL)
 		}
+		s.blockReportURL = config.IPFilter.BlockReportURL
 	}
 
 	// Compile header regex patterns
@@ -526,6 +573,7 @@ func (s *Sentinel) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			if data := s.denyCache.fetch(parseDenyList); data != nil {
 				if d, ok := data.(*ipDenySet); ok && d.contains(clientIP) {
 					s.log("IP deny-listed: %v", clientIP)
+					s.recordDrop() // count firewall-block-list drops for the panel's L7 metric
 					s.blockRequest(rw, req, BlockReasonIP)
 					return
 				}

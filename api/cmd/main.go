@@ -479,6 +479,8 @@ func main() {
 	// directly so it bypasses the auth middleware; the handler refuses proxied requests.
 	if fwSvc != nil {
 		mux.Handle("/internal/blocklist", http.HandlerFunc(fwSvc.HandleInternalBlocklist))
+		// Sentinel posts its periodic L7 block count here (internal-only, refuses proxied).
+		mux.Handle("/internal/l7block", http.HandlerFunc(fwSvc.HandleInternalL7Block))
 	}
 
 	mux.Handle("/", handler)
