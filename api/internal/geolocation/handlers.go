@@ -214,15 +214,19 @@ func (s *Service) GetStatus() *Status {
 
 	providers := make(map[string]ProviderStatus)
 
+	// Snapshot the providers once under the lock (they're swapped on reload paths).
+	lp := s.getLookupProvider()
+	bp := s.getBlockingProvider()
+
 	// MaxMind status
 	maxmindStatus := ProviderStatus{
 		Name:       "maxmind",
 		Configured: s.config.MaxMindLicenseKey != "",
 	}
-	if s.lookupProvider != nil && s.lookupProvider.Name() == "maxmind" {
-		maxmindStatus.Available = s.lookupProvider.IsAvailable()
-		maxmindStatus.LastUpdate = s.lookupProvider.LastUpdated().Format("2006-01-02 15:04:05")
-		if mp, ok := s.lookupProvider.(*MaxMindProvider); ok {
+	if lp != nil && lp.Name() == "maxmind" {
+		maxmindStatus.Available = lp.IsAvailable()
+		maxmindStatus.LastUpdate = lp.LastUpdated().Format("2006-01-02 15:04:05")
+		if mp, ok := lp.(*MaxMindProvider); ok {
 			maxmindStatus.FileSize = mp.GetFileSize()
 			maxmindStatus.FilePath = mp.GetFilePath()
 		}
@@ -234,10 +238,10 @@ func (s *Service) GetStatus() *Status {
 		Name:       "ip2location",
 		Configured: s.config.IP2LocationToken != "",
 	}
-	if s.lookupProvider != nil && s.lookupProvider.Name() == "ip2location" {
-		ip2locStatus.Available = s.lookupProvider.IsAvailable()
-		ip2locStatus.LastUpdate = s.lookupProvider.LastUpdated().Format("2006-01-02 15:04:05")
-		if ip, ok := s.lookupProvider.(*IP2LocationProvider); ok {
+	if lp != nil && lp.Name() == "ip2location" {
+		ip2locStatus.Available = lp.IsAvailable()
+		ip2locStatus.LastUpdate = lp.LastUpdated().Format("2006-01-02 15:04:05")
+		if ip, ok := lp.(*IP2LocationProvider); ok {
 			ip2locStatus.FileSize = ip.GetFileSize()
 			ip2locStatus.FilePath = ip.GetFilePath()
 		}
@@ -247,11 +251,11 @@ func (s *Service) GetStatus() *Status {
 	// IPDeny status
 	ipdenyStatus := ProviderStatus{
 		Name:       "ipdeny",
-		Available:  s.blockingProvider != nil,
+		Available:  bp != nil,
 		Configured: true,
 	}
-	if s.blockingProvider != nil {
-		ipdenyStatus.LastUpdate = s.blockingProvider.LastUpdated().Format("2006-01-02 15:04:05")
+	if bp != nil {
+		ipdenyStatus.LastUpdate = bp.LastUpdated().Format("2006-01-02 15:04:05")
 	}
 	providers["ipdeny"] = ipdenyStatus
 
@@ -337,12 +341,13 @@ func (s *Service) handleRefreshZones(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.blockingProvider == nil {
+	bp := s.getBlockingProvider()
+	if bp == nil {
 		router.JSONError(w, "Blocking provider not initialized", http.StatusInternalServerError)
 		return
 	}
 
-	updated, errors := s.blockingProvider.RefreshAllZones()
+	updated, errors := bp.RefreshAllZones()
 
 	// Trigger nftables apply to use updated zones
 	if updated > 0 && s.nft != nil {

@@ -246,6 +246,32 @@ func (s *Service) loadConfig() {
 	s.config.DataDir = s.dataDir
 }
 
+// Provider accessors — the provider fields are swapped on config-reload paths and read
+// from concurrent lookup/apply/status paths, so every access goes through s.mu.
+func (s *Service) getLookupProvider() Provider {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lookupProvider
+}
+
+func (s *Service) getBlockingProvider() CIDRProvider {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.blockingProvider
+}
+
+func (s *Service) setLookupProvider(p Provider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lookupProvider = p
+}
+
+func (s *Service) setBlockingProvider(p CIDRProvider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blockingProvider = p
+}
+
 // initProviders initializes the lookup and blocking providers
 func (s *Service) initProviders() error {
 	var lastErr error
@@ -258,7 +284,7 @@ func (s *Service) initProviders() error {
 			log.Printf("Warning: MaxMind provider init failed: %v", err)
 			lastErr = err
 		} else {
-			s.lookupProvider = provider
+			s.setLookupProvider(provider)
 		}
 	case "ip2location":
 		// Get templates from provider config
@@ -278,17 +304,16 @@ func (s *Service) initProviders() error {
 			log.Printf("Warning: IP2Location provider init failed: %v", err)
 			lastErr = err
 		} else {
-			s.lookupProvider = provider
+			s.setLookupProvider(provider)
 		}
 	default:
 		// No lookup provider
-		s.lookupProvider = nil
+		s.setLookupProvider(nil)
 	}
 
 	// Initialize blocking provider (ipdeny)
 	if s.config.BlockingEnabled {
-		provider := NewIPDenyProvider(s.db)
-		s.blockingProvider = provider
+		s.setBlockingProvider(NewIPDenyProvider(s.db))
 	}
 
 	return lastErr
@@ -357,11 +382,11 @@ func (s *Service) Handlers() router.ServiceHandlers {
 func (s *Service) Shutdown() {
 	s.cancel()
 
-	if s.lookupProvider != nil {
-		s.lookupProvider.Close()
+	if lp := s.getLookupProvider(); lp != nil {
+		lp.Close()
 	}
-	if s.blockingProvider != nil {
-		s.blockingProvider.Close()
+	if bp := s.getBlockingProvider(); bp != nil {
+		bp.Close()
 	}
 
 	log.Println("Geolocation service shutdown complete")
@@ -376,26 +401,27 @@ func (s *Service) IsBlockingEnabled() bool {
 
 // FetchAndCacheCountryZones fetches zones from ipdeny if not cached, returns range count
 func (s *Service) FetchAndCacheCountryZones(countryCode string) (int, error) {
-	if s.blockingProvider == nil {
+	bp := s.getBlockingProvider()
+	if bp == nil {
 		return 0, fmt.Errorf("blocking provider not available")
 	}
 
 	countryCode = strings.ToUpper(countryCode)
 
 	// Check if already cached
-	zones, err := s.blockingProvider.GetCachedZones(countryCode)
+	zones, err := bp.GetCachedZones(countryCode)
 	if err == nil && zones != "" {
 		return strings.Count(zones, "\n") + 1, nil
 	}
 
 	// Fetch from ipdeny.com
-	zones, err = s.blockingProvider.FetchCountryZones(countryCode)
+	zones, err = bp.FetchCountryZones(countryCode)
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch zones for %s: %w", countryCode, err)
 	}
 
 	// Cache zones
-	if provider, ok := s.blockingProvider.(*IPDenyProvider); ok {
+	if provider, ok := bp.(*IPDenyProvider); ok {
 		if err := provider.CacheZones(countryCode, zones); err != nil {
 			return 0, fmt.Errorf("failed to cache zones for %s: %w", countryCode, err)
 		}
@@ -408,10 +434,11 @@ func (s *Service) FetchAndCacheCountryZones(countryCode string) (int, error) {
 
 // GetAllBlockedCIDRs returns all blocked country CIDRs (implements nftables.CountryZonesProvider)
 func (s *Service) GetAllBlockedCIDRs(outboundOnly bool) ([]string, error) {
-	if s.blockingProvider == nil {
+	bp := s.getBlockingProvider()
+	if bp == nil {
 		return nil, fmt.Errorf("blocking provider not available")
 	}
-	return s.blockingProvider.GetAllBlockedCIDRs(outboundOnly)
+	return bp.GetAllBlockedCIDRs(outboundOnly)
 }
 
 // GetAllowedCountryCIDRs returns the IPv4 CIDRs of every enabled, allowing country
@@ -438,8 +465,8 @@ func (s *Service) EnableBlocking() {
 	s.mu.Unlock()
 
 	// Initialize blocking provider if needed
-	if s.blockingProvider == nil {
-		s.blockingProvider = NewIPDenyProvider(s.db)
+	if s.getBlockingProvider() == nil {
+		s.setBlockingProvider(NewIPDenyProvider(s.db))
 	}
 
 	// Trigger nftables apply
