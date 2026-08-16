@@ -20,7 +20,9 @@ func TestDumpScriptsForLint(t *testing.T) {
 		blockedRangesIn: []string{"3.3.3.0/24"}, blockedRangesOut: []string{"4.4.4.0/24"},
 		tcpPorts: []string{"22", "443"}, udpPorts: []string{"51820"},
 		countryIn: []string{"5.5.0.0/16"}, countryOut: []string{"6.6.0.0/16"},
-		asnIn: []string{"7.7.7.0/24"}, asnOut: []string{"8.8.8.0/24"},
+		// Deliberately OVERLAPPING CIDRs (7.7.0.0/16 ⊃ 7.7.7.0/24): without the auto-merge
+		// set flag, nft -f rejects these and wedges the whole table. With it, they merge.
+		asnIn: []string{"7.7.0.0/16", "7.7.7.0/24"}, asnOut: []string{"8.8.8.0/24"},
 		allowedIPs: []string{"9.9.9.9"}, allowedRanges: []string{"11.11.0.0/16"},
 		allowedCountries: []string{"12.12.0.0/16"}, allowedASN: []string{"13.13.13.0/24"},
 		noInternetPeers: []string{"10.8.0.9"}, wanIface: "eth0",

@@ -84,21 +84,36 @@ func BuildSet(name, setType string, flags []string, elements []string) string {
 		setType = "ipv4_addr"
 	}
 
+	// "auto-merge" is NOT a `flags` keyword — it's a standalone set statement, and it
+	// requires `flags interval`. Pull it out of the flags slice, emit the real flags,
+	// then emit `auto-merge` on its own line. Without auto-merge, nft rejects a set with
+	// overlapping interval elements and wedges the whole atomic reload.
+	autoMerge := false
+	validFlags := make([]string, 0, len(flags))
+	hasInterval := false
+	for _, f := range flags {
+		if f == "auto-merge" {
+			autoMerge = true
+			continue
+		}
+		if validFlag.MatchString(f) {
+			validFlags = append(validFlags, f)
+			if f == "interval" {
+				hasInterval = true
+			}
+		}
+	}
+
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("    set %s {\n", name))
 	sb.WriteString(fmt.Sprintf("        type %s\n", setType))
 
-	if len(flags) > 0 {
-		// Validate each flag
-		validFlags := make([]string, 0, len(flags))
-		for _, f := range flags {
-			if validFlag.MatchString(f) {
-				validFlags = append(validFlags, f)
-			}
-		}
-		if len(validFlags) > 0 {
-			sb.WriteString(fmt.Sprintf("        flags %s\n", strings.Join(validFlags, ", ")))
-		}
+	if len(validFlags) > 0 {
+		sb.WriteString(fmt.Sprintf("        flags %s\n", strings.Join(validFlags, ", ")))
+	}
+	// Only valid alongside `flags interval`; guard so we never emit it on a plain set.
+	if autoMerge && hasInterval {
+		sb.WriteString("        auto-merge\n")
 	}
 
 	if len(elements) > 0 {

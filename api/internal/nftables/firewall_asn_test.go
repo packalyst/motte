@@ -129,6 +129,26 @@ func TestFirewallFailsClosedOnUnknownWAN(t *testing.T) {
 	}
 }
 
+// TestBuildSetAutoMerge guards the interval-wedge fix: auto-merge must be emitted as its
+// own set statement (not a `flags` keyword, which nft rejects), and only alongside
+// `flags interval`. Without it, overlapping interval elements wedge the atomic reload.
+func TestBuildSetAutoMerge(t *testing.T) {
+	s := BuildSet("x", "ipv4_addr", []string{"interval", "auto-merge"}, []string{"1.0.0.0/8", "1.1.0.0/16"})
+	if !strings.Contains(s, "flags interval\n") {
+		t.Error("missing `flags interval`")
+	}
+	if !strings.Contains(s, "\n        auto-merge\n") {
+		t.Error("auto-merge must be on its own line")
+	}
+	if strings.Contains(s, "interval, auto-merge") {
+		t.Error("auto-merge must NOT be a flags keyword (nft rejects it)")
+	}
+	// A non-interval set must never get auto-merge, even if passed.
+	if p := BuildSet("y", "ipv4_addr", []string{"auto-merge"}, []string{"1.2.3.4"}); strings.Contains(p, "auto-merge") {
+		t.Error("auto-merge emitted without `flags interval`")
+	}
+}
+
 // TestBuildScriptAllowBeforeDeny guards the security-critical ordering: in each
 // chain the source allow-list (accept) must appear BEFORE the block-list (drop),
 // otherwise a block would win over an intended allow-exception.
