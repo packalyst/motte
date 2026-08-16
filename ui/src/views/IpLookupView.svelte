@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { apiGet, apiPost, toast } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
+  import Button from '../components/Button.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
   import { lookupIPs, getGeoData, checkGeoEnabled } from '../stores/geo.js'
@@ -94,9 +95,7 @@
       placeholder="Paste an IP address — e.g. 45.155.205.18"
       class="flex-1 bg-transparent outline-none text-sm py-2"
     />
-    <button onclick={() => lookup()} disabled={busy} class="shrink-0 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50">
-      {busy ? 'Looking up…' : 'Look up'}
-    </button>
+    <div class="shrink-0"><Button variant="primary" icon="search" loading={busy} onclick={() => lookup()}>Look up</Button></div>
   </div>
 
   {#if error}
@@ -119,6 +118,10 @@
           <div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Verdict</span><span class="font-medium {meta.text}">{meta.label}</span></div>
           <div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Owner (ASN)</span><span class="font-medium text-right">{result.as_name || '—'}{#if result.asn} · AS{result.asn}{/if}</span></div>
           <div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Country</span><span class="font-medium">{result.country_name || result.country_code || '—'}</span></div>
+          {#if result.extra?.city || result.extra?.region}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">City / region</span><span class="font-medium text-right">{[result.extra.city, result.extra.region].filter(Boolean).join(', ')}</span></div>{/if}
+          {#if result.extra?.isp}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">ISP</span><span class="font-medium text-right truncate max-w-[60%]">{result.extra.isp}</span></div>{/if}
+          {#if result.extra?.domain}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Domain</span><span class="font-medium font-mono text-xs">{result.extra.domain}</span></div>{/if}
+          {#if result.extra?.timezone}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Timezone</span><span class="font-medium">{result.extra.timezone}</span></div>{/if}
           {#if usageTypeLabel(result.usage_type)}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Network</span><span class="font-medium">{usageTypeLabel(result.usage_type)}</span></div>{/if}
           {#if result.fraud_score != null}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Fraud score</span><span class="font-medium tabular-nums {result.fraud_score >= 75 ? 'text-destructive' : result.fraud_score >= 40 ? 'text-warning' : 'text-foreground'}">{result.fraud_score}/100</span></div>{/if}
           {#if result.threat && result.threat !== '-'}<div class="flex justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Threat</span><span class="font-medium text-destructive">{result.threat}</span></div>{/if}
@@ -145,16 +148,14 @@
     </div>
 
     <!-- Actions -->
-    <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-center gap-2">
-      <span class="text-xs text-muted-foreground mr-1">Actions:</span>
-      <button onclick={() => act({ type: 'ip', value: query, action: 'block' }, `Blocked ${query}`)} class="text-xs px-3 py-1.5 rounded-lg border border-destructive/40 text-destructive hover:bg-destructive/10">Ban this IP</button>
-      {#if result.asn}
-        <button onclick={() => act({ type: 'asn', value: String(result.asn), action: 'block', name: result.as_name }, `Blocking AS${result.asn}`)} class="text-xs px-3 py-1.5 rounded-lg border border-destructive/40 text-destructive hover:bg-destructive/10">Ban range (AS{result.asn})</button>
-      {/if}
-      {#if result.country_code}
-        <button onclick={() => act({ type: 'country', value: result.country_code, action: 'block', name: result.country_name }, `Blocking ${result.country_name || result.country_code}`)} class="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:bg-muted">Block {result.country_name || result.country_code}</button>
-      {/if}
-      <button onclick={() => act({ type: 'ip', value: query, action: 'allow' }, `Allow-listed ${query}`)} class="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 ml-auto">Add to allow-list</button>
+    <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-center gap-3">
+      <span class="text-xs text-muted-foreground">Actions:</span>
+      <div class="kt-btn-group">
+        <Button variant="destructive" size="sm" icon="ban" onclick={() => act({ type: 'ip', value: query, action: 'block' }, `Blocked ${query}`)}>Ban IP</Button>
+        {#if result.asn}<Button variant="destructive" size="sm" onclick={() => act({ type: 'asn', value: String(result.asn), action: 'block', name: result.as_name }, `Blocking AS${result.asn}`)}>Ban range (AS{result.asn})</Button>{/if}
+        {#if result.country_code}<Button variant="outline" size="sm" icon="world" onclick={() => act({ type: 'country', value: result.country_code, action: 'block', name: result.country_name }, `Blocking ${result.country_name || result.country_code}`)}>Block {result.country_name || result.country_code}</Button>{/if}
+      </div>
+      <Button variant="success" size="sm" icon="check" class="ml-auto" onclick={() => act({ type: 'ip', value: query, action: 'allow' }, `Allow-listed ${query}`)}>Allow-list</Button>
     </div>
   {/if}
 
