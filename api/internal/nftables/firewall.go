@@ -6,10 +6,40 @@ import (
 	"net"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 
 	"api/internal/database"
 )
+
+// isValidPortElement guards the inet_service set boundary: a numeric port 1-65535 or a
+// strict N-M range. Mirrors the ValidateIPv4OrCIDR boundary for address sets, so a bad
+// value can't reach the set and break the atomic reload.
+func isValidPortElement(s string) bool {
+	s = strings.TrimSpace(s)
+	if a, b, ok := strings.Cut(s, "-"); ok {
+		return validPortNum(a) && validPortNum(b)
+	}
+	return validPortNum(s)
+}
+
+func validPortNum(s string) bool {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	return err == nil && n >= 1 && n <= 65535
+}
+
+// keepIPv4CIDRs drops any element that isn't a valid IPv4 address/CIDR — a boundary guard
+// for provider-sourced (country/ASN) ranges before they enter ipv4_addr sets, so a corrupt
+// cache row can't wedge the atomic reload. Mirrors the per-entry filter in Build.
+func keepIPv4CIDRs(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, c := range in {
+		if ValidateIPv4OrCIDR(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
 
 // detectWANInterface returns the interface name of the default IPv4 route.
 // Re-detected on every script render so cable swaps / wifi changes self-heal.
@@ -119,6 +149,9 @@ func (t *FirewallTable) Build() (string, error) {
 				allowedRanges = append(allowedRanges, e.Value)
 			}
 		case EntryTypePort:
+			if !isValidPortElement(e.Value) {
+				continue
+			}
 			if e.Action == ActionAllow {
 				switch e.Protocol {
 				case ProtocolTCP:
@@ -162,6 +195,13 @@ func (t *FirewallTable) Build() (string, error) {
 			allowedASN = cidrs
 		}
 	}
+
+	// Boundary guard: drop any non-IPv4 element from provider-sourced ranges before they
+	// enter the ipv4_addr sets, so a corrupt cache row can't wedge the atomic reload.
+	countryRangesIn, countryRangesOut = keepIPv4CIDRs(countryRangesIn), keepIPv4CIDRs(countryRangesOut)
+	allowedCountries = keepIPv4CIDRs(allowedCountries)
+	asnRangesIn, asnRangesOut = keepIPv4CIDRs(asnRangesIn), keepIPv4CIDRs(asnRangesOut)
+	allowedASN = keepIPv4CIDRs(allowedASN)
 
 	// Per-peer WAN block: list of VPN peer IPs whose internet egress should be dropped.
 	// WAN interface (default-route NIC) is detected dynamically and reused for both the
