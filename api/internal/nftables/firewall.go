@@ -451,36 +451,34 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 	// Drop all inbound IPv6 arriving on the public interface. This panel is IPv4-only:
 	// the blocklist/country sets are ipv4_addr, so an IPv6 packet to an open port would
 	// otherwise be accepted unfiltered (the port rules below are protocol-agnostic).
-	// Loopback (::1) is accepted above; ICMPv6 neighbour discovery is accepted just BELOW
-	// this drop (so external ICMPv6 is dropped but internal ND still works); the VPN (wg0)
-	// and Headscale overlay (fd7a::) ride other interfaces, so scoping the drop to the WAN
-	// NIC blocks only external IPv6 and leaves internal IPv6 intact.
+	// Loopback (::1) is accepted above; each branch below keeps ICMPv6 neighbour discovery
+	// working while dropping external IPv6, so internal IPv6 connectivity survives. The VPN
+	// (wg0) and Headscale overlay (fd7a::) ride other interfaces.
 	// NOTE: Docker-published container ports use their own DNAT/forward path and are NOT
 	// governed by this chain — revisit this if the host ever gains real public IPv6.
 	if wanIface != "" {
+		// Scoped: drop external IPv6 on the WAN NIC, then accept ICMPv6 from the remaining
+		// (internal) interfaces — external ICMPv6 is already dropped, internal ND still works.
 		inputRules = append(inputRules,
 			"# Drop external IPv6 (IPv4-only panel)",
 			"meta nfproto ipv6 iifname \""+SanitizeElement(wanIface)+"\" drop",
 			"",
+			"# Allow internal ICMPv6 (neighbour discovery) — external ICMPv6 dropped above",
+			"ip6 nexthdr icmpv6 accept",
+			"",
 		)
 	} else {
-		// WAN NIC couldn't be detected — fail CLOSED rather than open: drop all other
-		// inbound IPv6 unscoped. Loopback and ICMPv6 ND are accepted above, and the panel
-		// is IPv4-only (no legitimate inbound IPv6-to-server path), so this closes the
-		// leak (external IPv6 reaching an open port unfiltered) without losing anything.
+		// WAN NIC couldn't be detected — fail CLOSED. Accept ONLY ICMPv6 neighbour discovery
+		// (needed for IPv6 link connectivity) BEFORE dropping all other inbound IPv6; ND must
+		// precede the unscoped drop or it would be dropped too. External ICMPv6 echo and every
+		// other IPv6 packet is dropped, closing the open-port leak.
 		inputRules = append(inputRules,
-			"# WAN NIC undetected — drop external IPv6 unscoped (fail closed, IPv4-only panel)",
+			"# WAN undetected — keep neighbour discovery, drop all other IPv6 (fail closed)",
+			"icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept",
 			"meta nfproto ipv6 drop",
 			"",
 		)
 	}
-	// Accept ICMPv6 (neighbour discovery) AFTER the external-IPv6 drop above — so internal
-	// ND keeps working, but external ICMPv6 is dropped rather than accepted unconditionally.
-	inputRules = append(inputRules,
-		"# Allow internal ICMPv6 (neighbour discovery) — external ICMPv6 dropped above",
-		"ip6 nexthdr icmpv6 accept",
-		"",
-	)
 	inputRules = append(inputRules, allowAndSaddrDropRules()...)
 	inputRules = append(inputRules,
 		"",
