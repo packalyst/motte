@@ -210,6 +210,25 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A port entry only ever means "allow this port" (it feeds the allowed_tcp/udp_ports
+	// sets — there is no "blocked port" concept). Allowing action=block here would let this
+	// endpoint flip an essential port (e.g. SSH) into a drop and lock the operator out.
+	if req.Type == nftables.EntryTypePort && req.Action == nftables.ActionBlock {
+		router.JSONError(w, "a port entry can't be a block — it opens a port; remove the entry to close it", http.StatusBadRequest)
+		return
+	}
+
+	// Never let this generic endpoint modify a protected (essential) rule — e.g. the SSH
+	// port row. Otherwise ON CONFLICT DO UPDATE could flip/disable it and lock the operator
+	// out. Essential rules are managed by their own flows (the SSH-port change in Settings).
+	var essentialConflict int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries WHERE entry_type = ? AND value = ? AND protocol = ? AND essential = 1`,
+		req.Type, normalizedValue, req.Protocol).Scan(&essentialConflict)
+	if essentialConflict > 0 {
+		router.JSONError(w, "that is a protected (essential) rule and can't be changed here — manage it in Settings", http.StatusConflict)
+		return
+	}
+
 	var expiresAt interface{}
 	if req.BanTime > 0 {
 		expiresAt = time.Now().Add(time.Duration(req.BanTime) * time.Second)
@@ -220,7 +239,8 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		VALUES (?, ?, ?, ?, ?, 'manual', ?, ?, ?, 1)
 		ON CONFLICT(entry_type, value, protocol) DO UPDATE SET
 		action = excluded.action, direction = excluded.direction, reason = excluded.reason,
-		name = excluded.name, expires_at = excluded.expires_at, enabled = 1`,
+		name = excluded.name, expires_at = excluded.expires_at, enabled = 1
+		WHERE firewall_entries.essential = 0`,
 		req.Type, normalizedValue, req.Action, req.Direction, req.Protocol, req.Reason, req.Name, expiresAt)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
