@@ -285,19 +285,42 @@ func (s *Service) scanLogins(now time.Time) authScan {
 // already uses nsenter elsewhere). Returns ok=false if journald isn't reachable so
 // the caller falls back to the log file.
 func (s *Service) scanJournal(now time.Time) (authScan, bool) {
-	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
-		"journalctl", "-o", "short-iso", "--since", "30 days ago", "--no-pager",
-		"-t", "sshd", "-t", "sshd-session", "-t", "sudo", "-t", "useradd", "-t", "groupadd")
-	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
-		return authScan{}, false
-	}
 	acc := newAuthAccum(now)
-	for _, line := range strings.Split(string(out), "\n") {
+	// Sparse events over a long window (logins, sudo, account changes). Exclude the
+	// noisy "Failed password" brute-force spam so a heavily-attacked host's rare login
+	// lines aren't buried — we ask the journal for exactly the lines that matter.
+	sparse, ok1 := journalGrep("30 days ago", `Accepted |COMMAND=|new user:|new group:`)
+	// The failed-SSH trend only needs the last couple of hours.
+	failed, ok2 := journalGrep("3 hours ago", `Failed password`)
+	if !ok1 && !ok2 {
+		return authScan{}, false // journal not reachable — fall back to the log file
+	}
+	for _, line := range sparse {
+		ts, ok := parseISOTime(line)
+		acc.line(line, ts, ok)
+	}
+	for _, line := range failed {
 		ts, ok := parseISOTime(line)
 		acc.line(line, ts, ok)
 	}
 	return acc.finish(), true
+}
+
+// journalGrep runs a filtered journalctl over the host journal (authpriv facility) via
+// nsenter. ok=false only when journalctl couldn't run at all (so the caller falls back
+// to the log file); a non-zero exit with no matches is treated as "ran, empty".
+func journalGrep(since, grep string) ([]string, bool) {
+	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
+		"journalctl", "-o", "short-iso", "--no-pager", "--facility=authpriv",
+		"--since", since, "--grep", grep)
+	out, err := cmd.Output()
+	if err != nil {
+		if _, isExit := err.(*exec.ExitError); !isExit {
+			return nil, false // nsenter/journalctl missing or blocked
+		}
+		// ExitError: journalctl ran (exit 1 = no matches) — use whatever it printed.
+	}
+	return strings.Split(string(out), "\n"), true
 }
 
 // ---------- dpkg.log ----------
