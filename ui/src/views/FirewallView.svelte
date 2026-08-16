@@ -105,6 +105,8 @@
   let asnResults = $state([])
   let asnSearching = $state(false)
   let addingAsn = $state(null)
+  let selectedAsns = $state([])     // multi-select: AS numbers (as strings) queued to add
+  let blockingAsns = $state(false)
   let asnSearchTimer
   function onAsnQueryInput() {
     clearTimeout(asnSearchTimer)
@@ -145,6 +147,66 @@
       toast('Failed: ' + e.message, 'error')
     } finally {
       addingAsn = null
+    }
+  }
+
+  // Group search results by provider so one provider that owns several ASNs
+  // (e.g. "Orange Romania" = 2 AS numbers) can be selected in a single tick.
+  const asnGroups = $derived.by(() => {
+    const groups = {}
+    for (const m of asnResults) {
+      const key = m.name || `AS${m.asn}`
+      ;(groups[key] ||= []).push(m)
+    }
+    return Object.entries(groups)
+      .map(([name, items]) => ({
+        name,
+        items,
+        asns: items.map(i => String(i.asn)),
+        totalRanges: items.reduce((s, i) => s + (i.ranges || 0), 0),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  })
+  // Only ASNs not already in the list are selectable.
+  const selectableAsns = $derived(asnResults.map(m => String(m.asn)).filter(a => !addedAsns.has(a)))
+
+  function toggleAsn(asn) {
+    asn = String(asn)
+    if (addedAsns.has(asn)) return
+    selectedAsns = selectedAsns.includes(asn) ? selectedAsns.filter(a => a !== asn) : [...selectedAsns, asn]
+  }
+  function groupCodes(group) { return group.asns.filter(a => !addedAsns.has(a)) }
+  function toggleAsnGroup(group) {
+    const codes = groupCodes(group)
+    if (codes.length === 0) return
+    const all = codes.every(a => selectedAsns.includes(a))
+    selectedAsns = all
+      ? selectedAsns.filter(a => !codes.includes(a))
+      : [...new Set([...selectedAsns, ...codes])]
+  }
+  function isAsnGroupFull(group) { const c = groupCodes(group); return c.length > 0 && c.every(a => selectedAsns.includes(a)) }
+  function isAsnGroupPartial(group) { const c = groupCodes(group); const n = c.filter(a => selectedAsns.includes(a)).length; return n > 0 && n < c.length }
+  function selectAllAsns() { selectedAsns = selectableAsns }
+  function clearAsnSelection() { selectedAsns = [] }
+
+  async function blockSelectedAsns() {
+    if (selectedAsns.length === 0) return
+    blockingAsns = true
+    try {
+      // One bulk call so all ASN ranges expand + apply together (heavier than countries).
+      const entries = selectedAsns.map(asn => {
+        const m = asnResults.find(r => String(r.asn) === asn)
+        return { type: 'asn', value: asn, action: viewAction, direction: 'inbound', name: m?.name || `AS${asn}` }
+      })
+      await apiPost('/api/fw/entries/bulk', { action: 'create', entries })
+      toast(`${viewAction === 'allow' ? 'Allowing' : 'Blocking'} ${selectedAsns.length} ASN${selectedAsns.length > 1 ? 's' : ''}…`, 'info')
+      showAsnModal = false
+      selectedAsns = []; asnQuery = ''; asnResults = []
+      await reloadBlocked()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      blockingAsns = false
     }
   }
 
@@ -1137,55 +1199,99 @@
 </Modal>
 
 
-<!-- ASN (provider) picker Modal -->
-<Modal bind:open={showAsnModal} title="{viewAction === 'allow' ? 'Allow' : 'Block'} a provider (ASN)" size="md">
+<!-- ASN (provider) picker Modal — multi-select, grouped by provider -->
+<Modal bind:open={showAsnModal} title="{viewAction === 'allow' ? 'Allow' : 'Block'} providers (ASN)" size="lg">
   <div class="space-y-3">
-    <Input
-      type="search"
-      bind:value={asnQuery}
-      oninput={onAsnQueryInput}
-      placeholder="Search provider name or AS number (e.g. DigitalOcean, 14061)"
-      prefixIcon="search"
-    />
-    <div class="max-h-80 overflow-y-auto border border-border rounded-lg divide-y divide-border">
+    <div class="flex flex-wrap items-center gap-3">
+      <Input
+        type="search"
+        bind:value={asnQuery}
+        oninput={onAsnQueryInput}
+        placeholder="Search provider name or AS number (e.g. Orange Romania, 14061)"
+        prefixIcon="search"
+        class="flex-1 min-w-[220px]"
+      />
+      {#if selectableAsns.length > 0}
+        <div class="flex items-center gap-2">
+          <button onclick={selectAllAsns} class="text-xs text-primary hover:text-primary/80 font-medium">Select all{asnQuery.trim() ? ' matches' : ''}</button>
+          {#if selectedAsns.length > 0}
+            <span class="text-dim">|</span>
+            <button onclick={clearAsnSelection} class="text-xs text-muted-foreground hover:text-foreground">Clear</button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
+    <div class="max-h-96 overflow-y-auto border border-border rounded-lg">
       {#if asnSearching}
         <div class="flex justify-center py-6"><LoadingSpinner /></div>
-      {:else if asnResults.length === 0}
+      {:else if asnGroups.length === 0}
         <div class="text-center py-6 text-sm text-muted-foreground px-4">
           {asnQuery.trim() ? 'No providers match — is the ASN database downloaded (Settings → Geolocation)?' : 'Type a provider name or AS number.'}
         </div>
       {:else}
-        {#each asnResults as m (m.asn)}
-          {@const added = addedAsns.has(String(m.asn))}
-          <button
-            class="w-full flex items-center gap-3 px-3 py-2.5 text-left transition cursor-pointer {added ? 'opacity-60 cursor-default' : 'hover:bg-muted/50'}"
-            onclick={() => addAsn(m)}
-            disabled={addingAsn === m.asn || added}
-          >
-            <Icon name="cloud" size={16} class="text-muted-foreground shrink-0" />
-            <div class="min-w-0 flex-1">
-              <div class="text-sm font-medium truncate">{m.name || 'AS' + m.asn}</div>
-              <div class="text-[11px] text-muted-foreground">
-                AS{m.asn} · ~{(m.ranges || 0).toLocaleString()} ranges{#if m.ranges > 1000} <span class="text-warning">⚠ large</span>{/if}
-              </div>
+        <div class="divide-y divide-border">
+          {#each asnGroups as g (g.name)}
+            {@const fullyAdded = g.asns.every(a => addedAsns.has(a))}
+            <div class="bg-card">
+              <!-- Provider header: selects every AS number this provider owns -->
+              <button
+                onclick={() => toggleAsnGroup(g)}
+                disabled={fullyAdded}
+                class="w-full flex items-center gap-3 px-3 py-2 bg-muted hover:bg-muted/80 transition-colors {fullyAdded ? 'opacity-60 cursor-default' : ''}"
+              >
+                <Checkbox
+                  checked={isAsnGroupFull(g)}
+                  indeterminate={isAsnGroupPartial(g)}
+                  class="pointer-events-none"
+                  tabindex="-1"
+                />
+                <Icon name="cloud" size={15} class="text-muted-foreground shrink-0" />
+                <span class="font-medium text-sm text-foreground truncate">{g.name}</span>
+                <span class="text-xs text-muted-foreground shrink-0 ml-auto">
+                  {g.items.length} ASN{g.items.length > 1 ? 's' : ''} · ~{g.totalRanges.toLocaleString()} ranges{#if g.totalRanges > 1000} <span class="text-warning">⚠</span>{/if}
+                </span>
+              </button>
+              <!-- Individual AS numbers (only when a provider owns more than one) -->
+              {#if g.items.length > 1}
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-1 p-2">
+                  {#each g.items as m (m.asn)}
+                    {@const added = addedAsns.has(String(m.asn))}
+                    <Checkbox
+                      checked={added || selectedAsns.includes(String(m.asn))}
+                      disabled={added}
+                      onchange={() => toggleAsn(m.asn)}
+                      class="px-2 py-1.5 rounded-md hover:bg-muted transition-colors {selectedAsns.includes(String(m.asn)) ? 'bg-primary/10' : ''} {added ? 'opacity-60' : ''}"
+                    >
+                      <span class="text-xs text-foreground truncate">AS{m.asn}<span class="text-muted-foreground"> · ~{(m.ranges || 0).toLocaleString()}</span>{#if added} <span class="text-[10px] text-muted-foreground">(added)</span>{/if}</span>
+                    </Checkbox>
+                  {/each}
+                </div>
+              {/if}
             </div>
-            {#if added}
-              <span class="text-xs text-muted-foreground shrink-0 flex items-center gap-1"><Icon name="check" size={13} />{viewAction === 'allow' ? 'Allowed' : 'Blocked'}</span>
-            {:else}
-              <span class="text-xs {viewAction === 'allow' ? 'text-success' : 'text-destructive'} shrink-0">
-                {addingAsn === m.asn ? '…' : (viewAction === 'allow' ? 'Allow' : 'Block')}
-              </span>
-            {/if}
-          </button>
-        {/each}
+          {/each}
+        </div>
       {/if}
     </div>
     <p class="text-[11px] text-muted-foreground">
-      Expands the provider's IP ranges into the firewall (like country blocking). Large providers add many ranges — memory only, no per-packet slowdown.
+      Expands each provider's IP ranges into the firewall (like country blocking). Selecting a provider adds all of its AS numbers at once. Large providers add many ranges — memory only, no per-packet slowdown.
     </p>
   </div>
 
   {#snippet footer()}
-    <Button onclick={() => { showAsnModal = false }} variant="secondary">Close</Button>
+    <Button onclick={() => { showAsnModal = false; selectedAsns = [] }} variant="secondary">Cancel</Button>
+    <Button
+      onclick={blockSelectedAsns}
+      icon={viewAction === 'allow' ? 'check' : 'ban'}
+      variant={viewAction === 'allow' ? 'success' : 'destructive'}
+      disabled={selectedAsns.length === 0 || blockingAsns}
+    >
+      {#if blockingAsns}
+        <div class="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></div>
+        {viewAction === 'allow' ? 'Allowing…' : 'Blocking…'}
+      {:else}
+        {viewAction === 'allow' ? 'Allow' : 'Block'} {selectedAsns.length > 0 ? `${selectedAsns.length} ASN${selectedAsns.length > 1 ? 's' : ''}` : 'ASNs'}
+      {/if}
+    </Button>
   {/snippet}
 </Modal>
