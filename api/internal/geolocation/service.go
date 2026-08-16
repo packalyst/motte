@@ -481,6 +481,7 @@ func (s *Service) proxyDBPath() string {
 // A missing file is not an error — that enrichment dimension is simply skipped. Each
 // load builds a fresh table and atomically replaces the old one (no accumulation).
 func (s *Service) loadEnrichmentDBs() {
+	asnReloaded := false
 	if p := s.asnDBPath(); fileExists(p) {
 		tbl := &rangeTable[asnVal]{}
 		if err := tbl.load(p, parseASNRow(newInterner())); err != nil {
@@ -489,6 +490,7 @@ func (s *Service) loadEnrichmentDBs() {
 			s.mu.Lock()
 			s.asnDB = tbl
 			s.mu.Unlock()
+			asnReloaded = true
 			log.Printf("geolocation: ASN DB loaded (%d ranges)", tbl.count())
 		}
 	}
@@ -503,6 +505,49 @@ func (s *Service) loadEnrichmentDBs() {
 			log.Printf("geolocation: proxy DB loaded (%d proxy ranges)", tbl.count())
 		}
 	}
+
+	// The ASN table just changed in memory, but asn_zones_cache (which feeds the firewall's
+	// blocked_asn set) was expanded from the OLD table. Re-expand every ASN referenced by an
+	// enabled firewall entry so a refreshed provider's NEW prefixes don't stay silently
+	// unblocked, then rebuild the firewall so they take effect. Lock is already released.
+	if asnReloaded {
+		if n := s.reexpandBlockedASNZones(); n > 0 && s.nft != nil {
+			s.nft.RequestApply()
+		}
+	}
+}
+
+// reexpandBlockedASNZones re-caches the IPv4 CIDRs of every ASN referenced by an enabled
+// firewall entry, from the currently-loaded ASN DB, and returns how many were re-expanded.
+// Called after an ASN DB (re)load so a refreshed table's prefixes actually reach the
+// firewall. Rows are drained before CacheASNZones runs (it queries the same connection).
+func (s *Service) reexpandBlockedASNZones() int {
+	if s.db == nil {
+		return 0
+	}
+	rows, err := s.db.Query(`SELECT DISTINCT value FROM firewall_entries WHERE entry_type = 'asn' AND enabled = 1`)
+	if err != nil {
+		log.Printf("geolocation: reexpand ASN zones query: %v", err)
+		return 0
+	}
+	var asns []uint32
+	for rows.Next() {
+		var v string
+		if rows.Scan(&v) == nil {
+			if n, perr := strconv.ParseUint(v, 10, 32); perr == nil {
+				asns = append(asns, uint32(n))
+			}
+		}
+	}
+	rows.Close()
+
+	count := 0
+	for _, asn := range asns {
+		if _, err := s.CacheASNZones(asn); err == nil {
+			count++
+		}
+	}
+	return count
 }
 
 // enrich adds ASN + proxy fields to a lookup result when those DBs are loaded. Nil-safe:
