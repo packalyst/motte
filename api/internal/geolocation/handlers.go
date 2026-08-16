@@ -214,9 +214,11 @@ func (s *Service) GetStatus() *Status {
 
 	providers := make(map[string]ProviderStatus)
 
-	// Snapshot the providers once under the lock (they're swapped on reload paths).
-	lp := s.getLookupProvider()
-	bp := s.getBlockingProvider()
+	// This function already holds s.mu.RLock (above), so read the provider fields DIRECTLY.
+	// Calling the get*Provider() accessors here would RLock the same RWMutex a second time
+	// — a recursive read-lock that deadlocks if a writer's Lock() arrives in between.
+	lp := s.lookupProvider
+	bp := s.blockingProvider
 
 	// MaxMind status
 	maxmindStatus := ProviderStatus{
