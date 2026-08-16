@@ -259,7 +259,7 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 		response["availableServices"] = available.data
 	}
 	if dnsConfig.err == nil {
-		response["dnsConfig"] = dnsConfig.data // includes aaaa_disabled
+		response["dnsConfig"] = dnsConfig.data // includes disable_ipv6
 	}
 
 	router.JSON(w, response)
@@ -313,7 +313,7 @@ func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) {
 			router.JSONError(w, "enabled field required for type: blockAAAA", http.StatusBadRequest)
 			return
 		}
-		body := `{"aaaa_disabled":` + strconv.FormatBool(*req.Enabled) + `}`
+		body := `{"disable_ipv6":` + strconv.FormatBool(*req.Enabled) + `}`
 		resp, err := s.doRequest("POST", "/control/dns_config", newStringReader(body))
 		if err != nil {
 			router.JSONError(w, err.Error(), http.StatusFailedDependency)

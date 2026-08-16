@@ -363,7 +363,7 @@
   async function toggleBlockAAAA(enabled) {
     try {
       await apiPut('/api/adguard/config', { type: 'blockAAAA', enabled })
-      dnsConfig = { ...dnsConfig, aaaa_disabled: enabled }
+      dnsConfig = { ...dnsConfig, disable_ipv6: enabled }
       toast(enabled ? 'IPv6 (AAAA) answers blocked' : 'IPv6 (AAAA) answers allowed', 'success')
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
@@ -505,7 +505,7 @@
                 <ContentBlock
                   icon="world-off"
                   title="Block IPv6 (AAAA)"
-                  active={dnsConfig?.aaaa_disabled}
+                  active={dnsConfig?.disable_ipv6}
                 >
                   {#snippet descriptionSlot()}
                     <div class="text-xs text-muted-foreground">
@@ -514,8 +514,8 @@
                   {/snippet}
                   <Checkbox
                     variant="switch"
-                    checked={dnsConfig?.aaaa_disabled}
-                    onchange={() => toggleBlockAAAA(!dnsConfig?.aaaa_disabled)}
+                    checked={dnsConfig?.disable_ipv6}
+                    onchange={() => toggleBlockAAAA(!dnsConfig?.disable_ipv6)}
                   />
                 </ContentBlock>
               </div>
