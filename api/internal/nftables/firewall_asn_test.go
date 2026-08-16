@@ -149,6 +149,32 @@ func TestBuildSetAutoMerge(t *testing.T) {
 	}
 }
 
+// TestVPNACLFailsClosedOnMissingRange guards H2: an empty/invalid WG_IP_RANGE must NOT
+// leave the forward chain (policy accept) without any peer-to-peer drop. When the IP range
+// is missing, an interface-scoped fail-closed drop is emitted instead.
+func TestVPNACLFailsClosedOnMissingRange(t *testing.T) {
+	at := &VPNACLTable{}
+	clients := map[int64]vpnClient{
+		1: {ID: 1, Name: "p", IP: "10.8.0.2", Type: "wireguard", Policy: "default"},
+	}
+	// Missing WG range (and an IPv6 hs range that our IPv4 validator rejects → also "").
+	got := at.buildScript(clients, nil, nil, "", "fd7a::/48", "10.8.0.1")
+	if !strings.Contains(got, `iifname "wg0" oifname "wg0" drop`) {
+		t.Error("missing WG range must emit an interface fail-closed drop (wg0), not fall through to policy accept")
+	}
+	if strings.Contains(got, "ip saddr  ip daddr") {
+		t.Error("must not emit a malformed empty-range rule")
+	}
+	// With a valid range, the interface fallback must NOT appear (IP-based drop governs).
+	ok := at.buildScript(clients, nil, nil, "10.8.0.0/16", "100.64.0.0/16", "10.8.0.1")
+	if strings.Contains(ok, `iifname "wg0" oifname "wg0" drop`) {
+		t.Error("valid range should use the IP-based drop, not the interface fallback")
+	}
+	if !strings.Contains(ok, "ip saddr 10.8.0.0/16 ip daddr 10.8.0.0/16 drop") {
+		t.Error("valid range should emit the wg->wg IP drop")
+	}
+}
+
 // TestBuildScriptAllowBeforeDeny guards the security-critical ordering: in each
 // chain the source allow-list (accept) must appear BEFORE the block-list (drop),
 // otherwise a block would win over an intended allow-exception.

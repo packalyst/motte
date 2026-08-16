@@ -2,6 +2,7 @@ package nftables
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"api/internal/database"
@@ -340,6 +341,31 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	}
 	if hsIPRange != "" {
 		sb.WriteString(fmt.Sprintf("        ip saddr %s ip daddr %s drop\n", hsIPRange, hsIPRange))
+	}
+
+	// FAIL CLOSED when a VPN range is missing/invalid. Without it the IP-based catch-all
+	// above can't be emitted, and the chain's policy is `accept` — so peers would reach each
+	// other freely (isolation, restricted/quarantine vips all void). Fall back to an
+	// interface-scoped drop of same-interface traffic (peer→peer enters AND leaves the VPN
+	// NIC; internet-bound leaves the WAN NIC, so it's unaffected). Uses the wg0/tailscale0
+	// names the firewall table already assumes. Established/related + explicit accepts are
+	// emitted earlier, so allowed pairs still work; everything else peer↔peer is denied.
+	if wgIPRange == "" {
+		// Warn only when WireGuard peers actually exist (a Headscale-only deployment
+		// legitimately has no WG range — the fallback drop is then just harmless, since
+		// there's no wg0 traffic).
+		for _, c := range clients {
+			if c.Type == "wireguard" {
+				log.Printf("nftables/vpn_acl: WG_IP_RANGE missing/invalid but WireGuard peers exist — falling back to interface isolation (wg0). Set a valid IPv4 WG_IP_RANGE to restore full peer/vip isolation.")
+				break
+			}
+		}
+		sb.WriteString("        # WG_IP_RANGE missing/invalid — interface fail-closed for WireGuard peers\n")
+		sb.WriteString("        iifname \"wg0\" oifname \"wg0\" drop\n")
+	}
+	if hsIPRange == "" {
+		sb.WriteString("        # HEADSCALE_IP_RANGE missing/invalid — interface fail-closed for Headscale peers\n")
+		sb.WriteString("        iifname \"tailscale0\" oifname \"tailscale0\" drop\n")
 	}
 
 	sb.WriteString("    }\n")
