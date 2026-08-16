@@ -294,6 +294,13 @@
       "endpoints": [
         {"path": "", "methods": ["GET"], "handler": "ListEvents", "description": "Recent cross-subsystem activity feed"}
       ]
+    },
+    "server": {
+      "prefix": "/api/server",
+      "enabled": true,
+      "endpoints": [
+        {"path": "/security", "methods": ["GET"], "handler": "GetSecurity", "description": "Host security posture: logins, sudo, accounts, packages, ports, uptime, certs"}
+      ]
     }
   },
   "middleware": {

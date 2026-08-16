@@ -23,6 +23,7 @@ import (
 	"api/internal/headscale"
 	"api/internal/helper"
 	"api/internal/logs"
+	"api/internal/server"
 	"api/internal/logs/sources"
 	"api/internal/nftables"
 	"api/internal/router"
@@ -311,6 +312,35 @@ func main() {
 			logsSvc.Start()
 			r.RegisterService("logs", logsSvc.Handlers())
 			log.Println("Logs service registered")
+		}
+	}
+
+	// Host-security ("Server" page): read-only host telemetry. Uses the same host
+	// access the container already has (network_mode:host, pid:host, /var/log:ro).
+	if config.IsServiceEnabled("server") {
+		if srvDB, dberr := database.GetDB(); dberr == nil {
+			srvSvc := server.New(srvDB.DB)
+			srvSvc.Certs = func() []server.CertInfo {
+				certs, err := traefik.GetCertificates()
+				if err != nil {
+					return nil
+				}
+				out := make([]server.CertInfo, 0, len(certs))
+				for _, c := range certs {
+					out = append(out, server.CertInfo{Domain: c.Domain, DaysLeft: c.DaysLeft, Status: c.Status})
+				}
+				return out
+			}
+			srvSvc.GeoLookup = func(ip string) (string, string) {
+				if g := geolocation.GetService(); g != nil {
+					if res, lerr := g.LookupIP(ip); lerr == nil && res != nil {
+						return res.ASName, res.CountryCode
+					}
+				}
+				return "", ""
+			}
+			r.RegisterService("server", srvSvc.Handlers())
+			log.Println("Server security service registered")
 		}
 	}
 
