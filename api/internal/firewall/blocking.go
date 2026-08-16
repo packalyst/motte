@@ -150,6 +150,25 @@ func (s *Service) checkASNEscalation(ip, jailName string, banTime int) {
 		return
 	}
 
+	// Size floor: never let auto-escalation block a huge provider (cloud/CDN). An attacker
+	// rotating source IPs through such an ASN could otherwise force a massive collateral
+	// block. Above the ceiling, skip auto-escalation — a large ASN can still be blocked
+	// manually, deliberately.
+	const maxAutoEscalateASNAddrs = 1 << 16 // a /16 worth; clouds are far larger
+	if s.geo != nil {
+		var addrs uint64
+		for _, c := range s.geo.ASNRangesV4(asn) {
+			if _, ipnet, err := net.ParseCIDR(c); err == nil {
+				ones, bits := ipnet.Mask.Size()
+				addrs += uint64(1) << uint(bits-ones)
+			}
+		}
+		if addrs > maxAutoEscalateASNAddrs {
+			log.Printf("firewall: skipping auto-escalation of AS%d — too large (%d addresses > %d ceiling); block it manually if intended", asn, addrs, maxAutoEscalateASNAddrs)
+			return
+		}
+	}
+
 	// Escalate: block the whole ASN.
 	var expiresAt interface{}
 	if banTime > 0 {

@@ -289,13 +289,14 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 	res, err := db.Exec(`INSERT INTO vpn_virtual_ips (client_id, ip, label, target_ip, target_port, restricted, quarantine) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		clientID, vip, label, target, port, restricted, quarantine)
 	if err != nil {
-		// The partial unique index is the durable guard; a concurrent create can pass
-		// the pre-check above and still trip it here — report it as a conflict, not a 500.
-		if strings.Contains(err.Error(), "UNIQUE constraint") && strings.Contains(err.Error(), "idx_vpn_vip_peer_target") {
-			router.JSONError(w, "this peer already forwards to that device and port", http.StatusConflict)
+		// Any UNIQUE violation on this insert is a conflict, not a server error: either the
+		// peer+device+port partial index caught a duplicate, or the auto-allocated vip IP
+		// (ip is UNIQUE) raced a concurrent create. Report 409; don't echo raw SQL.
+		if strings.Contains(err.Error(), "UNIQUE constraint") {
+			router.JSONError(w, "could not create this virtual IP — it may duplicate an existing forward, or the address was just taken; try again", http.StatusConflict)
 			return
 		}
-		router.JSONError(w, "failed to add virtual IP: "+err.Error(), http.StatusInternalServerError)
+		router.JSONError(w, "failed to add virtual IP", http.StatusInternalServerError)
 		return
 	}
 	vipID, _ := res.LastInsertId()
@@ -437,13 +438,30 @@ func (s *Service) handleSetVirtualIPACL(w http.ResponseWriter, r *http.Request) 
 	}
 	// Replace the allow-list. The INSERT...SELECT guarantees each source_client_id
 	// references a real client (integrity + validation); OR IGNORE handles duplicates.
-	if _, err := db.Exec(`DELETE FROM vpn_virtual_ip_acl WHERE virtual_ip_id = ?`, vipID); err != nil {
+	// Replace the allow-list atomically: without a transaction, a failure mid-loop would
+	// leave the vip with a half-applied allow-list (some grants deleted, others not
+	// inserted), silently widening or narrowing access.
+	tx, err := db.Begin()
+	if err != nil {
+		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
+	if _, err := tx.Exec(`DELETE FROM vpn_virtual_ip_acl WHERE virtual_ip_id = ?`, vipID); err != nil {
+		tx.Rollback()
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	for _, cid := range req.AllowedClientIDs {
-		db.Exec(`INSERT OR IGNORE INTO vpn_virtual_ip_acl (virtual_ip_id, source_client_id)
-		         SELECT ?, id FROM vpn_clients WHERE id = ?`, vipID, cid)
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO vpn_virtual_ip_acl (virtual_ip_id, source_client_id)
+		         SELECT ?, id FROM vpn_clients WHERE id = ?`, vipID, cid); err != nil {
+			tx.Rollback()
+			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	requestFirewallApply() // rebuild the vpn_acl table with the new allow-list
 	router.JSON(w, map[string]string{"status": "ok"})
