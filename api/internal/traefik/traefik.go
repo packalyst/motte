@@ -32,6 +32,18 @@ var (
 	LoadVPNOnlyMode    func() (string, error)
 )
 
+// Firewall-block (L7) toggle hooks, wired by main.go for the same import-cycle reason.
+// PersistFWBlock/LoadFWBlock persist the on/off flag; RegenerateDomains re-renders the
+// domain routes so the toggle takes effect on them too.
+var (
+	PersistFWBlock    func(on bool) error
+	LoadFWBlock       func() (bool, error)
+	RegenerateDomains func() error
+)
+
+// fwBlockRouters are the panel's own routers that carry the block middleware (HTTP+HTTPS).
+var fwBlockRouters = []string{"ui", "ui-secure", "unified-api", "unified-api-secure"}
+
 // Sentinel middleware names - used throughout the codebase
 const (
 	MiddlewareSentinelVPN       = "sentinel_vpn"
@@ -81,6 +93,8 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"UpdateConfig": s.handleUpdateConfig,
 		"GetVPNOnly":   s.handleGetVPNOnly,
 		"SetVPNOnly":   s.handleSetVPNOnly,
+		"GetFWBlock":   s.handleGetFWBlock,
+		"SetFWBlock":   s.handleSetFWBlock,
 		"GetResolvers": s.handleGetResolvers,
 	}
 }
@@ -492,6 +506,56 @@ func (s *Service) removeMiddlewareFromRouter(routerName, middlewareName string) 
 
 	log.Printf("Removed middleware '%s' from router '%s'", middlewareName, routerName)
 	return nil
+}
+
+// RestoreFWBlock reconciles the panel routers' sentinel_fw_block attachment to `on`, and
+// re-renders the domain routes. Called at startup (so state matches the persisted setting
+// after manage.sh regenerates core.yml) and on every toggle. Idempotent: it removes the
+// middleware first, then re-adds it only when enabled, so it never double-attaches.
+func (s *Service) RestoreFWBlock(on bool) {
+	for _, rtr := range fwBlockRouters {
+		s.removeMiddlewareFromRouter(rtr, MiddlewareSentinelFWBlock)
+		if on {
+			if err := s.addMiddlewareToRouter(rtr, MiddlewareSentinelFWBlock); err != nil {
+				// Router may not exist (e.g. *-secure with SSL off) — log and continue.
+				log.Printf("fw-block: router %s: %v", rtr, err)
+			}
+		}
+	}
+	if RegenerateDomains != nil {
+		if err := RegenerateDomains(); err != nil {
+			log.Printf("fw-block: domain route regen: %v", err)
+		}
+	}
+}
+
+// handleGetFWBlock reports whether L7 firewall-block enforcement is on.
+func (s *Service) handleGetFWBlock(w http.ResponseWriter, r *http.Request) {
+	on := true
+	if LoadFWBlock != nil {
+		if v, err := LoadFWBlock(); err == nil {
+			on = v
+		}
+	}
+	router.JSON(w, map[string]bool{"enabled": on})
+}
+
+// handleSetFWBlock persists the toggle and re-applies it to the panel + domain routers.
+func (s *Service) handleSetFWBlock(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	if PersistFWBlock != nil {
+		if err := PersistFWBlock(req.Enabled); err != nil {
+			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	s.RestoreFWBlock(req.Enabled)
+	router.JSON(w, map[string]bool{"enabled": req.Enabled})
 }
 
 // GetVPNOnlyMode returns the current VPN-only mode ("off", "403", or "silent")

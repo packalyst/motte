@@ -124,6 +124,8 @@
         {"path": "/config", "methods": ["PUT"], "handler": "UpdateConfig", "description": "Update dynamic config"},
         {"path": "/vpn-only", "methods": ["GET"], "handler": "GetVPNOnly", "description": "Get VPN-only mode status"},
         {"path": "/vpn-only", "methods": ["POST"], "handler": "SetVPNOnly", "description": "Set VPN-only mode"},
+        {"path": "/fw-block", "methods": ["GET"], "handler": "GetFWBlock", "description": "Get L7 firewall-block enforcement status"},
+        {"path": "/fw-block", "methods": ["POST"], "handler": "SetFWBlock", "description": "Enable/disable L7 firewall-block enforcement"},
         {"path": "/resolvers", "methods": ["GET"], "handler": "GetResolvers", "description": "List cert resolvers defined in traefik.yml"}
       ]
     },

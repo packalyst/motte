@@ -189,8 +189,9 @@ func main() {
 		}
 	}
 
+	var traefikSvc *traefik.Service
 	if config.IsServiceEnabled("traefik") {
-		traefikSvc := traefik.New()
+		traefikSvc = traefik.New()
 		r.RegisterService("traefik", traefikSvc.Handlers())
 
 		// Wire up settings callbacks for traefik
@@ -205,6 +206,10 @@ func main() {
 		traefik.LoadVPNOnlyMode = func() (string, error) {
 			return settings.GetSetting("vpn_only_mode")
 		}
+
+		// L7 firewall-block toggle persistence (same dependency-inversion pattern).
+		traefik.PersistFWBlock = settings.SetTraefikFWBlock
+		traefik.LoadFWBlock = func() (bool, error) { return settings.GetTraefikFWBlock(), nil }
 
 		// Re-apply the persisted VPN-only mode. Needed after manage.sh regenerates
 		// core.yml from template (which wipes any middleware the user previously
@@ -267,6 +272,13 @@ func main() {
 		// Wire the L7 firewall-block toggle (hook avoids a domains -> settings import cycle).
 		domains.FWBlockEnabled = settings.GetTraefikFWBlock
 		r.RegisterService("domains", domainsSvc.Handlers())
+
+		// Now that domains can regenerate routes, let the traefik toggle drive it, and
+		// reconcile the block middleware to the persisted setting (survives core.yml regen).
+		if traefikSvc != nil {
+			traefik.RegenerateDomains = domains.ApplyRoutes
+			traefikSvc.RestoreFWBlock(settings.GetTraefikFWBlock())
+		}
 		log.Println("Domains service registered")
 	}
 

@@ -54,6 +54,10 @@
   let vpnOnlyMode = $state('off')
   let vpnOnlyLoading = $state(false)
 
+  // L7 firewall-block enforcement (apply the firewall block list to proxied/Cloudflare traffic)
+  let fwBlockEnabled = $state(true)
+  let fwBlockLoading = $state(false)
+
   // Session settings
   let sessionTimeout = $state('24')
   let sessionChanged = $state(false)
@@ -164,6 +168,12 @@
 
       // VPN-only mode (from aggregated response)
       vpnOnlyMode = settings.vpn_only_mode || 'off'
+
+      // L7 firewall-block enforcement (default on)
+      try {
+        const fw = await apiGet('/api/traefik/fw-block')
+        fwBlockEnabled = fw?.enabled !== false
+      } catch { fwBlockEnabled = true }
 
       // Headscale
       headscaleApiUrl = settings.headscale_api_url || ''
@@ -576,6 +586,21 @@
       toast('Failed to set VPN-only mode: ' + e.message, 'error')
     } finally {
       vpnOnlyLoading = false
+    }
+  }
+
+  // Toggle L7 firewall-block enforcement
+  async function setFWBlock(enabled) {
+    fwBlockLoading = true
+    try {
+      await apiPost('/api/traefik/fw-block', { enabled })
+      fwBlockEnabled = enabled
+      toast(enabled ? 'Firewall enforcement enabled on proxied traffic' : 'Firewall enforcement disabled on proxied traffic', 'success')
+    } catch (e) {
+      fwBlockEnabled = !enabled // revert the switch
+      toast('Failed to update firewall enforcement: ' + e.message, 'error')
+    } finally {
+      fwBlockLoading = false
     }
   }
 
@@ -1435,6 +1460,14 @@
                   onchange={(e) => setVPNOnlyMode(e.target.value)}
                   disabled={vpnOnlyLoading}
                 />
+              </div>
+            </ContentBlock>
+            <ContentBlock title="Enforce Firewall on Proxied Traffic" description="Apply the firewall block list at the proxy, so blocks work behind Cloudflare too">
+              <div class="flex items-center gap-2">
+                {#if fwBlockLoading}
+                  <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                {/if}
+                <Checkbox variant="switch" bind:checked={fwBlockEnabled} disabled={fwBlockLoading} onchange={() => setFWBlock(fwBlockEnabled)} />
               </div>
             </ContentBlock>
           </div>
