@@ -5,6 +5,8 @@
   import InfoCard from '../components/InfoCard.svelte'
   import AreaChart from '../components/AreaChart.svelte'
   import SecurityHero from '../components/SecurityHero.svelte'
+  import BlockedByLayer from '../components/BlockedByLayer.svelte'
+  import PublicVisitors from '../components/PublicVisitors.svelte'
   import ActivityFeed from '../components/ActivityFeed.svelte'
   import PeersCard from '../components/PeersCard.svelte'
   import { currentView } from '../stores/app.js'
@@ -81,6 +83,12 @@
 
   <!-- Security status + service health: am I under attack, is everything up? -->
   <SecurityHero services={$statsStore?.services || []} />
+
+  <!-- Is my defense working — blocked by layer (last hour) -->
+  <BlockedByLayer period="hour" />
+
+  <!-- Worst offender is in SecurityHero; pair it with live public visitors -->
+  <PublicVisitors />
 
   <!-- Traffic: live chart + cumulative totals -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
