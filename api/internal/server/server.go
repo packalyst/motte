@@ -132,8 +132,8 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	rep := securityReport{Status: "calm", Certs: []CertInfo{}}
 
-	// Single bounded pass over auth.log yields logins, sudo, accounts, failed-ssh.
-	al := s.scanAuthLog(now)
+	// Journald (preferred) or auth.log yields logins, sudo, accounts, failed-ssh.
+	al := s.scanLogins(now)
 	rep.Logins = al.logins
 	rep.Sudo = al.sudo
 	rep.Accounts = al.accounts
@@ -169,13 +169,15 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 
 // ---------- auth.log ----------
 
+// Process-name brackets are optional so these match both /var/log/auth.log and
+// journald output.
 var (
-	reAccepted = regexp.MustCompile(`sshd\[\d+\]:\s+Accepted\s+(\S+)\s+for\s+(\S+)\s+from\s+(\S+)\s+port\s+(\d+)`)
-	reFailed   = regexp.MustCompile(`sshd\[\d+\]:\s+Failed\s+password\s+for\s+(?:invalid user\s+)?\S+\s+from\s+(\S+)\s+port`)
-	reSudoCmd  = regexp.MustCompile(`sudo:\s+(\S+)\s+:.*COMMAND=(.+)$`)
-	reSudoFail = regexp.MustCompile(`sudo:.*(authentication failure|incorrect password attempt)`)
-	reNewUser  = regexp.MustCompile(`useradd\[\d+\]:\s+new user:\s+name=([A-Za-z0-9_.-]+)`)
-	reNewGroup = regexp.MustCompile(`groupadd\[\d+\]:\s+new group:\s+name=([A-Za-z0-9_.-]+)`)
+	reAccepted = regexp.MustCompile(`sshd(?:\[\d+\])?:\s+Accepted\s+(\S+)\s+for\s+(\S+)\s+from\s+(\S+)\s+port\s+(\d+)`)
+	reFailed   = regexp.MustCompile(`sshd(?:\[\d+\])?:\s+Failed\s+password\s+for\s+(?:invalid user\s+)?\S+\s+from\s+(\S+)\s+port`)
+	reSudoCmd  = regexp.MustCompile(`sudo(?:\[\d+\])?:\s+(\S+)\s+:.*COMMAND=(.+)$`)
+	reSudoFail = regexp.MustCompile(`sudo(?:\[\d+\])?:.*(authentication failure|incorrect password attempt)`)
+	reNewUser  = regexp.MustCompile(`useradd(?:\[\d+\])?:\s+new user:\s+name=([A-Za-z0-9_.-]+)`)
+	reNewGroup = regexp.MustCompile(`groupadd(?:\[\d+\])?:\s+new group:\s+name=([A-Za-z0-9_.-]+)`)
 	// Leading syslog timestamp "Aug  5 18:42:01" (day may be space-padded).
 	reSyslogTS = regexp.MustCompile(`^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})`)
 )
@@ -186,78 +188,115 @@ type authScan struct {
 	accounts accountsBlock
 }
 
-func (s *Service) scanAuthLog(now time.Time) authScan {
-	var out authScan
-	out.accounts.NewUsers = []acctEvent{}
-	out.accounts.NewGroups = []acctEvent{}
-	out.logins.Recent = []loginEvent{}
-	out.sudo.Recent = []sudoEvent{}
+// authAccum matches parsed auth events from either /var/log/auth.log (syslog
+// timestamps) or journald (ISO timestamps) into a single result.
+type authAccum struct {
+	out                                   authScan
+	failedIPs                             map[string]struct{}
+	oneHour, twoHour, dayAgo, cutoff time.Time
+}
 
-	cutoff := now.Add(-7 * 24 * time.Hour) // keep recent events for the lists
-	oneHour := now.Add(-time.Hour)
-	twoHour := now.Add(-2 * time.Hour)
-	dayAgo := now.Add(-24 * time.Hour)
+func newAuthAccum(now time.Time) *authAccum {
+	a := &authAccum{
+		oneHour:   now.Add(-time.Hour),
+		twoHour:   now.Add(-2 * time.Hour),
+		dayAgo:    now.Add(-24 * time.Hour),
+		cutoff:    now.Add(-7 * 24 * time.Hour),
+		failedIPs: map[string]struct{}{},
+	}
+	a.out.accounts.NewUsers = []acctEvent{}
+	a.out.accounts.NewGroups = []acctEvent{}
+	a.out.logins.Recent = []loginEvent{}
+	a.out.sudo.Recent = []sudoEvent{}
+	return a
+}
 
-	failedIPs := map[string]struct{}{}
+func (a *authAccum) line(line string, ts time.Time, ok bool) {
+	if m := reFailed.FindStringSubmatch(line); m != nil {
+		if ok {
+			if ts.After(a.oneHour) {
+				a.out.logins.Failed1h++
+				a.failedIPs[m[1]] = struct{}{}
+			} else if ts.After(a.twoHour) {
+				a.out.logins.FailedPrev1h++
+			}
+		}
+		return
+	}
+	if m := reAccepted.FindStringSubmatch(line); m != nil {
+		if !ok || ts.Before(a.cutoff) {
+			return
+		}
+		a.out.logins.Recent = append(a.out.logins.Recent, loginEvent{Method: m[1], User: m[2], IP: m[3], When: ts, Root: m[2] == "root"})
+		return
+	}
+	if m := reSudoCmd.FindStringSubmatch(line); m != nil {
+		if !ok || ts.Before(a.cutoff) {
+			return
+		}
+		a.out.sudo.Recent = append(a.out.sudo.Recent, sudoEvent{User: m[1], Command: strings.TrimSpace(m[2]), When: ts})
+		return
+	}
+	if reSudoFail.MatchString(line) {
+		if ok && ts.After(a.dayAgo) {
+			a.out.sudo.Failures24h++
+		}
+		return
+	}
+	if m := reNewUser.FindStringSubmatch(line); m != nil {
+		if ok && !ts.Before(a.cutoff) {
+			a.out.accounts.NewUsers = append(a.out.accounts.NewUsers, acctEvent{Name: m[1], When: ts})
+		}
+		return
+	}
+	if m := reNewGroup.FindStringSubmatch(line); m != nil {
+		if ok && !ts.Before(a.cutoff) {
+			a.out.accounts.NewGroups = append(a.out.accounts.NewGroups, acctEvent{Name: m[1], When: ts})
+		}
+		return
+	}
+}
 
+func (a *authAccum) finish() authScan {
+	a.out.logins.FailedIPs1h = len(a.failedIPs)
+	a.out.logins.Recent = lastN(a.out.logins.Recent, 12)
+	a.out.sudo.Recent = lastN(a.out.sudo.Recent, 12)
+	return a.out
+}
+
+// scanLogins reads recent auth events, preferring journald (Ubuntu 24.04+ ships no
+// /var/log/auth.log by default — sshd logs only to the journal) and falling back to
+// the log file when the journal isn't reachable.
+func (s *Service) scanLogins(now time.Time) authScan {
+	if sc, ok := s.scanJournal(now); ok {
+		return sc
+	}
+	acc := newAuthAccum(now)
 	forEachTailLine(s.authLogPath, func(line string) {
 		ts, ok := parseSyslogTime(line, now)
-
-		// Failed SSH — bucket by hour for the trend (uses ts when available).
-		if m := reFailed.FindStringSubmatch(line); m != nil {
-			ip := m[1]
-			if ok {
-				if ts.After(oneHour) {
-					out.logins.Failed1h++
-					failedIPs[ip] = struct{}{}
-				} else if ts.After(twoHour) {
-					out.logins.FailedPrev1h++
-				}
-			}
-			return
-		}
-		// Successful login.
-		if m := reAccepted.FindStringSubmatch(line); m != nil {
-			if !ok || ts.Before(cutoff) {
-				return
-			}
-			ev := loginEvent{Method: m[1], User: m[2], IP: m[3], When: ts, Root: m[2] == "root"}
-			out.logins.Recent = append(out.logins.Recent, ev)
-			return
-		}
-		// sudo success.
-		if m := reSudoCmd.FindStringSubmatch(line); m != nil {
-			if !ok || ts.Before(cutoff) {
-				return
-			}
-			out.sudo.Recent = append(out.sudo.Recent, sudoEvent{User: m[1], Command: strings.TrimSpace(m[2]), When: ts})
-			return
-		}
-		// sudo failure (24h count).
-		if reSudoFail.MatchString(line) {
-			if ok && ts.After(dayAgo) {
-				out.sudo.Failures24h++
-			}
-			return
-		}
-		if m := reNewUser.FindStringSubmatch(line); m != nil {
-			if ok && !ts.Before(cutoff) {
-				out.accounts.NewUsers = append(out.accounts.NewUsers, acctEvent{Name: m[1], When: ts})
-			}
-			return
-		}
-		if m := reNewGroup.FindStringSubmatch(line); m != nil {
-			if ok && !ts.Before(cutoff) {
-				out.accounts.NewGroups = append(out.accounts.NewGroups, acctEvent{Name: m[1], When: ts})
-			}
-			return
-		}
+		acc.line(line, ts, ok)
 	})
+	return acc.finish()
+}
 
-	out.logins.FailedIPs1h = len(failedIPs)
-	out.logins.Recent = lastN(out.logins.Recent, 12)
-	out.sudo.Recent = lastN(out.sudo.Recent, 12)
-	return out
+// scanJournal reads sshd/sudo/useradd/groupadd events from the host journal via
+// nsenter into PID 1's namespaces (the container is pid:host + privileged, and
+// already uses nsenter elsewhere). Returns ok=false if journald isn't reachable so
+// the caller falls back to the log file.
+func (s *Service) scanJournal(now time.Time) (authScan, bool) {
+	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
+		"journalctl", "-o", "short-iso", "--since", "7 days ago", "--no-pager",
+		"-t", "sshd", "-t", "sudo", "-t", "useradd", "-t", "groupadd")
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		return authScan{}, false
+	}
+	acc := newAuthAccum(now)
+	for _, line := range strings.Split(string(out), "\n") {
+		ts, ok := parseISOTime(line)
+		acc.line(line, ts, ok)
+	}
+	return acc.finish(), true
 }
 
 // ---------- dpkg.log ----------
@@ -379,6 +418,20 @@ func parseSyslogTime(line string, now time.Time) (time.Time, bool) {
 	// Syslog has no year: if that lands >24h in the future, it's from last year.
 	if t.After(now.Add(24 * time.Hour)) {
 		t = t.AddDate(-1, 0, 0)
+	}
+	return t, true
+}
+
+// parseISOTime parses the leading ISO timestamp of a `journalctl -o short-iso`
+// line, e.g. "2026-08-16T18:42:01+0200 host sshd[1]: ...".
+func parseISOTime(line string) (time.Time, bool) {
+	i := strings.IndexByte(line, ' ')
+	if i <= 0 {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006-01-02T15:04:05-0700", line[:i])
+	if err != nil {
+		return time.Time{}, false
 	}
 	return t, true
 }
