@@ -169,15 +169,16 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 
 // ---------- auth.log ----------
 
-// Process-name brackets are optional so these match both /var/log/auth.log and
-// journald output.
+// Match on the MESSAGE content, not the process name — OpenSSH 9.8+ (Ubuntu 24.04)
+// logs logins under "sshd-session", older ones under "sshd", and journald vs syslog
+// format the prefix differently. The content phrasing is stable and SSH-specific.
 var (
-	reAccepted = regexp.MustCompile(`sshd(?:\[\d+\])?:\s+Accepted\s+(\S+)\s+for\s+(\S+)\s+from\s+(\S+)\s+port\s+(\d+)`)
-	reFailed   = regexp.MustCompile(`sshd(?:\[\d+\])?:\s+Failed\s+password\s+for\s+(?:invalid user\s+)?\S+\s+from\s+(\S+)\s+port`)
+	reAccepted = regexp.MustCompile(`Accepted\s+(\S+)\s+for\s+(\S+)\s+from\s+(\S+)\s+port\s+(\d+)`)
+	reFailed   = regexp.MustCompile(`Failed\s+password\s+for\s+(?:invalid user\s+)?\S+\s+from\s+(\S+)\s+port`)
 	reSudoCmd  = regexp.MustCompile(`sudo(?:\[\d+\])?:\s+(\S+)\s+:.*COMMAND=(.+)$`)
 	reSudoFail = regexp.MustCompile(`sudo(?:\[\d+\])?:.*(authentication failure|incorrect password attempt)`)
-	reNewUser  = regexp.MustCompile(`useradd(?:\[\d+\])?:\s+new user:\s+name=([A-Za-z0-9_.-]+)`)
-	reNewGroup = regexp.MustCompile(`groupadd(?:\[\d+\])?:\s+new group:\s+name=([A-Za-z0-9_.-]+)`)
+	reNewUser  = regexp.MustCompile(`new user:\s+name=([A-Za-z0-9_.-]+)`)
+	reNewGroup = regexp.MustCompile(`new group:\s+name=([A-Za-z0-9_.-]+)`)
 	// Leading syslog timestamp "Aug  5 18:42:01" (day may be space-padded).
 	reSyslogTS = regexp.MustCompile(`^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})`)
 )
@@ -201,7 +202,7 @@ func newAuthAccum(now time.Time) *authAccum {
 		oneHour:   now.Add(-time.Hour),
 		twoHour:   now.Add(-2 * time.Hour),
 		dayAgo:    now.Add(-24 * time.Hour),
-		cutoff:    now.Add(-7 * 24 * time.Hour),
+		cutoff:    now.Add(-30 * 24 * time.Hour),
 		failedIPs: map[string]struct{}{},
 	}
 	a.out.accounts.NewUsers = []acctEvent{}
@@ -285,8 +286,8 @@ func (s *Service) scanLogins(now time.Time) authScan {
 // the caller falls back to the log file.
 func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
-		"journalctl", "-o", "short-iso", "--since", "7 days ago", "--no-pager",
-		"-t", "sshd", "-t", "sudo", "-t", "useradd", "-t", "groupadd")
+		"journalctl", "-o", "short-iso", "--since", "30 days ago", "--no-pager",
+		"-t", "sshd", "-t", "sshd-session", "-t", "sudo", "-t", "useradd", "-t", "groupadd")
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
 		return authScan{}, false

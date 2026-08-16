@@ -236,19 +236,18 @@
     </div>
   </div>
 
-  <!-- Peers (online + top traffic) alongside recent activity -->
+  <!-- Who's here · recent activity -->
+  <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2">Who's here · recent activity</h2>
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <PeersCard />
 
     <!-- Recent activity (compact feed; full history on the Activity page) -->
-    <div class="kt-panel">
-      <div class="kt-panel-header flex items-center justify-between">
-        <h3 class="kt-panel-title">Recent activity</h3>
-        <button class="text-xs text-muted-foreground hover:text-foreground transition cursor-pointer" onclick={() => currentView.set('activity')}>View all →</button>
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-sm font-semibold text-foreground flex items-center gap-2"><Icon name="clock" size={16} class="text-muted-foreground" />Recent activity</h3>
+        <button class="text-xs text-primary font-medium hover:underline cursor-pointer" onclick={() => currentView.set('activity')}>View all →</button>
       </div>
-      <div class="kt-panel-body">
-        <ActivityFeed limit={8} compact />
-      </div>
+      <ActivityFeed limit={8} compact />
     </div>
   </div>
 

@@ -93,7 +93,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
         <h3 class="text-sm font-semibold text-foreground mb-0.5 flex items-center gap-2"><Icon name="terminal-2" size={16} class="text-primary" />Successful shell logins</h3>
-        <p class="text-[11px] text-muted-foreground mb-3">From <span class="font-mono">/var/log/auth.log</span>. An unfamiliar user, IP, or a root login means someone's inside.</p>
+        <p class="text-[11px] text-muted-foreground mb-3">From the system journal. An unfamiliar user, IP, or a root login from outside means someone's inside.</p>
         {#if data.logins.recent.length === 0}
           <div class="text-sm text-muted-foreground py-4 text-center">No shell logins recorded recently.</div>
         {:else}
