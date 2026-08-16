@@ -64,7 +64,9 @@
     <div class="flex items-center justify-between mb-1.5">
       <span class="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><Icon name="check" size={14} />Allowed</span>
     </div>
-    <div class="text-xl font-bold tabular-nums text-success">{d?.allowed?.percent != null ? Math.round(d.allowed.percent) + '%' : '—'}</div>
-    <div class="h-1.5 rounded-full bg-muted mt-2 overflow-hidden"><div class="h-full bg-success rounded-full" style="width:{Math.round(d?.allowed?.percent ?? 0)}%"></div></div>
+    <div class="text-xl font-bold tabular-nums text-success">{fmt(d?.allowed?.requests)}</div>
+    <div class="text-[11px] text-muted-foreground mt-1">
+      requests served{#if (d?.allowed?.requests ?? 0) + (d?.total_blocked ?? 0) > 0} · {Math.round(d?.allowed?.percent ?? 0)}% of traffic{/if}
+    </div>
   </div>
 </div>
