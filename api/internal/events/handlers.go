@@ -30,8 +30,9 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	typeFilter := r.URL.Query().Get("type")
+	subsystemFilter := r.URL.Query().Get("subsystem")
 
-	list, err := List(limit, typeFilter)
+	list, err := List(limit, typeFilter, subsystemFilter)
 	if err != nil {
 		router.JSONError(w, "failed to load events", http.StatusInternalServerError)
 		return

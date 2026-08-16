@@ -5,8 +5,8 @@
 package events
 
 import (
-	"database/sql"
 	"log"
+	"strings"
 	"sync/atomic"
 
 	"api/internal/database"
@@ -77,8 +77,10 @@ func trim(db *database.DB, latestID int64) {
 }
 
 // List returns the most recent events, newest first. limit is clamped to a sane
-// range; typeFilter, when non-empty, restricts to a single event type.
-func List(limit int, typeFilter string) ([]Event, error) {
+// range; typeFilter and subsystemFilter, when non-empty, restrict the result. Both
+// are applied in SQL so a low-volume subsystem isn't missed just because it fell
+// outside the newest `limit` rows across all subsystems.
+func List(limit int, typeFilter, subsystemFilter string) ([]Event, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -87,18 +89,28 @@ func List(limit int, typeFilter string) ([]Event, error) {
 		return nil, err
 	}
 
-	var rows *sql.Rows
 	// Emit created_at as ISO-8601 UTC (…Z) so the browser parses it as UTC
 	// rather than local time — SQLite's default "YYYY-MM-DD HH:MM:SS" is
 	// zone-ambiguous and would skew "time ago".
 	const cols = `id, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) AS created_at, type, severity, subsystem, message`
+	conds := []string{}
+	args := []interface{}{}
 	if typeFilter != "" {
-		rows, err = db.Query(
-			`SELECT `+cols+` FROM events WHERE type = ? ORDER BY id DESC LIMIT ?`, typeFilter, limit)
-	} else {
-		rows, err = db.Query(
-			`SELECT `+cols+` FROM events ORDER BY id DESC LIMIT ?`, limit)
+		conds = append(conds, "type = ?")
+		args = append(args, typeFilter)
 	}
+	if subsystemFilter != "" {
+		conds = append(conds, "subsystem = ?")
+		args = append(args, subsystemFilter)
+	}
+	q := `SELECT ` + cols + ` FROM events`
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	q += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

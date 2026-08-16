@@ -8,7 +8,6 @@
    * - limit: max events to fetch (default 50)
    * - compact: tighter rows, no subsystem label, no day grouping
    */
-  import { onMount } from 'svelte'
   import { apiGet } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import EmptyState from './EmptyState.svelte'
@@ -67,8 +66,13 @@
   }
 
   export async function reload() {
+    loading = true
     try {
-      const res = await apiGet(`/api/events?limit=${limit}`)
+      const params = new URLSearchParams({ limit: String(limit) })
+      // Filter by subsystem in SQL, not client-side over a capped fetch — otherwise a
+      // low-volume subsystem outside the newest `limit` rows shows a false "No activity".
+      if (subsystem) params.set('subsystem', subsystem)
+      const res = await apiGet(`/api/events?${params}`)
       events = res.events || []
       error = ''
     } catch (e) {
@@ -78,7 +82,12 @@
     }
   }
 
-  onMount(reload)
+  // Refetch whenever the subsystem filter (or limit) changes; runs on mount too.
+  $effect(() => {
+    subsystem
+    limit
+    reload()
+  })
 </script>
 
 {#if loading}
