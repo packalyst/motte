@@ -281,22 +281,38 @@ func (a *authAccum) finish() authScan {
 // /var/log/auth.log by default — sshd logs only to the journal) and falling back to
 // the log file when the journal isn't reachable.
 func (s *Service) scanLogins(now time.Time) authScan {
-	// Prefer the log file when it exists and has content (Debian/Ubuntu with rsyslog).
-	acc := newAuthAccum(now)
-	lines := 0
-	forEachTailLine(s.authLogPath, func(line string) {
-		lines++
-		ts, ok := parseAnyTime(line, now)
-		acc.line(line, ts, ok)
-	})
-	if lines > 0 {
-		return acc.finish()
+	// Prefer a log file when one exists with content: Debian/Ubuntu = /var/log/auth.log,
+	// RHEL/Fedora = /var/log/secure. Timestamp format varies by distro/version but the
+	// content phrasing is stable, and an unparseable timestamp never drops an event.
+	for _, path := range s.authLogCandidates() {
+		acc := newAuthAccum(now)
+		lines := 0
+		forEachTailLine(path, func(line string) {
+			lines++
+			ts, ok := parseAnyTime(line, now)
+			acc.line(line, ts, ok)
+		})
+		if lines > 0 {
+			return acc.finish()
+		}
 	}
-	// No log file (systemd-only hosts like Ubuntu 24.04) — read the journal instead.
+	// No usable log file (systemd-only hosts like Ubuntu 24.04) — read the journal.
 	if sc, ok := s.scanJournal(now); ok {
 		return sc
 	}
-	return acc.finish()
+	return newAuthAccum(now).finish()
+}
+
+func (s *Service) authLogCandidates() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range []string{s.authLogPath, "/var/log/auth.log", "/var/log/secure"} {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // scanJournal reads sshd/sudo/useradd/groupadd events from the host journal via
@@ -474,16 +490,26 @@ func parseAnyTime(line string, now time.Time) (time.Time, bool) {
 	return parseISOTime(line)
 }
 
-// parseISOTime parses a leading ISO-8601 timestamp, e.g. journald `-o short-iso`
-// ("2026-08-16T18:42:01+0200 ...") or rsyslog high-precision
-// ("2026-08-16T18:42:01.123456+00:00 ...").
+// isoLayouts covers the ISO-8601 timestamp variants seen across distros/loggers:
+// rsyslog high-precision ("…​.387291+03:00"), journald short-iso ("…+0200"),
+// UTC "Z", and no-offset forms.
+var isoLayouts = []string{
+	time.RFC3339Nano,                    // 2006-01-02T15:04:05.999999999Z07:00 (frac + ±HH:MM / Z)
+	time.RFC3339,                        // 2006-01-02T15:04:05Z07:00
+	"2006-01-02T15:04:05.999999999-0700", // frac + ±HHMM (no colon)
+	"2006-01-02T15:04:05-0700",          // journald short-iso, ±HHMM
+	"2006-01-02T15:04:05.999999999",     // frac, no offset
+	"2006-01-02T15:04:05",               // bare
+}
+
+// parseISOTime parses a leading ISO-8601 timestamp token of any common shape.
 func parseISOTime(line string) (time.Time, bool) {
 	i := strings.IndexByte(line, ' ')
 	if i <= 0 {
 		return time.Time{}, false
 	}
 	tok := line[:i]
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05-0700", "2006-01-02T15:04:05"} {
+	for _, layout := range isoLayouts {
 		if t, err := time.Parse(layout, tok); err == nil {
 			return t, true
 		}
