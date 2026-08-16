@@ -108,12 +108,12 @@
             <span class="h-px flex-1 bg-border"></span>
           </div>
         {/if}
-        <ul class="space-y-0.5">
+        <ul class={compact ? 'divide-y divide-border' : 'space-y-0.5'}>
           {#each group.items as e (e.id)}
             {@const sev = sevFor(e)}
             <li class="group flex items-center gap-2.5 rounded-md px-2 hover:bg-muted/40 transition {compact ? 'py-1.5' : 'py-2 border-l-2 ' + sev.accent}">
-              <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg {sev.bg} {sev.icon}">
-                <Icon name={iconFor(e)} size={14} />
+              <span class="flex shrink-0 items-center justify-center rounded-lg {sev.bg} {sev.icon} {compact ? 'h-6 w-6' : 'h-7 w-7'}">
+                <Icon name={iconFor(e)} size={compact ? 12 : 14} />
               </span>
               <span class="min-w-0 flex-1 text-[13px] leading-tight text-foreground truncate">{e.message}</span>
               {#if !compact}

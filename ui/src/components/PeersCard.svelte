@@ -72,7 +72,7 @@
     </div>
     <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs shrink-0">
       <button onclick={() => activeTab = 'online'} class="px-2.5 py-1 rounded-md transition cursor-pointer {activeTab === 'online' ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">
-        Online now{#if sessions.length} <span class="tabular-nums text-muted-foreground">{sessions.length}</span>{/if}
+        Online now
       </button>
       <button onclick={() => activeTab = 'traffic'} class="px-2.5 py-1 rounded-md transition cursor-pointer {activeTab === 'traffic' ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">
         Top traffic
