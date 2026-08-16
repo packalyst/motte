@@ -3,7 +3,9 @@ package firewall
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 
 	"api/internal/helper"
 	"api/internal/router"
@@ -76,10 +78,42 @@ func (s *Service) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateConfig updates configuration
 func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
-	if !router.DecodeJSONOrError(w, r, &s.config) {
+	// Decode into a COPY, never the live config: a bad request must not half-update it,
+	// and the copy preserves the json:"-" internal fields (WgPort, ServerIP, …). Only
+	// IgnoreNetworks and MaxAttempts are client-settable.
+	s.configMu.RLock()
+	updated := s.config
+	s.configMu.RUnlock()
+
+	if !router.DecodeJSONOrError(w, r, &updated) {
 		return
 	}
-	router.JSON(w, s.config)
+
+	// Validate the client-settable fields before they can affect the firewall/jails.
+	for _, n := range updated.IgnoreNetworks {
+		_, ipnet, err := net.ParseCIDR(strings.TrimSpace(n))
+		if err != nil {
+			router.JSONError(w, "invalid ignore network "+n+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Reject 0.0.0.0/0 (and ::/0): an all-addresses ignore net makes isIgnoredNetwork
+		// match every IP, silently disabling all blocking/auto-ban.
+		if ones, _ := ipnet.Mask.Size(); ones == 0 {
+			router.JSONError(w, "ignore network "+n+" is too broad — /0 would make the firewall ignore all traffic", http.StatusBadRequest)
+			return
+		}
+	}
+	if updated.MaxAttempts < 0 {
+		router.JSONError(w, "maxAttempts cannot be negative", http.StatusBadRequest)
+		return
+	}
+
+	// NOTE: the write is guarded; fully race-clean config reads (jail/traffic/utils) are a
+	// deferred follow-up — see the config-race notes. Config changes are rare admin actions.
+	s.configMu.Lock()
+	s.config = updated
+	s.configMu.Unlock()
+	router.JSON(w, updated)
 }
 
 // handleApplyRules manually applies firewall rules
