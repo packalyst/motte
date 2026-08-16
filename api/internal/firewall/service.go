@@ -119,6 +119,7 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 	// Start background tasks
 	go svc.runJailMonitors()
 	go svc.runExpirationCleanup()
+	go svc.runL3CounterSampler()
 
 	serviceInstance = svc
 	log.Printf("Firewall service initialized")

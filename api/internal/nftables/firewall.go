@@ -381,10 +381,10 @@ func allowAndSaddrDropRules() []string {
 		"",
 		"# Drop blocked sources (saddr). A country/ASN allow exempts its IPs from the geo/ASN",
 		"# drops ONLY (still port-gated) — it is deliberately not an all-port accept.",
-		"ip saddr @blocked_ips drop",
-		"ip saddr @blocked_ranges drop",
-		"ip saddr @blocked_countries ip saddr != @allowed_countries ip saddr != @allowed_asn drop",
-		"ip saddr @blocked_asn ip saddr != @allowed_countries ip saddr != @allowed_asn drop",
+		"ip saddr @blocked_ips counter drop",
+		"ip saddr @blocked_ranges counter drop",
+		"ip saddr @blocked_countries ip saddr != @allowed_countries ip saddr != @allowed_asn counter drop",
+		"ip saddr @blocked_asn ip saddr != @allowed_countries ip saddr != @allowed_asn counter drop",
 	}
 }
 
