@@ -191,7 +191,10 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 		statusCh <- result{data, err}
 	}()
 	go func() {
-		data, err := s.fetchJSON("/control/dns_config")
+		// AdGuard is asymmetric: config is READ from /control/dns_info (returns disable_ipv6
+		// et al.) but WRITTEN to POST /control/dns_config. Reading dns_config gave no
+		// disable_ipv6, so the AAAA checkbox never reflected the saved state.
+		data, err := s.fetchJSON("/control/dns_info")
 		dnsConfigCh <- result{data, err}
 	}()
 	go func() {
