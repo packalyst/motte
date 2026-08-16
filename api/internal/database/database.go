@@ -63,8 +63,12 @@ func Init(dataDir string) (*DB, error) {
 	once.Do(func() {
 		dbPath = dataDir + "/app.db"
 
-		// Open database (creates file if not exists)
-		db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+		// Open database (creates file if not exists). _foreign_keys=1 enables FK
+		// enforcement on every pooled connection, so the schema's ON DELETE CASCADE /
+		// SET NULL actually fire (SQLite ignores foreign keys per-connection otherwise) —
+		// e.g. deleting a peer now removes its virtual IPs + ACL rows instead of orphaning
+		// them into the firewall.
+		db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=1")
 		if err != nil {
 			initErr = fmt.Errorf("failed to open database: %v", err)
 			return
@@ -74,6 +78,26 @@ func Init(dataDir string) (*DB, error) {
 		if err := createSchema(db); err != nil {
 			initErr = fmt.Errorf("failed to create schema: %v", err)
 			return
+		}
+
+		// Pre-check: enabling FK enforcement doesn't retroactively validate existing rows,
+		// so surface any pre-existing violation loudly instead of letting it silently break
+		// a future write. (createSchema already swept known orphans.)
+		if rows, err := db.Query(`PRAGMA foreign_key_check`); err == nil {
+			n := 0
+			for rows.Next() {
+				var table, parent string
+				var rowid sql.NullInt64
+				var fkid int
+				if rows.Scan(&table, &rowid, &parent, &fkid) == nil {
+					log.Printf("WARNING: foreign-key violation after enabling FK enforcement: table=%s rowid=%v -> %s", table, rowid.Int64, parent)
+					n++
+				}
+			}
+			rows.Close()
+			if n > 0 {
+				log.Printf("WARNING: %d foreign-key violation(s) remain — inserts touching those parents may now fail", n)
+			}
 		}
 
 		instance = db
@@ -629,8 +653,7 @@ func runMigrations(db *sql.DB) {
 	// Enforce "a peer maps a device IP+port once" durably (race-proof) with a partial
 	// unique index. Bare-routed vips (target_ip='') are exempt. Existing exact-duplicate
 	// rows would make the index creation fail, so dedupe first — keep the lowest id in
-	// each (client_id, target_ip, target_port) group; also clear now-orphaned ACL rows
-	// (FK CASCADE isn't guaranteed without PRAGMA foreign_keys).
+	// each (client_id, target_ip, target_port) group.
 	if _, err := db.Exec(`DELETE FROM vpn_virtual_ips
 		WHERE target_ip != '' AND id NOT IN (
 			SELECT MIN(id) FROM vpn_virtual_ips WHERE target_ip != ''
@@ -638,7 +661,15 @@ func runMigrations(db *sql.DB) {
 		)`); err != nil {
 		log.Printf("Migration: vip dedupe failed: %v", err)
 	}
-	if _, err := db.Exec(`DELETE FROM vpn_virtual_ip_acl WHERE virtual_ip_id NOT IN (SELECT id FROM vpn_virtual_ips)`); err != nil {
+	// One-time sweep of pre-existing orphans: peers deleted while FK enforcement was OFF
+	// left vips (and, transitively, ACL rows) behind. Enabling FK doesn't remove them
+	// retroactively, so clear them once here. Order: vips first (with FK on this cascades
+	// their ACL rows), then mop up any ACL rows orphaned before FK was enabled.
+	if _, err := db.Exec(`DELETE FROM vpn_virtual_ips WHERE client_id NOT IN (SELECT id FROM vpn_clients)`); err != nil {
+		log.Printf("Migration: vip orphan (deleted-peer) cleanup failed: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM vpn_virtual_ip_acl WHERE virtual_ip_id NOT IN (SELECT id FROM vpn_virtual_ips)
+		OR source_client_id NOT IN (SELECT id FROM vpn_clients)`); err != nil {
 		log.Printf("Migration: vip orphan-ACL cleanup failed: %v", err)
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vpn_vip_peer_target
