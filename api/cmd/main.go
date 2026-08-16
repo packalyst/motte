@@ -264,6 +264,8 @@ func main() {
 
 	if config.IsServiceEnabled("domains") {
 		domainsSvc := domains.New()
+		// Wire the L7 firewall-block toggle (hook avoids a domains -> settings import cycle).
+		domains.FWBlockEnabled = settings.GetTraefikFWBlock
 		r.RegisterService("domains", domainsSvc.Handlers())
 		log.Println("Domains service registered")
 	}

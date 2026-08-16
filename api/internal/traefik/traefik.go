@@ -37,9 +37,11 @@ const (
 	MiddlewareSentinelVPN       = "sentinel_vpn"
 	MiddlewareSentinelVPNSilent = "sentinel_vpn_silent"
 	MiddlewareSentinelDrop      = "sentinel_drop"
+	MiddlewareSentinelFWBlock   = "sentinel_fw_block"
 	// With @file suffix for router middleware lists
 	MiddlewareSentinelVPNFile       = "sentinel_vpn@file"
 	MiddlewareSentinelVPNSilentFile = "sentinel_vpn_silent@file"
+	MiddlewareSentinelFWBlockFile   = "sentinel_fw_block@file"
 )
 
 // Service handles Traefik operations
@@ -753,7 +755,7 @@ type DomainRouteConfig struct {
 }
 
 // GenerateDomainRoutes writes domain routes to Traefik's dynamic config directory
-func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
+func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockEnabled bool) error {
 	var sb strings.Builder
 
 	sb.WriteString("# Domain Routes - Auto-generated, do not edit manually\n")
@@ -793,6 +795,14 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig) error {
 					name   string
 					config *SentinelConfig
 				}{mwName, route.SentinelConfig})
+			}
+
+			// Global firewall-block enforcement: when the Settings toggle is on, every
+			// domain route also checks the panel's block list (matched against the real
+			// client IP, so it works behind Cloudflare). Feeds both the HTTP and HTTPS
+			// routers below via this one middlewares list.
+			if fwBlockEnabled {
+				middlewares = append(middlewares, MiddlewareSentinelFWBlockFile)
 			}
 
 			// Build rule based on domain type (wildcard vs exact)

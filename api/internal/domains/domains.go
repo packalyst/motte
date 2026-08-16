@@ -18,6 +18,11 @@ import (
 	"api/internal/traefik"
 )
 
+// FWBlockEnabled reports whether domain routes should enforce the panel's firewall block
+// list at L7. Wired by main.go to settings.GetTraefikFWBlock (a hook avoids a domains ->
+// settings import cycle). Defaults to enabled.
+var FWBlockEnabled = func() bool { return true }
+
 // ensureVPNMiddleware adds sentinel_vpn@file if no VPN middleware exists
 // validateMiddlewaresAndResolver rejects middleware names / cert-resolver values that
 // aren't safe to write into the generated Traefik YAML (see traefik.GenerateDomainRoutes).
@@ -240,8 +245,9 @@ func ApplyRoutes() error {
 		routes = append(routes, rc)
 	}
 
-	// Generate Traefik config
-	if err := traefik.GenerateDomainRoutes(traefikConfigDir, routes); err != nil {
+	// Generate Traefik config. fwBlockEnabled (default on) makes every domain route also
+	// enforce the panel's firewall block list at L7 (works behind Cloudflare).
+	if err := traefik.GenerateDomainRoutes(traefikConfigDir, routes, FWBlockEnabled()); err != nil {
 		return fmt.Errorf("failed to generate Traefik config: %v", err)
 	}
 

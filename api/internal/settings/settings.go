@@ -417,6 +417,26 @@ func setSettingEncrypted(key, value string) error {
 	return err
 }
 
+// GetTraefikFWBlock reports whether the firewall block-list should be enforced at the
+// Traefik/sentinel (L7) layer, so blocks apply to Cloudflare-proxied traffic too. Default
+// ON — only an explicit "off" disables it.
+func GetTraefikFWBlock() bool {
+	v, err := GetSetting("traefik_fw_block")
+	if err != nil {
+		return true
+	}
+	return v != "off"
+}
+
+// SetTraefikFWBlock persists the L7 firewall-block toggle.
+func SetTraefikFWBlock(on bool) error {
+	v := "off"
+	if on {
+		v = "on"
+	}
+	return SetSetting("traefik_fw_block", v)
+}
+
 // GetSetting exports the getter for other packages
 func GetSetting(key string) (string, error) {
 	return getSetting(key)

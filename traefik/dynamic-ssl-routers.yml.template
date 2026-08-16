@@ -18,7 +18,8 @@
       rule: "Host(`${SSL_DOMAIN}`) && PathPrefix(`/`)"
       service: ui
       priority: 10
-      middlewares: []
+      middlewares:
+        - sentinel_fw_block
       entryPoints:
         - websecure
       tls:
@@ -34,6 +35,7 @@
       middlewares:
         - rate-limit
         - security-headers
+        - sentinel_fw_block
       entryPoints:
         - websecure
       tls:
