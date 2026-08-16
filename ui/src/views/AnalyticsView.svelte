@@ -12,6 +12,7 @@
   import StatCard from '../components/StatCard.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
   import Sparkline from '../components/Sparkline.svelte'
+  import BlockedByLayer from '../components/BlockedByLayer.svelte'
   import AreaChart from '../components/AreaChart.svelte'
   import BarList from '../components/BarList.svelte'
   import IpBadge from '../components/IpBadge.svelte'
@@ -323,6 +324,10 @@
             </div>
           </div>
         {/if}
+
+        <!-- Blocked by layer — L3 firewall / DNS / L7 proxy / allowed (obeys the period) -->
+        <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Blocked by layer · last {periodLabel}</div>
+        <div class="mb-4"><BlockedByLayer {period} /></div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {#each Object.entries(typeMeta) as [type, meta]}
