@@ -243,6 +243,7 @@
         <h3 class="text-sm font-semibold text-foreground flex items-center gap-2"><Icon name="clock" size={16} class="text-muted-foreground" />Recent activity</h3>
         <button class="text-xs text-primary font-medium hover:underline cursor-pointer" onclick={() => currentView.set('activity')}>View all →</button>
       </div>
+      <p class="text-[11px] text-muted-foreground -mt-1 mb-2">Latest events — full history on Activity.</p>
       <ActivityFeed limit={8} compact />
     </div>
   </div>
@@ -322,44 +323,30 @@
 
     <!-- Disk Usage -->
     {#if $statsStore?.diskUsage}
-    <div class="bg-card border border-border rounded-xl p-4">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-semibold">Disk Usage</h3>
-        <span class="text-xs text-muted-foreground">{$statsStore.diskUsage.totalSizeHR} total</span>
-      </div>
-      <div>
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <Icon name="layers-subtract" size={16} class="text-info" />
-              <span class="text-sm">Images ({$statsStore.diskUsage.imagesCount})</span>
-            </div>
-            <span class="text-sm font-medium">{$statsStore.diskUsage.imagesSizeHR}</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <Icon name="box" size={16} class="text-success" />
-              <span class="text-sm">Containers ({$statsStore.diskUsage.containersCount})</span>
-            </div>
-            <span class="text-sm font-medium">{$statsStore.diskUsage.containersSizeHR}</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <Icon name="server" size={16} class="text-warning" />
-              <span class="text-sm">Volumes ({$statsStore.diskUsage.volumesCount})</span>
-            </div>
-            <span class="text-sm font-medium">{$statsStore.diskUsage.volumesSizeHR}</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <Icon name="code" size={16} class="text-muted-foreground" />
-              <span class="text-sm">Build Cache</span>
-            </div>
-            <span class="text-sm font-medium">{$statsStore.diskUsage.buildCacheSizeHR}</span>
-          </div>
+      {@const du = $statsStore.diskUsage}
+      {@const parts = [
+        { label: 'Images', size: du.imagesSize || 0, hr: du.imagesSizeHR, color: 'bg-info' },
+        { label: 'Containers', size: du.containersSize || 0, hr: du.containersSizeHR, color: 'bg-success' },
+        { label: 'Volumes', size: du.volumesSize || 0, hr: du.volumesSizeHR, color: 'bg-warning' },
+        { label: 'Build cache', size: du.buildCacheSize || 0, hr: du.buildCacheSizeHR, color: 'bg-muted-foreground/40' },
+      ].filter(p => p.size > 0)}
+      {@const total = parts.reduce((s, p) => s + p.size, 0) || 1}
+      <div class="bg-card border border-border rounded-xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold">Disk usage</h3>
+          <span class="text-xs text-muted-foreground">{du.totalSizeHR} total</span>
+        </div>
+        <div class="flex h-3 rounded-full overflow-hidden bg-muted border border-border">
+          {#each parts as p}
+            <div class="{p.color}" style="width:{(p.size / total * 100).toFixed(1)}%" title="{p.label} {p.hr}"></div>
+          {/each}
+        </div>
+        <div class="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-[11px] text-muted-foreground">
+          {#each parts as p}
+            <span class="inline-flex items-center gap-1.5"><i class="h-2.5 w-2.5 rounded-sm {p.color} inline-block"></i>{p.label} <span class="text-foreground font-medium tabular-nums">{p.hr}</span></span>
+          {/each}
         </div>
       </div>
-    </div>
     {/if}
   </div>
   {/if}

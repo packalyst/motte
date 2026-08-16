@@ -79,9 +79,13 @@
     <svg width={containerWidth} height={height} class="block absolute inset-0">
       <defs>
         <linearGradient id={uid} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="currentColor" stop-opacity="0.25" />
+          <stop offset="0%" stop-color="currentColor" stop-opacity="0.38" />
+          <stop offset="65%" stop-color="currentColor" stop-opacity="0.06" />
           <stop offset="100%" stop-color="currentColor" stop-opacity="0" />
         </linearGradient>
+        <filter id="{uid}-glow" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="2.6" />
+        </filter>
       </defs>
 
       <!-- Gridlines (full-width) -->
@@ -95,14 +99,16 @@
       {/each}
 
       <path d={areaPath} fill="url(#{uid})" />
-      <path
-        d={linePath}
-        fill="none" stroke="currentColor" stroke-width={strokeWidth}
-        stroke-linejoin="round" stroke-linecap="round"
-      />
+      <!-- soft glow underlay -->
+      <path d={linePath} fill="none" stroke="currentColor" stroke-width={strokeWidth + 2}
+        stroke-linejoin="round" stroke-linecap="round" opacity="0.35" filter="url(#{uid}-glow)" />
+      <!-- crisp line -->
+      <path d={linePath} fill="none" stroke="currentColor" stroke-width={strokeWidth}
+        stroke-linejoin="round" stroke-linecap="round" />
       {#if lastPoint}
-        <circle cx={lastPoint.x} cy={lastPoint.y} r="5.5" fill="currentColor" opacity="0.15" />
-        <circle cx={lastPoint.x} cy={lastPoint.y} r="2.6" fill="currentColor" />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="8" fill="currentColor" opacity="0.16" class="ac-pulse" />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="3.6" fill="currentColor" />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="3.6" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="1" />
       {/if}
     </svg>
 
@@ -135,3 +141,9 @@
     </div>
   {/if}
 </div>
+
+<style>
+  @keyframes acPulse { 0%, 100% { opacity: 0.16; } 50% { opacity: 0.04; } }
+  :global(.ac-pulse) { animation: acPulse 2.4s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { :global(.ac-pulse) { animation: none; } }
+</style>

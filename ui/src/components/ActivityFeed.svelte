@@ -31,9 +31,9 @@
   }
   // Color per severity.
   const SEVERITY = {
-    info:     { icon: 'text-muted-foreground', bg: 'bg-muted',            accent: 'border-transparent' },
-    warning:  { icon: 'text-warning',          bg: 'bg-warning/10',       accent: 'border-warning/60' },
-    critical: { icon: 'text-destructive',      bg: 'bg-destructive/10',   accent: 'border-destructive/60' },
+    info:     { icon: 'text-muted-foreground', bg: 'bg-muted',            accent: 'border-transparent',    dot: 'bg-muted-foreground/40' },
+    warning:  { icon: 'text-warning',          bg: 'bg-warning/10',       accent: 'border-warning/60',     dot: 'bg-warning' },
+    critical: { icon: 'text-destructive',      bg: 'bg-destructive/10',   accent: 'border-destructive/60', dot: 'bg-destructive' },
   }
 
   const iconFor = e => SUBSYSTEM_ICON[e.subsystem] || 'activity'
@@ -112,9 +112,13 @@
           {#each group.items as e (e.id)}
             {@const sev = sevFor(e)}
             <li class="group flex items-center gap-2.5 rounded-md px-2 hover:bg-muted/40 transition {compact ? 'py-1.5' : 'py-2 border-l-2 ' + sev.accent}">
-              <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg {sev.bg} {sev.icon}">
-                <Icon name={iconFor(e)} size={14} />
-              </span>
+              {#if compact}
+                <span class="h-2 w-2 rounded-full shrink-0 {sev.dot}"></span>
+              {:else}
+                <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg {sev.bg} {sev.icon}">
+                  <Icon name={iconFor(e)} size={14} />
+                </span>
+              {/if}
               <span class="min-w-0 flex-1 text-[13px] leading-tight text-foreground truncate">{e.message}</span>
               {#if !compact}
                 <span class="hidden sm:inline-flex shrink-0 items-center rounded bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{e.subsystem}</span>

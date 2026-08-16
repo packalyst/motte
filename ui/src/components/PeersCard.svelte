@@ -9,6 +9,7 @@
   import { apiGet, apiPost } from '../stores/app.js'
   import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
+  import Button from './Button.svelte'
   import Tabs from './Tabs.svelte'
   import CountryFlag from './CountryFlag.svelte'
   import IpBadge from './IpBadge.svelte'
@@ -78,16 +79,16 @@
         <ul class="divide-y divide-border">
           {#each sessions as s (s.id)}
             {@const geo = geoData[s.endpointIp]}
-            <li class="flex items-center gap-3 px-2 py-2.5">
-              <span class="shrink-0">
-                {#if geo?.country_code}<CountryFlag code={geo.country_code} size="sm" />{:else}<Icon name="world" size={16} class="text-muted-foreground" />{/if}
+            <li class="flex items-center gap-3 px-2 py-2">
+              <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/60 border border-border">
+                {#if geo?.country_code}<CountryFlag code={geo.country_code} size="sm" />{:else}<Icon name="device-laptop" size={15} class="text-muted-foreground" />{/if}
               </span>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 min-w-0">
                   <span class="text-sm font-medium truncate">{s.name}</span>
                   <IpBadge {geo} compact />
                 </div>
-                <div class="text-[11px] text-muted-foreground truncate">
+                <div class="text-[11px] text-muted-foreground truncate font-mono">
                   {s.ip}{#if s.endpointIp} · from {s.endpointIp}{/if} · {timeAgo(s.lastHandshake)}
                 </div>
               </div>
@@ -95,14 +96,9 @@
                 <div>↓ {formatBytes(s.rx)}</div>
                 <div>↑ {formatBytes(s.tx)}</div>
               </div>
-              <button
-                class="shrink-0 text-xs px-2 py-1 rounded-lg border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition disabled:opacity-50 cursor-pointer disabled:cursor-default"
-                onclick={() => isolate(s)}
-                disabled={isolating === s.id}
-                title="Disable this peer and disconnect it"
-              >
-                {isolating === s.id ? '…' : 'Isolate'}
-              </button>
+              <div class="shrink-0">
+                <Button variant="outline" size="xs" onclick={() => isolate(s)} loading={isolating === s.id} title="Disable this peer and disconnect it">Isolate</Button>
+              </div>
             </li>
           {/each}
         </ul>
