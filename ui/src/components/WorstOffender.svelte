@@ -6,6 +6,7 @@
   import { onMount } from 'svelte'
   import { apiGet, apiPost, toast } from '../stores/app.js'
   import Icon from './Icon.svelte'
+  import Button from './Button.svelte'
   import CountryFlag from './CountryFlag.svelte'
 
   let a = $state(null)
@@ -47,9 +48,7 @@
         </div>
         <div class="text-[11px] text-muted-foreground font-mono truncate">{a.owner || 'unknown owner'} · ×{a.count} hits</div>
       </div>
-      <button onclick={ban} disabled={banning} class="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50">
-        {banning ? 'Banning…' : 'Ban'}
-      </button>
+      <div class="shrink-0"><Button variant="destructive" size="xs" icon="ban" onclick={ban} loading={banning}>Ban</Button></div>
     </div>
   {/if}
 </div>

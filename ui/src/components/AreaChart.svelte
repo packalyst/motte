@@ -33,19 +33,39 @@
   const ticks = $derived(niceTicks(max, yTicks))
   const chartMax = $derived(ticks[ticks.length - 1] || max)
 
-  const linePath = $derived(
-    values.map((v, i) => {
-      const x = values.length > 1 ? (i * containerWidth) / (values.length - 1) : 0
-      const y = padTop + chartH - (v / chartMax) * chartH
-      return (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1)
-    }).join(' ')
+  const points = $derived(
+    values.map((v, i) => ({
+      x: values.length > 1 ? (i * containerWidth) / (values.length - 1) : 0,
+      y: padTop + chartH - (v / chartMax) * chartH,
+    }))
   )
 
+  // Catmull-Rom → cubic-bezier smoothing for a modern, flowing line.
+  function smooth(pts) {
+    if (pts.length < 2) return pts.length ? `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}` : ''
+    const t = 0.18
+    let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i]
+      const p1 = pts[i]
+      const p2 = pts[i + 1]
+      const p3 = pts[i + 2] || p2
+      const c1x = p1.x + (p2.x - p0.x) * t
+      const c1y = p1.y + (p2.y - p0.y) * t
+      const c2x = p2.x - (p3.x - p1.x) * t
+      const c2y = p2.y - (p3.y - p1.y) * t
+      d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`
+    }
+    return d
+  }
+
+  const linePath = $derived(smooth(points))
   const areaPath = $derived(
-    values.length
+    points.length
       ? linePath + ` L${containerWidth.toFixed(1)},${(padTop + chartH).toFixed(1)} L0,${(padTop + chartH).toFixed(1)} Z`
       : ''
   )
+  const lastPoint = $derived(points.length ? points[points.length - 1] : null)
 
   const uid = 'ac-' + Math.random().toString(36).slice(2, 8)
 </script>
@@ -80,6 +100,10 @@
         fill="none" stroke="currentColor" stroke-width={strokeWidth}
         stroke-linejoin="round" stroke-linecap="round"
       />
+      {#if lastPoint}
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="5.5" fill="currentColor" opacity="0.15" />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="2.6" fill="currentColor" />
+      {/if}
     </svg>
 
     <!-- Y-axis labels overlaid inside the chart, top-left corner of each gridline -->

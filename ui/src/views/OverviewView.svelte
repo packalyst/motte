@@ -118,11 +118,9 @@
   <!-- Traffic: live chart + cumulative totals -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
   <!-- Live Traffic -->
-  <div class="kt-panel lg:col-span-2">
-    <div class="kt-panel-header">
-      <h3 class="kt-panel-title">Live Traffic</h3>
-    </div>
-    <div class="kt-panel-body">
+  <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
+    <h3 class="text-sm font-semibold mb-3">Live Traffic</h3>
+    <div>
       {#if samples.length > 1}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="rounded-lg border border-border bg-muted/20 p-3 overflow-hidden">
@@ -154,11 +152,9 @@
   </div>
 
     <!-- Total Transfer -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">Total Transfer</h3>
-      </div>
-      <div class="kt-panel-body space-y-3">
+    <div class="bg-card border border-border rounded-xl p-4">
+      <h3 class="text-sm font-semibold mb-3">Total Transfer</h3>
+      <div class="space-y-3">
         <div class="p-4 rounded-lg bg-success/10 border border-success/20">
           <div class="flex items-center gap-2 mb-1">
             <Icon name="arrow-up" size={16} class="text-success" />
@@ -179,8 +175,8 @@
 
   <!-- Key Stats -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-    <div class="kt-panel">
-      <div class="kt-panel-body p-4">
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-primary/10">
             <Icon name="clock" size={20} class="text-primary" />
@@ -193,8 +189,8 @@
       </div>
     </div>
 
-    <div class="kt-panel">
-      <div class="kt-panel-body p-4">
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-success/10">
             <Icon name="users" size={20} class="text-success" />
@@ -207,8 +203,8 @@
       </div>
     </div>
 
-    <div class="kt-panel">
-      <div class="kt-panel-body p-4">
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-destructive/10">
             <Icon name="user-off" size={20} class="text-destructive" />
@@ -221,8 +217,8 @@
       </div>
     </div>
 
-    <div class="kt-panel">
-      <div class="kt-panel-body p-4">
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-info/10">
             <Icon name="plug-connected" size={20} class="text-info" />
@@ -255,12 +251,12 @@
   {#if $statsStore?.dockerInfo}
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
     <!-- Docker Info -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">Docker</h3>
-        <span class="text-sm text-muted-foreground">{$statsStore.dockerInfo.operatingSystem}</span>
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold">Docker</h3>
+        <span class="text-xs text-muted-foreground">{$statsStore.dockerInfo.operatingSystem}</span>
       </div>
-      <div class="kt-panel-body">
+      <div>
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div class="flex items-center gap-3">
             <div class="p-2 rounded-lg bg-info/10">
@@ -326,12 +322,12 @@
 
     <!-- Disk Usage -->
     {#if $statsStore?.diskUsage}
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">Disk Usage</h3>
-        <span class="text-sm text-muted-foreground">{$statsStore.diskUsage.totalSizeHR} total</span>
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold">Disk Usage</h3>
+        <span class="text-xs text-muted-foreground">{$statsStore.diskUsage.totalSizeHR} total</span>
       </div>
-      <div class="kt-panel-body">
+      <div>
         <div class="space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">

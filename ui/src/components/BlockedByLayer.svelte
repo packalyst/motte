@@ -20,7 +20,7 @@
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
   <!-- L3 firewall -->
   <div class="bg-card border border-border rounded-xl p-3.5">
-    <div class="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5"><Icon name="bricks" size={14} class="text-destructive" />Firewall (L3)</div>
+    <div class="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5"><Icon name="wall" size={14} class="text-destructive" />Firewall (L3)</div>
     <div class="text-2xl font-bold tabular-nums text-destructive">{fmt(d?.l3?.blocked)}</div>
     <div class="text-[11px] text-muted-foreground mt-1">packets dropped</div>
   </div>

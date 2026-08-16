@@ -56,14 +56,14 @@
       <div class="text-sm font-semibold text-foreground">{verdict.title}</div>
       <div class="text-xs text-muted-foreground">{sub}</div>
     </div>
-    <button onclick={() => currentView.set('server')} class="ml-auto shrink-0 text-xs text-primary font-medium hover:underline flex items-center gap-1">
+    <button onclick={() => currentView.set('server')} class="ml-auto shrink-0 text-xs text-primary font-medium hover:underline flex items-center gap-1 cursor-pointer">
       Server detail <Icon name="chevron-right" size={13} />
     </button>
   </div>
 
   <!-- Breach glance tiles -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-    <button onclick={() => currentView.set('server')} class="bg-card border border-border rounded-xl p-3.5 text-left hover:border-primary transition">
+    <button onclick={() => currentView.set('server')} class="bg-card border border-border rounded-xl p-3.5 text-left hover:border-primary transition cursor-pointer">
       <div class="flex items-start justify-between">
         <div>
           {#if unknownLogins > 0}<div class="text-2xl font-bold tabular-nums text-destructive">{unknownLogins}</div>
