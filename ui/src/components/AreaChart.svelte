@@ -99,16 +99,15 @@
       {/each}
 
       <path d={areaPath} fill="url(#{uid})" />
-      <!-- soft glow underlay -->
-      <path d={linePath} fill="none" stroke="currentColor" stroke-width={strokeWidth + 2}
-        stroke-linejoin="round" stroke-linecap="round" opacity="0.35" filter="url(#{uid}-glow)" />
+      <!-- subtle glow underlay -->
+      <path d={linePath} fill="none" stroke="currentColor" stroke-width={strokeWidth}
+        stroke-linejoin="round" stroke-linecap="round" opacity="0.22" filter="url(#{uid}-glow)" />
       <!-- crisp line -->
       <path d={linePath} fill="none" stroke="currentColor" stroke-width={strokeWidth}
         stroke-linejoin="round" stroke-linecap="round" />
       {#if lastPoint}
-        <circle cx={lastPoint.x} cy={lastPoint.y} r="8" fill="currentColor" opacity="0.16" class="ac-pulse" />
-        <circle cx={lastPoint.x} cy={lastPoint.y} r="3.6" fill="currentColor" />
-        <circle cx={lastPoint.x} cy={lastPoint.y} r="3.6" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="1" />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="6" fill="currentColor" opacity="0.15" class="ac-pulse" />
+        <circle cx={lastPoint.x} cy={lastPoint.y} r="3" fill="currentColor" />
       {/if}
     </svg>
 

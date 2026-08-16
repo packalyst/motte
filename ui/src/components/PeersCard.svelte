@@ -65,11 +65,20 @@
 </script>
 
 <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-  <div class="flex items-center gap-2 px-4 pt-3">
-    <Icon name="users" size={16} class="text-muted-foreground" />
-    <h3 class="text-sm font-semibold">Peers</h3>
+  <div class="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
+    <div class="flex items-center gap-2">
+      <Icon name="users" size={16} class="text-muted-foreground" />
+      <h3 class="text-sm font-semibold">Peers</h3>
+    </div>
+    <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs shrink-0">
+      <button onclick={() => activeTab = 'online'} class="px-2.5 py-1 rounded-md transition cursor-pointer {activeTab === 'online' ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">
+        Online now{#if sessions.length} <span class="tabular-nums text-muted-foreground">{sessions.length}</span>{/if}
+      </button>
+      <button onclick={() => activeTab = 'traffic'} class="px-2.5 py-1 rounded-md transition cursor-pointer {activeTab === 'traffic' ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">
+        Top traffic
+      </button>
+    </div>
   </div>
-  <Tabs {tabs} bind:activeTab size="sm" class="px-4 mt-2" />
 
   <div class="p-2 sm:p-3">
     {#if activeTab === 'online'}
