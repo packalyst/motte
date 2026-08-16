@@ -2,11 +2,14 @@ package server
 
 import (
 	"net"
+	"net/http"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"api/internal/router"
 )
 
 // ---------- live sudo-failure capture ----------
@@ -72,7 +75,7 @@ func (s *Service) scanSudoFailures() {
 func (s *Service) recentSudoFailures(now time.Time) []sudoFail {
 	s.ensureSudoTable()
 	out := []sudoFail{}
-	rows, err := s.db.Query(`SELECT ts, user, tty, ip, command FROM sudo_failures
+	rows, err := s.db.Query(`SELECT rowid, ts, user, tty, ip, command FROM sudo_failures
 		ORDER BY inserted_at DESC LIMIT 15`)
 	if err != nil {
 		return out
@@ -81,7 +84,7 @@ func (s *Service) recentSudoFailures(now time.Time) []sudoFail {
 	for rows.Next() {
 		var f sudoFail
 		var ts string
-		if rows.Scan(&ts, &f.User, &f.TTY, &f.IP, &f.Command) != nil {
+		if rows.Scan(&f.ID, &ts, &f.User, &f.TTY, &f.IP, &f.Command) != nil {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339, ts); err == nil {
@@ -92,6 +95,19 @@ func (s *Service) recentSudoFailures(now time.Time) []sudoFail {
 		out = append(out, f)
 	}
 	return out
+}
+
+// handleForgetSudoFailure deletes one recorded sudo failure — "I recognize this
+// one, dismiss it." DELETE /api/server/sudo-failure/{id}.
+func (s *Service) handleForgetSudoFailure(w http.ResponseWriter, r *http.Request) {
+	idStr := router.ExtractPathParam(r, "/api/server/sudo-failure/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		router.JSONError(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	s.db.Exec(`DELETE FROM sudo_failures WHERE rowid = ?`, id)
+	router.JSON(w, map[string]bool{"ok": true})
 }
 
 // whoSessions maps an active session TTY (pts/2, tty1) to its source IP via `who`

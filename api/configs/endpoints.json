@@ -300,7 +300,8 @@
       "prefix": "/api/server",
       "enabled": true,
       "endpoints": [
-        {"path": "/security", "methods": ["GET"], "handler": "GetSecurity", "description": "Host security posture: logins, sudo, accounts, packages, ports, uptime, certs"}
+        {"path": "/security", "methods": ["GET"], "handler": "GetSecurity", "description": "Host security posture: logins, sudo, accounts, packages, ports, uptime, certs"},
+        {"path": "/sudo-failure/{id}", "methods": ["DELETE"], "handler": "ForgetSudoFailure", "description": "Dismiss a recorded sudo failure"}
       ]
     }
   },

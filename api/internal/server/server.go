@@ -59,7 +59,8 @@ func New(db *sql.DB) *Service {
 
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetSecurity": s.handleGetSecurity,
+		"GetSecurity":        s.handleGetSecurity,
+		"ForgetSudoFailure":  s.handleForgetSudoFailure,
 	}
 }
 
@@ -86,6 +87,7 @@ type sudoEvent struct {
 	When    time.Time `json:"when"`
 }
 type sudoFail struct {
+	ID      int64     `json:"id"`
 	User    string    `json:"user"`
 	TTY     string    `json:"tty,omitempty"`
 	IP      string    `json:"ip,omitempty"` // resolved from `who` at failure time
