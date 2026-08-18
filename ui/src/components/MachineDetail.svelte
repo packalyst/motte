@@ -10,6 +10,7 @@
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Badge from './Badge.svelte'
+  import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
   import { timeAgo } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
@@ -242,9 +243,11 @@
       <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
         {@render head('ban', 'Blocking', 'push blocks to this host over mTLS', 'text-destructive')}
         <div class="flex flex-wrap items-center gap-2">
-          <input bind:value={blockIP} placeholder="IP to block on this host" onkeydown={(e) => e.key === 'Enter' && blockOn()}
-            class="flex-1 min-w-[180px] bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono" />
-          <Button variant="destructive" size="sm" icon="ban" onclick={blockOn} disabled={!blockIP.trim()}>Block IP</Button>
+          <div class="flex-1 min-w-[220px]">
+            <Input bind:value={blockIP} prefixIcon="world" placeholder="IP to block on this host" class="font-mono"
+              onkeydown={(e) => e.key === 'Enter' && blockOn()}
+              suffixAddonBtn={{ icon: 'ban', label: 'Block', variant: 'destructive', onclick: blockOn, disabled: !blockIP.trim() }} />
+          </div>
           <Button variant="outline" size="sm" icon="arrow-down" onclick={pushBlocks}>Push panel blocklist</Button>
         </div>
         {@render note("Block one IP, or push the panel's whole blocklist down so this host drops the same attackers the panel already knows about.")}

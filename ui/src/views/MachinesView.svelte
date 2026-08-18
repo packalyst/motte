@@ -11,6 +11,9 @@
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import StatCard from '../components/StatCard.svelte'
+  import Input from '../components/Input.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
+  import Select from '../components/Select.svelte'
   import MachineDetail from '../components/MachineDetail.svelte'
   import { timeAgo } from '$lib/utils/format.js'
   import { usageColor, statusInfo, round } from '$lib/fleet.js'
@@ -94,7 +97,6 @@
   function openDetail(m) { selected = m }
   function closeDetail() { selected = null; load() }
 
-  const inputCls = 'bg-background border border-border rounded-lg px-3 py-2 text-sm'
   const chipCls = {
     ok: 'bg-success/10 text-success',
     warn: 'bg-warning/10 text-warning',
@@ -134,40 +136,44 @@
 
   <!-- Listener config -->
   <div class="bg-card border border-border rounded-xl p-4">
-    <div class="flex flex-wrap items-center gap-3">
-      <label class="flex items-center gap-2 text-sm font-medium cursor-pointer">
-        <input type="checkbox" bind:checked={cfgEnabled} class="w-4 h-4 accent-primary" />
-        Agent listener
-      </label>
-      <span class="w-1.5 h-1.5 rounded-full {ep?.listening ? 'bg-success' : 'bg-muted-foreground'}"></span>
-      <span class="text-xs text-muted-foreground">{ep?.listening ? `on · :${ep.port}` : 'off'}</span>
-      <div class="flex items-center gap-1.5 ml-auto">
-        <span class="text-xs text-muted-foreground">port</span>
-        <input type="number" bind:value={cfgPort} min="1" max="65535" class="{inputCls} w-24 py-1.5" />
-        <Button size="xs" icon="device-floppy" onclick={saveConfig} disabled={savingCfg}>Save</Button>
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+      <div class="flex items-center gap-2.5">
+        <span class="w-9 h-9 rounded-lg grid place-items-center border {ep?.listening ? 'bg-success/10 border-success/30 text-success' : 'bg-muted border-border text-muted-foreground'}">
+          <Icon name={ep?.listening ? 'lock-open' : 'lock'} size={17} />
+        </span>
+        <Checkbox variant="switch" bind:checked={cfgEnabled} onchange={saveConfig}
+          label="Agent listener"
+          helperText={ep?.listening ? `Door open · accepting agents on :${ep.port}` : 'Closed · no agents can connect'} />
+      </div>
+      <div class="ml-auto w-full sm:w-auto">
+        <Input type="number" bind:value={cfgPort} min="1" max="65535" prefixIcon="plug-connected"
+          class="w-40" label="Port"
+          suffixAddonBtn={{ icon: 'device-floppy', label: 'Save', variant: 'primary', onclick: saveConfig, disabled: savingCfg }} />
       </div>
     </div>
-    <p class="text-[11px] text-muted-foreground mt-2">
-      Turning this on opens the port through the firewall automatically and starts the mutual-TLS listener. Nothing to edit in env or compose.
+    <p class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border flex items-start gap-1.5">
+      <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />
+      Turning this on opens the port through the firewall automatically and starts the mutual-TLS listener — nothing to edit in env or compose.
     </p>
   </div>
 
   <!-- Add machine -->
   <div class="bg-card border border-border rounded-xl p-4">
     <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="plus" size={16} class="text-primary" />Add a machine</h3>
-    <div class="flex flex-wrap items-center gap-2">
-      <input bind:value={newLabel} placeholder="label (e.g. web-01)" onkeydown={(e) => e.key === 'Enter' && addMachine()}
-        class="flex-1 min-w-[150px] {inputCls}" />
+    <div class="flex flex-wrap items-end gap-2">
+      <div class="flex-1 min-w-[160px]">
+        <Input bind:value={newLabel} prefixIcon="tag" label="Machine name" placeholder="e.g. web-01"
+          onkeydown={(e) => e.key === 'Enter' && addMachine()} />
+      </div>
       {#if ep?.hosts?.length}
-        <label class="text-xs text-muted-foreground">reachable at</label>
-        <select bind:value={selectedHost} class="{inputCls} py-2">
-          {#each ep.hosts as h}<option value={h}>{h}</option>{/each}
-        </select>
+        <div class="min-w-[180px]">
+          <Select bind:value={selectedHost} label="Reachable at" options={ep.hosts.map((h) => ({ value: h, label: h }))} />
+        </div>
       {/if}
       <Button icon="key" onclick={addMachine} disabled={creating || !newLabel.trim()}>Generate install command</Button>
     </div>
     {#if !ep?.enabled}
-      <div class="text-[11px] text-warning mt-2">Turn the agent listener on (above) so machines can enroll.</div>
+      <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Turn the agent listener on (above) so machines can enroll.</div>
     {/if}
 
     {#if lastToken}
