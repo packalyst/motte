@@ -142,6 +142,7 @@ func (s *Service) stopLocked() {
 	if s.srv != nil {
 		_ = s.srv.Close()
 		s.srv = nil
+		log.Printf("fleet: mTLS listener on :%d stopped", s.port)
 	}
 	if s.closePort != nil && s.port != 0 {
 		if err := s.closePort(s.port); err != nil {
