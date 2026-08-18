@@ -41,28 +41,24 @@ func (s *Service) SearchASN(query string, limit int) []ASNMatch {
 		qNum, isNum = uint32(n), true
 	}
 
-	db.mu.RLock()
-	rows := db.rows
-	db.mu.RUnlock()
-
 	agg := make(map[uint32]*ASNMatch)
-	for i := range rows {
-		v := rows[i].val
+	db.iterate(func(loB, _ [16]byte, v asnVal) bool {
 		if v.asn == 0 {
-			continue
+			return true
 		}
-		if _, ok := v4From16(rows[i].lo); !ok {
-			continue // IPv4-only firewall
+		if _, ok := v4From16(loB); !ok {
+			return true // IPv4-only firewall
 		}
 		if !((isNum && v.asn == qNum) || strings.Contains(strings.ToLower(v.name), q)) {
-			continue
+			return true
 		}
 		if m := agg[v.asn]; m != nil {
 			m.Ranges++
 		} else {
 			agg[v.asn] = &ASNMatch{ASN: v.asn, Name: v.name, Ranges: 1}
 		}
-	}
+		return true
+	})
 
 	out := make([]ASNMatch, 0, len(agg))
 	for _, m := range agg {

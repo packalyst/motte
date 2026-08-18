@@ -71,28 +71,30 @@ func asnV4CIDRs(t *rangeTable[asnVal], asn uint32) []string {
 	if t == nil {
 		return nil
 	}
-	t.mu.RLock()
-	rows := t.rows
-	t.mu.RUnlock()
-
 	var out []string
-	for i := range rows {
-		if rows[i].val.asn != asn {
-			continue
+	truncated := false
+	t.iterate(func(loB, hiB [16]byte, v asnVal) bool {
+		if v.asn != asn {
+			return true
 		}
-		lo, ok := v4From16(rows[i].lo)
+		lo, ok := v4From16(loB)
 		if !ok {
-			continue
+			return true
 		}
-		hi, ok := v4From16(rows[i].hi)
+		hi, ok := v4From16(hiB)
 		if !ok {
-			continue
+			return true
 		}
 		out = append(out, rangeToCIDRsV4(lo, hi)...)
 		if len(out) > maxASNv4CIDRs {
-			log.Printf("geolocation: ASN %d expands beyond %d CIDRs — truncating (block may be incomplete; check the ASN DB)", asn, maxASNv4CIDRs)
-			return out[:maxASNv4CIDRs]
+			truncated = true
+			return false // stop iterating
 		}
+		return true
+	})
+	if truncated {
+		log.Printf("geolocation: ASN %d expands beyond %d CIDRs — truncating (block may be incomplete; check the ASN DB)", asn, maxASNv4CIDRs)
+		return out[:maxASNv4CIDRs]
 	}
 	return out
 }

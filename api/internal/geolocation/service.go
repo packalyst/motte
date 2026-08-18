@@ -510,7 +510,7 @@ func (s *Service) proxyDBPath() string {
 func (s *Service) loadEnrichmentDBs() {
 	asnReloaded := false
 	if p := s.asnDBPath(); fileExists(p) {
-		tbl := &rangeTable[asnVal]{}
+		tbl := newRangeTable(asnCodec)
 		if err := tbl.load(p, parseASNRow(newInterner())); err != nil {
 			log.Printf("geolocation: failed to load ASN DB: %v", err)
 		} else {
@@ -522,7 +522,7 @@ func (s *Service) loadEnrichmentDBs() {
 		}
 	}
 	if p := s.proxyDBPath(); fileExists(p) {
-		tbl := &rangeTable[proxyVal]{}
+		tbl := newRangeTable(proxyCodec)
 		if err := tbl.load(p, parseProxyRow(newInterner(), s.proxyColumnsFromConfig())); err != nil {
 			log.Printf("geolocation: failed to load proxy DB: %v", err)
 		} else {

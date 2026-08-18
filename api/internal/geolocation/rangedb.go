@@ -2,107 +2,129 @@ package geolocation
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/binary"
 	"encoding/csv"
+	"fmt"
 	"io"
 	"math/big"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
-// maxRangeRows caps how many rows a range DB will load. A defensive upper bound so a
-// corrupt or hostile CSV can never exhaust memory; real IP2Location LITE files are far
-// smaller. Once loaded the table is a FIXED size — nothing grows per lookup.
-const maxRangeRows = 8_000_000
+// This file backs the IP2Location ASN + proxy range lookups with an on-disk,
+// memory-mapped binary index instead of an in-RAM slice. The CSV is compiled once
+// (on download/update) into two files next to it — "<name>.idx" (a sorted,
+// fixed-width record table) and "<name>.strings" (a deduped string pool). At run
+// time those files are mmap'd read-only, so lookups binary-search directly over
+// the mapped pages and the process's resident memory stays tiny (the kernel pages
+// the index in on demand and can reclaim it under pressure). Same lookup semantics
+// as before — only the storage changed.
+//
+// .idx layout:  [magic "RIDX"(4)][version u16][recSize u16][count u32]  then
+//               count records of recSize bytes: lo[16] hi[16] value[valSize].
+// String values in a record are stored as u32 offsets into the .strings pool;
+// each pooled string is [len u16][bytes]. Offset 0xFFFFFFFF means "no string".
 
-// asnVal / proxyVal are the tiny per-range payloads. Strings are interned at load time
-// so the thousands of ranges that share one operator/type name point at one string.
+const (
+	maxRangeRows = 8_000_000 // defensive cap so a corrupt CSV can't blow up the build
+	idxMagic     = "RIDX"
+	idxVersion   = 1
+	idxHeaderLen = 12
+	noStrOff     = 0xFFFFFFFF
+)
+
+// asnVal / proxyVal are the per-range payloads (unchanged shape).
 type asnVal struct {
 	asn  uint32
 	name string
 }
 type proxyVal struct {
 	ptype    string
-	usage    string // usage_type (DCH=data-center, ISP, MOB…), higher PX tiers only
-	threat   string // threat class (spam/botnet…), PX9+
-	fraud    uint8  // fraud score 0-100, PX12
+	usage    string
+	threat   string
+	fraud    uint8
 	hasFraud bool
 }
 
-// proxyColumns holds the CSV column indices for the optional richer proxy fields.
-// They vary by IP2Proxy tier and the CSV has no header, so the indices are configurable
-// (configs/geolocation.json) — a wrong guess is a config fix, not a rebuild. A value
-// <= 2 (i.e. at/before proxy_type) means "field not present, skip".
+// proxyColumns holds the configurable CSV column indices for the richer proxy fields.
 type proxyColumns struct {
 	usageType int
 	threat    int
 	fraud     int
 }
 
-// rangeRow is one [lo,hi] IP range stored as 16-byte big-endian keys (so IPv4 and IPv6
-// live in one table — IPv4 as its ::ffff: mapped form, matching netip.Addr.As16()).
-type rangeRow[T any] struct {
-	lo, hi [16]byte
-	val    T
+// codec[T] encodes/decodes a value into the fixed-width record's value bytes and a
+// string pool. valSize is the fixed number of value bytes per record.
+type codec[T any] struct {
+	valSize int
+	encode  func(dst []byte, v T, p *strPool)
+	decode  func(val []byte, strs []byte) T
 }
 
-// rangeTable is an immutable, sorted set of IP ranges searched by binary search.
-// Reads take an RLock and never allocate or mutate; a reload builds a brand-new slice
-// and swaps it under the write lock, so the old one is released for GC. Memory is a
-// fixed function of the file — no accumulation across lookups or reloads.
+// rangeTable is a memory-mapped, sorted set of IP ranges searched by binary search.
+// idx/strs are mmap'd read-only. A reload builds fresh files, opens a new mapping,
+// and swaps under the write lock; a finalizer unmaps the old one once unreferenced.
 type rangeTable[T any] struct {
-	mu   sync.RWMutex
-	rows []rangeRow[T]
+	codec codec[T]
+
+	mu           sync.RWMutex
+	idx          []byte // mmap of .idx (header + records)
+	strs         []byte // mmap of .strings
+	count_       int
+	recSize      int
+	finalizerSet bool
 }
 
-// lookup returns the payload of the range containing ip, if any. Zero allocation.
+func newRangeTable[T any](c codec[T]) *rangeTable[T] { return &rangeTable[T]{codec: c} }
+
+// lookup returns the payload of the range containing ip, if any.
 func (t *rangeTable[T]) lookup(ip string) (T, bool) {
 	var zero T
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return zero, false
 	}
-
 	t.mu.RLock()
-	rows := t.rows
-	t.mu.RUnlock()
-	if len(rows) == 0 {
+	defer t.mu.RUnlock()
+	if t.count_ == 0 {
 		return zero, false
 	}
-
-	// Try the IPv4-mapped key (::ffff:a.b.c.d) first.
-	if v, ok := searchRanges(rows, addr.As16()); ok {
+	if v, ok := t.search(addr.As16()); ok {
 		return v, true
 	}
-	// Some IP2Location IPv6 CSVs number IPv4 as the plain low 32 bits
-	// (::a.b.c.d) rather than ::ffff:. For an IPv4 query, also try that form so
-	// enrichment works regardless of the file's numbering.
+	// Some IP2Location IPv6 CSVs number IPv4 as the plain low 32 bits (::a.b.c.d).
 	if addr.Is4() || addr.Is4In6() {
 		v4 := addr.As4()
 		var plain [16]byte
 		copy(plain[12:], v4[:])
-		if v, ok := searchRanges(rows, plain); ok {
+		if v, ok := t.search(plain); ok {
 			return v, true
 		}
 	}
 	return zero, false
 }
 
-// searchRanges binary-searches sorted rows for the range containing key.
-func searchRanges[T any](rows []rangeRow[T], key [16]byte) (T, bool) {
+// search binary-searches the mapped records for the range containing key. Caller holds RLock.
+func (t *rangeTable[T]) search(key [16]byte) (T, bool) {
 	var zero T
-	// Index of the last range whose lo <= key.
-	i := sort.Search(len(rows), func(i int) bool {
-		return compare16(rows[i].lo, key) > 0
+	i := sort.Search(t.count_, func(i int) bool {
+		o := idxHeaderLen + i*t.recSize
+		return bytes.Compare(t.idx[o:o+16], key[:]) > 0
 	}) - 1
 	if i < 0 {
 		return zero, false
 	}
-	if compare16(key, rows[i].hi) <= 0 {
-		return rows[i].val, true
+	o := idxHeaderLen + i*t.recSize
+	if bytes.Compare(key[:], t.idx[o+16:o+32]) <= 0 {
+		return t.codec.decode(t.idx[o+32:o+t.recSize], t.strs), true
 	}
 	return zero, false
 }
@@ -110,32 +132,106 @@ func searchRanges[T any](rows []rangeRow[T], key [16]byte) (T, bool) {
 func (t *rangeTable[T]) count() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return len(t.rows)
+	return t.count_
 }
 
-// load parses a CSV file into a fresh sorted table and swaps it in atomically. parse
-// turns one record into (loDecimal, hiDecimal, payload, ok); invalid rows are skipped,
-// never fatal. big.Int is used only here (at load), never on the lookup path.
-func (t *rangeTable[T]) load(path string, parse func(rec []string) (string, string, T, bool)) error {
-	f, err := os.Open(path)
+// iterate calls fn for every range (in sorted order) until fn returns false. Used by
+// the ASN scans (expand-to-CIDRs, search). Caller must not retain lo/hi/val past fn.
+func (t *rangeTable[T]) iterate(fn func(lo, hi [16]byte, v T) bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for i := 0; i < t.count_; i++ {
+		o := idxHeaderLen + i*t.recSize
+		var lo, hi [16]byte
+		copy(lo[:], t.idx[o:o+16])
+		copy(hi[:], t.idx[o+16:o+32])
+		if !fn(lo, hi, t.codec.decode(t.idx[o+32:o+t.recSize], t.strs)) {
+			return
+		}
+	}
+}
+
+func (t *rangeTable[T]) close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	munmap(t.idx)
+	munmap(t.strs)
+	t.idx, t.strs, t.count_ = nil, nil, 0
+}
+
+// load compiles csvPath into a binary index (if missing or stale) and mmaps it.
+func (t *rangeTable[T]) load(csvPath string, parse func(rec []string) (string, string, T, bool)) error {
+	idxPath := swapExt(csvPath, ".idx")
+	strsPath := swapExt(csvPath, ".strings")
+	if needBuild(csvPath, idxPath) {
+		if err := buildIndex(csvPath, idxPath, strsPath, parse, t.codec); err != nil {
+			return err
+		}
+	}
+	return t.open(idxPath, strsPath)
+}
+
+func (t *rangeTable[T]) open(idxPath, strsPath string) error {
+	idx, err := mmapFile(idxPath)
+	if err != nil {
+		return err
+	}
+	if len(idx) < idxHeaderLen || string(idx[0:4]) != idxMagic {
+		munmap(idx)
+		return fmt.Errorf("bad index header in %s", idxPath)
+	}
+	recSize := int(binary.LittleEndian.Uint16(idx[6:8]))
+	count := int(binary.LittleEndian.Uint32(idx[8:12]))
+	if recSize != 32+t.codec.valSize {
+		munmap(idx)
+		return fmt.Errorf("index recSize %d != expected %d", recSize, 32+t.codec.valSize)
+	}
+	strs, err := mmapFile(strsPath)
+	if err != nil {
+		munmap(idx)
+		return err
+	}
+	t.mu.Lock()
+	oldIdx, oldStrs := t.idx, t.strs
+	t.idx, t.strs, t.count_, t.recSize = idx, strs, count, recSize
+	setFinalizer := !t.finalizerSet
+	t.finalizerSet = true
+	t.mu.Unlock()
+
+	// Reload of the same table object: free the previous mapping now (safe — the
+	// write lock we just held guarantees no reader was mid-lookup). Each fresh
+	// table gets exactly one finalizer, which frees its final mapping when GC'd.
+	munmap(oldIdx)
+	munmap(oldStrs)
+	if setFinalizer {
+		runtime.SetFinalizer(t, (*rangeTable[T]).close)
+	}
+	return nil
+}
+
+// buildIndex parses csvPath and writes a sorted .idx + .strings pair atomically.
+func buildIndex[T any](csvPath, idxPath, strsPath string, parse func(rec []string) (string, string, T, bool), c codec[T]) error {
+	f, err := os.Open(csvPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	r := csv.NewReader(bufio.NewReaderSize(f, 1<<16))
-	r.ReuseRecord = true   // reuse the record slice header; field strings are still fresh copies
-	r.FieldsPerRecord = -1 // tolerate variable column counts
-
-	rows := make([]rangeRow[T], 0, 4096)
+	recSize := 32 + c.valSize
+	pool := newStrPool()
+	var flat []byte
 	var lo, hi big.Int
-	for len(rows) < maxRangeRows {
+
+	r := csv.NewReader(bufio.NewReaderSize(f, 1<<16))
+	r.ReuseRecord = true
+	r.FieldsPerRecord = -1
+	for len(flat)/recSize < maxRangeRows {
 		rec, err := r.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			continue // skip a malformed line, keep going
+			continue
 		}
 		loStr, hiStr, val, ok := parse(rec)
 		if !ok {
@@ -150,60 +246,132 @@ func (t *rangeTable[T]) load(path string, parse func(rec []string) (string, stri
 		if lo.Sign() < 0 || hi.Sign() < 0 || lo.BitLen() > 128 || hi.BitLen() > 128 {
 			continue
 		}
-		var row rangeRow[T]
-		lo.FillBytes(row.lo[:])
-		hi.FillBytes(row.hi[:])
-		row.val = val
-		rows = append(rows, row)
+		start := len(flat)
+		flat = append(flat, make([]byte, recSize)...)
+		lo.FillBytes(flat[start : start+16])
+		hi.FillBytes(flat[start+16 : start+32])
+		c.encode(flat[start+32:start+recSize], val, pool)
 	}
 
-	sort.Slice(rows, func(i, j int) bool { return compare16(rows[i].lo, rows[j].lo) < 0 })
+	n := len(flat) / recSize
+	order := make([]int, n)
+	for i := range order {
+		order[i] = i
+	}
+	sort.Slice(order, func(a, b int) bool {
+		oa, ob := order[a]*recSize, order[b]*recSize
+		return bytes.Compare(flat[oa:oa+16], flat[ob:ob+16]) < 0
+	})
 
-	t.mu.Lock()
-	t.rows = rows
-	t.mu.Unlock()
-	return nil
-}
-
-// fileExists reports whether p is an existing regular file.
-func fileExists(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && !info.IsDir()
-}
-
-// compare16 orders two 16-byte big-endian values: -1, 0, or 1.
-func compare16(a, b [16]byte) int {
-	for i := 0; i < 16; i++ {
-		if a[i] != b[i] {
-			if a[i] < b[i] {
-				return -1
+	// write .idx (header + records in sorted order) to a temp, then rename.
+	if err := writeFileAtomic(idxPath, func(w *bufio.Writer) error {
+		var hdr [idxHeaderLen]byte
+		copy(hdr[0:4], idxMagic)
+		binary.LittleEndian.PutUint16(hdr[4:6], idxVersion)
+		binary.LittleEndian.PutUint16(hdr[6:8], uint16(recSize))
+		binary.LittleEndian.PutUint32(hdr[8:12], uint32(n))
+		if _, err := w.Write(hdr[:]); err != nil {
+			return err
+		}
+		for _, idx := range order {
+			o := idx * recSize
+			if _, err := w.Write(flat[o : o+recSize]); err != nil {
+				return err
 			}
-			return 1
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	return 0
+	return writeFileAtomic(strsPath, func(w *bufio.Writer) error {
+		_, err := w.Write(pool.buf)
+		return err
+	})
 }
 
-// interner deduplicates repeated strings during a single load; the map is discarded
-// afterwards, so only the unique strings survive in the table.
-func newInterner() func(string) string {
-	m := make(map[string]string, 4096)
-	return func(s string) string {
-		if v, ok := m[s]; ok {
-			return v
-		}
-		m[s] = s
-		return s
-	}
+// --- string pool ---
+
+type strPool struct {
+	buf []byte
+	m   map[string]uint32
 }
 
-// parseASNRow parses IP2Location LITE ASN CSV rows: ip_from, ip_to, cidr, asn, as_name.
+func newStrPool() *strPool { return &strPool{m: make(map[string]uint32, 4096)} }
+
+func (p *strPool) add(s string) uint32 {
+	if s == "" {
+		return noStrOff
+	}
+	if off, ok := p.m[s]; ok {
+		return off
+	}
+	if len(s) > 65535 {
+		s = s[:65535]
+	}
+	off := uint32(len(p.buf))
+	var l [2]byte
+	binary.LittleEndian.PutUint16(l[:], uint16(len(s)))
+	p.buf = append(p.buf, l[:]...)
+	p.buf = append(p.buf, s...)
+	p.m[s] = off
+	return off
+}
+
+func readStr(strs []byte, off uint32) string {
+	if off == noStrOff || int(off)+2 > len(strs) {
+		return ""
+	}
+	n := int(binary.LittleEndian.Uint16(strs[off : off+2]))
+	start, end := int(off)+2, int(off)+2+n
+	if end > len(strs) {
+		return ""
+	}
+	return string(strs[start:end])
+}
+
+// --- codecs ---
+
+var asnCodec = codec[asnVal]{
+	valSize: 8,
+	encode: func(dst []byte, v asnVal, p *strPool) {
+		binary.LittleEndian.PutUint32(dst[0:4], v.asn)
+		binary.LittleEndian.PutUint32(dst[4:8], p.add(v.name))
+	},
+	decode: func(val, strs []byte) asnVal {
+		return asnVal{asn: binary.LittleEndian.Uint32(val[0:4]), name: readStr(strs, binary.LittleEndian.Uint32(val[4:8]))}
+	},
+}
+
+var proxyCodec = codec[proxyVal]{
+	valSize: 14,
+	encode: func(dst []byte, v proxyVal, p *strPool) {
+		binary.LittleEndian.PutUint32(dst[0:4], p.add(v.ptype))
+		binary.LittleEndian.PutUint32(dst[4:8], p.add(v.usage))
+		binary.LittleEndian.PutUint32(dst[8:12], p.add(v.threat))
+		dst[12] = v.fraud
+		if v.hasFraud {
+			dst[13] = 1
+		}
+	},
+	decode: func(val, strs []byte) proxyVal {
+		return proxyVal{
+			ptype:    readStr(strs, binary.LittleEndian.Uint32(val[0:4])),
+			usage:    readStr(strs, binary.LittleEndian.Uint32(val[4:8])),
+			threat:   readStr(strs, binary.LittleEndian.Uint32(val[8:12])),
+			fraud:    val[12],
+			hasFraud: val[13] != 0,
+		}
+	},
+}
+
+// --- CSV row parsers (unchanged) ---
+
 func parseASNRow(intern func(string) string) func([]string) (string, string, asnVal, bool) {
 	return func(rec []string) (string, string, asnVal, bool) {
 		if len(rec) < 5 {
 			return "", "", asnVal{}, false
 		}
-		asn, _ := strconv.ParseUint(strings.TrimSpace(rec[3]), 10, 32) // "-" -> 0
+		asn, _ := strconv.ParseUint(strings.TrimSpace(rec[3]), 10, 32)
 		name := strings.TrimSpace(rec[4])
 		if asn == 0 && (name == "" || name == "-") {
 			return "", "", asnVal{}, false
@@ -212,10 +380,6 @@ func parseASNRow(intern func(string) string) func([]string) (string, string, asn
 	}
 }
 
-// parseProxyRow parses IP2Proxy LITE CSV rows. Columns 0,1 are the range and column 2
-// is proxy_type (present in every tier); the richer fields are read from configurable
-// indices when the row is long enough (higher tiers). Only actual proxy ranges are
-// stored — a lookup miss simply means "not a proxy", keeping the table to flagged ranges.
 func parseProxyRow(intern func(string) string, cols proxyColumns) func([]string) (string, string, proxyVal, bool) {
 	get := func(rec []string, idx int) string {
 		if idx > 2 && idx < len(rec) {
@@ -248,4 +412,88 @@ func parseProxyRow(intern func(string) string, cols proxyColumns) func([]string)
 		}
 		return rec[0], rec[1], v, true
 	}
+}
+
+// interner keeps the CSV-parse signature stable; the string pool does the real dedup.
+func newInterner() func(string) string {
+	m := make(map[string]string, 4096)
+	return func(s string) string {
+		if v, ok := m[s]; ok {
+			return v
+		}
+		m[s] = s
+		return s
+	}
+}
+
+// --- small helpers ---
+
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
+// needBuild reports whether the binary index must be (re)built: missing, or the CSV
+// is newer than the index.
+func needBuild(csvPath, idxPath string) bool {
+	ci, err := os.Stat(csvPath)
+	if err != nil {
+		return false // no CSV → nothing to build (caller checks fileExists first)
+	}
+	ii, err := os.Stat(idxPath)
+	if err != nil {
+		return true
+	}
+	return ci.ModTime().After(ii.ModTime())
+}
+
+func swapExt(path, newExt string) string {
+	return strings.TrimSuffix(path, filepath.Ext(path)) + newExt
+}
+
+func mmapFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := int(fi.Size())
+	if size == 0 {
+		return []byte{}, nil
+	}
+	return syscall.Mmap(int(f.Fd()), 0, size, syscall.PROT_READ, syscall.MAP_SHARED)
+}
+
+func munmap(b []byte) {
+	if len(b) > 0 {
+		_ = syscall.Munmap(b)
+	}
+}
+
+func writeFileAtomic(path string, write func(w *bufio.Writer) error) error {
+	tmp := path + ".tmp"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriterSize(f, 1<<20)
+	if err := write(w); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
 }
