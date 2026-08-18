@@ -46,6 +46,13 @@ services:
       - GRPC=0            # No gRPC
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Isolated single-member network: gives this service an explicit network so
+    # Compose never auto-creates a project "_default" network (which would grab an
+    # overlapping /16 and clash with vpn-network). Nothing else joins it, so no
+    # other container can reach :2375 over the network — the only consumer (api,
+    # host-networked) uses the published 127.0.0.1:2375 port, unaffected by this.
+    networks:
+      - socket-proxy-net
 
   # ============================================
   # TRAEFIK - Reverse Proxy with API & Dashboard
@@ -263,3 +270,14 @@ networks:
       config:
         - subnet: ${DOCKER_SUBNET}
           gateway: ${DOCKER_GATEWAY}
+  # Dedicated, isolated network for docker-socket-proxy only. internal: true =
+  # no internet egress (it only needs the mounted docker.sock). Pinned to a tiny,
+  # out-of-the-way subnet so Docker's address pool can never hand it a range that
+  # overlaps vpn-network (the bug this whole change fixes).
+  socket-proxy-net:
+    name: socket-proxy-net
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.31.255.0/28
