@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"context"
+	"log"
 	"net/http"
 )
 
@@ -17,12 +18,17 @@ const machineCtxKey ctxKey = 0
 func (s *Service) requireClientCert(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+			log.Printf("fleet: rejected %s %s from %s — no client certificate", r.Method, r.URL.Path, r.RemoteAddr)
 			writeErr(w, http.StatusUnauthorized, "client certificate required")
 			return
 		}
 		fp := fingerprintFromCert(r.TLS.PeerCertificates[0])
 		m, err := s.machineByCertFP(fp)
 		if err != nil || m == nil {
+			// A cert our CA signed but that no longer maps to a live machine — e.g. a
+			// deleted/revoked host still running its old agent. Logged so the operator
+			// can see stale/rogue agents still trying to connect.
+			log.Printf("fleet: rejected %s %s from %s — unknown or revoked cert %s", r.Method, r.URL.Path, r.RemoteAddr, fp)
 			writeErr(w, http.StatusUnauthorized, "unknown or revoked client certificate")
 			return
 		}
