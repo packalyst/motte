@@ -1543,6 +1543,22 @@
           ],
           "handler": "SetConfig",
           "description": "Enable/disable fleet listener + set port"
+        },
+        {
+          "path": "/push-blocks",
+          "methods": [
+            "POST"
+          ],
+          "handler": "PushBlocks",
+          "description": "Push the panel's explicit blocklist onto a machine"
+        },
+        {
+          "path": "/machine/delete",
+          "methods": [
+            "POST"
+          ],
+          "handler": "DeleteMachine",
+          "description": "Delete a machine and invalidate its cert"
         }
       ]
     }

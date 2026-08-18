@@ -38,6 +38,32 @@ func (s *Service) AllBlockedCIDRs() []string {
 	return out
 }
 
+// ExplicitBlockedCIDRs returns ONLY the operator/escalation ip+range blocks (enabled,
+// unexpired, inbound). It deliberately excludes the expanded country/ASN CIDRs — those
+// are millions of entries meant for the panel's own nftables sets, far too large to push
+// down to a member machine. This is what the fleet "push panel blocks" command ships to an
+// agent so a host benefits from the specific IPs the panel already knows are hostile.
+func (s *Service) ExplicitBlockedCIDRs() []string {
+	out := []string{}
+	rows, err := s.db.Query(`SELECT value FROM firewall_entries
+		WHERE entry_type IN ('ip','range') AND action = 'block' AND enabled = 1
+		  AND direction IN ('inbound','both')
+		  AND (expires_at IS NULL OR expires_at > datetime('now'))`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v string
+		if rows.Scan(&v) == nil {
+			if v = strings.TrimSpace(v); v != "" {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
 // HandleInternalBlocklist serves the block list as plain text (one CIDR/IP per line) for
 // the Traefik sentinel plugin to fetch over the internal Docker network.
 //

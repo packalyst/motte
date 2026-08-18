@@ -6,21 +6,105 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
+	"strings"
 	"time"
 )
 
 // Machine is one enrolled agent.
 type Machine struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	MachineHash string     `json:"machine_hash"`
-	CertFP      string     `json:"cert_fp"`
-	WGPubkey    string     `json:"wg_pubkey,omitempty"`
-	Status      string     `json:"status"`
-	EnrolledAt  time.Time  `json:"enrolled_at"`
-	LastSeen    *time.Time `json:"last_seen,omitempty"`
-	Revoked     bool       `json:"revoked"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	MachineHash string          `json:"machine_hash"`
+	CertFP      string          `json:"cert_fp"`
+	WGPubkey    string          `json:"wg_pubkey,omitempty"`
+	Status      string          `json:"status"`
+	EnrolledAt  time.Time       `json:"enrolled_at"`
+	LastSeen    *time.Time      `json:"last_seen,omitempty"`
+	Revoked     bool            `json:"revoked"`
+	Summary     *MachineSummary `json:"summary,omitempty"`
+}
+
+// MachineSummary is the at-a-glance slice of a machine's latest report, so the fleet
+// list can render usage bars + threat chips per card without fetching every full report.
+type MachineSummary struct {
+	CPU         float64 `json:"cpu"`
+	Mem         float64 `json:"mem"`
+	Disk        float64 `json:"disk"`
+	OS          string  `json:"os,omitempty"`
+	CVETotal    int     `json:"cve_total"`
+	CVECritical int     `json:"cve_critical"`
+	Bans        int     `json:"bans"`
+	Blocked     int     `json:"blocked"`
+	FIM         int     `json:"fim"`
+	Agent       string  `json:"agent,omitempty"`
+}
+
+// summarize extracts the card-level summary from a raw report JSON document. It reads
+// only the handful of fields the fleet list shows; anything missing stays zero.
+func summarize(raw string) *MachineSummary {
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	var r struct {
+		Agent   string `json:"agent"`
+		Metrics struct {
+			CPU  float64 `json:"cpu"`
+			Mem  float64 `json:"mem"`
+			Disk float64 `json:"disk"`
+		} `json:"metrics"`
+		Blocked   []string `json:"blocked"`
+		Intrusion struct {
+			ActiveBans int `json:"active_bans"`
+		} `json:"intrusion"`
+		CVEs struct {
+			Total  int            `json:"total"`
+			Counts map[string]int `json:"counts"`
+		} `json:"cves"`
+		Facts struct {
+			OS  map[string]string `json:"os"`
+			FIM []any             `json:"fim"`
+		} `json:"facts"`
+	}
+	if err := json.Unmarshal([]byte(raw), &r); err != nil {
+		return nil
+	}
+	s := &MachineSummary{
+		CPU: r.Metrics.CPU, Mem: r.Metrics.Mem, Disk: r.Metrics.Disk,
+		CVETotal: r.CVEs.Total, CVECritical: r.CVEs.Counts["CRITICAL"],
+		Bans: r.Intrusion.ActiveBans, Blocked: len(r.Blocked), FIM: len(r.Facts.FIM),
+		Agent: r.Agent,
+	}
+	if name := r.Facts.OS["name"]; name != "" {
+		s.OS = strings.TrimSpace(name + " " + r.Facts.OS["version"])
+	}
+	return s
+}
+
+// DeleteMachine removes a machine and everything tied to it: the registry row (which
+// invalidates its client cert, since mTLS auth requires a live, non-revoked cert_fp
+// lookup) and any queued commands. A hard delete — the enrolled agent can no longer
+// authenticate and must re-enroll with a fresh token to return.
+func (s *Service) DeleteMachine(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM fleet_commands WHERE machine_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	res, err := tx.Exec(`DELETE FROM fleet_machines WHERE id = ?`, id)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		_ = tx.Rollback()
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
 }
 
 func newMachineID() (string, error) {
@@ -57,9 +141,10 @@ func (s *Service) registerMachine(m Machine) error {
 	return err
 }
 
-// ListMachines returns all enrolled machines, newest first.
+// ListMachines returns all enrolled machines, newest first, each with an at-a-glance
+// summary parsed from its latest report (for the fleet card grid).
 func (s *Service) ListMachines() ([]Machine, error) {
-	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked
+	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report
 		FROM fleet_machines ORDER BY enrolled_at DESC`)
 	if err != nil {
 		return nil, err
@@ -68,11 +153,12 @@ func (s *Service) ListMachines() ([]Machine, error) {
 	out := []Machine{}
 	for rows.Next() {
 		var m Machine
-		var enrolled, lastSeen, wg sql.NullString
-		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked); err != nil {
+		var enrolled, lastSeen, wg, report sql.NullString
+		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report); err != nil {
 			return nil, err
 		}
 		m.WGPubkey = wg.String
+		m.Summary = summarize(report.String)
 		if enrolled.Valid {
 			m.EnrolledAt, _ = time.Parse(time.RFC3339, enrolled.String)
 		}

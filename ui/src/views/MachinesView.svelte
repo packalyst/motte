@@ -1,23 +1,27 @@
 <script>
   /**
-   * MachinesView — the fleet page. Turn the agent-listener on/off (+ port) right
-   * here, add machines (mint a one-time token → one-command install, with a
-   * WG-vs-public address picker), watch each host report in, and issue commands.
-   * No env vars: the panel reads the toggle/port from Settings and opens its own
-   * firewall port; the install command's address is whichever host you pick.
+   * MachinesView — the fleet page. A summary strip, the agent-listener control (on/off
+   * + port, no env vars), the add-machine flow (one-time token → one-command install),
+   * and a grid of machine cards (usage bars + threat chips from each host's latest
+   * report). Click a card to open its structured detail page.
    */
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiPost, toast } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
+  import StatCard from '../components/StatCard.svelte'
+  import Badge from '../components/Badge.svelte'
+  import MachineDetail from '../components/MachineDetail.svelte'
   import { timeAgo } from '$lib/utils/format.js'
+  import { usageColor, statusInfo, round } from '$lib/fleet.js'
 
   let { loading = $bindable(true) } = $props()
 
   let machines = $state([])
   let ep = $state(null) // { enabled, port, listening, hosts:[], fingerprint }
   let error = $state(null)
+  let selected = $state(null) // machine object when a detail page is open
 
   // listener config
   let cfgEnabled = $state(false)
@@ -30,20 +34,17 @@
   let creating = $state(false)
   let lastToken = $state(null)
 
-  // per-machine
-  let blockIP = $state({})
-  let reportFor = $state(null)
-  let report = $state(null)
-
   async function load() {
     try {
-      const [m, e] = await Promise.allSettled([apiGet('/api/fleet/machines'), apiGet('/api/fleet/endpoints')])
-      if (m.status === 'fulfilled') machines = m.value || []
-      if (e.status === 'fulfilled') {
-        ep = e.value
+      const [mRes, eRes] = await Promise.allSettled([apiGet('/api/fleet/machines'), apiGet('/api/fleet/endpoints')])
+      if (mRes.status === 'fulfilled') machines = mRes.value || []
+      if (eRes.status === 'fulfilled') {
+        ep = eRes.value
         if (!savingCfg) { cfgEnabled = ep.enabled; cfgPort = ep.port }
         if (!selectedHost && ep.hosts?.length) selectedHost = ep.hosts[0]
       }
+      // keep the open detail's header fresh
+      if (selected) selected = machines.find((x) => x.id === selected.id) || selected
       error = null
     } catch (e) {
       error = e.message
@@ -52,6 +53,17 @@
     }
   }
   onMount(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t) })
+
+  // fleet summary tiles
+  const summary = $derived.by(() => {
+    let online = 0, threats = 0, cves = 0
+    for (const m of machines) {
+      if (statusInfo(m).online) online++
+      if ((m.summary?.bans ?? 0) > 0 || (m.summary?.fim ?? 0) > 0) threats++
+      if ((m.summary?.cve_critical ?? 0) > 0) cves++
+    }
+    return { total: machines.length, online, threats, cves }
+  })
 
   async function saveConfig() {
     savingCfg = true
@@ -80,58 +92,31 @@
     }
   }
 
-  async function sendCommand(m, type, payload = null) {
-    const ok = await confirm({
-      title: `${type} · ${m.name}`,
-      message: `Queue "${type}" for ${m.name}? It runs on the machine's next check-in.`,
-      confirmText: 'Queue',
-      variant: type === 'restart' ? 'destructive' : 'primary',
-    })
-    if (!ok) return
-    try {
-      await apiPost('/api/fleet/command', { machine_id: m.id, type, payload })
-      toast(`${type} queued for ${m.name}`, 'success')
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
-  }
+  function openDetail(m) { selected = m }
+  function closeDetail() { selected = null; load() }
 
-  async function blockOn(m) {
-    const ip = (blockIP[m.id] || '').trim()
-    if (!ip) return
-    await sendCommand(m, 'block', { ip })
-    blockIP[m.id] = ''
-  }
-
-  async function viewReport(m) {
-    if (reportFor === m.id) { reportFor = null; report = null; return }
-    reportFor = m.id
-    report = null
-    try { report = await apiGet('/api/fleet/report?id=' + encodeURIComponent(m.id)) } catch { report = null }
-  }
-
-  function statusDot(m) {
-    if (m.revoked) return 'bg-destructive'
-    if (!m.last_seen) return 'bg-muted-foreground'
-    const mins = (Date.now() - new Date(m.last_seen)) / 60000
-    return mins < 2 ? 'bg-success' : mins < 10 ? 'bg-warning' : 'bg-muted-foreground'
-  }
-  function statusText(m) {
-    if (m.revoked) return 'revoked'
-    if (!m.last_seen) return 'never reported'
-    return 'seen ' + timeAgo(m.last_seen)
-  }
-
-  const chip = 'text-[11px] px-1.5 py-0.5 rounded font-medium'
   const inputCls = 'bg-background border border-border rounded-lg px-3 py-2 text-sm'
 </script>
 
+{#if selected}
+  <MachineDetail machine={selected} onback={closeDetail} ondeleted={closeDetail} />
+{:else}
 <div class="space-y-4">
   <InfoCard icon="device-desktop" title="Machines"
-    description="Enrolled wgscout agents. Turn the listener on, add a machine for a one-command install, and push commands over the encrypted channel." />
+    description="Enrolled wgscout agents. Turn the listener on, add a machine for a one-command install, and manage each host over the encrypted mutual-TLS channel." />
 
   {#if error}
     <div class="bg-destructive/10 border border-destructive/30 text-destructive rounded-xl p-3 text-sm">{error}</div>
+  {/if}
+
+  <!-- Summary -->
+  {#if machines.length}
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <StatCard icon="device-desktop" color="primary" value={summary.total} label="Machines" />
+      <StatCard icon="circle-check" color="success" value={summary.online} label="Online" />
+      <StatCard icon="alert-triangle" color="warning" value={summary.cves} label="With critical CVEs" />
+      <StatCard icon="skull" color="destructive" value={summary.threats} label="Active threats" />
+    </div>
   {/if}
 
   <!-- Listener config -->
@@ -187,55 +172,60 @@
     {/if}
   </div>
 
-  <!-- Machine list -->
+  <!-- Machine grid -->
   {#if machines.length === 0}
     <div class="bg-card border border-border rounded-xl p-8 text-center text-sm text-muted-foreground">
       No machines enrolled yet. Add one above.
     </div>
   {:else}
-    <div class="space-y-2.5">
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
       {#each machines as m (m.id)}
-        <div class="bg-card border border-border rounded-xl p-4">
-          <div class="flex items-center gap-3">
-            <span class="w-2.5 h-2.5 rounded-full shrink-0 {statusDot(m)}"></span>
+        {@const st = statusInfo(m)}
+        {@const s = m.summary}
+        <button type="button" onclick={() => openDetail(m)}
+          class="text-left bg-card border rounded-xl p-4 transition hover:border-primary/50 hover:shadow-sm
+                 {(s?.bans > 0 || s?.fim > 0) ? 'border-destructive/40' : 'border-border'}">
+          <div class="flex items-center gap-2.5">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0 {st.dot}"></span>
             <div class="min-w-0 flex-1">
-              <div class="text-sm font-semibold text-foreground flex items-center gap-2">{m.name || m.id}
-                {#if m.revoked}<span class="{chip} bg-destructive/15 text-destructive">revoked</span>{/if}</div>
-              <div class="text-[11px] text-muted-foreground font-mono truncate">{m.id} · {statusText(m)}</div>
+              <div class="text-sm font-semibold text-foreground truncate">{m.name || m.id}</div>
+              <div class="text-[11px] text-muted-foreground truncate">{st.label}{m.last_seen ? ` · ${timeAgo(m.last_seen)}` : ''}</div>
             </div>
-            <Button variant="ghost" size="xs" icon={reportFor === m.id ? 'chevron-down' : 'chevron-right'} onclick={() => viewReport(m)}>Report</Button>
+            {#if s?.os}<span class="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border shrink-0">{s.os}</span>{/if}
           </div>
 
-          <div class="flex flex-wrap items-center gap-2 mt-3">
-            <input bind:value={blockIP[m.id]} placeholder="IP to block"
-              class="w-[130px] bg-background border border-border rounded-lg px-2 py-1 text-xs font-mono" />
-            <Button variant="destructive" size="xs" icon="ban" onclick={() => blockOn(m)} disabled={!(blockIP[m.id] || '').trim()}>Block</Button>
-            <Button variant="ghost" size="xs" icon="refresh" onclick={() => sendCommand(m, 'apply-updates')}>Updates</Button>
-            <Button variant="ghost" size="xs" icon="tool" onclick={() => sendCommand(m, 'restart', { target: 'tools' })}>Restart tools</Button>
-          </div>
+          {#if s && st.online}
+            <div class="mt-3 space-y-1.5">
+              {#each [['CPU', s.cpu], ['MEM', s.mem], ['DISK', s.disk]] as [lbl, val]}
+                <div class="flex items-center gap-2 text-[11px]">
+                  <span class="w-8 text-muted-foreground">{lbl}</span>
+                  <span class="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                    <span class="block h-full rounded-full {usageColor(round(val))}" style="width:{Math.min(round(val), 100)}%"></span>
+                  </span>
+                  <span class="w-8 text-right tabular-nums text-muted-foreground">{round(val)}%</span>
+                </div>
+              {/each}
+            </div>
 
-          {#if reportFor === m.id}
-            <div class="mt-3 border-t border-dashed border-border pt-3">
-              {#if !report}
-                <div class="text-xs text-muted-foreground">No report yet.</div>
+            <div class="flex flex-wrap gap-1.5 mt-3">
+              {#if s.bans > 0}
+                <Badge variant="danger" size="sm">{s.bans} ban{s.bans > 1 ? 's' : ''}</Badge>
               {:else}
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-                  <div><div class="text-lg font-bold tabular-nums">{report.metrics?.cpu ?? 0}%</div><div class="text-[11px] text-muted-foreground">CPU</div></div>
-                  <div><div class="text-lg font-bold tabular-nums">{report.metrics?.mem ?? 0}%</div><div class="text-[11px] text-muted-foreground">Memory</div></div>
-                  <div><div class="text-lg font-bold tabular-nums">{report.metrics?.disk ?? 0}%</div><div class="text-[11px] text-muted-foreground">Disk</div></div>
-                  <div><div class="text-lg font-bold tabular-nums">{report.blocked?.length ?? 0}</div><div class="text-[11px] text-muted-foreground">Blocked</div></div>
-                </div>
-                <div class="flex flex-wrap gap-2 mt-3 text-[11px]">
-                  {#if report.cves?.total}<span class="{chip} bg-destructive/15 text-destructive">{report.cves.total} CVEs · {report.cves.counts?.CRITICAL ?? 0} critical</span>{/if}
-                  {#if report.intrusion}<span class="{chip} bg-warning/15 text-warning">{report.intrusion.active_bans ?? 0} bans · {report.intrusion.enforced ?? 0} enforced</span>{/if}
-                  {#if report.facts?.fim?.length}<span class="{chip} bg-muted text-muted-foreground">{report.facts.fim.length} FIM events</span>{/if}
-                  <span class="{chip} bg-muted text-muted-foreground">agent {report.agent}</span>
-                </div>
+                <Badge variant="success" size="sm">no threats</Badge>
+              {/if}
+              {#if s.fim > 0}<Badge variant="warning" size="sm">FIM {s.fim}</Badge>{/if}
+              {#if s.cve_total > 0}
+                <Badge variant={s.cve_critical > 0 ? 'danger' : 'warning'} size="sm">{s.cve_total} CVE{s.cve_total > 1 ? 's' : ''}{s.cve_critical > 0 ? ` · ${s.cve_critical} crit` : ''}</Badge>
               {/if}
             </div>
+          {:else}
+            <div class="mt-3 text-[11px] text-muted-foreground py-3 text-center">
+              {m.revoked ? 'Revoked' : m.last_seen ? 'Offline — no live metrics' : 'Waiting for first report'}
+            </div>
           {/if}
-        </div>
+        </button>
       {/each}
     </div>
   {/if}
 </div>
+{/if}

@@ -28,6 +28,10 @@ type Service struct {
 	openPort  func(port int) error
 	closePort func(port int) error
 
+	// blockedIPs returns the panel's explicit ip/range blocklist, so the operator can
+	// push it onto a machine (sync-blocks). Nil ⇒ push is unavailable.
+	blockedIPs func() []string
+
 	mu      sync.Mutex
 	enabled bool
 	port    int
@@ -39,7 +43,7 @@ type Service struct {
 // New initializes the schema + CA. The listener is NOT started here — call
 // ReloadFromSettings() once the firewall callbacks are wired. openPort/closePort
 // may be nil (then the firewall isn't touched).
-func New(db *sql.DB, installURL, sslDomain string, openPort, closePort func(int) error) (*Service, error) {
+func New(db *sql.DB, installURL, sslDomain string, openPort, closePort func(int) error, blockedIPs func() []string) (*Service, error) {
 	if err := ensureSchema(db); err != nil {
 		return nil, err
 	}
@@ -57,6 +61,7 @@ func New(db *sql.DB, installURL, sslDomain string, openPort, closePort func(int)
 		sslDomain:     sslDomain,
 		openPort:      openPort,
 		closePort:     closePort,
+		blockedIPs:    blockedIPs,
 		clientCertTTL: 90 * 24 * time.Hour,
 	}, nil
 }

@@ -22,7 +22,58 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"MachineReport":  s.handleMachineReport,
 		"FleetEndpoints": s.handleEndpoints,
 		"SetConfig":      s.handleSetConfig,
+		"PushBlocks":     s.handlePushBlocks,
+		"DeleteMachine":  s.handleDeleteMachine,
 	}
+}
+
+// handleDeleteMachine removes a machine and everything tied to it (registry row +
+// queued commands), which invalidates its client cert. To return, the host must
+// re-enroll with a fresh one-time token.
+// POST /api/fleet/machine/delete  {"machine_id":"..."}
+func (s *Service) handleDeleteMachine(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MachineID string `json:"machine_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil || req.MachineID == "" {
+		router.JSONError(w, "machine_id required", http.StatusBadRequest)
+		return
+	}
+	if err := s.DeleteMachine(req.MachineID); err != nil {
+		router.JSONError(w, "machine not found", http.StatusNotFound)
+		return
+	}
+	router.JSON(w, map[string]bool{"ok": true})
+}
+
+// handlePushBlocks queues a sync-blocks command carrying the panel's current explicit
+// blocklist (operator + escalation ip/range entries) so the machine blocks them too.
+// POST /api/fleet/push-blocks  {"machine_id":"..."}
+func (s *Service) handlePushBlocks(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MachineID string `json:"machine_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil || req.MachineID == "" {
+		router.JSONError(w, "machine_id required", http.StatusBadRequest)
+		return
+	}
+	if s.blockedIPs == nil {
+		router.JSONError(w, "blocklist unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	ips := s.blockedIPs()
+	// Cap defensively so a runaway blocklist can't build a giant nft set on the host.
+	const maxPush = 5000
+	if len(ips) > maxPush {
+		ips = ips[:maxPush]
+	}
+	payload, _ := json.Marshal(map[string]any{"ips": ips})
+	id, err := s.Enqueue(req.MachineID, "sync-blocks", payload)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	router.JSON(w, map[string]any{"command_id": id, "count": len(ips)})
 }
 
 // handleSetConfig turns the fleet listener on/off and sets its port, then applies

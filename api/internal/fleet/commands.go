@@ -18,6 +18,8 @@ var allowedCommands = map[string]bool{
 	"unblock":       true,
 	"apply-updates": true,
 	"restart":       true,
+	"rescan":        true, // re-run the Trivy CVE scan now (don't wait for the interval)
+	"sync-blocks":   true, // push the panel's explicit blocklist onto this machine
 }
 
 // Command is one queued instruction for a machine.
