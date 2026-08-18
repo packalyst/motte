@@ -161,7 +161,12 @@
             {#each data.phone_home.destinations.slice(0, 6) as d}
               <div class="flex items-center gap-2 py-1.5">
                 <Icon name="arrow-up-right" size={13} class="text-muted-foreground shrink-0" />
-                <div class="min-w-0 flex-1"><div class="text-xs font-mono text-foreground truncate">{d.ip}</div>{#if d.owner || d.country}<div class="text-[11px] text-muted-foreground truncate">{d.owner || ''}{d.country ? ' · ' + d.country : ''}</div>{/if}</div>
+                <div class="min-w-0 flex-1">
+                  <div class="text-xs font-mono text-foreground truncate">{d.ip}{d.port ? ':' + d.port : ''}</div>
+                  {#if d.process || d.owner || d.country}
+                    <div class="text-[11px] text-muted-foreground truncate">{#if d.process}<span class="font-medium text-foreground/80">{d.process}</span>{/if}{#if d.owner}{d.process ? ' · ' : ''}{d.owner}{/if}{#if d.country} · {d.country}{/if}</div>
+                  {/if}
+                </div>
               </div>
             {/each}
           </div>

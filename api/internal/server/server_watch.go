@@ -212,6 +212,8 @@ func markActiveLogins(recent []loginEvent, counts map[string]int) {
 
 type destRow struct {
 	IP      string `json:"ip"`
+	Port    int    `json:"port,omitempty"`
+	Process string `json:"process,omitempty"` // program that opened the connection (ss -p)
 	Owner   string `json:"owner,omitempty"`
 	Country string `json:"country,omitempty"`
 }
@@ -220,39 +222,96 @@ type phoneBlock struct {
 	Destinations []destRow `json:"destinations"`
 }
 
+// reProc pulls the first process out of `ss -p`'s users:(("name",pid=NNN,fd=NN)) field.
+var reProc = regexp.MustCompile(`\(\("([^"]+)",pid=(\d+)`)
+
 // phoneHome lists the external hosts the server itself reached OUT to — a live
-// snapshot from `ss`. `ss` shows both directions, so we skip inbound connections
-// (those whose local port is one of our listening service ports); what's left is
-// outbound (we initiated), which is where a reverse shell / beacon shows up. It's
-// a snapshot, not a baseline, so we report destinations, not verdicts.
+// snapshot from `ss`, with the process that opened each connection. It's a
+// snapshot, not a baseline, so we report destinations (and their process), not
+// verdicts — a reverse shell / beacon shows up here.
 func phoneHome() phoneBlock {
-	pb := phoneBlock{Destinations: []destRow{}}
-	out, err := exec.Command("ss", "-tunH", "state", "established").Output()
+	out, err := exec.Command("ss", "-tunHp", "state", "established").Output()
 	if err != nil {
-		return pb
+		return phoneBlock{Destinations: []destRow{}}
 	}
-	listening := listeningPortSet()
+	return parsePhoneHome(out, listeningPortSet(), hostOwnIPs())
+}
+
+// parsePhoneHome is the pure core: given `ss -tunHp` output, the set of our
+// listening service ports, and this host's own IPs, it returns only genuinely
+// OUTBOUND connections to EXTERNAL hosts. Split out from the exec so it's testable.
+//
+// Direction: in a connection the client holds the ephemeral (high) port and the
+// server holds the service port. So a row is INBOUND (skip) when we hold a
+// service port — either it's in our listening set, or our local port is
+// non-ephemeral while the peer's is ephemeral. Self-connections (peer is one of
+// our own IPs) and private/loopback peers are dropped too.
+func parsePhoneHome(ssOut []byte, listening map[int]bool, ownIPs map[string]bool) phoneBlock {
+	pb := phoneBlock{Destinations: []destRow{}}
 	seen := map[string]bool{}
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(string(ssOut), "\n") {
 		f := strings.Fields(line)
 		if len(f) < 5 {
 			continue
 		}
-		// established rows (state pre-filtered): f[3]=local addr:port, f[4]=peer.
-		if _, lp := splitHostPort(f[3]); lp != "" {
-			if p, _ := strconv.Atoi(lp); listening[p] {
-				continue // inbound connection to one of our services — not phone-home
-			}
+		// established rows: f[3]=local addr:port, f[4]=peer addr:port.
+		_, lps := splitHostPort(f[3])
+		peerHost, pps := splitHostPort(f[4])
+		if p := net.ParseIP(strings.Trim(peerHost, "[]")); p != nil {
+			peerHost = p.String() // canonicalize (e.g. ::ffff:1.2.3.4 -> 1.2.3.4)
 		}
-		addr, _ := splitHostPort(f[4])
-		if addr == "" || isPrivateOrLocal(addr) || seen[addr] {
+		if peerHost == "" || isPrivateOrLocal(peerHost) || ownIPs[peerHost] {
+			continue // loopback/private, or the box talking to itself
+		}
+		localPort, _ := strconv.Atoi(lps)
+		peerPort, _ := strconv.Atoi(pps)
+		if listening[localPort] {
+			continue // inbound to one of our services
+		}
+		if isEphemeralPort(peerPort) && !isEphemeralPort(localPort) {
+			continue // peer is the client (ephemeral), we hold the service port -> inbound
+		}
+		proc, _ := parseProc(line)
+		key := peerHost + "|" + strconv.Itoa(peerPort) + "|" + proc
+		if seen[key] {
 			continue
 		}
-		seen[addr] = true
-		pb.Destinations = append(pb.Destinations, destRow{IP: addr})
+		seen[key] = true
+		pb.Destinations = append(pb.Destinations, destRow{IP: peerHost, Port: peerPort, Process: proc})
 	}
 	pb.External = len(pb.Destinations)
 	return pb
+}
+
+// isEphemeralPort reports whether p is in Linux's default ephemeral range, i.e. a
+// client-side port rather than a service the host offers.
+func isEphemeralPort(p int) bool { return p >= 32768 }
+
+// parseProc extracts the owning process name + pid from an `ss -p` line.
+func parseProc(line string) (string, int) {
+	m := reProc.FindStringSubmatch(line)
+	if m == nil {
+		return "", 0
+	}
+	pid, _ := strconv.Atoi(m[2])
+	return m[1], pid
+}
+
+// hostOwnIPs is the set of IP addresses bound to this host (all interfaces). The
+// api runs network_mode:host, so this sees the real host IPs incl. the public one,
+// letting us recognize (and drop) the box's connections to itself.
+func hostOwnIPs() map[string]bool {
+	ips := map[string]bool{}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ips
+	}
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok {
+			ips[ipnet.IP.String()] = true
+		}
+	}
+	return ips
 }
 
 // listeningPortSet returns the local ports the host has services listening on, so
