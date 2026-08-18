@@ -19,10 +19,9 @@ var errBadPort = errors.New("invalid port")
 // port through the firewall (reusing the allowed-ports mechanism) and closes it
 // when disabled.
 type Service struct {
-	db         *sql.DB
-	ca         *CA
-	installURL string // where install.sh is fetched from (GitHub latest, by default)
-	sslDomain  string // panel's public domain, if any (added to cert SANs + host options)
+	db        *sql.DB
+	ca        *CA
+	sslDomain string // panel's public domain, if any (added to cert SANs + host options)
 
 	// firewall port open/close callbacks (wired to the firewall service in main).
 	openPort  func(port int) error
@@ -43,7 +42,7 @@ type Service struct {
 // New initializes the schema + CA. The listener is NOT started here — call
 // ReloadFromSettings() once the firewall callbacks are wired. openPort/closePort
 // may be nil (then the firewall isn't touched).
-func New(db *sql.DB, installURL, sslDomain string, openPort, closePort func(int) error, blockedIPs func() []string) (*Service, error) {
+func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, blockedIPs func() []string) (*Service, error) {
 	if err := ensureSchema(db); err != nil {
 		return nil, err
 	}
@@ -51,13 +50,9 @@ func New(db *sql.DB, installURL, sslDomain string, openPort, closePort func(int)
 	if err != nil {
 		return nil, err
 	}
-	if installURL == "" {
-		installURL = "https://github.com/packalyst/wireguard-admin-panel/releases/latest/download/install.sh"
-	}
 	return &Service{
 		db:            db,
 		ca:            ca,
-		installURL:    installURL,
 		sslDomain:     sslDomain,
 		openPort:      openPort,
 		closePort:     closePort,

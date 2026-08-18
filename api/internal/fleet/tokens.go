@@ -52,6 +52,22 @@ func (s *Service) CreateToken(label string, ttl time.Duration) (*Token, error) {
 	return &Token{Plaintext: val, Label: label, ExpiresAt: exp}, nil
 }
 
+// tokenIsLive reports whether a token exists, is unused, and not expired — WITHOUT
+// consuming it. Used by the install-script endpoint: fetching the installer must not
+// spend the token, since the actual enroll (which does consume it) happens afterwards.
+func (s *Service) tokenIsLive(plaintext string) bool {
+	if plaintext == "" {
+		return false
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM fleet_tokens WHERE token_hash = ? AND used = 0 AND expires_at > ?`,
+		hashToken(plaintext), now,
+	).Scan(&n)
+	return err == nil && n == 1
+}
+
 // redeemToken atomically validates + consumes a token. A single UPDATE guarded by
 // (used=0 AND not expired) means only one concurrent caller can ever win, so a
 // token can't be used twice. Returns the token's label.

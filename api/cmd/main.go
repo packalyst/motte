@@ -376,7 +376,6 @@ func main() {
 				return err
 			}
 			sslDomain := helper.GetEnvOptional("SSL_DOMAIN", "")
-			installURL := helper.GetEnvOptional("FLEET_INSTALL_URL", "")
 			// Source the panel's explicit blocklist for the "push blocks" command.
 			blockedIPs := func() []string {
 				if fwSvc == nil {
@@ -384,7 +383,7 @@ func main() {
 				}
 				return fwSvc.ExplicitBlockedCIDRs()
 			}
-			flSvc, ferr := fleet.New(db, installURL, sslDomain, openPort, closePort, blockedIPs)
+			flSvc, ferr := fleet.New(db, sslDomain, openPort, closePort, blockedIPs)
 			if ferr != nil {
 				log.Printf("Fleet init failed: %v", ferr)
 			} else {

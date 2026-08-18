@@ -178,10 +178,13 @@
 
     {#if lastToken}
       <div class="mt-3 border-t border-dashed border-border pt-3">
-        <div class="text-xs text-muted-foreground mb-1.5">Run this on the new machine (one-time, expires {timeAgo(lastToken.expires_at)}):</div>
+        <div class="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+          <Icon name="terminal-2" size={13} />
+          Paste this whole block on the new machine (one-time, expires {timeAgo(lastToken.expires_at)}). The agent, tools manifest and checksum are all served by this panel — no GitHub, nothing else fetched.
+        </div>
         {#if lastToken.install_command}
           <div class="flex items-start gap-2">
-            <pre class="flex-1 bg-background border border-border rounded-lg p-2.5 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">{lastToken.install_command}</pre>
+            <pre class="flex-1 bg-background border border-border rounded-lg p-2.5 text-[11px] font-mono overflow-auto max-h-56 whitespace-pre break-normal">{lastToken.install_command}</pre>
             <Button variant="ghost" size="xs" icon="copy" copyText={lastToken.install_command} title="Copy" />
           </div>
         {:else}

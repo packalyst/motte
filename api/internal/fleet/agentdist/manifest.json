@@ -1,0 +1,29 @@
+{
+  "tools": {
+    "trivy": {
+      "version": "0.74.0",
+      "assets": {
+        "linux/amd64": { "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz", "sha256": "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a", "format": "tar.gz", "bin_paths": { "trivy": "trivy" } },
+        "linux/arm64": { "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz", "sha256": "b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5", "format": "tar.gz", "bin_paths": { "trivy": "trivy" } }
+      }
+    },
+    "osquery": {
+      "version": "5.23.1",
+      "assets": {
+        "linux/amd64": { "url": "https://github.com/osquery/osquery/releases/download/5.23.1/osquery-5.23.1_1.linux_x86_64.tar.gz", "sha256": "0f37a478a1dbda24b67c81551e32d734b392c5a2f5deb156bf1c41ca204cfa67", "format": "tar.gz", "bin_paths": { "osqueryd": "opt/osquery/bin/osqueryd" } }
+      }
+    },
+    "crowdsec": {
+      "version": "1.7.8",
+      "assets": {
+        "linux/amd64": {
+          "url": "https://github.com/crowdsecurity/crowdsec/releases/download/v1.7.8/crowdsec-release.tgz",
+          "sha256": "647bd928b8413fe932fd781be1edef01ba6211797e837f3a731c39a3ce66f94c",
+          "format": "tar.gz",
+          "bin_paths": { "crowdsec": "crowdsec-v1.7.8/cmd/crowdsec/crowdsec", "cscli": "crowdsec-v1.7.8/cmd/crowdsec-cli/cscli" },
+          "config_dir": "crowdsec-v1.7.8/config"
+        }
+      }
+    }
+  }
+}

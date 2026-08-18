@@ -181,8 +181,7 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	panelURL, install := "", ""
 	if host != "" {
 		panelURL = fmt.Sprintf("https://%s:%d", host, s.effectivePort())
-		install = fmt.Sprintf("curl -fsSL %s | sudo sh -s -- --panel %s --ca-fp %s --token %s",
-			s.installURL, panelURL, s.ca.Fingerprint(), tok.Plaintext)
+		install = buildInstallCommand(host, s.effectivePort(), tok.Plaintext, string(s.ca.CertPEM()))
 	}
 	router.JSON(w, createTokenResponse{
 		Token:          tok.Plaintext,
@@ -192,6 +191,27 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		PanelURL:       panelURL,
 		InstallCommand: install,
 	})
+}
+
+// buildInstallCommand produces the self-extracting install one-liner. The whole agent
+// (binary + manifest + installer) comes back inside the response from /i/<token>; here
+// we only need curl to VERIFY that download against the panel CA. curl takes the CA as
+// a file, so the command writes the panel's CA PEM to a temp file and passes --cacert.
+// This works for both an IP and a domain (the fleet cert carries both as SANs), needs
+// no public certificate, and survives panel restarts (the CA is stable). $(uname -m)
+// is filled in by the target's own shell so the panel returns the right-arch binary.
+func buildInstallCommand(host string, port int, token, caPEM string) string {
+	return fmt.Sprintf(`cat > /tmp/wgscout-ca.pem <<'EOF'
+%sEOF
+curl -fsSL --cacert /tmp/wgscout-ca.pem "https://%s:%d/i/%s?arch=$(uname -m)" | sudo sh
+rm -f /tmp/wgscout-ca.pem`, ensureTrailingNL(caPEM), host, port, token)
+}
+
+func ensureTrailingNL(s string) string {
+	if strings.HasSuffix(s, "\n") {
+		return s
+	}
+	return s + "\n"
 }
 
 func (s *Service) handleListMachines(w http.ResponseWriter, r *http.Request) {
