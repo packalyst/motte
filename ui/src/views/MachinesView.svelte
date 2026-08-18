@@ -11,7 +11,6 @@
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import StatCard from '../components/StatCard.svelte'
-  import Badge from '../components/Badge.svelte'
   import MachineDetail from '../components/MachineDetail.svelte'
   import { timeAgo } from '$lib/utils/format.js'
   import { usageColor, statusInfo, round } from '$lib/fleet.js'
@@ -96,7 +95,21 @@
   function closeDetail() { selected = null; load() }
 
   const inputCls = 'bg-background border border-border rounded-lg px-3 py-2 text-sm'
+  const chipCls = {
+    ok: 'bg-success/10 text-success',
+    warn: 'bg-warning/10 text-warning',
+    crit: 'bg-destructive/10 text-destructive',
+    muted: 'bg-muted text-muted-foreground',
+  }
 </script>
+
+<!-- Source-labelled status chip (matches the fleet mockup): a coloured pill with the
+     data source (crowdsec / osquery / trivy) called out, so provenance stays visible. -->
+{#snippet chip(variant, label, src)}
+  <span class="inline-flex items-center gap-1 text-[10.5px] font-medium px-2 py-0.5 rounded-full {chipCls[variant]}">
+    {label}{#if src}<span class="text-[9px] opacity-60 font-normal">{src}</span>{/if}
+  </span>
+{/snippet}
 
 {#if selected}
   <MachineDetail machine={selected} onback={closeDetail} ondeleted={closeDetail} />
@@ -209,20 +222,30 @@
 
             <div class="flex flex-wrap gap-1.5 mt-3">
               {#if s.bans > 0}
-                <Badge variant="danger" size="sm">{s.bans} ban{s.bans > 1 ? 's' : ''}</Badge>
+                {@render chip('crit', `⚠ ${s.bans} ban${s.bans > 1 ? 's' : ''}`, 'crowdsec')}
               {:else}
-                <Badge variant="success" size="sm">no threats</Badge>
+                {@render chip('ok', '✓ no threats', 'crowdsec')}
               {/if}
-              {#if s.fim > 0}<Badge variant="warning" size="sm">FIM {s.fim}</Badge>{/if}
+              {#if s.fim > 0}
+                {@render chip('warn', `⚠ FIM ${s.fim}`, 'osquery')}
+              {:else}
+                {@render chip('ok', '✓ FIM clean', 'osquery')}
+              {/if}
               {#if s.cve_total > 0}
-                <Badge variant={s.cve_critical > 0 ? 'danger' : 'warning'} size="sm">{s.cve_total} CVE{s.cve_total > 1 ? 's' : ''}{s.cve_critical > 0 ? ` · ${s.cve_critical} crit` : ''}</Badge>
+                {@render chip(s.cve_critical > 0 ? 'crit' : 'warn', `${s.cve_total} CVE${s.cve_total > 1 ? 's' : ''}${s.cve_critical > 0 ? ` · ${s.cve_critical} crit` : ''}`, 'trivy')}
+              {:else}
+                {@render chip('ok', '✓ no CVEs', 'trivy')}
               {/if}
             </div>
           {:else}
-            <div class="mt-3 text-[11px] text-muted-foreground py-3 text-center">
-              {m.revoked ? 'Revoked' : m.last_seen ? 'Offline — no live metrics' : 'Waiting for first report'}
+            <div class="mt-3 text-[11px] text-muted-foreground py-4 text-center">
+              {m.revoked ? 'Revoked' : m.last_seen ? `Offline · last seen ${timeAgo(m.last_seen)}` : 'Waiting for first report'}
             </div>
           {/if}
+
+          <div class="flex items-center gap-1.5 mt-3 pt-3 border-t border-border text-[11px] text-muted-foreground">
+            <Icon name="chevron-right" size={13} /> View detail
+          </div>
         </button>
       {/each}
     </div>
