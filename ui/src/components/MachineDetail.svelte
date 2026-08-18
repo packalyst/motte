@@ -325,7 +325,8 @@
             {#each facts.users as u}
               <div class="flex items-center gap-3 py-1.5 border-t border-border first:border-t-0 text-sm">
                 <span class="font-medium">{u.user}</span>
-                <span class="text-xs text-muted-foreground font-mono">{u.host || 'local'}</span>
+                {#if u.tty}<span class="text-[11px] text-muted-foreground font-mono">{u.tty}</span>{/if}
+                <span class="text-xs text-muted-foreground font-mono ml-auto">{u.host ? `from ${u.host}` : 'local console'}</span>
               </div>
             {/each}
           </div>
