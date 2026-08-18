@@ -15,8 +15,9 @@ theme.subscribe(value => {
 })
 
 // Valid view IDs for URL routing
-export const validViews = ['overview', 'nodes', 'users', 'firewall', 'routes', 'authkeys', 'apikeys',
-                           'traefik', 'domains', 'adguard', 'docker', 'logs', 'analytics', 'settings', 'about']
+export const validViews = ['overview', 'nodes', 'users', 'firewall', 'server', 'fleet', 'iplookup',
+                           'routes', 'authkeys', 'apikeys', 'traefik', 'domains', 'tunnels', 'adguard',
+                           'docker', 'logs', 'analytics', 'activity', 'settings', 'profile', 'about']
 
 // Get initial tab from URL hash (for tab persistence on refresh)
 export function getInitialTab(defaultTab, validTabs) {
