@@ -270,13 +270,13 @@ networks:
       config:
         - subnet: ${DOCKER_SUBNET}
           gateway: ${DOCKER_GATEWAY}
-  # Dedicated, isolated network for docker-socket-proxy only. internal: true =
-  # no internet egress (it only needs the mounted docker.sock). Pinned to a tiny,
-  # out-of-the-way subnet so Docker's address pool can never hand it a range that
-  # overlaps vpn-network (the bug this whole change fixes).
+  # Dedicated single-member network for docker-socket-proxy, purely so Compose
+  # doesn't auto-create a "_default" network that overlaps vpn-network. Pinned to
+  # a tiny, out-of-the-way subnet so the address pool can't clash. NOT marked
+  # internal: an internal network blocks the published 127.0.0.1:2375 port the
+  # api relies on. Isolation still holds — no other container joins this network.
   socket-proxy-net:
     name: socket-proxy-net
-    internal: true
     ipam:
       driver: default
       config:
