@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -117,29 +118,94 @@ func (s *Service) handleForgetSudoFailure(w http.ResponseWriter, r *http.Request
 	router.JSON(w, map[string]bool{"ok": true})
 }
 
+// runWho returns the raw `who` output lines from the host (via nsenter, since the
+// api container must see the host's sessions, not its own). Empty on failure.
+func runWho() []string {
+	out, err := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "who").Output()
+	if err != nil {
+		if out, err = exec.Command("who").Output(); err != nil {
+			return nil
+		}
+	}
+	return strings.Split(string(out), "\n")
+}
+
+// whoHost extracts the remote host/IP from a `who` line's trailing "(...)", or ""
+// for a local console session (no parenthetical, or an X display like ":0").
+func whoHost(line string) string {
+	i := strings.LastIndex(line, "(")
+	if i < 0 {
+		return ""
+	}
+	host := strings.Trim(strings.TrimSpace(line[i:]), "()")
+	if host == "" || strings.HasPrefix(host, ":") {
+		return ""
+	}
+	return host
+}
+
 // whoSessions maps an active session TTY (pts/2, tty1) to its source IP via `who`
 // on the host. Local console sessions have no remote IP (skipped).
 func whoSessions() map[string]string {
 	m := map[string]string{}
-	out, err := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "who").Output()
-	if err != nil {
-		if out, err = exec.Command("who").Output(); err != nil {
-			return m
-		}
-	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range runWho() {
 		f := strings.Fields(line)
 		if len(f) < 2 {
 			continue
 		}
-		if i := strings.LastIndex(line, "("); i >= 0 {
-			host := strings.Trim(strings.TrimSpace(line[i:]), "()")
-			if host != "" && !strings.HasPrefix(host, ":") { // skip local X display ":0"
-				m[f[1]] = host
-			}
+		if host := whoHost(line); host != "" {
+			m[f[1]] = host
 		}
 	}
 	return m
+}
+
+// activeSessionCounts counts the sessions currently open, keyed by user+IP, so a
+// historical login can be flagged "active" when a live session matches it. Using a
+// count (not a bool) means N live sessions from the same user+IP mark the N most
+// recent matching logins — not all of them.
+func activeSessionCounts() map[string]int {
+	counts := map[string]int{}
+	for _, line := range runWho() {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		host := whoHost(line)
+		if host == "" {
+			continue
+		}
+		counts[f[0]+"\x00"+host]++
+	}
+	return counts
+}
+
+// markActiveLogins flags the still-connected logins. For each (user, IP) group it
+// marks the k most-recent login events active, where k is that pair's live-session
+// count from `who`. Best-effort: a `who` host shown as a name (reverse DNS) simply
+// won't match an IP-based login, so it stays unflagged rather than mislabeled.
+func markActiveLogins(recent []loginEvent, counts map[string]int) {
+	if len(counts) == 0 {
+		return
+	}
+	groups := map[string][]int{}
+	for i, l := range recent {
+		if l.IP == "" {
+			continue
+		}
+		key := l.User + "\x00" + l.IP
+		groups[key] = append(groups[key], i)
+	}
+	for key, idxs := range groups {
+		k := counts[key]
+		if k <= 0 {
+			continue
+		}
+		sort.Slice(idxs, func(a, b int) bool { return recent[idxs[a]].When.After(recent[idxs[b]].When) })
+		for n := 0; n < k && n < len(idxs); n++ {
+			recent[idxs[n]].Active = true
+		}
+	}
 }
 
 // ---------- phone-home watch ----------

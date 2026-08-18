@@ -49,3 +49,6 @@ Thumbs.db
 wireguard-backup-*
 .claude/
 headscale/config/derp.yaml
+
+# Fleet agent — work in progress, intentionally not committed yet
+agent/

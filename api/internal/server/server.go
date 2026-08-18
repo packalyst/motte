@@ -74,6 +74,7 @@ type loginEvent struct {
 	Owner   string    `json:"owner,omitempty"`
 	When    time.Time `json:"when"`
 	Root    bool      `json:"root"`
+	Active  bool      `json:"active,omitempty"` // session still open right now (per `who`)
 }
 type loginsBlock struct {
 	Recent       []loginEvent `json:"recent"`
@@ -167,6 +168,11 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// Flag which of the historical logins are still-open sessions right now, by
+	// cross-referencing `who`. The login list is a ledger of past Accepted events;
+	// this marks the ones currently connected so "live vs history" reads at a glance.
+	markActiveLogins(rep.Logins.Recent, activeSessionCounts())
 
 	rep.Packages = s.recentPackages(now)
 	rep.Sudo.Failed = s.recentSudoFailures(now) // persisted failures with session IP

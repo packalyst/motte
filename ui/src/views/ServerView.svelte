@@ -84,17 +84,18 @@
           </div>
         {:else}
           <div class="divide-y divide-border">
-            <!-- successful logins -->
-            {#each data.logins.recent.slice().reverse() as l}
+            <!-- successful logins: live sessions first, then newest history -->
+            {#each data.logins.recent.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || new Date(b.when) - new Date(a.when)) as l}
               {@const alarm = l.root && l.ip && !isLocal(l.ip)}
               <div class="flex items-center gap-2.5 py-2 {alarm ? 'bg-destructive/10 -mx-2 px-2 rounded-lg' : ''}">
                 <span class="{av} {alarm ? 'border-destructive/50 text-destructive' : 'text-muted-foreground'}"><Icon name={methodIcon(l.method)} size={15} /></span>
                 <div class="flex-1 min-w-0">
                   <div class="text-[13px] font-medium flex items-center gap-1.5 {alarm ? 'text-destructive' : 'text-foreground'}">{l.user}
+                    {#if l.active}<span class="{chip} bg-success/15 text-success flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>active</span>{/if}
                     <span class="{chip} bg-muted text-muted-foreground">{l.method}</span>
                     {#if l.root}<span class="{chip} {alarm ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground'}">{alarm ? 'unexpected root' : 'root'}</span>{/if}
                     {#if isLocal(l.ip)}<span class="{chip} bg-success/15 text-success">local</span>{/if}</div>
-                  <div class="{l2}">{isLocal(l.ip) ? 'local session' : l.ip}{l.country ? ' · ' + l.country : ''}{l.owner ? ' · ' + l.owner : ''} · {timeAgo(l.when)}</div>
+                  <div class="{l2}">{isLocal(l.ip) ? 'local session' : l.ip}{l.country ? ' · ' + l.country : ''}{l.owner ? ' · ' + l.owner : ''} · {l.active ? 'connected now · since ' + timeAgo(l.when) : timeAgo(l.when)}</div>
                 </div>
                 {#if alarm}<Button variant="destructive" size="xs" icon="ban" onclick={() => banIP(l.ip)}>Ban</Button>{/if}
               </div>
