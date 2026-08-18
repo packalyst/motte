@@ -67,7 +67,9 @@ func (s *Service) CA() *CA { return s.ca }
 const (
 	settingEnabled = "fleet_enabled"
 	settingPort    = "fleet_port"
-	defaultPort    = 8443
+	// 9443: an alternate-HTTPS port free in this stack. NOT 8443 (that's DERP_HTTP_PORT)
+	// nor 8080/8081/8085/9090/50443 (Traefik/api/headscale/metrics/grpc).
+	defaultPort = 9443
 )
 
 // ReloadFromSettings reads fleet_enabled + fleet_port from the settings table and

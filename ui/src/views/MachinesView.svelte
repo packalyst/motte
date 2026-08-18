@@ -21,7 +21,7 @@
 
   // listener config
   let cfgEnabled = $state(false)
-  let cfgPort = $state(8443)
+  let cfgPort = $state(9443)
   let savingCfg = $state(false)
 
   // add-machine

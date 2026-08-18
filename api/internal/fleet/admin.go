@@ -28,7 +28,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 // handleSetConfig turns the fleet listener on/off and sets its port, then applies
 // it live (starts/stops the mTLS listener + opens/closes the firewall port). This
 // is the "flip a switch" control — no env vars.
-// POST /api/fleet/config  {"enabled":true,"port":8443}
+// POST /api/fleet/config  {"enabled":true,"port":9443}
 func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled bool `json:"enabled"`
