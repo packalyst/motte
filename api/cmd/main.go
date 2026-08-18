@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,14 +20,15 @@ import (
 	"api/internal/domains"
 	"api/internal/events"
 	"api/internal/firewall"
+	"api/internal/fleet"
 	"api/internal/geolocation"
 	"api/internal/headscale"
 	"api/internal/helper"
 	"api/internal/logs"
-	"api/internal/server"
 	"api/internal/logs/sources"
 	"api/internal/nftables"
 	"api/internal/router"
+	"api/internal/server"
 	"api/internal/settings"
 	"api/internal/setup"
 	"api/internal/stats"
@@ -341,6 +343,48 @@ func main() {
 			}
 			r.RegisterService("server", srvSvc.Handlers())
 			log.Println("Server security service registered")
+		}
+	}
+
+	// Fleet (Phase 2): panel-side CA + agent enrollment + machine registry + a
+	// managed mTLS listener. On/off + port come from Settings (fleet_enabled /
+	// fleet_port), NOT env. When enabled it auto-opens its port through the firewall
+	// (reusing the allowed-ports mechanism) and auto-detects its own IPs for the cert.
+	if config.IsServiceEnabled("fleet") {
+		if flDB, dberr := database.GetDB(); dberr == nil {
+			db := flDB.DB
+			// Open/close the fleet port via the firewall's allowed-ports table, then
+			// re-apply nftables — the same path essential ports use.
+			openPort := func(port int) error {
+				if fwSvc == nil {
+					return nil
+				}
+				_, err := db.Exec(`INSERT OR IGNORE INTO firewall_entries
+					(entry_type, value, action, direction, protocol, source, name, essential, enabled)
+					VALUES ('port', ?, 'allow', 'inbound', 'tcp', 'system', 'wgscout-fleet', 1, 1)`,
+					strconv.Itoa(port))
+				fwSvc.RequestApply()
+				return err
+			}
+			closePort := func(port int) error {
+				if fwSvc == nil {
+					return nil
+				}
+				_, err := db.Exec(`DELETE FROM firewall_entries WHERE entry_type='port' AND name='wgscout-fleet' AND value=?`,
+					strconv.Itoa(port))
+				fwSvc.RequestApply()
+				return err
+			}
+			sslDomain := helper.GetEnvOptional("SSL_DOMAIN", "")
+			installURL := helper.GetEnvOptional("FLEET_INSTALL_URL", "")
+			flSvc, ferr := fleet.New(db, installURL, sslDomain, openPort, closePort)
+			if ferr != nil {
+				log.Printf("Fleet init failed: %v", ferr)
+			} else {
+				r.RegisterService("fleet", flSvc.Handlers())
+				flSvc.ReloadFromSettings() // start the listener if enabled in Settings
+				log.Printf("Fleet service registered (CA %s)", flSvc.CA().Fingerprint())
+			}
 		}
 	}
 
