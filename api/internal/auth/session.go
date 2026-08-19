@@ -74,18 +74,25 @@ func (s *Service) RevokeOtherSessions(currentToken string, userID int64) (int64,
 	return result.RowsAffected()
 }
 
+// VerifyPassword checks a plaintext password against the stored hash for a user.
+// Returns nil on match. Used for step-up re-authentication on sensitive actions
+// (change password, create user) so a stolen session token alone is not enough.
+func (s *Service) VerifyPassword(userID int64, password string) error {
+	var passwordHash string
+	if err := s.db.QueryRow("SELECT password_hash FROM users WHERE id = ?", userID).Scan(&passwordHash); err != nil {
+		return errors.New("user not found")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+		return errors.New("current password is incorrect")
+	}
+	return nil
+}
+
 // ChangePassword changes the user's password after verifying the current one
 func (s *Service) ChangePassword(userID int64, currentPassword, newPassword string) error {
-	// Get current password hash
-	var passwordHash string
-	err := s.db.QueryRow("SELECT password_hash FROM users WHERE id = ?", userID).Scan(&passwordHash)
-	if err != nil {
-		return fmt.Errorf("user not found")
-	}
-
 	// Verify current password FIRST (before any other validation)
-	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(currentPassword)); err != nil {
-		return errors.New("current password is incorrect")
+	if err := s.VerifyPassword(userID, currentPassword); err != nil {
+		return err
 	}
 
 	// Only after verifying current password, check if new password is different

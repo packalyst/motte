@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"api/internal/database"
+	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
 	"api/internal/settings"
@@ -457,11 +458,32 @@ func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	// Creating another panel login is a sensitive, persistence-granting action, so it
+	// requires STEP-UP re-authentication (the caller's current password) — a stolen
+	// session token alone must not be able to mint a new admin — and it is audit-logged.
+	// (There is no UI for this yet; the endpoint stays hardened for future multi-admin.)
+	token := helper.ExtractBearerToken(r)
+	if token == "" {
+		router.JSONError(w, "No token provided", http.StatusUnauthorized)
+		return
+	}
+	caller, err := s.ValidateSession(token)
+	if err != nil {
+		router.JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
+		return
+	}
+
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		CurrentPassword string `json:"currentPassword"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+
+	if err := s.VerifyPassword(caller.ID, req.CurrentPassword); err != nil {
+		router.JSONError(w, "current password is incorrect", http.StatusUnauthorized)
 		return
 	}
 
@@ -471,6 +493,8 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	events.Log("auth", "user_created", events.SeverityWarning,
+		fmt.Sprintf("Panel user %q created by %q", user.Username, caller.Username))
 	router.JSON(w, user)
 }
 
