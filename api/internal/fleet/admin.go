@@ -24,6 +24,9 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"SetConfig":      s.handleSetConfig,
 		"PushBlocks":     s.handlePushBlocks,
 		"DeleteMachine":  s.handleDeleteMachine,
+		"CVEGroups":      s.handleCVEGroups,
+		"ListCVEs":       s.handleListCVEs,
+		"FixPackages":    s.handleFixPackages,
 	}
 }
 

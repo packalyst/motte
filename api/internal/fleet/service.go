@@ -317,6 +317,21 @@ func ensureSchema(db *sql.DB) error {
 			done_at      TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_fleet_cmd_machine ON fleet_commands(machine_id, status)`,
+		`CREATE TABLE IF NOT EXISTS fleet_cves (
+			machine_id TEXT NOT NULL,
+			cve_id     TEXT NOT NULL,
+			pkg        TEXT,
+			installed  TEXT,
+			fixed      TEXT,
+			severity   TEXT,
+			target     TEXT,
+			class      TEXT,
+			type       TEXT,
+			title      TEXT,
+			scanned_at TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_machine ON fleet_cves(machine_id, severity)`,
+		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_target ON fleet_cves(machine_id, target)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {

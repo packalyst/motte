@@ -38,6 +38,7 @@ func (s *Service) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ca": s.ca.Fingerprint()})
 	})
 	mux.HandleFunc("POST /report", s.requireClientCert(s.HandleReport))
+	mux.HandleFunc("POST /cve-report", s.requireClientCert(s.HandleCVEReport))
 	mux.HandleFunc("GET /commands", s.requireClientCert(s.HandleCommands))
 	mux.HandleFunc("POST /commands/ack", s.requireClientCert(s.HandleCommandAck))
 	return mux

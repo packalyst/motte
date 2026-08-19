@@ -1559,6 +1559,30 @@
           ],
           "handler": "DeleteMachine",
           "description": "Delete a machine and invalidate its cert"
+        },
+        {
+          "path": "/cves/groups",
+          "methods": [
+            "GET"
+          ],
+          "handler": "CVEGroups",
+          "description": "Machine CVEs grouped by OS/project (?machine_id=)"
+        },
+        {
+          "path": "/cves",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ListCVEs",
+          "description": "Filtered/paginated machine CVE list"
+        },
+        {
+          "path": "/fix",
+          "methods": [
+            "POST"
+          ],
+          "handler": "FixPackages",
+          "description": "Queue a targeted OS-package upgrade for selected CVEs"
         }
       ]
     }
