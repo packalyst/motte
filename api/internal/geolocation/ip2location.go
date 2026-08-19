@@ -317,11 +317,15 @@ func (p *IP2LocationProvider) downloadDBToPath(destPath string) error {
 		return fmt.Errorf("failed to create zip file: %v", err)
 	}
 
-	_, err = io.Copy(zipFile, resp.Body)
+	n, err := io.Copy(zipFile, io.LimitReader(resp.Body, maxGeoDBBytes+1))
 	zipFile.Close()
 	if err != nil {
 		os.Remove(zipPath)
 		return fmt.Errorf("failed to download zip: %v", err)
+	}
+	if n > maxGeoDBBytes {
+		os.Remove(zipPath)
+		return fmt.Errorf("IP2Location download exceeds %d bytes — refusing", maxGeoDBBytes)
 	}
 
 	// Extract .BIN file from zip
@@ -356,11 +360,15 @@ func (p *IP2LocationProvider) extractBINFromZip(zipPath, destPath string) error 
 				return fmt.Errorf("failed to create output file: %v", err)
 			}
 
-			_, err = io.Copy(dst, src)
+			n, err := io.Copy(dst, io.LimitReader(src, maxGeoDBBytes+1))
 			dst.Close()
 			if err != nil {
 				os.Remove(destPath)
 				return fmt.Errorf("failed to extract file: %v", err)
+			}
+			if n > maxGeoDBBytes {
+				os.Remove(destPath)
+				return fmt.Errorf("IP2Location .BIN exceeds %d bytes — refusing (possible zip bomb)", maxGeoDBBytes)
 			}
 
 			return nil

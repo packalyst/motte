@@ -79,24 +79,46 @@ func (s *Service) IngestCVEs(machineID, scannedAt string, findings []CVE) error 
 		_ = tx.Rollback()
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO fleet_cves
+	// Batched multi-row INSERT (up to batchRows per statement) instead of one Exec per
+	// finding — a large scan can be tens of thousands of rows, and per-row round-trips
+	// dominate the ingest. 12 columns × 1000 rows = 12000 bind params, well under SQLite's
+	// variable limit.
+	const batchRows = 1000
+	const valueTuple = "(?,?,?,?,?,?,?,?,?,?,?,?)"
+	const prefix = `INSERT INTO fleet_cves
 		(machine_id, cve_id, pkg, installed, fixed, severity, target, project, class, type, title, scanned_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		_ = tx.Rollback()
+		VALUES `
+
+	args := make([]any, 0, batchRows*12)
+	rows := 0
+	flush := func() error {
+		if rows == 0 {
+			return nil
+		}
+		q := prefix + valueTuple + strings.Repeat(","+valueTuple, rows-1)
+		_, err := tx.Exec(q, args...)
+		args = args[:0]
+		rows = 0
 		return err
 	}
-	defer stmt.Close()
 	for _, f := range findings {
 		project := f.Project
 		if project == "" {
 			project = deriveProject(f.Class, f.Target, f.Pkg)
 		}
-		if _, err := stmt.Exec(machineID, f.CVEID, f.Pkg, f.Installed, f.Fixed, f.Severity,
-			f.Target, project, f.Class, f.Type, f.Title, scannedAt); err != nil {
-			_ = tx.Rollback()
-			return err
+		args = append(args, machineID, f.CVEID, f.Pkg, f.Installed, f.Fixed, f.Severity,
+			f.Target, project, f.Class, f.Type, f.Title, scannedAt)
+		rows++
+		if rows >= batchRows {
+			if err := flush(); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
 		}
+	}
+	if err := flush(); err != nil {
+		_ = tx.Rollback()
+		return err
 	}
 	return tx.Commit()
 }

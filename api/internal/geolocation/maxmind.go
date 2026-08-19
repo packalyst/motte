@@ -25,6 +25,11 @@ const (
 	maxmindDBFile      = "GeoLite2-Country.mmdb"
 )
 
+// maxGeoDBBytes caps a single geo-DB download/extraction (MaxMind + IP2Location). Real
+// databases are far under this (tens of MB); a download or decompression larger than the
+// cap is a bomb or a corrupt/hostile response, so we reject it rather than fill the disk.
+const maxGeoDBBytes = 500 << 20 // 500 MB
+
 // MaxMindProvider provides IP geolocation using MaxMind GeoLite2
 type MaxMindProvider struct {
 	reader     *maxminddb.Reader
@@ -277,11 +282,17 @@ func (p *MaxMindProvider) downloadDBToPath(destPath string) error {
 				return fmt.Errorf("failed to create output file: %v", err)
 			}
 
-			_, err = io.Copy(outFile, tarReader)
+			// Cap the extraction: a hostile/corrupt tar.gz could otherwise decompress
+			// without bound and fill the disk. Real GeoLite2 DBs are far under the cap.
+			n, err := io.Copy(outFile, io.LimitReader(tarReader, maxGeoDBBytes+1))
 			outFile.Close()
 			if err != nil {
 				os.Remove(destPath)
 				return fmt.Errorf("failed to write database: %v", err)
+			}
+			if n > maxGeoDBBytes {
+				os.Remove(destPath)
+				return fmt.Errorf("MaxMind database exceeds %d bytes — refusing (possible decompression bomb)", maxGeoDBBytes)
 			}
 
 			log.Printf("MaxMind database downloaded: %s", destPath)
