@@ -168,11 +168,34 @@ func (s *Service) Status() (enabled bool, port int) {
 	return s.srv != nil, s.port
 }
 
-// HostCandidates returns the addresses agents could dial the panel on — every
-// non-loopback interface IP plus the SSL domain — so the admin UI can offer them
-// when building an install command.
+// HostCandidates returns the direct addresses an agent could dial for mTLS: the panel's
+// public IPv4(s) plus its WireGuard interface IP. Docker/bridge private IPs and the
+// (possibly Cloudflare-proxied) SSL domain are deliberately excluded — the mTLS channel
+// must reach the origin directly, and only these are meaningful to pick for that. Order:
+// public IPs first, then WG. (detectHostSANs still lists everything for the cert SANs.)
 func (s *Service) HostCandidates() []string {
-	return detectHostSANs(s.sslDomain)
+	pub, wg := []string{}, []string{}
+	seen := map[string]bool{}
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		isWG := strings.HasPrefix(iface.Name, "wg")
+		addrs, _ := iface.Addrs()
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.To4() == nil || seen[ipnet.IP.String()] {
+				continue
+			}
+			ip := ipnet.IP.String()
+			if isPublicIPv4(ipnet.IP) {
+				seen[ip] = true
+				pub = append(pub, ip)
+			} else if isWG && ipnet.IP.IsPrivate() {
+				seen[ip] = true
+				wg = append(wg, ip)
+			}
+		}
+	}
+	return append(pub, wg...)
 }
 
 // firstPublicIP returns the panel's first routable public IPv4, used as the default

@@ -11,6 +11,7 @@
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import StatCard from '../components/StatCard.svelte'
+  import EmptyState from '../components/EmptyState.svelte'
   import Input from '../components/Input.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import Select from '../components/Select.svelte'
@@ -46,8 +47,13 @@
         // Default the mTLS host to the first candidate (a public IP), not the domain.
         if (!selectedHost && ep.hosts?.length) selectedHost = ep.hosts[0]
       }
-      // keep the open detail's header fresh
-      if (selected) selected = machines.find((x) => x.id === selected.id) || selected
+      // keep the open detail's header fresh; restore it from the URL hash on refresh.
+      if (selected) {
+        selected = machines.find((x) => x.id === selected.id) || selected
+      } else {
+        const id = selectedIdFromHash()
+        if (id) selected = machines.find((x) => x.id === id) || null
+      }
       error = null
     } catch (e) {
       error = e.message
@@ -55,7 +61,16 @@
       loading = false
     }
   }
-  onMount(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t) })
+  onMount(() => {
+    load()
+    const t = setInterval(load, 15000)
+    const onHash = () => {
+      const id = selectedIdFromHash()
+      selected = id ? (machines.find((x) => x.id === id) || selected) : null
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => { clearInterval(t); window.removeEventListener('hashchange', onHash) }
+  })
 
   // fleet summary tiles
   const summary = $derived.by(() => {
@@ -95,8 +110,20 @@
     }
   }
 
-  function openDetail(m) { selected = m }
-  function closeDetail() { selected = null; load() }
+  // Deep-link the open machine in the URL hash (#m=<id>) so a refresh stays on it.
+  function selectedIdFromHash() {
+    if (typeof window === 'undefined') return null
+    return new URLSearchParams(window.location.hash.slice(1)).get('m')
+  }
+  function openDetail(m) {
+    selected = m
+    if (typeof window !== 'undefined') window.location.hash = 'm=' + encodeURIComponent(m.id)
+  }
+  function closeDetail() {
+    selected = null
+    if (typeof window !== 'undefined' && window.location.hash) history.replaceState(null, '', window.location.pathname)
+    load()
+  }
 
   const chipCls = {
     ok: 'bg-success/10 text-success',
@@ -158,7 +185,8 @@
     </p>
   </div>
 
-  <!-- Add machine -->
+  <!-- Add machine — only once the listener is on (nothing can enroll otherwise) -->
+  {#if ep?.enabled}
   <div class="bg-card border border-border rounded-xl p-4">
     <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="plus" size={16} class="text-primary" />Add a machine</h3>
     <div class="flex flex-wrap items-end gap-2">
@@ -173,9 +201,7 @@
       {/if}
       <Button icon="key" onclick={addMachine} disabled={creating || !newLabel.trim() || !ep?.domain}>Generate install command</Button>
     </div>
-    {#if !ep?.enabled}
-      <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Turn the agent listener on (above) so machines can enroll.</div>
-    {:else if !ep?.domain}
+    {#if !ep?.domain}
       <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Set a panel domain (SSL_DOMAIN) to enable the one-command install — it's served over the domain's HTTPS.</div>
     {:else}
       <div class="text-[11px] text-muted-foreground mt-2">Downloads over <span class="font-mono">{ep.domain}</span>; the agent then connects to the picked address for mutual-TLS. Pick a directly-reachable IP (not a Cloudflare-proxied name).</div>
@@ -198,19 +224,20 @@
       </div>
     {/if}
   </div>
+  {/if}
 
   <!-- Machine grid -->
   {#if machines.length === 0}
-    <div class="bg-card border border-border rounded-xl p-8 text-center text-sm text-muted-foreground">
-      No machines enrolled yet. Add one above.
+    <div class="bg-card border border-border rounded-xl p-10">
+      <EmptyState icon="device-desktop" title="No machines yet"
+        description={ep?.enabled ? 'Add a machine above — you’ll get a one-command install to run on the box.' : 'Turn the agent listener on above, then add your first machine.'} />
     </div>
   {:else}
     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
       {#each machines as m (m.id)}
         {@const st = statusInfo(m)}
         {@const s = m.summary}
-        <button type="button" onclick={() => openDetail(m)}
-          class="text-left bg-card border rounded-xl p-4 transition hover:border-primary/50 hover:shadow-sm
+        <div class="bg-card border rounded-xl p-4 flex flex-col
                  {(s?.bans > 0 || s?.fim > 0) ? 'border-destructive/40' : 'border-border'}">
           <div class="flex items-center gap-2.5">
             <span class="w-2.5 h-2.5 rounded-full shrink-0 {st.dot}"></span>
@@ -257,10 +284,10 @@
             </div>
           {/if}
 
-          <div class="flex items-center gap-1.5 mt-3 pt-3 border-t border-border text-[11px] text-muted-foreground">
-            <Icon name="chevron-right" size={13} /> View detail
+          <div class="mt-auto pt-3 border-t border-border flex">
+            <Button variant="outline" size="xs" icon="chevron-right" onclick={() => openDetail(m)} class="w-full justify-center">Manage</Button>
           </div>
-        </button>
+        </div>
       {/each}
     </div>
   {/if}

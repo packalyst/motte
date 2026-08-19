@@ -93,7 +93,38 @@
   }
 
   const toneDot = { crit: 'bg-destructive', warn: 'bg-warning', ok: 'bg-success' }
+
+  // Well-known port → service label (client-side; the agent only sends addr/port/proto).
+  const PORT_NAMES = {
+    22: 'SSH', 53: 'DNS', 25: 'SMTP', 80: 'HTTP', 443: 'HTTPS', 123: 'NTP',
+    3306: 'MySQL', 5432: 'Postgres', 6379: 'Redis', 27017: 'MongoDB', 11211: 'Memcached',
+    9100: 'node_exporter', 8420: 'CrowdSec', 51820: 'WireGuard', 3000: 'app', 8080: 'HTTP-alt',
+  }
+  const proto = (p) => (p === '6' ? 'tcp' : p === '17' ? 'udp' : p || '')
+  const scopeOf = (addr) =>
+    !addr || addr === '0.0.0.0' || addr === '::' ? 'exposed'
+    : addr === '127.0.0.1' || addr === '::1' ? 'local' : 'iface'
+  // Group listening ports by exposure so "what's open to the world" reads at a glance.
+  const portGroups = $derived.by(() => {
+    const g = { exposed: [], iface: [], local: [] }
+    for (const p of facts?.ports || []) (g[scopeOf(p.address)] ||= []).push(p)
+    return g
+  })
+  const scopeMeta = {
+    exposed: { label: 'Exposed (all interfaces)', tone: 'text-warning', dot: 'bg-warning' },
+    iface: { label: 'Bound to an interface', tone: 'text-info', dot: 'bg-info' },
+    local: { label: 'Local only', tone: 'text-success', dot: 'bg-success' },
+  }
 </script>
+
+<!-- one listening-port pill with a service name when we know it -->
+{#snippet portPill(p)}
+  <span class="inline-flex items-center gap-1 font-mono text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+    <span class="text-foreground">{p.address || '*'}:{p.port}</span>
+    <span class="opacity-60">/{proto(p.protocol)}</span>
+    {#if PORT_NAMES[+p.port]}<span class="not-italic text-[9px] px-1 rounded bg-background text-muted-foreground">{PORT_NAMES[+p.port]}</span>{/if}
+  </span>
+{/snippet}
 
 <!-- card header: icon tile + title + source subtitle -->
 {#snippet head(icon, title, sub, tint = 'text-muted-foreground')}
@@ -101,7 +132,7 @@
     <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 {tint}"><Icon name={icon} size={17} /></span>
     <div class="min-w-0">
       <div class="text-[13px] font-semibold text-foreground">{title}</div>
-      <div class="text-[11px] text-muted-foreground truncate">{sub}</div>
+      {#if sub}<div class="text-[11px] text-muted-foreground truncate">{sub}</div>{/if}
     </div>
   </div>
 {/snippet}
@@ -114,17 +145,25 @@
 <div class="space-y-4">
   <!-- Header -->
   <div class="flex items-center gap-3 flex-wrap">
-    <Button variant="ghost" size="xs" icon="arrow-left" onclick={onback}>Fleet</Button>
+    <button onclick={onback} title="Back to fleet"
+      class="h-8 w-8 grid place-items-center rounded-lg border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer shrink-0">
+      <Icon name="arrow-left" size={16} />
+    </button>
     <span class="w-2.5 h-2.5 rounded-full shrink-0 {st.dot}"></span>
-    <div class="min-w-0">
-      <div class="text-lg font-semibold text-foreground truncate">{machine.name || machine.id}</div>
+    <div class="min-w-0 flex-1">
+      <div class="text-lg font-semibold text-foreground truncate leading-tight">{machine.name || machine.id}</div>
       <div class="text-[11px] text-muted-foreground font-mono truncate">
         {st.label}{machine.last_seen ? ` · seen ${timeAgo(machine.last_seen)}` : ''}{report?.agent ? ` · agent ${report.agent}` : ''}
       </div>
     </div>
-    <div class="ml-auto flex items-center gap-2">
-      <Button variant="ghost" size="xs" icon="refresh" onclick={load}>Refresh</Button>
-      <Button variant="destructive" size="xs" icon="trash" onclick={del}>Delete</Button>
+    <!-- grouped actions -->
+    <div class="flex items-center rounded-lg border border-border overflow-hidden shrink-0 divide-x divide-border">
+      <button onclick={load} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
+        <Icon name="refresh" size={14} />Refresh
+      </button>
+      <button onclick={del} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
+        <Icon name="trash" size={14} />Delete
+      </button>
     </div>
   </div>
 
@@ -140,7 +179,7 @@
 
       <!-- LIVE USAGE -->
       <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('activity', 'Live usage', 'node metrics over WireGuard')}
+        {@render head('activity', 'Live usage', '')}
         <div class="space-y-2.5">
           {#each [['CPU', m.cpu], ['Memory', m.mem], ['Disk', m.disk]] as [lbl, val]}
             <div class="flex items-center gap-3 text-xs">
@@ -156,7 +195,7 @@
           <span class="text-muted-foreground">Uptime <span class="text-foreground font-medium">{fmtUptime(m.uptime)}</span></span>
           <span class="text-muted-foreground">Load <span class="text-foreground font-medium tabular-nums">{(m.load1 ?? 0).toFixed(2)}</span></span>
         </div>
-        {@render note('Live resource use pulled from the agent over the WG tunnel. A sustained CPU spike often tracks attack traffic.')}
+        {@render note('Live resource use reported by the agent. A sustained CPU spike often tracks attack traffic.')}
       </div>
 
       <!-- SECURITY EVENTS -->
@@ -180,25 +219,37 @@
 
       <!-- VULNERABILITIES -->
       <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('package', 'Vulnerabilities / updates', 'Trivy · OS packages + app lockfiles', 'text-warning')}
-        <div class="flex flex-wrap items-center gap-1.5 mb-3">
-          {#each ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as sev}
-            {#if cves?.counts?.[sev]}<Badge variant={sevVariant(sev)} size="sm">{cves.counts[sev]} {sev.toLowerCase()}</Badge>{/if}
-          {/each}
-          <span class="text-[11px] text-muted-foreground ml-auto">{cves?.total ?? 0} total{cves?.scanned_at ? ` · ${timeAgo(cves.scanned_at)}` : ''}</span>
+        <!-- header with severity counts inline -->
+        <div class="flex items-center gap-2.5 mb-3">
+          <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-warning"><Icon name="package" size={17} /></span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-[13px] font-semibold text-foreground">Vulnerabilities</span>
+              {#each ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as sev}
+                {#if cves?.counts?.[sev]}<Badge variant={sevVariant(sev)} size="sm">{cves.counts[sev].toLocaleString()} {sev.toLowerCase()}</Badge>{/if}
+              {/each}
+              <span class="ml-auto text-[11px] text-muted-foreground shrink-0">{(cves?.total ?? 0).toLocaleString()} total{cves?.scanned_at ? ` · ${timeAgo(cves.scanned_at)}` : ''}</span>
+            </div>
+            <div class="text-[11px] text-muted-foreground">Trivy · OS packages + app lockfiles</div>
+          </div>
         </div>
         {#if cves?.top?.length}
           <div class="max-h-72 overflow-y-auto -mr-1 pr-1">
             {#each cves.top as v}
-              <div class="flex items-center gap-2.5 py-1.5 border-t border-border first:border-t-0 text-xs">
-                <Badge variant={sevVariant(v.severity)} size="sm">{(v.severity || '').toLowerCase()}</Badge>
-                <span class="font-mono whitespace-nowrap" title={v.title}>{v.id}</span>
-                <span class="text-muted-foreground truncate flex-1">{v.pkg} {v.installed || ''}</span>
-                <span class="shrink-0 font-mono text-[11px]">{#if v.fixed}<span class="text-success">fix {v.fixed}</span>{:else}<span class="text-muted-foreground">no fix</span>{/if}</span>
+              <div class="py-1.5 border-t border-border first:border-t-0 text-xs">
+                <div class="flex items-center gap-2.5">
+                  <Badge variant={sevVariant(v.severity)} size="sm">{(v.severity || '').toLowerCase()}</Badge>
+                  <span class="font-mono whitespace-nowrap" title={v.title}>{v.id}</span>
+                  <span class="ml-auto shrink-0 font-mono text-[11px]">{#if v.fixed}<span class="text-success">→ {v.fixed}</span>{:else}<span class="text-muted-foreground">no fix</span>{/if}</span>
+                </div>
+                <div class="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground pl-1">
+                  <span class="font-mono">{v.pkg}{v.installed ? ` ${v.installed}` : ''}</span>
+                  {#if v.target}<span class="opacity-60 truncate" title={v.target}>· {v.target}</span>{/if}
+                </div>
               </div>
             {/each}
           </div>
-          {#if cves.total > cves.top.length}<div class="text-[11px] text-muted-foreground mt-1.5">Showing the {cves.top.length} worst of {cves.total}.</div>{/if}
+          {#if cves.total > cves.top.length}<div class="text-[11px] text-muted-foreground mt-1.5">Showing the {cves.top.length} worst of {cves.total.toLocaleString()}.</div>{/if}
         {:else}
           <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No known vulnerabilities found.</div>
         {/if}
@@ -206,26 +257,41 @@
           <Button variant="primary" size="sm" icon="refresh-alert" onclick={applyUpdates}>Apply updates</Button>
           <Button variant="outline" size="sm" icon="scan" onclick={rescan}>Rescan</Button>
         </div>
-        {@render note('Apply updates fixes OS-package CVEs (apt); a kernel CVE also needs a reboot. App-dependency CVEs come from lockfiles and are fixed by the app owner. Rescan to confirm.')}
+        {@render note('Apply updates patches OS-package CVEs (apt); a kernel CVE also needs a reboot. App-dependency CVEs come from the lockfile shown per row and are fixed by bumping that project. Rescan to confirm.')}
       </div>
 
       <!-- HOST & EXPOSURE -->
       <div class="bg-card border border-border rounded-xl p-4">
         {@render head('server', 'Host & exposure', 'osquery inventory')}
-        <div class="text-sm">
-          <div class="flex justify-between gap-3 py-1.5 border-t border-border first:border-t-0"><span class="text-muted-foreground">OS</span><span class="font-mono">{[facts?.os?.name, facts?.os?.version].filter(Boolean).join(' ') || '—'}</span></div>
-          <div class="flex justify-between gap-3 py-1.5 border-t border-border"><span class="text-muted-foreground">CPU</span><span class="font-mono truncate max-w-[62%] text-right">{facts?.system?.cpu_brand || '—'}</span></div>
-          <div class="flex justify-between gap-3 py-1.5 border-t border-border"><span class="text-muted-foreground">WG pubkey</span><span class="font-mono text-xs truncate max-w-[58%] text-right">{machine.wg_pubkey || '—'}</span></div>
-          <div class="flex justify-between gap-3 py-1.5 border-t border-border"><span class="text-muted-foreground">Last report</span><span class="font-mono">{report.time ? timeAgo(report.time) : '—'}</span></div>
+        <div>
+          {#each [['device-desktop', 'OS', [facts?.os?.name, facts?.os?.version].filter(Boolean).join(' ')], ['cpu', 'CPU', facts?.system?.cpu_brand], ['key', 'WG pubkey', machine.wg_pubkey], ['clock', 'Last report', report.time ? timeAgo(report.time) : '']] as [ic, k, val]}
+            <div class="flex items-center gap-2.5 py-2 border-t border-border first:border-t-0 text-sm">
+              <Icon name={ic} size={14} class="text-muted-foreground shrink-0" />
+              <span class="text-muted-foreground w-24 shrink-0">{k}</span>
+              <span class="font-mono truncate text-right flex-1 {val ? 'text-foreground' : 'text-muted-foreground'}">{val || '—'}</span>
+            </div>
+          {/each}
         </div>
+
         {#if facts?.ports?.length}
-          <div class="text-[11px] text-muted-foreground mt-3 mb-1">Listening ports</div>
-          <div class="max-h-40 overflow-y-auto -mr-1 pr-1 flex flex-wrap gap-1.5">
-            {#each facts.ports as p}
-              <span class="font-mono text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{p.address || '*'}:{p.port}/{p.protocol === '6' ? 'tcp' : p.protocol === '17' ? 'udp' : p.protocol}</span>
+          <div class="mt-3 space-y-2">
+            {#each ['exposed', 'iface', 'local'] as scope}
+              {#if portGroups[scope].length}
+                <div>
+                  <div class="flex items-center gap-1.5 mb-1">
+                    <span class="w-1.5 h-1.5 rounded-full {scopeMeta[scope].dot}"></span>
+                    <span class="text-[11px] font-medium {scopeMeta[scope].tone}">{scopeMeta[scope].label}</span>
+                    <span class="text-[10px] text-muted-foreground">· {portGroups[scope].length}</span>
+                  </div>
+                  <div class="flex flex-wrap gap-1.5">
+                    {#each portGroups[scope] as p}{@render portPill(p)}{/each}
+                  </div>
+                </div>
+              {/if}
             {/each}
           </div>
         {/if}
+
         {#if facts?.users?.length}
           <div class="text-[11px] text-muted-foreground mt-3 mb-1">Logged-in users</div>
           {#each facts.users as u}
@@ -236,7 +302,7 @@
             </div>
           {/each}
         {/if}
-        {@render note('Agents bind to the WG interface only — reachable through the tunnel, invisible to the internet. An unexpected public port is worth a look.')}
+        {@render note('“Exposed” ports are open on all interfaces (reachable from the internet unless firewalled); “local” ones only from the box itself. An unexpected exposed port is worth a look.')}
       </div>
 
       <!-- BLOCKING -->
