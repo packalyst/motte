@@ -27,18 +27,25 @@
   const unknownLogins = $derived(logins.filter(l => l.root && l.ip && !isLocal(l.ip)).length)
   const sessionCount = $derived(Array.isArray(sessions) ? sessions.length : (sessions?.sessions?.length ?? 0))
 
-  // Worst of the firewall status and the host status drives the banner.
-  const rank = { calm: 0, elevated: 1, under_attack: 2 }
-  const status = $derived.by(() => {
-    const s = [fw?.status, host?.status].filter(Boolean)
-    return s.sort((a, b) => (rank[b] ?? 0) - (rank[a] ?? 0))[0] || 'calm'
+  // The banner headline is chosen by WHICH signal fired, not just the severity — so
+  // "heavy attack, all blocked" (firewall busy, defenses holding) reads differently
+  // from "someone may be inside" (a host break-in signal). Host signals mean a real
+  // possible intrusion and take priority in the wording; firewall volume alone is the
+  // defense working, not a breach.
+  const fwStatus = $derived(fw?.status || 'calm')
+  const hostStatus = $derived(host?.status || 'calm')
+  const verdict = $derived.by(() => {
+    const blocked = (fw?.attackers ?? 0).toLocaleString()
+    if (hostStatus === 'under_attack')
+      return { dot: 'bg-destructive', title: 'Warning — possible intrusion. Check the Server page.' }
+    if (fwStatus === 'under_attack')
+      return { dot: 'bg-destructive', title: `Under heavy attack — defenses holding (${blocked} blocked this hour).` }
+    if (hostStatus === 'elevated')
+      return { dot: 'bg-warning', title: 'Elevated — suspicious host activity. Check the Server page.' }
+    if (fwStatus === 'elevated')
+      return { dot: 'bg-warning', title: 'Elevated — heavy probing, but no break-in.' }
+    return { dot: 'bg-success', title: 'All clear — no break-in, defenses holding.' }
   })
-  const V = {
-    calm:         { dot: 'bg-success', title: 'All clear — no break-in, defenses holding.' },
-    elevated:     { dot: 'bg-warning', title: 'Elevated — heavy probing, but no break-in.' },
-    under_attack: { dot: 'bg-destructive', title: 'Warning — possible intrusion. Check the Server page.' },
-  }
-  const verdict = $derived(V[status] || V.calm)
   const sub = $derived(
     `${fw?.attackers ?? 0} attackers blocked this hour · ${unknownLogins === 0 ? 'no unknown logins' : unknownLogins + ' unknown login(s)'} · ${sessionCount} panel session${sessionCount === 1 ? '' : 's'}.`
   )
