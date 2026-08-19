@@ -111,6 +111,36 @@
   })
   const rescan = () => cmd('rescan', null, { title: 'Rescan', message: `Re-run the Trivy CVE scan on ${machine.name} now?` })
 
+  // Unblock a single IP (the typed one, or a specific one from the enforced list).
+  async function unblockOn(ip = null) {
+    const t = (ip ?? blockIP).trim()
+    if (!t) return
+    await cmd('unblock', { ip: t }, { title: 'Unblock IP', message: `Unblock ${t} on ${machine.name}?`, after: () => { if (ip == null) blockIP = '' } })
+  }
+  const updateKernel = () => cmd('update-kernel', null, {
+    title: 'Update kernel', variant: 'destructive', confirmText: 'Update & reboot', alert: true,
+    message: `Run the full kernel update on ${machine.name}? It installs the newest kernel, AUTO-REBOOTS to activate, then purges old kernels and rescans. The host is briefly offline. Honors dry-run.`,
+  })
+  const restartAgents = () => cmd('restart', { target: 'tools' }, { title: 'Restart sub-agents', message: `Restart the CrowdSec / osquery sub-agents on ${machine.name}? Safe — no reboot.` })
+  const rebootHost = () => cmd('restart', { target: 'host' }, {
+    title: 'Reboot host', variant: 'destructive', confirmText: 'Reboot', alert: true,
+    message: `REBOOT ${machine.name}? The whole host restarts and is offline for a bit.`,
+  })
+
+  // Host facts shown in the Agent & Host card (icon · label · value).
+  const hostFacts = $derived([
+    ['device-desktop', 'OS', [facts?.os?.name, facts?.os?.version].filter(Boolean).join(' ')],
+    ['cpu', 'CPU', facts?.system?.cpu_brand],
+    ['clock', 'Uptime', m.uptime ? fmtUptime(m.uptime) : ''],
+    ['server', 'Host', report?.host],
+    ['activity', 'Last report', report?.time ? timeAgo(report.time) : ''],
+    ['calendar', 'Enrolled', machine.enrolled_at ? timeAgo(machine.enrolled_at) : ''],
+    ['certificate', 'Cert', (machine.cert_fp || '').replace('sha256:', '').slice(0, 12)],
+    ['key', 'WG pubkey', machine.wg_pubkey],
+  ])
+  // IPs this host is currently enforcing a block on (from the live report).
+  const blockedIPs = $derived(report?.blocked || [])
+
   async function del() {
     await cmd(null, null, {
       endpoint: '/api/fleet/machine/delete', title: `Delete ${machine.name}`,
@@ -203,50 +233,83 @@
         description="This machine hasn't checked in with a report. It appears once the agent's first metrics/scan cycle completes." />
     </div>
   {:else}
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+    <!-- AGENT & HOST (full width): header · Host | Actions inline · commands full-width -->
+    <div class="bg-card border border-border rounded-xl mb-4">
+      <div class="p-4 pb-3 flex items-center gap-2.5">
+        <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-muted-foreground"><Icon name="robot" size={17} /></span>
+        <div class="min-w-0 flex-1">
+          <div class="text-[13px] font-semibold text-foreground">Agent &amp; Host</div>
+          <div class="text-[11px] text-muted-foreground truncate">{report?.agent ? `wgscout ${report.agent}` : 'wgscout'}</div>
+        </div>
+        <span class="hidden sm:flex items-center gap-1.5 text-xs mr-1">
+          <span class="w-2 h-2 rounded-full {dryRun ? 'bg-warning' : 'bg-success'}"></span>
+          <span class="font-medium">{dryRun ? 'Dry-run' : 'Live'}</span>
+          <span class="text-muted-foreground">{dryRun ? '— logs actions' : '— enforcing'}</span>
+        </span>
+        {#if dryRun}
+          <Button variant="destructive" size="xs" icon="bolt" onclick={() => setDryRun(false)}>Go live</Button>
+        {:else}
+          <Button variant="outline" size="xs" icon="player-pause" onclick={() => setDryRun(true)}>Dry-run</Button>
+        {/if}
+      </div>
 
-      <!-- AGENT -->
-      <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
-        <!-- header: icon + title + version, dry-run button inline on the right -->
-        <div class="flex items-center gap-2.5 mb-3">
-          <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-muted-foreground"><Icon name="robot" size={17} /></span>
-          <div class="min-w-0 flex-1">
-            <div class="text-[13px] font-semibold text-foreground">Agent</div>
-            <div class="text-[11px] text-muted-foreground truncate">{report?.agent ? `wgscout ${report.agent}` : 'wgscout'}</div>
+      {#if kernel && kphase}
+        <div class="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2">
+          <span class="w-2 h-2 rounded-full mt-1.5 shrink-0 {kphase.dot} {kernel.phase === 'installing' || kernel.phase === 'cleanup_pending' ? 'animate-pulse' : ''}"></span>
+          <div class="min-w-0">
+            <div class="text-xs font-medium flex items-center gap-1.5"><Icon name="cpu" size={12} /> {kphase.label}{#if kernel.target}<span class="font-mono text-[10px] text-muted-foreground">{kernel.target}</span>{/if}</div>
+            {#if kernel.message}<div class="text-[11px] text-muted-foreground mt-0.5 break-words">{kernel.message}</div>{/if}
+            {#if kernel.removed?.length}<div class="text-[10px] text-muted-foreground mt-0.5">Removed {kernel.removed.length} old package(s)</div>{/if}
           </div>
-          {#if dryRun}
-            <Button variant="destructive" size="xs" icon="bolt" onclick={() => setDryRun(false)}>Go live</Button>
-          {:else}
-            <Button variant="outline" size="xs" icon="player-pause" onclick={() => setDryRun(true)}>Switch to dry-run</Button>
+        </div>
+      {/if}
+
+      <!-- Host | Actions inline -->
+      <div class="flex flex-col md:flex-row border-t border-border">
+        <div class="md:flex-[1.6] min-w-0 p-4">
+          <div class="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-2">Host</div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border rounded-lg overflow-hidden border border-border">
+            {#each hostFacts as [ic, k, v]}
+              <div class="bg-card px-2.5 py-2 flex items-center gap-2 min-w-0">
+                <Icon name={ic} size={14} class="text-muted-foreground shrink-0" />
+                <div class="min-w-0">
+                  <div class="text-[9px] uppercase tracking-wide text-muted-foreground leading-tight">{k}</div>
+                  <div class="text-xs font-medium truncate {v ? '' : 'text-muted-foreground'}">{v || '—'}</div>
+                </div>
+              </div>
+            {/each}
+          </div>
+          {#if facts?.users?.length}
+            <div class="mt-2 text-[11px] text-muted-foreground">
+              Sessions: {#each facts.users as u, i}{i > 0 ? ', ' : ''}<span class="font-mono text-foreground">{u.user}</span>{u.host ? ` (${u.host})` : ''}{/each}
+            </div>
           {/if}
         </div>
-        <div class="flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full {dryRun ? 'bg-warning' : 'bg-success'}"></span>
-          <span class="text-sm font-medium">{dryRun ? 'Dry-run' : 'Live'}</span>
-          <span class="text-[11px] text-muted-foreground">{dryRun ? '— logs actions, does not enforce' : '— enforcing for real'}</span>
-        </div>
-        {#if kernel && kphase}
-          <div class="flex items-start gap-2 mt-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2">
-            <span class="w-2 h-2 rounded-full mt-1.5 shrink-0 {kphase.dot} {kernel.phase === 'installing' || kernel.phase === 'cleanup_pending' ? 'animate-pulse' : ''}"></span>
-            <div class="min-w-0">
-              <div class="text-xs font-medium flex items-center gap-1.5">
-                <Icon name="cpu" size={12} /> {kphase.label}
-                {#if kernel.target}<span class="font-mono text-[10px] text-muted-foreground">{kernel.target}</span>{/if}
+        <div class="md:flex-1 min-w-0 p-4 border-t md:border-t-0 md:border-l border-border">
+          <div class="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-2">Actions</div>
+          <div class="space-y-2.5">
+            <div>
+              <div class="text-[10px] text-muted-foreground mb-1">Patching</div>
+              <div class="flex flex-wrap gap-1.5">
+                <Button variant="outline" size="xs" icon="download" onclick={applyUpdates}>Apply updates</Button>
+                <Button variant="outline" size="xs" icon="bricks" onclick={updateKernel}>Update kernel</Button>
+                <Button variant="outline" size="xs" icon="scan" onclick={rescan}>Rescan</Button>
               </div>
-              {#if kernel.message}<div class="text-[11px] text-muted-foreground mt-0.5 break-words">{kernel.message}</div>{/if}
-              {#if kernel.removed?.length}<div class="text-[10px] text-muted-foreground mt-0.5">Removed {kernel.removed.length} old package(s)</div>{/if}
+            </div>
+            <div>
+              <div class="text-[10px] text-muted-foreground mb-1">Lifecycle</div>
+              <div class="flex flex-wrap gap-1.5">
+                <Button variant="outline" size="xs" icon="refresh" onclick={restartAgents}>Restart agents</Button>
+                <Button variant="destructive" size="xs" icon="power" onclick={rebootHost}>Reboot host</Button>
+              </div>
             </div>
           </div>
-        {/if}
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 mt-3">
-          {#each [['Enrolled', machine.enrolled_at ? timeAgo(machine.enrolled_at) : '—'], ['Host', report?.host || '—'], ['Cert', (machine.cert_fp || '').replace('sha256:', '').slice(0, 12) || '—']] as [k, v]}
-            <div class="flex justify-between gap-2 py-1.5 border-t border-border sm:border-t-0 text-sm">
-              <span class="text-muted-foreground">{k}</span><span class="font-mono truncate">{v}</span>
-            </div>
-          {/each}
         </div>
-        {#if commands.length}
-          <div class="text-[11px] text-muted-foreground mt-3 mb-1">Recent commands</div>
+      </div>
+
+      {#if commands.length}
+        <div class="p-4 border-t border-border">
+          <div class="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1">Recent commands</div>
           <div class="max-h-40 overflow-y-auto -mr-1 pr-1">
             {#each commands as c}
               <div class="flex items-center gap-2 py-1 border-t border-border first:border-t-0 text-xs">
@@ -257,9 +320,12 @@
               </div>
             {/each}
           </div>
-        {/if}
-        {@render note('Dry-run logs actions; Live enforces. Changes apply on the next check-in (~10s).')}
-      </div>
+        </div>
+      {/if}
+    </div>
+
+    <!-- rest of the cards in a 2-column masonry (CSS columns keep source order, pack by height) -->
+    <div class="columns-1 lg:columns-2 [column-gap:1rem] [&>*]:break-inside-avoid [&>*]:mb-4">
 
       <!-- LIVE USAGE -->
       <div class="bg-card border border-border rounded-xl p-4">
@@ -345,27 +411,15 @@
         {/if}
         <div class="flex items-center gap-2 mt-3 flex-wrap">
           {#if cves?.total}<Button variant="primary" size="sm" icon="list-details" onclick={() => onviewcves?.(machine)}>View all & fix</Button>{/if}
-          <Button variant="outline" size="sm" icon="refresh-alert" onclick={applyUpdates}>Apply all updates</Button>
-          <Button variant="outline" size="sm" icon="scan" onclick={rescan}>Rescan</Button>
         </div>
-        {@render note('“Apply all updates” upgrades every OS package (apt; a kernel CVE also needs a reboot). Use “View all & fix” to see the full list grouped by OS/project and upgrade only selected packages.')}
+        {@render note('Fixable OS-package CVEs clear via “Apply updates” on the Agent card; kernel CVEs via “Update kernel”. “View all & fix” opens the full list grouped by OS/project to upgrade only selected packages.')}
       </div>
 
-      <!-- HOST & EXPOSURE -->
+      <!-- EXPOSURE (listening ports only — host facts moved to the Agent & Host card) -->
       <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('server', 'Host & exposure', 'osquery inventory')}
-        <div>
-          {#each [['device-desktop', 'OS', [facts?.os?.name, facts?.os?.version].filter(Boolean).join(' ')], ['cpu', 'CPU', facts?.system?.cpu_brand], ['key', 'WG pubkey', machine.wg_pubkey], ['clock', 'Last report', report.time ? timeAgo(report.time) : '']] as [ic, k, val]}
-            <div class="flex items-center gap-2.5 py-2 border-t border-border first:border-t-0 text-sm">
-              <Icon name={ic} size={14} class="text-muted-foreground shrink-0" />
-              <span class="text-muted-foreground w-24 shrink-0">{k}</span>
-              <span class="font-mono truncate text-right flex-1 {val ? 'text-foreground' : 'text-muted-foreground'}">{val || '—'}</span>
-            </div>
-          {/each}
-        </div>
-
+        {@render head('network', 'Exposure', 'listening ports · osquery', 'text-info')}
         {#if facts?.ports?.length}
-          <div class="mt-3 space-y-2">
+          <div class="space-y-2">
             {#each ['exposed', 'iface', 'local'] as scope}
               {#if portGroups[scope].length}
                 <div>
@@ -381,33 +435,36 @@
               {/if}
             {/each}
           </div>
-        {/if}
-
-        {#if facts?.users?.length}
-          <div class="text-[11px] text-muted-foreground mt-3 mb-1">Logged-in users</div>
-          {#each facts.users as u}
-            <div class="flex items-center gap-2 py-1 text-sm">
-              <span class="font-medium">{u.user}</span>
-              {#if u.tty}<span class="text-[11px] text-muted-foreground font-mono">{u.tty}</span>{/if}
-              <span class="text-xs text-muted-foreground font-mono ml-auto">{u.host ? `from ${u.host}` : 'local console'}</span>
-            </div>
-          {/each}
+        {:else}
+          <div class="text-sm text-muted-foreground py-1">No listening ports reported.</div>
         {/if}
         {@render note('“Exposed” ports are open on all interfaces (reachable from the internet unless firewalled); “local” ones only from the box itself. An unexpected exposed port is worth a look.')}
       </div>
 
       <!-- BLOCKING -->
-      <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
-        {@render head('ban', 'Blocking', 'push blocks to this host over mTLS', 'text-destructive')}
+      <div class="bg-card border border-border rounded-xl p-4">
+        {@render head('ban', 'Blocking', `${blockedIPs.length} IP${blockedIPs.length === 1 ? '' : 's'} blocked on this host`, 'text-destructive')}
         <div class="flex flex-wrap items-center gap-2">
-          <div class="flex-1 min-w-[220px]">
-            <Input bind:value={blockIP} prefixIcon="world" placeholder="IP to block on this host" class="font-mono"
-              onkeydown={(e) => e.key === 'Enter' && blockOn()}
-              suffixAddonBtn={{ icon: 'ban', label: 'Block', variant: 'destructive', onclick: blockOn, disabled: !blockIP.trim() }} />
+          <div class="flex-1 min-w-[180px]">
+            <Input bind:value={blockIP} prefixIcon="world" placeholder="IP to block / unblock" class="font-mono"
+              onkeydown={(e) => e.key === 'Enter' && blockOn()} />
           </div>
-          <Button variant="outline" size="sm" icon="arrow-down" onclick={pushBlocks}>Push panel blocklist</Button>
+          <Button variant="destructive" size="sm" icon="ban" onclick={blockOn} disabled={!blockIP.trim()}>Block</Button>
+          <Button variant="outline" size="sm" icon="circle-check" onclick={() => unblockOn()} disabled={!blockIP.trim()}>Unblock</Button>
         </div>
-        {@render note("Block one IP, or push the panel's whole blocklist down so this host drops the same attackers the panel already knows about.")}
+        {#if blockedIPs.length}
+          <div class="mt-3 max-h-48 overflow-y-auto -mr-1 pr-1">
+            {#each blockedIPs as ip}
+              <div class="flex items-center gap-2 py-1.5 border-t border-border first:border-t-0 text-sm">
+                <Icon name="ban" size={13} class="text-destructive shrink-0" />
+                <span class="font-mono truncate flex-1">{ip}</span>
+                <button onclick={() => unblockOn(ip)} class="text-[11px] text-muted-foreground hover:text-foreground transition cursor-pointer shrink-0">unblock</button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        <div class="mt-3"><Button variant="outline" size="sm" icon="arrow-down" onclick={pushBlocks}>Push panel blocklist</Button></div>
+        {@render note("Block or unblock one IP, or push the panel's whole blocklist down so this host drops the same attackers the panel already knows about.")}
       </div>
     </div>
   {/if}
