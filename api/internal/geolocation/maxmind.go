@@ -25,10 +25,12 @@ const (
 	maxmindDBFile      = "GeoLite2-Country.mmdb"
 )
 
-// maxGeoDBBytes caps a single geo-DB download/extraction (MaxMind + IP2Location). Real
-// databases are far under this (tens of MB); a download or decompression larger than the
-// cap is a bomb or a corrupt/hostile response, so we reject it rather than fill the disk.
-const maxGeoDBBytes = 500 << 20 // 500 MB
+// maxGeoDBBytes caps a single geo-DB download/extraction (MaxMind + IP2Location). It is a
+// generous CEILING, not a size we expect to hit: MaxMind GeoLite2-Country is ~10 MB, and
+// the largest IP2Location LITE variant this panel downloads (DB11 with IPv6) is on the
+// order of ~1 GB. 4 GB clears every legitimate database with wide headroom while still
+// bounding a decompression bomb / corrupt / MITM'd response so it can't fill the disk.
+const maxGeoDBBytes = 4 << 30 // 4 GB
 
 // MaxMindProvider provides IP geolocation using MaxMind GeoLite2
 type MaxMindProvider struct {
