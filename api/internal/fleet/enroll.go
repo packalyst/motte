@@ -38,16 +38,19 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate the CSR shape BEFORE redeeming the token. redeemToken is a one-shot
+	// consume; if we spent it first and the CSR were malformed, the operator would
+	// have to mint a fresh token for a retry. Cheap syntactic checks come first.
+	block, _ := pem.Decode([]byte(req.CSR))
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		writeErr(w, http.StatusBadRequest, "invalid CSR")
+		return
+	}
+
 	label, err := s.redeemToken(req.Token)
 	if err != nil {
 		// Deliberately vague: don't distinguish invalid vs used vs expired.
 		writeErr(w, http.StatusUnauthorized, "invalid or used enrollment token")
-		return
-	}
-
-	block, _ := pem.Decode([]byte(req.CSR))
-	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		writeErr(w, http.StatusBadRequest, "invalid CSR")
 		return
 	}
 

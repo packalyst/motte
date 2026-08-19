@@ -131,7 +131,7 @@ type createTokenRequest struct {
 // handleEndpoints tells the UI the fleet state + the addresses agents can reach the
 // panel on, so the Add-Machine dialog can offer WG vs public without env vars.
 func (s *Service) handleEndpoints(w http.ResponseWriter, r *http.Request) {
-	enabled, port := s.Status()
+	enabled, _ := s.Status()
 	router.JSON(w, map[string]any{
 		"enabled":     enabled,
 		"port":        s.effectivePort(),
@@ -140,7 +140,6 @@ func (s *Service) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 		"hosts":       s.HostCandidates(), // addresses the agent could dial for mTLS (operator picks)
 		"fingerprint": s.ca.Fingerprint(),
 	})
-	_ = port
 }
 
 func (s *Service) effectivePort() int {

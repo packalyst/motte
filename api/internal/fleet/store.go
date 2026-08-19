@@ -142,8 +142,12 @@ func certFingerprintPEM(certPEM []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// machineIdentityHash binds a machine to its /etc/machine-id (+ WG pubkey), so a
-// stolen cert+key replayed on a different host can be detected.
+// machineIdentityHash records a stable fingerprint of the host identity
+// (/etc/machine-id + WG pubkey) captured AT ENROLL. The enforced runtime binding is
+// the client-cert fingerprint (see requireClientCert); this hash is the provenance
+// anchor for detecting a same-host re-enroll and the intended second factor for a
+// future report-time replay check (agent would resend machine-id to compare) — it is
+// NOT yet consulted on report, so don't treat it as live replay protection today.
 func machineIdentityHash(machineID, wgPubkey string) string {
 	sum := sha256.Sum256([]byte(machineID + "|" + wgPubkey))
 	return hex.EncodeToString(sum[:])

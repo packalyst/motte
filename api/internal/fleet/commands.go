@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -128,8 +129,8 @@ func (s *Service) HandleCommands(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer rows.Close()
 	cmds := []Command{}
+	ids := []string{}
 	for rows.Next() {
 		var c Command
 		var payload sql.NullString
@@ -140,10 +141,22 @@ func (s *Service) HandleCommands(w http.ResponseWriter, r *http.Request) {
 			c.Payload = json.RawMessage(payload.String)
 		}
 		cmds = append(cmds, c)
+		ids = append(ids, c.ID)
 	}
-	if len(cmds) > 0 {
-		_, _ = s.db.Exec(`UPDATE fleet_commands SET status='delivered', delivered_at=? WHERE machine_id=? AND status='pending'`,
-			time.Now().UTC().Format(time.RFC3339), m.ID)
+	rows.Close()
+	// Mark delivered ONLY the rows we actually returned (by id) — never a blanket
+	// "all pending for this machine". A command enqueued in the SELECT→UPDATE window,
+	// or one whose Scan failed above, stays pending so it reaches the agent next poll
+	// instead of being silently dropped as delivered.
+	if len(ids) > 0 {
+		q := `UPDATE fleet_commands SET status='delivered', delivered_at=? WHERE id IN (?` +
+			strings.Repeat(",?", len(ids)-1) + `)`
+		args := make([]any, 0, len(ids)+1)
+		args = append(args, time.Now().UTC().Format(time.RFC3339))
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		_, _ = s.db.Exec(q, args...)
 	}
 	writeJSON(w, http.StatusOK, cmds)
 }

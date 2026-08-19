@@ -311,9 +311,25 @@ func (s *Service) handleExportCVEs(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(w)
 	_ = cw.Write([]string{"cve_id", "severity", "package", "installed", "fixed", "project", "target", "class", "type", "title"})
 	for _, c := range cves {
-		_ = cw.Write([]string{c.CVEID, c.Severity, c.Pkg, c.Installed, c.Fixed, c.Project, c.Target, c.Class, c.Type, c.Title})
+		_ = cw.Write([]string{csvSafe(c.CVEID), csvSafe(c.Severity), csvSafe(c.Pkg), csvSafe(c.Installed),
+			csvSafe(c.Fixed), csvSafe(c.Project), csvSafe(c.Target), csvSafe(c.Class), csvSafe(c.Type), csvSafe(c.Title)})
 	}
 	cw.Flush()
+}
+
+// csvSafe neutralizes CSV formula injection. A cell that opens with =, +, -, @, or a
+// control char is interpreted as a formula by Excel/Sheets; a Trivy title is
+// attacker-influenced (it comes from the advisory text), so prefix such cells with a
+// tab so the spreadsheet treats them as literal text.
+func csvSafe(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "\t" + s
+	}
+	return s
 }
 
 // handleFixPackages (POST /api/fleet/fix {machine_id, packages}) queues a targeted
