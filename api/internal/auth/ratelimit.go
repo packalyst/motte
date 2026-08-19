@@ -116,74 +116,63 @@ func init() {
 	}()
 }
 
-// checkLoginRateLimit returns true if the IP is rate limited
-func checkLoginRateLimit(ip string) (bool, time.Duration) {
-	loginAttemptsMutex.RLock()
-	attempt, exists := loginAttempts[ip]
-	loginAttemptsMutex.RUnlock()
-
-	if !exists {
-		return false, 0
-	}
-
-	now := time.Now()
-
-	// Check if currently locked out
-	if !attempt.lockedAt.IsZero() {
-		remaining := loginLockoutTime - now.Sub(attempt.lockedAt)
-		if remaining > 0 {
-			return true, remaining
-		}
-		// Lockout expired, reset
-		loginAttemptsMutex.Lock()
-		delete(loginAttempts, ip)
-		loginAttemptsMutex.Unlock()
-		return false, 0
-	}
-
-	// Check if window has expired (reset counter)
-	if now.Sub(attempt.firstTry) > loginLockoutWindow {
-		loginAttemptsMutex.Lock()
-		delete(loginAttempts, ip)
-		loginAttemptsMutex.Unlock()
-		return false, 0
-	}
-
-	return false, 0
-}
-
-// recordFailedLogin records a failed login attempt and returns true if now locked out
-func recordFailedLogin(ip string) bool {
+// registerLoginAttempt ATOMICALLY checks the lockout and reserves an attempt slot in a
+// single critical section, closing the check-then-increment race where a burst of
+// concurrent requests could all pass a stale "under the limit" read before any of them
+// incremented. Every attempt consumes a slot up front; a success (clearLoginAttempts) or a
+// correct-password-but-2FA-pending result (refundLoginAttempt) gives it back. Returns
+// whether the caller is locked out and, if so, the remaining lockout time.
+func registerLoginAttempt(ip string) (bool, time.Duration) {
 	loginAttemptsMutex.Lock()
 	defer loginAttemptsMutex.Unlock()
 
 	now := time.Now()
 	attempt, exists := loginAttempts[ip]
-
 	if !exists {
-		loginAttempts[ip] = &loginAttempt{
-			count:    1,
-			firstTry: now,
-		}
-		return false
+		loginAttempts[ip] = &loginAttempt{count: 1, firstTry: now}
+		return false, 0
 	}
 
-	// Reset if window expired
-	if now.Sub(attempt.firstTry) > loginLockoutWindow {
+	// Currently locked out?
+	if !attempt.lockedAt.IsZero() {
+		if remaining := loginLockoutTime - now.Sub(attempt.lockedAt); remaining > 0 {
+			return true, remaining
+		}
+		// Lockout expired — reset and count this as the first attempt of a new window.
 		attempt.count = 1
 		attempt.firstTry = now
 		attempt.lockedAt = time.Time{}
-		return false
+		return false, 0
 	}
 
+	// Counting window expired — reset.
+	if now.Sub(attempt.firstTry) > loginLockoutWindow {
+		attempt.count = 1
+		attempt.firstTry = now
+		return false, 0
+	}
+
+	// Reserve this attempt; lock once we exceed the allowance.
 	attempt.count++
-	if attempt.count >= maxLoginAttempts {
+	if attempt.count > maxLoginAttempts {
 		attempt.lockedAt = now
-		log.Printf("Login rate limit: IP %s locked out after %d failed attempts", ip, attempt.count)
-		return true
+		log.Printf("Login rate limit: IP %s locked out after %d attempts", ip, attempt.count)
+		return true, loginLockoutTime
 	}
+	return false, 0
+}
 
-	return false
+// refundLoginAttempt returns a slot reserved by registerLoginAttempt when the attempt was
+// not actually a failure (correct password, but 2FA still pending). No-op once locked.
+func refundLoginAttempt(ip string) {
+	loginAttemptsMutex.Lock()
+	defer loginAttemptsMutex.Unlock()
+	if a, ok := loginAttempts[ip]; ok && a.lockedAt.IsZero() && a.count > 0 {
+		a.count--
+		if a.count == 0 {
+			delete(loginAttempts, ip)
+		}
+	}
 }
 
 // clearLoginAttempts clears failed attempts for an IP after successful login
@@ -193,74 +182,43 @@ func clearLoginAttempts(ip string) {
 	loginAttemptsMutex.Unlock()
 }
 
-// checkTOTPRateLimit returns true if the user is rate limited for TOTP attempts
-func checkTOTPRateLimit(userID int64) (bool, time.Duration) {
-	totpAttemptsMutex.RLock()
-	attempt, exists := totpAttempts[userID]
-	totpAttemptsMutex.RUnlock()
-
-	if !exists {
-		return false, 0
-	}
-
-	now := time.Now()
-
-	// Check if currently locked out
-	if !attempt.lockedAt.IsZero() {
-		remaining := loginLockoutTime - now.Sub(attempt.lockedAt)
-		if remaining > 0 {
-			return true, remaining
-		}
-		// Lockout expired, reset
-		totpAttemptsMutex.Lock()
-		delete(totpAttempts, userID)
-		totpAttemptsMutex.Unlock()
-		return false, 0
-	}
-
-	// Check if window has expired (reset counter)
-	if now.Sub(attempt.firstTry) > loginLockoutWindow {
-		totpAttemptsMutex.Lock()
-		delete(totpAttempts, userID)
-		totpAttemptsMutex.Unlock()
-		return false, 0
-	}
-
-	return false, 0
-}
-
-// recordFailedTOTP records a failed TOTP attempt and returns true if now locked out
-func recordFailedTOTP(userID int64) bool {
+// registerTOTPAttempt atomically checks the lockout and reserves a TOTP attempt slot in one
+// critical section (same race-free pattern as registerLoginAttempt, keyed by user ID). It
+// is called just before verifying a code; a successful verify refunds via clearTOTPAttempts.
+func registerTOTPAttempt(userID int64) (bool, time.Duration) {
 	totpAttemptsMutex.Lock()
 	defer totpAttemptsMutex.Unlock()
 
 	now := time.Now()
 	attempt, exists := totpAttempts[userID]
-
 	if !exists {
-		totpAttempts[userID] = &loginAttempt{
-			count:    1,
-			firstTry: now,
-		}
-		return false
+		totpAttempts[userID] = &loginAttempt{count: 1, firstTry: now}
+		return false, 0
 	}
 
-	// Reset if window expired
-	if now.Sub(attempt.firstTry) > loginLockoutWindow {
+	if !attempt.lockedAt.IsZero() {
+		if remaining := loginLockoutTime - now.Sub(attempt.lockedAt); remaining > 0 {
+			return true, remaining
+		}
 		attempt.count = 1
 		attempt.firstTry = now
 		attempt.lockedAt = time.Time{}
-		return false
+		return false, 0
+	}
+
+	if now.Sub(attempt.firstTry) > loginLockoutWindow {
+		attempt.count = 1
+		attempt.firstTry = now
+		return false, 0
 	}
 
 	attempt.count++
-	if attempt.count >= maxTOTPAttempts {
+	if attempt.count > maxTOTPAttempts {
 		attempt.lockedAt = now
-		log.Printf("TOTP rate limit: user ID %d locked out after %d failed attempts", userID, attempt.count)
-		return true
+		log.Printf("TOTP rate limit: user ID %d locked out after %d attempts", userID, attempt.count)
+		return true, loginLockoutTime
 	}
-
-	return false
+	return false, 0
 }
 
 // clearTOTPAttempts clears failed TOTP attempts for a user after success

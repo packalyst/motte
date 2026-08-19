@@ -64,6 +64,12 @@ func main() {
 
 	// Initialize encryption (must be before services that use encryption)
 	helper.InitEncryption()
+	if helper.WeakEncryptionKey {
+		// DB is up (initialized above), so surface the weak-secret warning to the Activity
+		// feed too — not just the startup log — so an operator actually sees it.
+		events.Log("security", "weak_encryption_secret", events.SeverityWarning,
+			"ENCRYPTION_SECRET is not a 32-byte hex key; secrets at rest use a weaker derived key. Rotate to `openssl rand -hex 32` (note: rotating invalidates existing encrypted secrets).")
+	}
 
 	// Keep the Cloudflare edge-range list current so CF-Connecting-IP is trusted
 	// only for requests that genuinely transit Cloudflare (falls back to the

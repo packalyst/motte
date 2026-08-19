@@ -231,11 +231,6 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 			return nil, ErrTOTPRequired
 		}
 
-		// Check TOTP rate limit
-		if limited, remaining := checkTOTPRateLimit(user.ID); limited {
-			return nil, fmt.Errorf("too many failed 2FA attempts, try again in %d seconds", int(remaining.Seconds()))
-		}
-
 		// Decrypt and verify TOTP code
 		if totpSecretEnc.Valid && totpSecretEnc.String != "" {
 			secret, err := helper.Decrypt(totpSecretEnc.String)
@@ -243,19 +238,23 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 				return nil, fmt.Errorf("failed to decrypt 2FA secret: %v", err)
 			}
 
+			// Rate limit: atomically check + reserve a TOTP attempt slot just before
+			// verifying, closing the check-then-record race.
+			if limited, remaining := registerTOTPAttempt(user.ID); limited {
+				return nil, fmt.Errorf("too many failed 2FA attempts, try again in %d seconds", int(remaining.Seconds()))
+			}
+
 			if !totp.Validate(totpCode, secret) {
-				recordFailedTOTP(user.ID)
 				return nil, errors.New("invalid 2FA code")
 			}
 
 			// Reject replay of a code already consumed within its window.
 			if totpReplayed(user.ID, totpCode) {
-				recordFailedTOTP(user.ID)
 				return nil, errors.New("2FA code already used, wait for the next code")
 			}
 			markTOTPUsed(user.ID, totpCode)
 
-			// Clear TOTP attempts on success
+			// Clear TOTP attempts on success (refunds the reserved slot).
 			clearTOTPAttempts(user.ID)
 		}
 	}
@@ -393,32 +392,28 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	clientIP := helper.GetClientIP(r)
 	userAgent := r.Header.Get("User-Agent")
 
-	// Check rate limit
-	if locked, remaining := checkLoginRateLimit(clientIP); locked {
-		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
-		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds.", int(remaining.Seconds())), http.StatusTooManyRequests)
-		return
-	}
-
 	var req LoginRequest
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
+	// Rate limit: atomically check the lockout AND reserve this attempt's slot, so a burst
+	// of concurrent attempts can't slip past a stale "under the limit" read.
+	if locked, remaining := registerLoginAttempt(clientIP); locked {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
+		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds.", int(remaining.Seconds())), http.StatusTooManyRequests)
+		return
+	}
+
 	resp, err := s.Login(req.Username, req.Password, req.TOTPCode, clientIP, userAgent)
 	if err != nil {
-		// Record failed attempt (except for TOTP required which isn't a failure)
-		if err != ErrTOTPRequired {
-			if recordFailedLogin(clientIP) {
-				router.JSONError(w, "Account locked due to too many failed attempts", http.StatusTooManyRequests)
-				return
-			}
-		}
-
 		if err == ErrTOTPRequired {
+			// Correct password, 2FA still pending — not a failed attempt, so give the slot back.
+			refundLoginAttempt(clientIP)
 			router.JSONError(w, "2FA code required", http.StatusPreconditionRequired)
 			return
 		}
+		// Genuine failure — the slot was already counted by registerLoginAttempt above.
 		if err == ErrInvalidCredentials {
 			router.JSONError(w, "Invalid username or password", http.StatusUnauthorized)
 			return
@@ -427,7 +422,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear failed attempts on successful login
+	// Clear failed attempts on successful login (refunds the reserved slot).
 	clearLoginAttempts(clientIP)
 
 	router.JSON(w, resp)

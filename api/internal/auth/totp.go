@@ -174,15 +174,14 @@ func (s *Service) handleEnable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check TOTP rate limit
-	if limited, remaining := checkTOTPRateLimit(user.ID); limited {
+	// Rate limit: atomically check + reserve a TOTP attempt slot before verifying.
+	if limited, remaining := registerTOTPAttempt(user.ID); limited {
 		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds", int(remaining.Seconds())), http.StatusTooManyRequests)
 		return
 	}
 
 	// Verify the code
 	if !totp.Validate(req.Code, secret) {
-		recordFailedTOTP(user.ID)
 		router.JSONError(w, "Invalid verification code", http.StatusBadRequest)
 		return
 	}
@@ -251,8 +250,8 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check TOTP rate limit
-	if limited, remaining := checkTOTPRateLimit(user.ID); limited {
+	// Rate limit: atomically check + reserve a TOTP attempt slot before verifying.
+	if limited, remaining := registerTOTPAttempt(user.ID); limited {
 		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds", int(remaining.Seconds())), http.StatusTooManyRequests)
 		return
 	}
@@ -266,7 +265,6 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !totp.Validate(req.Code, secret) {
-			recordFailedTOTP(user.ID)
 			router.JSONError(w, "Invalid 2FA code", http.StatusBadRequest)
 			return
 		}

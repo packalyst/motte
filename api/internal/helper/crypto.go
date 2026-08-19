@@ -15,6 +15,12 @@ import (
 
 var encryptionKey []byte
 
+// WeakEncryptionKey is set true when ENCRYPTION_SECRET was NOT a proper 32-byte hex key and
+// we had to fall back to a single unsalted SHA-256 of the raw string. That key is far more
+// brute-forceable than a real 256-bit random key, so main() surfaces this to the Activity
+// feed (in addition to the startup-log warning below) recommending rotation.
+var WeakEncryptionKey bool
+
 // InitEncryption initializes the encryption key from environment.
 // Must be called early in main() before any encryption/decryption operations.
 func InitEncryption() {
@@ -25,7 +31,12 @@ func InitEncryption() {
 
 	key, err := hex.DecodeString(keyHex)
 	if err != nil || len(key) != 32 {
-		// If not valid hex, derive a key from the secret (allows using any string as secret)
+		// Not a 32-byte hex key: fall back to SHA-256 of the raw string so any secret still
+		// works, but WARN — this is materially weaker than a real random key and secrets at
+		// rest (WG keys, TOTP, fleet CA) inherit that weakness. Changing the derivation later
+		// would make existing ciphertext undecryptable, so we keep it and flag for rotation.
+		log.Printf("WARNING: ENCRYPTION_SECRET is not a 32-byte hex key — using a weaker SHA-256-derived key. Rotate to a strong key: openssl rand -hex 32 (note: rotating re-keys and invalidates existing encrypted secrets).")
+		WeakEncryptionKey = true
 		hash := sha256.Sum256([]byte(keyHex))
 		encryptionKey = hash[:]
 		return
