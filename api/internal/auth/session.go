@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
 
@@ -236,6 +237,16 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// A password change is often a response to suspected compromise, so evict every OTHER
+	// session for this user (keeping the caller's current one) — a stolen token elsewhere
+	// must not survive the change. Audit-logged.
+	revoked, err := s.RevokeOtherSessions(token, user.ID)
+	if err != nil {
+		log.Printf("change-password: failed to revoke other sessions for user %d: %v", user.ID, err)
+	}
+	events.Log("auth", "password_changed", events.SeverityWarning,
+		fmt.Sprintf("Password changed for %q; %d other session(s) revoked", user.Username, revoked))
 
 	router.JSON(w, map[string]string{"message": "Password changed successfully"})
 }
