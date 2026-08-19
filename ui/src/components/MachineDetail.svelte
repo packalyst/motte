@@ -28,6 +28,18 @@
   const intr = $derived(report?.intrusion || null)
   const facts = $derived(report?.facts || null)
 
+  // kernel-maintenance job status (absent unless a kernel update has run). Each phase
+  // maps to a dot color + human label so a long, reboot-spanning job is legible.
+  const kernel = $derived(report?.kernel || null)
+  const kernelPhase = {
+    installing:     { dot: 'bg-info',        label: 'Installing new kernel' },
+    reboot_pending: { dot: 'bg-warning',     label: 'Reboot pending' },
+    cleanup_pending:{ dot: 'bg-warning',     label: 'Rebooting & cleaning up' },
+    done:           { dot: 'bg-success',     label: 'Kernel up to date' },
+    failed:         { dot: 'bg-destructive', label: 'Kernel update failed' },
+  }
+  const kphase = $derived(kernel ? (kernelPhase[kernel.phase] || { dot: 'bg-muted-foreground', label: kernel.phase }) : null)
+
   // merged security feed: bans first (most severe), then FIM changes.
   const feed = $derived.by(() => {
     const out = []
@@ -209,6 +221,19 @@
           <span class="text-sm font-medium">{dryRun ? 'Dry-run' : 'Live'}</span>
           <span class="text-[11px] text-muted-foreground">{dryRun ? '— logs actions, does not enforce' : '— enforcing for real'}</span>
         </div>
+        {#if kernel && kphase}
+          <div class="flex items-start gap-2 mt-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2">
+            <span class="w-2 h-2 rounded-full mt-1.5 shrink-0 {kphase.dot} {kernel.phase === 'installing' || kernel.phase === 'cleanup_pending' ? 'animate-pulse' : ''}"></span>
+            <div class="min-w-0">
+              <div class="text-xs font-medium flex items-center gap-1.5">
+                <Icon name="cpu" size={12} /> {kphase.label}
+                {#if kernel.target}<span class="font-mono text-[10px] text-muted-foreground">{kernel.target}</span>{/if}
+              </div>
+              {#if kernel.message}<div class="text-[11px] text-muted-foreground mt-0.5 break-words">{kernel.message}</div>{/if}
+              {#if kernel.removed?.length}<div class="text-[10px] text-muted-foreground mt-0.5">Removed {kernel.removed.length} old package(s)</div>{/if}
+            </div>
+          </div>
+        {/if}
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 mt-3">
           {#each [['Enrolled', machine.enrolled_at ? timeAgo(machine.enrolled_at) : '—'], ['Host', report?.host || '—'], ['Cert', (machine.cert_fp || '').replace('sha256:', '').slice(0, 12) || '—']] as [k, v]}
             <div class="flex justify-between gap-2 py-1.5 border-t border-border sm:border-t-0 text-sm">

@@ -72,13 +72,13 @@
   async function updateKernel() {
     const ok = await confirm({
       title: `Update kernel · ${machine.name}`,
-      message: `Install the newest kernel on ${machine.name} (apt install linux-generic + autoremove)? You must REBOOT afterwards to run it — kernel CVEs clear after the reboot + a rescan. Honors dry-run.`,
-      confirmText: 'Update kernel', variant: 'primary',
+      message: `Run the full kernel update on ${machine.name}? This installs the newest kernel, then AUTOMATICALLY REBOOTS the host to activate it, and after it boots back up it purges the old kernels and re-scans — so the kernel CVEs clear on their own. The host will be briefly offline during the reboot. Honors dry-run (nothing changes, no reboot).`,
+      confirmText: 'Update kernel & reboot', variant: 'danger',
     })
     if (!ok) return
     try {
       await apiPost('/api/fleet/command', { machine_id: machine.id, type: 'update-kernel' })
-      toast('Kernel update queued — reboot the host once it completes', 'success')
+      toast('Kernel update queued — the host will reboot itself and finish cleanup automatically', 'success')
     } catch (e) { toast('Failed: ' + e.message, 'error') }
   }
 
