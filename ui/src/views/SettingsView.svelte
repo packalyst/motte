@@ -1028,7 +1028,7 @@
             Save
           </Button>
           {#if adguardDashboardURL}
-            <a href={adguardDashboardURL} target="_blank" class="kt-btn kt-btn-secondary kt-btn-sm">
+            <a href={adguardDashboardURL} target="_blank" rel="noopener noreferrer" class="kt-btn kt-btn-secondary kt-btn-sm">
               <Icon name="link" size={14} />
               Open Dashboard
             </a>

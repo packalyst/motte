@@ -38,4 +38,10 @@ const app = mount(App, {
   target: document.getElementById('app'),
 })
 
+// Register the service worker here (moved out of an inline <script> in index.html) so the
+// page carries NO inline scripts and the CSP can use a strict script-src 'self'.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {})
+}
+
 export default app

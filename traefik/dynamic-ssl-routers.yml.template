@@ -19,6 +19,7 @@
       service: ui
       priority: 10
       middlewares:
+        - security-headers
         - sentinel_fw_block
       entryPoints:
         - websecure

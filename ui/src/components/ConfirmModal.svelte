@@ -80,8 +80,15 @@
       {/if}
 
       {#if $confirmModalStore.details}
-        <div class="text-xs text-muted-foreground">
-          {@html $confirmModalStore.details}
+        <div class="text-xs text-muted-foreground space-y-1">
+          {#if Array.isArray($confirmModalStore.details)}
+            <!-- Structured rows, auto-escaped by Svelte {expr} — no {@html} sink to misuse. -->
+            {#each $confirmModalStore.details as d}
+              <p><span class="font-semibold">{d.label}</span> <span class="font-mono">{d.value}</span></p>
+            {/each}
+          {:else}
+            <p>{$confirmModalStore.details}</p>
+          {/if}
         </div>
       {/if}
 

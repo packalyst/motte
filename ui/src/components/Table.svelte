@@ -22,7 +22,8 @@
           {#each columns as col}
             <td class="px-4 py-3 border-b border-border {col.cellClass || ''}">
               {#if col.render}
-                {@html col.render(row)}
+                <!-- Auto-escaped: a render() result is treated as text, never raw HTML. -->
+                {col.render(row)}
               {:else}
                 {row[col.key] ?? '-'}
               {/if}

@@ -7,6 +7,7 @@ http:
       service: ui
       priority: 10
       middlewares:
+        - security-headers
         - sentinel_fw_block
       entryPoints:
         - web
@@ -131,6 +132,14 @@ http:
         contentTypeNosniff: true
         browserXssFilter: true
         referrerPolicy: "strict-origin-when-cross-origin"
+        # Content-Security-Policy: the backstop that neuters XSS. script-src 'self' allows
+        # NO inline scripts (the page carries none — the SW registration lives in main.js),
+        # so an injected <script> or inline handler is blocked. style-src keeps 'unsafe-inline'
+        # (Svelte/Tailwind inject inline styles — not a script-exec vector); img-src allows
+        # https for the Leaflet map tiles; connect-src allows the same-origin API + websocket.
+        # frame-ancestors 'none' is the modern clickjacking guard (matches frameDeny).
+        # NOTE: if a bundled lib ever needs eval, add 'unsafe-eval' to script-src.
+        contentSecurityPolicy: "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:"
         # HSTS: browsers ignore this over plain HTTP and only honor it over a
         # valid HTTPS connection, so it is inert on an IP/HTTP setup and only
         # activates once SSL is enabled. 1 year, current host only (no
