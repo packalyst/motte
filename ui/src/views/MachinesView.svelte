@@ -13,7 +13,6 @@
   import StatCard from '../components/StatCard.svelte'
   import Input from '../components/Input.svelte'
   import Checkbox from '../components/Checkbox.svelte'
-  import Select from '../components/Select.svelte'
   import MachineDetail from '../components/MachineDetail.svelte'
   import { timeAgo } from '$lib/utils/format.js'
   import { usageColor, statusInfo, round } from '$lib/fleet.js'
@@ -32,7 +31,6 @@
 
   // add-machine
   let newLabel = $state('')
-  let selectedHost = $state('')
   let creating = $state(false)
   let lastToken = $state(null)
 
@@ -43,7 +41,6 @@
       if (eRes.status === 'fulfilled') {
         ep = eRes.value
         if (!savingCfg) { cfgEnabled = ep.enabled; cfgPort = ep.port }
-        if (!selectedHost && ep.hosts?.length) selectedHost = ep.hosts[0]
       }
       // keep the open detail's header fresh
       if (selected) selected = machines.find((x) => x.id === selected.id) || selected
@@ -84,7 +81,7 @@
     if (!newLabel.trim()) return
     creating = true
     try {
-      lastToken = await apiPost('/api/fleet/token', { label: newLabel.trim(), ttl_seconds: 3600, panel_host: selectedHost })
+      lastToken = await apiPost('/api/fleet/token', { label: newLabel.trim(), ttl_seconds: 3600 })
       newLabel = ''
       toast('Enrollment token created — one-time, expires in 1h', 'success')
     } catch (e) {
@@ -165,15 +162,16 @@
         <Input bind:value={newLabel} prefixIcon="tag" label="Machine name" placeholder="e.g. web-01"
           onkeydown={(e) => e.key === 'Enter' && addMachine()} />
       </div>
-      {#if ep?.hosts?.length}
-        <div class="min-w-[180px]">
-          <Select bind:value={selectedHost} label="Reachable at" options={ep.hosts.map((h) => ({ value: h, label: h }))} />
-        </div>
-      {/if}
-      <Button icon="key" onclick={addMachine} disabled={creating || !newLabel.trim()}>Generate install command</Button>
+      <div class="min-w-[200px]">
+        <Input value={ep?.domain || ''} prefixIcon="world" label="Reachable at" readonly
+          placeholder="no panel domain set" />
+      </div>
+      <Button icon="key" onclick={addMachine} disabled={creating || !newLabel.trim() || !ep?.domain}>Generate install command</Button>
     </div>
     {#if !ep?.enabled}
       <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Turn the agent listener on (above) so machines can enroll.</div>
+    {:else if !ep?.domain}
+      <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Set a panel domain (SSL_DOMAIN) to enable the one-command install — it's served over the domain's HTTPS.</div>
     {/if}
 
     {#if lastToken}

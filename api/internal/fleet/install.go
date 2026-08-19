@@ -21,7 +21,7 @@ var archAlias = map[string]string{
 	"aarch64": "arm64", "arm64": "arm64",
 }
 
-// handleInstallScript serves a SELF-EXTRACTING install script for a valid token.
+// HandleInstallScript serves a SELF-EXTRACTING install script for a valid token.
 // GET /agent/{token}?arch=<uname -m>
 //
 // The returned script carries the agent binary (for the requested arch), the manifest,
@@ -32,10 +32,12 @@ var archAlias = map[string]string{
 // response. On a bad token/arch it returns a runnable error script (the caller is
 // piping to sh), so the failure prints cleanly instead of a raw HTTP error.
 //
-// This runs on the fleet listener (token-gated, NOT client-cert-gated — the new box has
-// no cert yet). The download is verified by curl against the panel CA (--cacert); the
-// token peeked here is consumed later, at /enroll.
-func (s *Service) handleInstallScript(w http.ResponseWriter, r *http.Request) {
+// Registered on the main api router (public, no session — the new box has no cert or
+// login yet; the one-time token in the path is the credential) and published over
+// Traefik/443 on the panel domain, so the download rides the panel's real cert plus the
+// fleet route's rate-limit/blocklist middleware. The token peeked here is consumed later,
+// at /enroll on the mTLS listener.
+func (s *Service) HandleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 
@@ -58,9 +60,14 @@ func (s *Service) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	manifest, _ := agentDist.ReadFile("agentdist/manifest.json")
 	installer, _ := agentDist.ReadFile("agentdist/install.sh")
 
-	// The agent dials the SAME address the operator installed from (r.Host) — IP or
-	// domain, whichever they used — so no host needs to be stored with the token.
+	// Where the agent will dial for mTLS (enroll/report/commands). Served via Traefik on
+	// 443, so r.Host is the domain WITHOUT the fleet port — build it from the configured
+	// domain + the fleet listener port. Fall back to r.Host only if no domain is set
+	// (direct :6444 access, e.g. a bare-IP setup).
 	panelURL := "https://" + r.Host
+	if s.sslDomain != "" {
+		panelURL = fmt.Sprintf("https://%s:%d", s.sslDomain, s.effectivePort())
+	}
 
 	script := renderInstallScript(installScriptData{
 		PanelURL:      panelURL,

@@ -35,7 +35,7 @@ func newTestService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	svc, err := New(db, "panel.example", nil, nil, nil)
+	svc, err := New(db, "panel.example", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestCAPersistsAcrossReload(t *testing.T) {
 	fp1 := svc.CA().Fingerprint()
 
 	// Re-open a Service against the same DB — must load the SAME CA, not regenerate.
-	svc2, err := New(svc.db, svc.sslDomain, nil, nil, nil)
+	svc2, err := New(svc.db, svc.sslDomain, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

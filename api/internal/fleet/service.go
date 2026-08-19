@@ -31,6 +31,10 @@ type Service struct {
 	// push it onto a machine (sync-blocks). Nil ⇒ push is unavailable.
 	blockedIPs func() []string
 
+	// fwBlockEnabled reports the "Enforce Firewall on Proxied Traffic" setting, so the
+	// generated /agent Traefik route carries sentinel_fw_block only when it's on. Nil ⇒ off.
+	fwBlockEnabled func() bool
+
 	mu      sync.Mutex
 	enabled bool
 	port    int
@@ -42,7 +46,7 @@ type Service struct {
 // New initializes the schema + CA. The listener is NOT started here — call
 // ReloadFromSettings() once the firewall callbacks are wired. openPort/closePort
 // may be nil (then the firewall isn't touched).
-func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, blockedIPs func() []string) (*Service, error) {
+func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, blockedIPs func() []string, fwBlockEnabled func() bool) (*Service, error) {
 	if err := ensureSchema(db); err != nil {
 		return nil, err
 	}
@@ -51,13 +55,14 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 		return nil, err
 	}
 	return &Service{
-		db:            db,
-		ca:            ca,
-		sslDomain:     sslDomain,
-		openPort:      openPort,
-		closePort:     closePort,
-		blockedIPs:    blockedIPs,
-		clientCertTTL: 90 * 24 * time.Hour,
+		db:             db,
+		ca:             ca,
+		sslDomain:      sslDomain,
+		openPort:       openPort,
+		closePort:      closePort,
+		blockedIPs:     blockedIPs,
+		fwBlockEnabled: fwBlockEnabled,
+		clientCertTTL:  90 * 24 * time.Hour,
 	}, nil
 }
 
@@ -84,6 +89,9 @@ func (s *Service) ReloadFromSettings() {
 		}
 	}
 	s.applyConfig(enabled, port)
+	if err := s.ApplyInstallRoute(); err != nil {
+		log.Printf("fleet: install route apply: %v", err)
+	}
 }
 
 // applyConfig starts/stops the listener and opens/closes the firewall port to match

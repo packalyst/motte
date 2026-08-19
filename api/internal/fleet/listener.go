@@ -30,9 +30,10 @@ func (s *Service) tlsConfig() (*tls.Config, error) {
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /enroll", s.HandleEnroll)
-	// Self-extracting installer, token-gated (no client cert yet). Verified by curl
-	// against the panel CA (--cacert); the token is consumed later at /enroll.
-	mux.HandleFunc("GET /agent/{token}", s.handleInstallScript)
+	// NOTE: the /agent install script is NOT served here. It's published on the main api
+	// router via Traefik/443 (see HandleInstallScript + fleetroute.go) so the download
+	// has the panel's real cert and rides Traefik's rate-limit/blocklist middleware —
+	// one guarded door. This listener is only the mTLS channel (enroll/report/commands).
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ca": s.ca.Fingerprint()})
 	})

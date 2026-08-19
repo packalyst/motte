@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"api/internal/router"
@@ -120,7 +119,6 @@ func boolStr(b bool) string {
 type createTokenRequest struct {
 	Label      string `json:"label"`
 	TTLSeconds int    `json:"ttl_seconds"`
-	PanelHost  string `json:"panel_host"` // address the agent will dial (WG IP / public IP / domain)
 }
 
 // handleEndpoints tells the UI the fleet state + the addresses agents can reach the
@@ -131,6 +129,7 @@ func (s *Service) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 		"enabled":     enabled,
 		"port":        s.effectivePort(),
 		"listening":   enabled,
+		"domain":      s.sslDomain, // the panel domain the install command uses (empty ⇒ none)
 		"hosts":       s.HostCandidates(),
 		"fingerprint": s.ca.Fingerprint(),
 	})
@@ -172,16 +171,13 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not create token", http.StatusInternalServerError)
 		return
 	}
-	host := strings.TrimSpace(req.PanelHost)
-	if host == "" {
-		if c := s.HostCandidates(); len(c) > 0 {
-			host = c[0]
-		}
-	}
+	// The installer is served over the panel domain via Traefik/443 (real cert → the
+	// command needs no CA handling). Without a domain there's no trusted public cert, so
+	// no one-command install is offered (the UI tells the operator to set a domain).
 	panelURL, install := "", ""
-	if host != "" {
-		panelURL = fmt.Sprintf("https://%s:%d", host, s.effectivePort())
-		install = buildInstallCommand(host, s.effectivePort(), tok.Plaintext, string(s.ca.CertPEM()))
+	if s.sslDomain != "" {
+		panelURL = fmt.Sprintf("https://%s:%d", s.sslDomain, s.effectivePort())
+		install = fmt.Sprintf(`curl -fsSL "https://%s/agent/%s?arch=$(uname -m)" | sudo sh`, s.sslDomain, tok.Plaintext)
 	}
 	router.JSON(w, createTokenResponse{
 		Token:          tok.Plaintext,
@@ -191,27 +187,6 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		PanelURL:       panelURL,
 		InstallCommand: install,
 	})
-}
-
-// buildInstallCommand produces the self-extracting install one-liner. The whole agent
-// (binary + manifest + installer) comes back inside the response from /i/<token>; here
-// we only need curl to VERIFY that download against the panel CA. curl takes the CA as
-// a file, so the command writes the panel's CA PEM to a temp file and passes --cacert.
-// This works for both an IP and a domain (the fleet cert carries both as SANs), needs
-// no public certificate, and survives panel restarts (the CA is stable). $(uname -m)
-// is filled in by the target's own shell so the panel returns the right-arch binary.
-func buildInstallCommand(host string, port int, token, caPEM string) string {
-	return fmt.Sprintf(`cat > /tmp/wgscout-ca.pem <<'EOF'
-%sEOF
-curl -fsSL --cacert /tmp/wgscout-ca.pem "https://%s:%d/agent/%s?arch=$(uname -m)" | sudo sh
-rm -f /tmp/wgscout-ca.pem`, ensureTrailingNL(caPEM), host, port, token)
-}
-
-func ensureTrailingNL(s string) string {
-	if strings.HasSuffix(s, "\n") {
-		return s
-	}
-	return s + "\n"
 }
 
 func (s *Service) handleListMachines(w http.ResponseWriter, r *http.Request) {

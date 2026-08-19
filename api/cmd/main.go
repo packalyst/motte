@@ -350,6 +350,7 @@ func main() {
 	// managed mTLS listener. On/off + port come from Settings (fleet_enabled /
 	// fleet_port), NOT env. When enabled it auto-opens its port through the firewall
 	// (reusing the allowed-ports mechanism) and auto-detects its own IPs for the cert.
+	var flSvc *fleet.Service
 	if config.IsServiceEnabled("fleet") {
 		if flDB, dberr := database.GetDB(); dberr == nil {
 			db := flDB.DB
@@ -383,12 +384,18 @@ func main() {
 				}
 				return fwSvc.ExplicitBlockedCIDRs()
 			}
-			flSvc, ferr := fleet.New(db, sslDomain, openPort, closePort, blockedIPs)
+			var ferr error
+			flSvc, ferr = fleet.New(db, sslDomain, openPort, closePort, blockedIPs, settings.GetTraefikFWBlock)
 			if ferr != nil {
 				log.Printf("Fleet init failed: %v", ferr)
+				flSvc = nil
 			} else {
 				r.RegisterService("fleet", flSvc.Handlers())
-				flSvc.ReloadFromSettings() // start the listener if enabled in Settings
+				// Let the FWBlock toggle re-render the /agent route too (like domain routes).
+				if traefikSvc != nil {
+					traefik.RegenerateFleetRoute = flSvc.ApplyInstallRoute
+				}
+				flSvc.ReloadFromSettings() // start the listener + install route if enabled
 				log.Printf("Fleet service registered (CA %s)", flSvc.CA().Fingerprint())
 			}
 		}
@@ -538,6 +545,14 @@ func main() {
 		mux.Handle("/internal/blocklist", http.HandlerFunc(fwSvc.HandleInternalBlocklist))
 		// Sentinel posts its periodic L7 block count here (internal-only, refuses proxied).
 		mux.Handle("/internal/l7block", http.HandlerFunc(fwSvc.HandleInternalL7Block))
+	}
+
+	// Self-extracting agent installer. Registered on the mux directly (bypasses auth —
+	// a new machine has no session; the one-time token in the path is the credential).
+	// Reached via Traefik/443 on the panel domain; the fleet route (fleet.yml) applies
+	// rate-limit + blocklist middleware in front of it.
+	if flSvc != nil {
+		mux.HandleFunc("GET /agent/{token}", flSvc.HandleInstallScript)
 	}
 
 	mux.Handle("/", handler)

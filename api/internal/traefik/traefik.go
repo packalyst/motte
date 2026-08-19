@@ -39,6 +39,10 @@ var (
 	PersistFWBlock    func(on bool) error
 	LoadFWBlock       func() (bool, error)
 	RegenerateDomains func() error
+	// RegenerateFleetRoute re-renders the fleet install route (traefik/dynamic/fleet.yml)
+	// so the FWBlock toggle takes effect on /agent too, the same way RegenerateDomains
+	// does for domain routes. Wired by main.go to the fleet service; nil-safe.
+	RegenerateFleetRoute func() error
 )
 
 // fwBlockRouters are the panel's own routers that carry the block middleware (HTTP+HTTPS).
@@ -525,6 +529,11 @@ func (s *Service) RestoreFWBlock(on bool) {
 	if RegenerateDomains != nil {
 		if err := RegenerateDomains(); err != nil {
 			log.Printf("fw-block: domain route regen: %v", err)
+		}
+	}
+	if RegenerateFleetRoute != nil {
+		if err := RegenerateFleetRoute(); err != nil {
+			log.Printf("fw-block: fleet route regen: %v", err)
 		}
 	}
 }
@@ -1269,6 +1278,61 @@ func GetACMEError(domain string) string {
 		}
 	}
 	return ""
+}
+
+// fleetRouteFile is the dynamic config file for the /agent install route.
+const fleetRouteFile = "fleet.yml"
+
+var hostnameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$`)
+
+// GenerateFleetRoute writes the Traefik route that publishes the panel's self-extracting
+// agent installer at https://<domain>/agent/<token> (443, panel's real cert → the install
+// command needs no --cacert). It routes to the api and is deliberately EXEMPT from
+// VPN-Only (new machines enroll from off-VPN). rate-limit-strict + security-headers are
+// always applied; sentinel_fw_block only when the "Enforce Firewall on Proxied Traffic"
+// toggle is on (fwBlockEnabled), mirroring domain routes. Invalid domain ⇒ error (the
+// value is written unquoted into a Host() rule).
+func GenerateFleetRoute(configDir, domain string, apiPort string, fwBlockEnabled bool) error {
+	if !hostnameRe.MatchString(domain) {
+		return fmt.Errorf("invalid panel domain %q", domain)
+	}
+	mws := []string{"rate-limit-strict@file", "security-headers@file", "sentinel_deny_agents@file"}
+	if fwBlockEnabled {
+		mws = append(mws, MiddlewareSentinelFWBlockFile)
+	}
+	var sb strings.Builder
+	sb.WriteString("# Fleet install route (/agent) - Auto-generated, do not edit manually\n")
+	sb.WriteString("# Generated at: " + time.Now().Format(time.RFC3339) + "\n\n")
+	sb.WriteString("http:\n  routers:\n")
+	sb.WriteString("    fleet-install:\n")
+	sb.WriteString(fmt.Sprintf("      rule: 'Host(`%s`) && PathPrefix(`/agent`)'\n", domain))
+	sb.WriteString("      service: fleet-install-api\n")
+	sb.WriteString("      priority: 60\n") // above the ui catch-all so /agent wins
+	sb.WriteString("      entryPoints:\n        - websecure\n")
+	sb.WriteString("      middlewares:\n")
+	for _, mw := range mws {
+		sb.WriteString(fmt.Sprintf("        - %s\n", mw))
+	}
+	sb.WriteString("      tls: {}\n\n")
+	sb.WriteString("  services:\n    fleet-install-api:\n      loadBalancer:\n        servers:\n")
+	sb.WriteString(fmt.Sprintf("          - url: \"http://host.docker.internal:%s\"\n", apiPort))
+
+	path := filepath.Join(configDir, fleetRouteFile)
+	if err := os.WriteFile(path, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("write fleet route: %w", err)
+	}
+	log.Printf("traefik: wrote fleet install route -> %s (Host %s, fw_block=%v)", path, domain, fwBlockEnabled)
+	return nil
+}
+
+// RemoveFleetRoute deletes the fleet install route file (listener turned off / no domain).
+// A missing file is not an error.
+func RemoveFleetRoute(configDir string) error {
+	path := filepath.Join(configDir, fleetRouteFile)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove fleet route: %w", err)
+	}
+	return nil
 }
 
 // GetPendingSSLDomains returns domains that have SSL enabled but no certificate yet
