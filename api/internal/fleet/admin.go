@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"api/internal/router"
@@ -119,6 +120,7 @@ func boolStr(b bool) string {
 type createTokenRequest struct {
 	Label      string `json:"label"`
 	TTLSeconds int    `json:"ttl_seconds"`
+	PanelHost  string `json:"panel_host"` // direct origin the agent dials for mTLS (IP the operator picked)
 }
 
 // handleEndpoints tells the UI the fleet state + the addresses agents can reach the
@@ -129,8 +131,8 @@ func (s *Service) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 		"enabled":     enabled,
 		"port":        s.effectivePort(),
 		"listening":   enabled,
-		"domain":      s.sslDomain, // the panel domain the install command uses (empty ⇒ none)
-		"hosts":       s.HostCandidates(),
+		"domain":      s.sslDomain,        // download domain the install command uses (empty ⇒ none)
+		"hosts":       s.HostCandidates(), // addresses the agent could dial for mTLS (operator picks)
 		"fingerprint": s.ca.Fingerprint(),
 	})
 	_ = port
@@ -166,17 +168,25 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
-	tok, err := s.CreateToken(req.Label, ttl)
+	// The agent's mTLS channel dials the direct origin the operator picked (an IP);
+	// recorded with the token so the install endpoint bakes it into --panel. Default to
+	// the first public IP if none was picked.
+	panelHost := strings.TrimSpace(req.PanelHost)
+	if panelHost == "" {
+		panelHost = firstPublicIP()
+	}
+	tok, err := s.CreateToken(req.Label, ttl, panelHost)
 	if err != nil {
 		router.JSONError(w, "could not create token", http.StatusInternalServerError)
 		return
 	}
-	// The installer is served over the panel domain via Traefik/443 (real cert → the
-	// command needs no CA handling). Without a domain there's no trusted public cert, so
-	// no one-command install is offered (the UI tells the operator to set a domain).
+	// The installer is DOWNLOADED over the panel domain via Traefik/443 (real cert → the
+	// command needs no CA handling); the agent then talks mTLS to panelHost:port.
+	// Without a domain there's no trusted public cert, so no one-command install is
+	// offered (the UI tells the operator to set a domain).
 	panelURL, install := "", ""
 	if s.sslDomain != "" {
-		panelURL = fmt.Sprintf("https://%s:%d", s.sslDomain, s.effectivePort())
+		panelURL = fmt.Sprintf("https://%s:%d", panelHost, s.effectivePort())
 		install = fmt.Sprintf(`curl -fsSL "https://%s/agent/%s?arch=$(uname -m)" | sudo sh`, s.sslDomain, tok.Plaintext)
 	}
 	router.JSON(w, createTokenResponse{

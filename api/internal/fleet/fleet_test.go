@@ -76,7 +76,7 @@ func TestCAPersistsAcrossReload(t *testing.T) {
 func TestTokenSingleUseAndExpiry(t *testing.T) {
 	svc := newTestService(t)
 
-	tok, err := svc.CreateToken("web-01", time.Hour)
+	tok, err := svc.CreateToken("web-01", time.Hour, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestTokenSingleUseAndExpiry(t *testing.T) {
 
 func TestEnrollEndToEnd(t *testing.T) {
 	svc := newTestService(t)
-	tok, _ := svc.CreateToken("web-01", time.Hour)
+	tok, _ := svc.CreateToken("web-01", time.Hour, "")
 	_, csrPEM := makeCSR(t, "agent")
 
 	body, _ := json.Marshal(enrollRequest{
@@ -175,7 +175,7 @@ func TestEnrollRejectsBadInputs(t *testing.T) {
 	}
 
 	// valid token but garbage CSR
-	tok, _ := svc.CreateToken("x", time.Hour)
+	tok, _ := svc.CreateToken("x", time.Hour, "")
 	body2, _ := json.Marshal(enrollRequest{Token: tok.Plaintext, CSR: "not a pem"})
 	rr2 := httptest.NewRecorder()
 	svc.HandleEnroll(rr2, httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewReader(body2)))

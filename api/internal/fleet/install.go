@@ -35,7 +35,8 @@ func (s *Service) HandleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 
 	token := r.PathValue("token")
-	if !s.tokenIsLive(token) {
+	panelHost, live := s.lookupToken(token)
+	if !live {
 		writeErrorScript(w, "enrollment token is invalid, already used, or expired.\nGenerate a fresh one in the panel (Machines -> Add a machine).")
 		return
 	}
@@ -51,14 +52,13 @@ func (s *Service) HandleInstallScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Where the agent will dial for mTLS (enroll/report/commands). Served via Traefik on
-	// 443, so r.Host is the domain WITHOUT the fleet port — build it from the configured
-	// domain + the fleet listener port. Fall back to r.Host only if no domain is set
-	// (direct :6444 access, e.g. a bare-IP setup).
-	panelURL := "https://" + r.Host
-	if s.sslDomain != "" {
-		panelURL = fmt.Sprintf("https://%s:%d", s.sslDomain, s.effectivePort())
+	// Where the agent will dial for mTLS (enroll/report/commands): the direct origin the
+	// operator picked when minting the token (an IP), NOT the Cloudflare-proxied download
+	// domain, which only forwards 443. Fall back to the first public IP for older tokens.
+	if panelHost == "" {
+		panelHost = firstPublicIP()
 	}
+	panelURL := fmt.Sprintf("https://%s:%d", panelHost, s.effectivePort())
 
 	script := renderInstallScript(installScriptData{
 		PanelURL:      panelURL,

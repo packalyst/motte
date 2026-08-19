@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -174,6 +175,34 @@ func (s *Service) HostCandidates() []string {
 	return detectHostSANs(s.sslDomain)
 }
 
+// firstPublicIP returns the panel's first routable public IPv4, used as the default
+// mTLS host when a token didn't record one. The agent's mTLS channel must reach the
+// origin DIRECTLY (a Cloudflare-proxied domain only forwards 80/443 and can't pass
+// client certs), so this is an IP, not the download domain.
+func firstPublicIP() string {
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			if ipnet, ok := a.(*net.IPNet); ok && isPublicIPv4(ipnet.IP) {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
+}
+
+// isPublicIPv4 reports whether ip is a routable public IPv4 (not loopback/link-local/
+// private/CGNAT).
+func isPublicIPv4(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate() {
+		return false
+	}
+	if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 { // CGNAT 100.64.0.0/10
+		return false
+	}
+	return true
+}
+
 // detectHostSANs enumerates this host's non-loopback IPs (WG IP, LAN, public…)
 // plus the configured SSL domain. Used both for the server cert SANs and the UI's
 // address picker, so the cert is valid for whatever address the agent uses.
@@ -235,6 +264,7 @@ func ensureSchema(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS fleet_tokens (
 			token_hash TEXT PRIMARY KEY,
 			label      TEXT,
+			panel_host TEXT,
 			expires_at TEXT NOT NULL,
 			used       INTEGER DEFAULT 0,
 			used_at    TEXT,
@@ -269,6 +299,11 @@ func ensureSchema(db *sql.DB) error {
 		if _, err := db.Exec(q); err != nil {
 			return err
 		}
+	}
+	// Migration for DBs created before panel_host existed (ignore "duplicate column").
+	if _, err := db.Exec(`ALTER TABLE fleet_tokens ADD COLUMN panel_host TEXT`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("fleet: panel_host migration: %v", err)
 	}
 	return nil
 }

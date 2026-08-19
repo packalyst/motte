@@ -3,6 +3,7 @@ package fleet
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -33,8 +34,10 @@ func hashToken(plaintext string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// CreateToken mints a one-time enrollment token valid for ttl.
-func (s *Service) CreateToken(label string, ttl time.Duration) (*Token, error) {
+// CreateToken mints a one-time enrollment token valid for ttl. panelHost is the direct
+// origin address the agent will dial for mTLS (an IP the operator picked) — recorded so
+// the install endpoint can bake it into the script's --panel later.
+func (s *Service) CreateToken(label string, ttl time.Duration, panelHost string) (*Token, error) {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
@@ -44,28 +47,30 @@ func (s *Service) CreateToken(label string, ttl time.Duration) (*Token, error) {
 	}
 	exp := time.Now().Add(ttl).UTC()
 	if _, err := s.db.Exec(
-		`INSERT INTO fleet_tokens (token_hash, label, expires_at, created_at) VALUES (?, ?, ?, ?)`,
-		hashToken(val), label, exp.Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339),
+		`INSERT INTO fleet_tokens (token_hash, label, panel_host, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`,
+		hashToken(val), label, panelHost, exp.Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return nil, err
 	}
 	return &Token{Plaintext: val, Label: label, ExpiresAt: exp}, nil
 }
 
-// tokenIsLive reports whether a token exists, is unused, and not expired — WITHOUT
-// consuming it. Used by the install-script endpoint: fetching the installer must not
-// spend the token, since the actual enroll (which does consume it) happens afterwards.
-func (s *Service) tokenIsLive(plaintext string) bool {
+// lookupToken returns the recorded panel_host for a token that is live (exists, unused,
+// unexpired). live=false otherwise. Does NOT consume the token (enroll does that).
+func (s *Service) lookupToken(plaintext string) (panelHost string, live bool) {
 	if plaintext == "" {
-		return false
+		return "", false
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	var n int
+	var host sql.NullString
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM fleet_tokens WHERE token_hash = ? AND used = 0 AND expires_at > ?`,
+		`SELECT panel_host FROM fleet_tokens WHERE token_hash = ? AND used = 0 AND expires_at > ?`,
 		hashToken(plaintext), now,
-	).Scan(&n)
-	return err == nil && n == 1
+	).Scan(&host)
+	if err != nil {
+		return "", false
+	}
+	return host.String, true
 }
 
 // redeemToken atomically validates + consumes a token. A single UPDATE guarded by
