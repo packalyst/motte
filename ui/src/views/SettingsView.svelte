@@ -58,6 +58,12 @@
   let fwBlockEnabled = $state(true)
   let fwBlockLoading = $state(false)
 
+  // Panel direct-IP access (L3 nftables). On = API port reachable by IP; off = closed to
+  // the public internet (still open to localhost, the Docker bridge/Traefik and WireGuard).
+  let apiDirectAccess = $state(true)
+  let apiDirectAccessDomainSet = $state(false)
+  let apiAccessLoading = $state(false)
+
   // Session settings
   let sessionTimeout = $state('24')
   let sessionChanged = $state(false)
@@ -188,6 +194,10 @@
       adguardDashboardURL = settings.adguard_dashboard_url || ''
       adguardQuerylogSize = settings.adguard_querylog_size || 1
       originalAdguard = { username: adguardUsername, password: adguardPassword, dashboardEnabled: adguardDashboardEnabled, querylogSize: adguardQuerylogSize }
+
+      // Panel direct-IP access
+      apiDirectAccess = settings.api_direct_access !== false
+      apiDirectAccessDomainSet = settings.api_direct_access_domain_set === true
 
       // Traefik (from aggregated response)
       const traefikConfig = settings.traefik
@@ -601,6 +611,29 @@
       toast('Failed to update firewall enforcement: ' + e.message, 'error')
     } finally {
       fwBlockLoading = false
+    }
+  }
+
+  async function setApiDirectAccess(enabled) {
+    // Closing the port is security-sensitive — confirm, and make the fallbacks explicit.
+    if (!enabled) {
+      const ok = await confirm({
+        title: 'Close direct IP access?',
+        message: 'The panel API port will be dropped from the public internet at the firewall (L3). You will still reach the panel via your domain, from localhost, and over WireGuard — but NOT by raw server IP. Continue?',
+        confirmText: 'Close it', variant: 'danger',
+      })
+      if (!ok) { apiDirectAccess = true; return } // revert the switch
+    }
+    apiAccessLoading = true
+    try {
+      await apiPut('/api/settings', { api_direct_access: enabled })
+      apiDirectAccess = enabled
+      toast(enabled ? 'Direct IP access enabled — API port open' : 'Direct IP access closed — panel now reachable only via domain, localhost and WireGuard', 'success')
+    } catch (e) {
+      apiDirectAccess = !enabled // revert the switch on failure (e.g. no domain configured)
+      toast(e.message || 'Failed to update direct IP access', 'error')
+    } finally {
+      apiAccessLoading = false
     }
   }
 
@@ -1468,6 +1501,14 @@
                   <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
                 {/if}
                 <Checkbox variant="switch" bind:checked={fwBlockEnabled} disabled={fwBlockLoading} onchange={() => setFWBlock(fwBlockEnabled)} />
+              </div>
+            </ContentBlock>
+            <ContentBlock title="Direct IP Access" description={apiDirectAccessDomainSet ? 'Reach the panel by raw server IP. Turn off once you use your domain — closes the API port to the public internet (localhost, Traefik and WireGuard still work).' : 'Set up a domain (SSL_DOMAIN) first — without one, closing IP access would lock you out.'}>
+              <div class="flex items-center gap-2">
+                {#if apiAccessLoading}
+                  <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                {/if}
+                <Checkbox variant="switch" bind:checked={apiDirectAccess} disabled={apiAccessLoading || (!apiDirectAccessDomainSet && apiDirectAccess)} onchange={() => setApiDirectAccess(apiDirectAccess)} />
               </div>
             </ContentBlock>
           </div>

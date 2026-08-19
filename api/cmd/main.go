@@ -165,6 +165,13 @@ func main() {
 		// Register VPN ACL table
 		db, _ := database.GetDB()
 		nftSvc.RegisterTable(nftables.NewVPNACLTable(db))
+		// Register panel-access table (closes the API port to the public internet when
+		// the api_direct_access setting is off — see nftables/panel_access.go).
+		nftSvc.RegisterTable(nftables.NewPanelAccessTable(db))
+
+		// Let the settings service trigger a firewall re-apply when the panel-access
+		// toggle changes (function pointer avoids a settings→nftables import cycle).
+		settings.RequestFirewallApply = func() { nftSvc.RequestApply() }
 
 		log.Println("nftables service initialized")
 	}
