@@ -49,8 +49,13 @@ services:
     # Isolated single-member network: gives this service an explicit network so
     # Compose never auto-creates a project "_default" network (which would grab an
     # overlapping /16 and clash with vpn-network). Nothing else joins it, so no
-    # other container can reach :2375 over the network — the only consumer (api,
-    # host-networked) uses the published 127.0.0.1:2375 port, unaffected by this.
+    # BRIDGE-networked container can reach :2375 over the network.
+    # SECURITY NOTE: :2375 is published on 127.0.0.1, so EVERY host-networked container
+    # shares that loopback and can reach it — not just `api`, but also `adguard` and
+    # `vpn-router` (both network_mode: host). Since EXEC=1 is enabled (for the headscale
+    # CLI), a compromise of any of those could exec into the privileged `api` container.
+    # Mitigated today by keeping the AdGuard dashboard bound to localhost; the structural
+    # fix is to drop EXEC=1 by moving headscale ops to its REST API (tracked follow-up).
     networks:
       - socket-proxy-net
 
