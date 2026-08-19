@@ -40,6 +40,20 @@ type CVEGroup struct {
 	Fixable  int    `json:"fixable"` // has a fixed version
 }
 
+// CVESummary is the machine-level roll-up. Total is raw findings (CVE×package) — noisy on a
+// full-OS scan — so the UI leads with UniqueCVEs, Packages, the severity split, and Fixable
+// (the actionable number: findings with a fix available).
+type CVESummary struct {
+	Total      int `json:"total"`       // raw findings (CVE × package rows)
+	UniqueCVEs int `json:"unique_cves"` // distinct CVE ids
+	Packages   int `json:"packages"`    // distinct affected packages
+	Critical   int `json:"critical"`
+	High       int `json:"high"`
+	Medium     int `json:"medium"`
+	Low        int `json:"low"`
+	Fixable    int `json:"fixable"` // findings with a fixed version available
+}
+
 // deriveProject buckets a finding: kernel packages → "Kernel" (fixed by a new kernel +
 // reboot, NOT a per-package upgrade); other OS packages → "OS"; an app dependency → the
 // DIRECTORY of its manifest (so go.mod + go.sum group together), not the raw file path.
@@ -197,6 +211,21 @@ func (s *Service) CVEGroups(machineID string) ([]CVEGroup, error) {
 	return out, rows.Err()
 }
 
+// CVESummaryFor returns the machine-level roll-up in one query.
+func (s *Service) CVESummaryFor(machineID string) (CVESummary, error) {
+	var sm CVESummary
+	err := s.db.QueryRow(`SELECT
+		COUNT(*),
+		COUNT(DISTINCT cve_id),
+		COUNT(DISTINCT pkg),
+		COALESCE(SUM(severity='CRITICAL'),0), COALESCE(SUM(severity='HIGH'),0),
+		COALESCE(SUM(severity='MEDIUM'),0), COALESCE(SUM(severity='LOW'),0),
+		COALESCE(SUM(fixed != '' AND fixed IS NOT NULL),0)
+		FROM fleet_cves WHERE machine_id = ?`, machineID).
+		Scan(&sm.Total, &sm.UniqueCVEs, &sm.Packages, &sm.Critical, &sm.High, &sm.Medium, &sm.Low, &sm.Fixable)
+	return sm, err
+}
+
 // ListCVEs returns a filtered, paginated page of a machine's findings plus the total
 // matching count. Filters (all optional): severity, class, target, fixable(=only rows
 // with a fix), q (substring on cve id or package).
@@ -284,7 +313,12 @@ func (s *Service) handleCVEGroups(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "query failed", http.StatusInternalServerError)
 		return
 	}
-	router.JSON(w, groups)
+	summary, err := s.CVESummaryFor(id)
+	if err != nil {
+		router.JSONError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, map[string]any{"summary": summary, "groups": groups})
 }
 
 // handleListCVEs (GET /api/fleet/cves?machine_id=&severity=&class=&target=&fixable=&q=&limit=&offset=).

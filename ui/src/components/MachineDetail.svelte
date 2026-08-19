@@ -53,6 +53,9 @@
   })
 
   let commands = $state([])
+  // machine-level CVE roll-up (unique CVEs, affected packages, fixable) — the report's cves
+  // summary only has raw findings + severity, so we pull the richer numbers from the panel.
+  let cveSummary = $state(null)
   async function load() {
     try {
       report = await apiGet('/api/fleet/report?id=' + encodeURIComponent(machine.id))
@@ -62,6 +65,7 @@
       loading = false
     }
     try { commands = (await apiGet('/api/fleet/machine/commands?machine_id=' + encodeURIComponent(machine.id))) || [] } catch { /* keep last */ }
+    try { cveSummary = (await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id)))?.summary || null } catch { /* keep last */ }
   }
   onMount(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t) })
 
@@ -305,17 +309,22 @@
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="text-[13px] font-semibold text-foreground">Vulnerabilities</span>
-              <span class="ml-auto text-[11px] text-muted-foreground shrink-0">{(cves?.total ?? 0).toLocaleString()} total{cves?.scanned_at ? ` · ${timeAgo(cves.scanned_at)}` : ''}</span>
+              <span class="ml-auto text-[11px] text-muted-foreground shrink-0">
+                {#if cveSummary}{cveSummary.unique_cves.toLocaleString()} CVEs · {cveSummary.packages.toLocaleString()} pkgs{:else}{(cves?.total ?? 0).toLocaleString()} findings{/if}{cves?.scanned_at ? ` · ${timeAgo(cves.scanned_at)}` : ''}
+              </span>
             </div>
             <div class="text-[11px] text-muted-foreground">Trivy · OS packages + app lockfiles</div>
           </div>
         </div>
-        <!-- severity badges below -->
+        <!-- lead with severity + what's actionable (fixable), not the noisy raw finding count -->
         {#if cves?.total}
-          <div class="flex flex-wrap gap-1.5">
+          <div class="flex flex-wrap items-center gap-1.5">
             {#each ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as sev}
               {#if cves?.counts?.[sev]}<Badge variant={sevVariant(sev)} size="sm">{cves.counts[sev].toLocaleString()} {sev.toLowerCase()}</Badge>{/if}
             {/each}
+            {#if cveSummary?.fixable}
+              <span class="inline-flex items-center gap-1 text-xs ml-1"><Icon name="tool" size={13} class="text-success" /><span class="font-semibold text-foreground">{cveSummary.fixable.toLocaleString()}</span><span class="text-muted-foreground">fixable</span></span>
+            {/if}
           </div>
           <!-- top preview (full list is the drill-down) -->
           {#if cves?.top?.length}

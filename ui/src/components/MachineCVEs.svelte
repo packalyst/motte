@@ -19,15 +19,17 @@
   let { machine, onback } = $props()
 
   let groups = $state([])
+  let summary = $state(null) // machine-level roll-up { total, unique_cves, packages, critical, high, ... , fixable }
   let cves = $state([])
   let total = $state(0)
   let loading = $state(true)
   let fixing = $state(false)
 
-  // filters
+  // filters — default to "has a fix" so the actionable set shows first, not the tens of
+  // thousands of unfixable OS findings. A toggle reveals everything.
   let project = $state('') // '' = all
   let severity = $state('')
-  let fixable = $state(false)
+  let fixable = $state(true)
   let q = $state('')
   let page = $state(0)
   const PAGE = 100
@@ -52,7 +54,11 @@
     return p
   }
   async function loadGroups() {
-    try { groups = (await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id))) || [] } catch { groups = [] }
+    try {
+      const res = await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id))
+      groups = res?.groups || []
+      summary = res?.summary || null
+    } catch { groups = []; summary = null }
   }
   async function loadList() {
     const p = filterParams()
@@ -149,6 +155,26 @@
     {/if}
   </div>
 
+  <!-- machine-level roll-up: lead with severity + what's actionable (fixable), scope on the right -->
+  {#if summary}
+    <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+      <div class="flex items-center gap-1.5">
+        {#if summary.critical}<Badge variant="danger" size="sm">{summary.critical.toLocaleString()} critical</Badge>{/if}
+        {#if summary.high}<Badge variant="warning" size="sm">{summary.high.toLocaleString()} high</Badge>{/if}
+        {#if summary.medium}<Badge variant="info" size="sm">{summary.medium.toLocaleString()} medium</Badge>{/if}
+        {#if summary.low}<Badge variant="muted" size="sm">{summary.low.toLocaleString()} low</Badge>{/if}
+      </div>
+      <div class="flex items-center gap-1.5 text-sm">
+        <Icon name="tool" size={14} class="text-success" />
+        <span class="font-semibold text-foreground">{summary.fixable.toLocaleString()}</span>
+        <span class="text-muted-foreground">fixable</span>
+      </div>
+      <div class="text-[11px] text-muted-foreground ml-auto">
+        {summary.unique_cves.toLocaleString()} CVEs · {summary.packages.toLocaleString()} packages · {summary.total.toLocaleString()} findings
+      </div>
+    </div>
+  {/if}
+
   <!-- filters -->
   <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-end gap-2">
     <div class="min-w-[220px] max-w-[320px] flex-1">
@@ -208,7 +234,12 @@
                   {/if}
                 </td>
                 <td class="py-1.5 px-2"><Badge variant={sevVariant(c.severity)} size="sm">{(c.severity || '').toLowerCase()}</Badge></td>
-                <td class="py-1.5 px-2 font-mono whitespace-nowrap" title={c.title}>{c.cve_id}</td>
+                <td class="py-1.5 px-2 font-mono whitespace-nowrap" title={c.title}>
+                  {#if /^CVE-/i.test(c.cve_id)}
+                    <a href={`https://nvd.nist.gov/vuln/detail/${c.cve_id}`} target="_blank" rel="noopener noreferrer"
+                      class="text-info hover:underline inline-flex items-center gap-1">{c.cve_id}<Icon name="external-link" size={11} /></a>
+                  {:else}{c.cve_id}{/if}
+                </td>
                 <td class="py-1.5 px-2 font-mono">{c.pkg}</td>
                 <td class="py-1.5 px-2 font-mono whitespace-nowrap"><span class="text-muted-foreground">{c.installed || '?'}</span>{#if c.fixed}<span class="text-success"> → {c.fixed}</span>{:else}<span class="text-muted-foreground"> → no fix</span>{/if}</td>
                 <td class="py-1.5 px-2 text-muted-foreground max-w-[220px] truncate" title={c.target}>{c.class === 'os-pkgs' ? 'OS' : (c.project || c.target)}</td>
