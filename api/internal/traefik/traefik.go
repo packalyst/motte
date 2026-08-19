@@ -1296,7 +1296,9 @@ func GenerateFleetRoute(configDir, domain string, apiPort string, fwBlockEnabled
 	if !hostnameRe.MatchString(domain) {
 		return fmt.Errorf("invalid panel domain %q", domain)
 	}
-	mws := []string{"rate-limit-strict@file", "security-headers@file", "sentinel_deny_agents@file"}
+	// NB: no sentinel_deny_agents here — the installer is fetched with curl, whose
+	// user-agent is on the crawler/bot denylist; that middleware would 444 the install.
+	mws := []string{"rate-limit-strict@file", "security-headers@file"}
 	if fwBlockEnabled {
 		mws = append(mws, MiddlewareSentinelFWBlockFile)
 	}
