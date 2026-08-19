@@ -24,6 +24,7 @@
   let showCves = $state(false) // drill into the full CVE list
 
   const st = $derived(statusInfo(machine))
+  const dryRun = $derived(report?.dry_run ?? true)
   const m = $derived(report?.metrics || {})
   const cves = $derived(report?.cves || null)
   const intr = $derived(report?.intrusion || null)
@@ -83,6 +84,13 @@
     done: (r) => `Pushing ${r.count} blocks to ${machine.name}`,
   })
   const applyUpdates = () => cmd('apply-updates', null, { title: 'Apply updates', message: `Run system package updates on ${machine.name}? OS-package CVEs are fixed by this; a kernel CVE also needs a reboot.` })
+  const setDryRun = (enabled) => cmd('set-dry-run', { enabled }, {
+    title: enabled ? 'Switch to dry-run' : 'Go live',
+    message: enabled
+      ? `Put ${machine.name} in DRY-RUN? It will LOG firewall/update actions instead of applying them.`
+      : `Take ${machine.name} LIVE? It will enforce firewall blocks and apply updates for real.`,
+    confirmText: enabled ? 'Dry-run' : 'Go live', variant: enabled ? 'primary' : 'destructive',
+  })
   const rescan = () => cmd('rescan', null, { title: 'Rescan', message: `Re-run the Trivy CVE scan on ${machine.name} now?` })
 
   async function del() {
@@ -181,6 +189,33 @@
     </div>
   {:else}
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+
+      <!-- AGENT -->
+      <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
+        {@render head('robot', 'Agent', report?.agent ? `wgscout ${report.agent}` : 'wgscout')}
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full {dryRun ? 'bg-warning' : 'bg-success'}"></span>
+            <span class="text-sm font-medium">{dryRun ? 'Dry-run' : 'Live'}</span>
+            <span class="text-[11px] text-muted-foreground">{dryRun ? '— logs actions, does not enforce' : '— enforcing for real'}</span>
+          </div>
+          <div class="ml-auto">
+            {#if dryRun}
+              <Button variant="destructive" size="sm" icon="bolt" onclick={() => setDryRun(false)}>Go live</Button>
+            {:else}
+              <Button variant="outline" size="sm" icon="player-pause" onclick={() => setDryRun(true)}>Switch to dry-run</Button>
+            {/if}
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 mt-3">
+          {#each [['Enrolled', machine.enrolled_at ? timeAgo(machine.enrolled_at) : '—'], ['Host', report?.host || '—'], ['Cert', (machine.cert_fp || '').replace('sha256:', '').slice(0, 12) || '—']] as [k, v]}
+            <div class="flex justify-between gap-2 py-1.5 border-t border-border sm:border-t-0 text-sm">
+              <span class="text-muted-foreground">{k}</span><span class="font-mono truncate">{v}</span>
+            </div>
+          {/each}
+        </div>
+        {@render note('Dry-run is the safe default: it logs what it WOULD block/update. Flip to Live to actually enforce. Applied on the next check-in (~10s).')}
+      </div>
 
       <!-- LIVE USAGE -->
       <div class="bg-card border border-border rounded-xl p-4">

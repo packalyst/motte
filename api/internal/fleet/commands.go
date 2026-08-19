@@ -21,6 +21,7 @@ var allowedCommands = map[string]bool{
 	"rescan":        true, // re-run the Trivy CVE scan now (don't wait for the interval)
 	"sync-blocks":   true, // push the panel's explicit blocklist onto this machine
 	"fix-packages":  true, // targeted OS-package upgrades for selected CVEs
+	"set-dry-run":   true, // flip enforcement on/off (dry-run) live
 }
 
 // Command is one queued instruction for a machine.

@@ -6,7 +6,7 @@
    * report). Click a card to open its structured detail page.
    */
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
@@ -118,6 +118,21 @@
   function openDetail(m) {
     selected = m
     if (typeof window !== 'undefined') window.location.hash = 'm=' + encodeURIComponent(m.id)
+  }
+  async function deleteMachine(m) {
+    const ok = await confirm({
+      title: `Delete ${m.name || m.id}`,
+      message: `Delete ${m.name || m.id}? Its certificate is invalidated immediately — the agent can no longer connect and must re-enroll with a fresh token to return.`,
+      confirmText: 'Delete machine', variant: 'destructive', alert: true,
+    })
+    if (!ok) return
+    try {
+      await apiPost('/api/fleet/machine/delete', { machine_id: m.id })
+      toast(`${m.name || m.id} deleted`, 'success')
+      await load()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
   }
   function closeDetail() {
     selected = null
@@ -284,8 +299,15 @@
             </div>
           {/if}
 
-          <div class="mt-auto pt-3 border-t border-border flex">
-            <Button variant="outline" size="xs" icon="chevron-right" onclick={() => openDetail(m)} class="w-full justify-center">Manage</Button>
+          <div class="mt-4 pt-3 border-t border-border">
+            <div class="flex items-center rounded-lg border border-border overflow-hidden divide-x divide-border">
+              <button onclick={() => openDetail(m)} class="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
+                <Icon name="chevron-right" size={13} />Manage
+              </button>
+              <button onclick={() => deleteMachine(m)} class="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
+                <Icon name="trash" size={13} />Delete
+              </button>
+            </div>
           </div>
         </div>
       {/each}
