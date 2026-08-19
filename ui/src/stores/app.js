@@ -92,6 +92,19 @@ const toastTextClass = {
   info: 'text-info'
 }
 
+// escapeHtml renders a string as literal text inside HTML. KTToast injects `message`
+// via innerHTML (not textContent), so any untrusted value interpolated into a toast —
+// machine names, error text, IP-lookup results, CVE titles — would otherwise be a stored
+// XSS sink. Escaping here closes that for ALL 200+ toast call sites at once.
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
 // Toast using KTUI
 export function toast(message, type = 'info') {
   if (window.KTToast) {
@@ -101,7 +114,7 @@ export function toast(message, type = 'info') {
         label: `<span class="icon-[tabler--circle-x] cursor-pointer text-base ${toastTextClass[type] || toastTextClass.info}"></span>`,
         onClick: function () {},
       },
-      message,
+      message: escapeHtml(message),
       variant: 'secondary',
       appearance: 'solid',
       progress: true,

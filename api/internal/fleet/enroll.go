@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -66,9 +67,16 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := req.Hostname
+	// Sanitize the self-reported hostname before it's stored as the display name: it's
+	// fully attacker-controlled at enroll and is later rendered in the UI. Defence in depth
+	// alongside output-escaping — a hostile name (e.g. an <img onerror=...> XSS payload)
+	// never even lands in the DB.
+	name := sanitizeMachineName(req.Hostname)
 	if name == "" {
-		name = label
+		name = sanitizeMachineName(label)
+	}
+	if name == "" {
+		name = "machine-" + id
 	}
 	m := Machine{
 		ID:          id,
@@ -90,6 +98,27 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		ClientCert: string(certPEM),
 		CACert:     string(s.ca.CertPEM()),
 	})
+}
+
+// sanitizeMachineName reduces an untrusted hostname/label to a safe, bounded display
+// name: ASCII letters/digits and a few separators (. _ - space) only, capped at 64
+// characters. Every other byte — including the < > " ' and control characters an XSS
+// payload needs — is dropped, so a hostile value can never reach the DB or the UI.
+func sanitizeMachineName(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.', r == '_', r == '-', r == ' ':
+			b.WriteRune(r)
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
