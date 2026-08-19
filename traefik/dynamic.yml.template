@@ -139,7 +139,12 @@ http:
         # https for the Leaflet map tiles; connect-src allows the same-origin API + websocket.
         # frame-ancestors 'none' is the modern clickjacking guard (matches frameDeny).
         # NOTE: if a bundled lib ever needs eval, add 'unsafe-eval' to script-src.
-        contentSecurityPolicy: "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:"
+        # connect-src must list the external hosts the app loads resources from, because the
+        # service worker (public/sw.js) re-fetches every request via fetch() — so even <img>
+        # tiles/flags become connect-src, not img-src. Hosts: flagcdn.com (country flags),
+        # *.tile.openstreetmap.org (Leaflet map tiles), unpkg.com (Leaflet CSS + marker icons).
+        # style-src adds unpkg.com for the externally-loaded Leaflet stylesheet.
+        contentSecurityPolicy: "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self'; connect-src 'self' ws: wss: https://flagcdn.com https://unpkg.com https://*.tile.openstreetmap.org; font-src 'self' data:"
         # HSTS: browsers ignore this over plain HTTP and only honor it over a
         # valid HTTPS connection, so it is inert on an IP/HTTP setup and only
         # activates once SSL is enabled. 1 year, current host only (no
