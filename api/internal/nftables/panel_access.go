@@ -109,16 +109,23 @@ func apiPort() (int, bool) {
 }
 
 // trustedPanelSources returns the CIDRs always allowed to reach the API port even when
-// direct access is off: loopback, the Docker bridge (so Traefik keeps reaching the API),
-// and the WireGuard range (so a VPN admin can never be locked out). Env values are
-// validated as CIDRs; each falls back to a sane default so a missing/garbled env var can
-// never drop the trusted source that keeps the panel reachable.
+// direct access is off, so an admin can never be locked out of their own panel:
+//   - loopback
+//   - the Docker bridge (DOCKER_SUBNET) so Traefik keeps reaching the API
+//   - the WireGuard range (WG_IP_RANGE) — admins on the WG VPN
+//   - the Headscale/Tailscale overlay (HEADSCALE_IP_RANGE) — admins on the Tailnet
+//
+// The ranges come from the same env vars the rest of the stack uses; each has a sane
+// fallback matching .env.example so a missing/garbled var can never drop a trusted source.
 func trustedPanelSources() []string {
 	out := []string{"127.0.0.0/8"}
 	if c := validCIDROr(os.Getenv("DOCKER_SUBNET"), "172.18.0.0/24"); c != "" {
 		out = append(out, c)
 	}
 	if c := validCIDROr(os.Getenv("WG_IP_RANGE"), "10.8.0.0/16"); c != "" {
+		out = append(out, c)
+	}
+	if c := validCIDROr(os.Getenv("HEADSCALE_IP_RANGE"), "100.64.0.0/16"); c != "" {
 		out = append(out, c)
 	}
 	return out
