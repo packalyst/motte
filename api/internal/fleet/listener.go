@@ -32,7 +32,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST /enroll", s.HandleEnroll)
 	// Self-extracting installer, token-gated (no client cert yet). Verified by curl
 	// against the panel CA (--cacert); the token is consumed later at /enroll.
-	mux.HandleFunc("GET /i/{token}", s.handleInstallScript)
+	mux.HandleFunc("GET /agent/{token}", s.handleInstallScript)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ca": s.ca.Fingerprint()})
 	})

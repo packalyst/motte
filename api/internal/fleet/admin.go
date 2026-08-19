@@ -203,7 +203,7 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 func buildInstallCommand(host string, port int, token, caPEM string) string {
 	return fmt.Sprintf(`cat > /tmp/wgscout-ca.pem <<'EOF'
 %sEOF
-curl -fsSL --cacert /tmp/wgscout-ca.pem "https://%s:%d/i/%s?arch=$(uname -m)" | sudo sh
+curl -fsSL --cacert /tmp/wgscout-ca.pem "https://%s:%d/agent/%s?arch=$(uname -m)" | sudo sh
 rm -f /tmp/wgscout-ca.pem`, ensureTrailingNL(caPEM), host, port, token)
 }
 

@@ -22,7 +22,7 @@ var archAlias = map[string]string{
 }
 
 // handleInstallScript serves a SELF-EXTRACTING install script for a valid token.
-// GET /i/{token}?arch=<uname -m>
+// GET /agent/{token}?arch=<uname -m>
 //
 // The returned script carries the agent binary (for the requested arch), the manifest,
 // and the real installer — all base64-embedded — plus panel URL + CA fingerprint +
