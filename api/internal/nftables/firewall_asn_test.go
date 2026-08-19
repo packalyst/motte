@@ -43,8 +43,9 @@ func TestBuildScriptSetsAreDefined(t *testing.T) {
 		"set allowed_countries {",
 		"set allowed_asn {",
 		// A country/ASN allow exempts its IPs from the geo/ASN drop but stays port-gated.
-		"ip saddr @blocked_asn ip saddr != @allowed_countries ip saddr != @allowed_asn drop",
-		"ip saddr @blocked_countries ip saddr != @allowed_countries ip saddr != @allowed_asn drop",
+		// (Inbound saddr drops carry a `counter` keyword from the L3 packet-drop-counter feature.)
+		"ip saddr @blocked_asn ip saddr != @allowed_countries ip saddr != @allowed_asn counter drop",
+		"ip saddr @blocked_countries ip saddr != @allowed_countries ip saddr != @allowed_asn counter drop",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("generated script missing %q", want)
@@ -197,7 +198,9 @@ func TestBuildScriptAllowBeforeDeny(t *testing.T) {
 			seg = seg[:len(chain)+end]
 		}
 		allow := strings.Index(seg, "ip saddr @allowed_ips accept")
-		deny := strings.Index(seg, "ip saddr @blocked_ips drop")
+		// The deny rule carries a `counter` keyword (added by the L3 packet-drop-counter
+		// feature): "ip saddr @blocked_ips counter drop".
+		deny := strings.Index(seg, "ip saddr @blocked_ips counter drop")
 		if allow < 0 || deny < 0 {
 			t.Fatalf("%s: missing allow/deny rule (allow=%d deny=%d)", chain, allow, deny)
 		}
