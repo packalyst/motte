@@ -53,6 +53,7 @@
   // Submenu groups → their child view ids. Drives auto-expand + collapse so the
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
+    'grp-clients': ['nodes', 'fleet'],
     'grp-access': ['routes', 'users', 'authkeys', 'apikeys'],
     'grp-web': ['traefik', 'domains', 'tunnels'],
     'grp-services': ['adguard', 'docker', 'logs', 'analytics'],
@@ -113,11 +114,15 @@
   const navItems = [
     // Daily-driver items stay one click away
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
-    { id: 'nodes', label: 'Nodes', icon: 'server' },
+    {
+      id: 'grp-clients', label: 'Clients', icon: 'devices',
+      children: [
+        { id: 'nodes', label: 'Nodes', icon: 'server' },
+        { id: 'fleet', label: 'Machines', icon: 'device-desktop' },
+      ]
+    },
     { id: 'firewall', label: 'Firewall', icon: 'shield' },
     { id: 'server', label: 'Server', icon: 'shield-lock' },
-    { id: 'fleet', label: 'Machines', icon: 'device-desktop' },
-    { id: 'iplookup', label: 'IP Lookup', icon: 'map-search' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
     { id: 'divider1', divider: true },
     {
@@ -158,7 +163,9 @@
   }
 
   function toggleMenu(id) {
-    expandedMenus[id] = !expandedMenus[id]
+    // Accordion: opening a group collapses the others so only one stays open.
+    const willOpen = !expandedMenus[id]
+    expandedMenus = Object.fromEntries(Object.keys(menuGroups).map(g => [g, g === id && willOpen]))
   }
 
   function toggleTheme() {
@@ -187,6 +194,7 @@
   // Get label for header
   function getViewLabel(viewId) {
     if (viewId === 'profile') return 'Profile'
+    if (viewId === 'iplookup') return 'IP Lookup' // topbar-only, not in the sidebar nav
     for (const item of navItems) {
       if (item.id === viewId) return item.label
       if (item.children) {
@@ -375,6 +383,13 @@
 
       <div class="flex items-center gap-2">
         <!-- Quick actions -->
+        <button
+          onclick={() => navigate('iplookup')}
+          class="custom_btns"
+          title="IP Lookup"
+        >
+          <Icon name="map-search" size={16} />
+        </button>
         <button
           onclick={() => navigate('nodes')}
           class="custom_btns"
