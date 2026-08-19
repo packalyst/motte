@@ -32,7 +32,6 @@
   let savingCfg = $state(false)
 
   // add-machine
-  let newLabel = $state('')
   let selectedHost = $state('') // direct origin IP the agent dials for mTLS
   let creating = $state(false)
   let lastToken = $state(null)
@@ -97,12 +96,13 @@
   }
 
   async function addMachine() {
-    if (!newLabel.trim()) return
     creating = true
     try {
-      lastToken = await apiPost('/api/fleet/token', { label: newLabel.trim(), ttl_seconds: 3600, panel_host: selectedHost })
-      newLabel = ''
-      toast('Enrollment token created — one-time, expires in 1h', 'success')
+      // The machine's real name comes from its hostname at enroll; this label is just a
+      // one-time-token reference, so auto-generate it.
+      const label = 'machine-' + Math.random().toString(36).slice(2, 8)
+      lastToken = await apiPost('/api/fleet/token', { label, ttl_seconds: 3600, panel_host: selectedHost })
+      toast('Install command ready — one-time, expires in 1h', 'success')
     } catch (e) {
       toast('Failed to create token: ' + e.message, 'error')
     } finally {
@@ -205,36 +205,26 @@
   <div class="bg-card border border-border rounded-xl p-4">
     <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="plus" size={16} class="text-primary" />Add a machine</h3>
     <div class="flex flex-wrap items-end gap-2">
-      <div class="flex-1 min-w-[160px]">
-        <Input bind:value={newLabel} prefixIcon="tag" label="Machine name" placeholder="e.g. web-01"
-          onkeydown={(e) => e.key === 'Enter' && addMachine()} />
-      </div>
       {#if ep?.hosts?.length}
-        <div class="min-w-[200px]">
-          <Select bind:value={selectedHost} label="Reachable at" options={ep.hosts.map((h) => ({ value: h, label: h }))} />
+        <div class="flex-1 min-w-[200px]">
+          <Select bind:value={selectedHost} label="Agent connects to" options={ep.hosts.map((h) => ({ value: h, label: h }))}
+            helperText="A directly-reachable IP (mTLS can't go through Cloudflare)." />
         </div>
       {/if}
-      <Button icon="key" onclick={addMachine} disabled={creating || !newLabel.trim() || !ep?.domain}>Generate install command</Button>
+      <Button icon="key" onclick={addMachine} disabled={creating || !ep?.domain}>Generate install command</Button>
     </div>
     {#if !ep?.domain}
-      <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Set a panel domain (SSL_DOMAIN) to enable the one-command install — it's served over the domain's HTTPS.</div>
-    {:else}
-      <div class="text-[11px] text-muted-foreground mt-2">Downloads over <span class="font-mono">{ep.domain}</span>; the agent then connects to the picked address for mutual-TLS. Pick a directly-reachable IP (not a Cloudflare-proxied name).</div>
+      <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Set a panel domain (SSL_DOMAIN) — the install downloads over the domain's HTTPS.</div>
     {/if}
 
     {#if lastToken}
       <div class="mt-3 border-t border-dashed border-border pt-3">
-        <div class="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
-          <Icon name="terminal-2" size={13} />
-          Paste this whole block on the new machine (one-time, expires {timeAgo(lastToken.expires_at)}). The agent, tools manifest and checksum are all served by this panel — no GitHub, nothing else fetched.
-        </div>
+        <div class="text-xs text-muted-foreground mb-1.5">Run on the new machine (one-time, expires {timeAgo(lastToken.expires_at)}):</div>
         {#if lastToken.install_command}
-          <div class="flex items-start gap-2">
-            <pre class="flex-1 bg-background border border-border rounded-lg p-2.5 text-[11px] font-mono overflow-auto max-h-56 whitespace-pre break-normal">{lastToken.install_command}</pre>
-            <Button variant="ghost" size="xs" icon="copy" copyText={lastToken.install_command} title="Copy" />
-          </div>
+          <Input value={lastToken.install_command} readonly class="font-mono text-[11px]"
+            suffixAddonBtn={{ icon: 'copy', variant: 'outline', copyText: lastToken.install_command, title: 'Copy' }} />
         {:else}
-          <div class="text-xs text-warning">Pick an address above so the install command can be built. Token: <span class="font-mono">{lastToken.token}</span></div>
+          <div class="text-xs text-warning">Pick an address above so the install command can be built.</div>
         {/if}
       </div>
     {/if}
@@ -302,9 +292,9 @@
           <div class="mt-4 pt-3 border-t border-border">
             <div class="flex items-center rounded-lg border border-border overflow-hidden divide-x divide-border">
               <button onclick={() => openDetail(m)} class="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
-                <Icon name="chevron-right" size={13} />Manage
+                <Icon name="settings" size={13} />Manage
               </button>
-              <button onclick={() => deleteMachine(m)} class="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
+              <button onclick={() => deleteMachine(m)} class="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
                 <Icon name="trash" size={13} />Delete
               </button>
             </div>

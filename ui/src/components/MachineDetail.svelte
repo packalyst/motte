@@ -214,7 +214,7 @@
             </div>
           {/each}
         </div>
-        {@render note('Dry-run is the safe default: it logs what it WOULD block/update. Flip to Live to actually enforce. Applied on the next check-in (~10s).')}
+        {@render note('Dry-run logs actions; Live enforces. Changes apply on the next check-in (~10s).')}
       </div>
 
       <!-- LIVE USAGE -->
@@ -277,6 +277,20 @@
               {#if cves?.counts?.[sev]}<Badge variant={sevVariant(sev)} size="sm">{cves.counts[sev].toLocaleString()} {sev.toLowerCase()}</Badge>{/if}
             {/each}
           </div>
+          <!-- top preview (full list is the drill-down) -->
+          {#if cves?.top?.length}
+            <div class="mt-3 border-t border-border pt-1">
+              {#each cves.top.slice(0, 12) as v}
+                <div class="flex items-center gap-2.5 py-1 text-xs">
+                  <Badge variant={sevVariant(v.severity)} size="sm">{(v.severity || '').toLowerCase()}</Badge>
+                  <span class="font-mono whitespace-nowrap" title={v.title}>{v.id}</span>
+                  <span class="text-muted-foreground truncate flex-1">{v.pkg}</span>
+                  <span class="shrink-0 font-mono text-[11px]">{#if v.fixed}<span class="text-success">→ {v.fixed}</span>{:else}<span class="text-muted-foreground">no fix</span>{/if}</span>
+                </div>
+              {/each}
+              {#if cves.total > 12}<div class="text-[11px] text-muted-foreground pt-1">+ {(cves.total - 12).toLocaleString()} more — “View all & fix”.</div>{/if}
+            </div>
+          {/if}
         {:else}
           <div class="text-sm text-success flex items-center gap-2 py-1"><Icon name="circle-check" size={15} />No known vulnerabilities found.</div>
         {/if}

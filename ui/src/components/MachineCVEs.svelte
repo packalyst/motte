@@ -12,6 +12,7 @@
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
   import Select from './Select.svelte'
+  import Checkbox from './Checkbox.svelte'
   import EmptyState from './EmptyState.svelte'
   import { sevVariant } from '$lib/fleet.js'
 
@@ -57,7 +58,6 @@
   onMount(async () => { await loadGroups(); await loadList() })
 
   function applyFilters() { selected = new Set(); loadList(true) }
-  function pickGroup(t) { target = target === t ? '' : t; applyFilters() }
   function loadMore() { offset += PAGE; loadList(false) }
 
   function toggle(c) {
@@ -93,6 +93,10 @@
 
   const sevOptions = [{ value: '', label: 'All severities' }, ...['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => ({ value: s, label: s[0] + s.slice(1).toLowerCase() }))]
   const groupLabel = (g) => (g.class === 'os-pkgs' ? `OS · ${g.type || g.target}` : g.target)
+  const groupOptions = $derived([
+    { value: '', label: `All (${groups.reduce((a, g) => a + g.total, 0).toLocaleString()})` },
+    ...groups.map((g) => ({ value: g.target, label: `${groupLabel(g)} · ${g.total}${g.critical ? ` (${g.critical} crit)` : ''}` })),
+  ])
 </script>
 
 <div class="space-y-4">
@@ -111,34 +115,17 @@
     {/if}
   </div>
 
-  <!-- groups -->
-  {#if groups.length}
-    <div class="flex flex-wrap gap-2">
-      <button onclick={() => pickGroup('')} class="px-3 py-1.5 rounded-lg border text-xs transition cursor-pointer {target === '' ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'}">
-        All ({groups.reduce((a, g) => a + g.total, 0).toLocaleString()})
-      </button>
-      {#each groups as g}
-        <button onclick={() => pickGroup(g.target)} title={g.target}
-          class="px-3 py-1.5 rounded-lg border text-xs flex items-center gap-2 transition cursor-pointer {target === g.target ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'}">
-          <Icon name={g.class === 'os-pkgs' ? 'package' : 'code'} size={13} />
-          <span class="max-w-[220px] truncate">{groupLabel(g)}</span>
-          {#if g.critical}<span class="text-[10px] text-destructive font-semibold">{g.critical}c</span>{/if}
-          <span class="text-[10px] opacity-70">{g.total}</span>
-        </button>
-      {/each}
-    </div>
-  {/if}
-
   <!-- filters -->
   <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-end gap-2">
-    <div class="flex-1 min-w-[160px]"><Input bind:value={q} prefixIcon="search" placeholder="CVE id or package" onkeydown={(e) => e.key === 'Enter' && applyFilters()} /></div>
-    <div class="min-w-[150px]"><Select bind:value={severity} options={sevOptions} onchange={applyFilters} /></div>
-    <label class="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer px-2 py-2">
-      <input type="checkbox" bind:checked={fixable} onchange={applyFilters} class="w-4 h-4 accent-primary" /> Has a fix
-    </label>
+    <div class="min-w-[220px] max-w-[320px] flex-1">
+      <Select bind:value={target} label="Project / OS" options={groupOptions} onchange={applyFilters} />
+    </div>
+    <div class="min-w-[150px]"><Select bind:value={severity} label="Severity" options={sevOptions} onchange={applyFilters} /></div>
+    <div class="flex-1 min-w-[160px]"><Input bind:value={q} label="Search" prefixIcon="search" placeholder="CVE id or package" onkeydown={(e) => e.key === 'Enter' && applyFilters()} /></div>
+    <Checkbox bind:checked={fixable} label="Has a fix" onchange={applyFilters} class="px-1 py-2" />
     <Button size="sm" icon="filter" onclick={applyFilters}>Apply</Button>
     {#if activeGroup && activeGroup.class === 'os-pkgs'}
-      <Button variant="outline" size="sm" icon="checks" onclick={selectAllFixableHere}>Select fixable on page</Button>
+      <Button variant="outline" size="sm" icon="checks" onclick={selectAllFixableHere}>Select fixable</Button>
     {/if}
   </div>
 
