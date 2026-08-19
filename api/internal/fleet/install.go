@@ -1,19 +1,11 @@
 package fleet
 
 import (
-	"embed"
 	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strings"
 )
-
-// agentDist bundles the agent binaries + manifest + the real installer INTO the panel
-// binary at build time, so the panel can serve a fully self-contained install with no
-// dependency on GitHub. Both arches ship; the install endpoint picks one per request.
-//
-//go:embed agentdist/wgscout-linux-amd64 agentdist/wgscout-linux-arm64 agentdist/manifest.json agentdist/install.sh
-var agentDist embed.FS
 
 // archAlias maps `uname -m` values to our release arch suffixes.
 var archAlias = map[string]string{
@@ -28,9 +20,10 @@ var archAlias = map[string]string{
 // and the real installer — all base64-embedded — plus panel URL + CA fingerprint +
 // token spliced in. It decodes them to a tempdir and runs the bundled installer with
 // --binary/--manifest/--panel/--ca-fp/--token, so ALL install logic stays in install.sh
-// (no duplication). Nothing is fetched from anywhere; the whole payload is this one
-// response. On a bad token/arch it returns a runnable error script (the caller is
-// piping to sh), so the failure prints cleanly instead of a raw HTTP error.
+// (no duplication). The assets are pulled from the latest GitHub release and cached on
+// the panel (see agentCache) — the repo carries no binaries. On a bad token/arch or a
+// cache/fetch failure it returns a runnable error script (the caller is piping to sh),
+// so the failure prints cleanly instead of a raw HTTP error.
 //
 // Registered on the main api router (public, no session — the new box has no cert or
 // login yet; the one-time token in the path is the credential) and published over
@@ -52,13 +45,11 @@ func (s *Service) HandleInstallScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bin, err := agentDist.ReadFile("agentdist/wgscout-linux-" + arch)
+	bin, manifest, installer, err := s.agentCache.Get(r.Context(), arch)
 	if err != nil {
-		writeErrorScript(w, "panel is missing the agent binary for this arch — contact the panel operator.")
+		writeErrorScript(w, "panel could not fetch the agent from the release — check the panel's internet access and that a release is published.")
 		return
 	}
-	manifest, _ := agentDist.ReadFile("agentdist/manifest.json")
-	installer, _ := agentDist.ReadFile("agentdist/install.sh")
 
 	// Where the agent will dial for mTLS (enroll/report/commands). Served via Traefik on
 	// 443, so r.Host is the domain WITHOUT the fleet port — build it from the configured

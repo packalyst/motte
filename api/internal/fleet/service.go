@@ -35,6 +35,10 @@ type Service struct {
 	// generated /agent Traefik route carries sentinel_fw_block only when it's on. Nil ⇒ off.
 	fwBlockEnabled func() bool
 
+	// agentCache pulls the agent binary/manifest/installer from the latest GitHub release
+	// and caches them on disk, so the repo ships no binaries.
+	agentCache *agentCache
+
 	mu      sync.Mutex
 	enabled bool
 	port    int
@@ -62,6 +66,7 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 		closePort:      closePort,
 		blockedIPs:     blockedIPs,
 		fwBlockEnabled: fwBlockEnabled,
+		agentCache:     newAgentCache(),
 		clientCertTTL:  90 * 24 * time.Hour,
 	}, nil
 }
