@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"compress/gzip"
+	"encoding/csv"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -18,24 +19,38 @@ type CVE struct {
 	Installed string `json:"installed"`
 	Fixed     string `json:"fixed"`
 	Severity  string `json:"severity"`
-	Target    string `json:"target"`
-	Class     string `json:"class"` // os-pkgs | lang-pkgs
+	Target    string `json:"target"`  // the exact manifest/lockfile path (or OS name)
+	Project   string `json:"project"` // OS, or the manifest's directory (≈ the project)
+	Class     string `json:"class"`   // os-pkgs | lang-pkgs
 	Type      string `json:"type"`
 	Title     string `json:"title"`
 }
 
-// CVEGroup is one bucket of a machine's findings: the OS, or a single app project /
-// lockfile (by target). Sorted worst-first, it drives the drill-down's grouping.
+// CVEGroup is one bucket of a machine's findings: the OS, or an app project (the
+// directory holding its manifests). Sorted worst-first, it drives the grouping.
 type CVEGroup struct {
+	Project  string `json:"project"`
 	Class    string `json:"class"`
 	Type     string `json:"type"`
-	Target   string `json:"target"`
 	Total    int    `json:"total"`
 	Critical int    `json:"critical"`
 	High     int    `json:"high"`
 	Medium   int    `json:"medium"`
 	Low      int    `json:"low"`
 	Fixable  int    `json:"fixable"` // has a fixed version
+}
+
+// deriveProject maps a finding to a project: OS packages → "OS"; an app dependency →
+// the DIRECTORY of its manifest (so go.mod + go.sum, or package.json + its lock, group
+// together), rather than the raw per-file path.
+func deriveProject(class, target string) string {
+	if class == "os-pkgs" || class == "" {
+		return "OS"
+	}
+	if i := strings.LastIndexByte(target, '/'); i > 0 {
+		return target[:i]
+	}
+	return target
 }
 
 // IngestCVEs replaces a machine's stored findings with the latest full scan (a snapshot,
@@ -50,16 +65,20 @@ func (s *Service) IngestCVEs(machineID, scannedAt string, findings []CVE) error 
 		return err
 	}
 	stmt, err := tx.Prepare(`INSERT INTO fleet_cves
-		(machine_id, cve_id, pkg, installed, fixed, severity, target, class, type, title, scanned_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+		(machine_id, cve_id, pkg, installed, fixed, severity, target, project, class, type, title, scanned_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 	for _, f := range findings {
+		project := f.Project
+		if project == "" {
+			project = deriveProject(f.Class, f.Target)
+		}
 		if _, err := stmt.Exec(machineID, f.CVEID, f.Pkg, f.Installed, f.Fixed, f.Severity,
-			f.Target, f.Class, f.Type, f.Title, scannedAt); err != nil {
+			f.Target, project, f.Class, f.Type, f.Title, scannedAt); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -107,7 +126,8 @@ func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 	cves := make([]CVE, len(payload.Findings))
 	for i, f := range payload.Findings {
 		cves[i] = CVE{CVEID: f.ID, Pkg: f.Pkg, Installed: f.Installed, Fixed: f.Fixed,
-			Severity: f.Severity, Target: f.Target, Class: f.Class, Type: f.Type, Title: f.Title}
+			Severity: f.Severity, Target: f.Target, Project: deriveProject(f.Class, f.Target),
+			Class: f.Class, Type: f.Type, Title: f.Title}
 	}
 	if err := s.IngestCVEs(m.ID, payload.ScannedAt, cves); err != nil {
 		writeErr(w, http.StatusInternalServerError, "store failed")
@@ -116,14 +136,14 @@ func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"stored": len(cves)})
 }
 
-// CVEGroups returns a machine's findings bucketed by class + target, worst-first.
+// CVEGroups returns a machine's findings bucketed by project, worst-first.
 func (s *Service) CVEGroups(machineID string) ([]CVEGroup, error) {
-	rows, err := s.db.Query(`SELECT class, MAX(type), target,
+	rows, err := s.db.Query(`SELECT project, MAX(class), MAX(type),
 		COUNT(*),
 		SUM(severity='CRITICAL'), SUM(severity='HIGH'), SUM(severity='MEDIUM'), SUM(severity='LOW'),
 		SUM(fixed != '' AND fixed IS NOT NULL)
 		FROM fleet_cves WHERE machine_id = ?
-		GROUP BY class, target
+		GROUP BY project
 		ORDER BY SUM(severity='CRITICAL') DESC, SUM(severity='HIGH') DESC, COUNT(*) DESC`, machineID)
 	if err != nil {
 		return nil, err
@@ -132,7 +152,7 @@ func (s *Service) CVEGroups(machineID string) ([]CVEGroup, error) {
 	out := []CVEGroup{}
 	for rows.Next() {
 		var g CVEGroup
-		if err := rows.Scan(&g.Class, &g.Type, &g.Target, &g.Total, &g.Critical, &g.High, &g.Medium, &g.Low, &g.Fixable); err != nil {
+		if err := rows.Scan(&g.Project, &g.Class, &g.Type, &g.Total, &g.Critical, &g.High, &g.Medium, &g.Low, &g.Fixable); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -154,9 +174,9 @@ func (s *Service) ListCVEs(machineID string, f cveFilter) ([]CVE, int, error) {
 		where = append(where, "class = ?")
 		args = append(args, f.Class)
 	}
-	if f.Target != "" {
-		where = append(where, "target = ?")
-		args = append(args, f.Target)
+	if f.Project != "" {
+		where = append(where, "project = ?")
+		args = append(args, f.Project)
 	}
 	if f.Fixable {
 		where = append(where, "fixed != '' AND fixed IS NOT NULL")
@@ -172,7 +192,7 @@ func (s *Service) ListCVEs(machineID string, f cveFilter) ([]CVE, int, error) {
 		return nil, 0, err
 	}
 	// worst-first, fixable before no-fix, then by CVE id.
-	q := `SELECT cve_id, pkg, installed, fixed, severity, target, class, type, title
+	q := `SELECT cve_id, pkg, installed, fixed, severity, target, project, class, type, title
 		FROM fleet_cves WHERE ` + cond + `
 		ORDER BY CASE severity WHEN 'CRITICAL' THEN 4 WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END DESC,
 		         (fixed != '' AND fixed IS NOT NULL) DESC, cve_id
@@ -186,7 +206,7 @@ func (s *Service) ListCVEs(machineID string, f cveFilter) ([]CVE, int, error) {
 	out := []CVE{}
 	for rows.Next() {
 		var c CVE
-		if err := rows.Scan(&c.CVEID, &c.Pkg, &c.Installed, &c.Fixed, &c.Severity, &c.Target, &c.Class, &c.Type, &c.Title); err != nil {
+		if err := rows.Scan(&c.CVEID, &c.Pkg, &c.Installed, &c.Fixed, &c.Severity, &c.Target, &c.Project, &c.Class, &c.Type, &c.Title); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, c)
@@ -195,9 +215,9 @@ func (s *Service) ListCVEs(machineID string, f cveFilter) ([]CVE, int, error) {
 }
 
 type cveFilter struct {
-	Severity, Class, Target, Q string
-	Fixable                    bool
-	Limit, Offset              int
+	Severity, Class, Project, Q string
+	Fixable                     bool
+	Limit, Offset               int
 }
 
 func (f cveFilter) limit() int {
@@ -241,7 +261,7 @@ func (s *Service) handleListCVEs(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
 	cves, total, err := s.ListCVEs(id, cveFilter{
-		Severity: q.Get("severity"), Class: q.Get("class"), Target: q.Get("target"),
+		Severity: q.Get("severity"), Class: q.Get("class"), Project: q.Get("project"),
 		Q: q.Get("q"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
 		Limit: limit, Offset: offset,
 	})
@@ -250,6 +270,35 @@ func (s *Service) handleListCVEs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	router.JSON(w, map[string]any{"cves": cves, "total": total})
+}
+
+// handleExportCVEs (GET /api/fleet/cves/export?machine_id=&<filters>) streams the
+// filtered findings as a CSV attachment — for offline triage or feeding an external
+// fixer. Same filters as the list; no pagination (whole matching set, capped).
+func (s *Service) handleExportCVEs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	id := q.Get("machine_id")
+	if id == "" {
+		router.JSONError(w, "machine_id required", http.StatusBadRequest)
+		return
+	}
+	cves, _, err := s.ListCVEs(id, cveFilter{
+		Severity: q.Get("severity"), Class: q.Get("class"), Project: q.Get("project"),
+		Q: q.Get("q"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
+		Limit: 50000, // export cap
+	})
+	if err != nil {
+		router.JSONError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="cves.csv"`)
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"cve_id", "severity", "package", "installed", "fixed", "project", "target", "class", "type", "title"})
+	for _, c := range cves {
+		_ = cw.Write([]string{c.CVEID, c.Severity, c.Pkg, c.Installed, c.Fixed, c.Project, c.Target, c.Class, c.Type, c.Title})
+	}
+	cw.Flush()
 }
 
 // handleFixPackages (POST /api/fleet/fix {machine_id, packages}) queues a targeted

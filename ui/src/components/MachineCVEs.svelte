@@ -6,7 +6,7 @@
    * CVEs are shown for context but can't be agent-fixed (the app owner bumps the dep).
    */
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiPost, apiGetBlob, toast, confirm } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Badge from './Badge.svelte'
@@ -25,40 +25,56 @@
   let fixing = $state(false)
 
   // filters
-  let target = $state('') // '' = all groups
+  let project = $state('') // '' = all
   let severity = $state('')
   let fixable = $state(false)
   let q = $state('')
-  let offset = $state(0)
-  const PAGE = 200
+  let page = $state(0)
+  const PAGE = 100
 
   // selection: distinct package names to fix (OS-package fixable CVEs only)
   let selected = $state(new Set())
 
   const isOSFixable = (c) => c.class === 'os-pkgs' && !!c.fixed
-  const activeGroup = $derived(groups.find((g) => g.target === target))
+  const activeGroup = $derived(groups.find((g) => g.project === project))
+  const pageCount = $derived(Math.max(1, Math.ceil(total / PAGE)))
 
-  async function loadGroups() {
-    try { groups = (await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id))) || [] } catch { groups = [] }
-  }
-  async function loadList(reset = true) {
-    if (reset) { offset = 0 }
-    const p = new URLSearchParams({ machine_id: machine.id, limit: String(PAGE), offset: String(offset) })
-    if (target) p.set('target', target)
+  function filterParams() {
+    const p = new URLSearchParams({ machine_id: machine.id })
+    if (project) p.set('project', project)
     if (severity) p.set('severity', severity)
     if (fixable) p.set('fixable', '1')
     if (q.trim()) p.set('q', q.trim())
+    return p
+  }
+  async function loadGroups() {
+    try { groups = (await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id))) || [] } catch { groups = [] }
+  }
+  async function loadList() {
+    const p = filterParams()
+    p.set('limit', String(PAGE)); p.set('offset', String(page * PAGE))
     try {
       const res = await apiGet('/api/fleet/cves?' + p.toString())
-      cves = offset === 0 ? (res.cves || []) : [...cves, ...(res.cves || [])]
+      cves = res.cves || []
       total = res.total || 0
-    } catch { if (offset === 0) { cves = []; total = 0 } }
+    } catch { cves = []; total = 0 }
     finally { loading = false }
   }
   onMount(async () => { await loadGroups(); await loadList() })
 
-  function applyFilters() { selected = new Set(); loadList(true) }
-  function loadMore() { offset += PAGE; loadList(false) }
+  function applyFilters() { selected = new Set(); page = 0; loadList() }
+  function goPage(n) { page = Math.min(Math.max(0, n), pageCount - 1); loadList() }
+
+  async function exportCSV() {
+    try {
+      const blob = await apiGetBlob('/api/fleet/cves/export?' + filterParams().toString())
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `cves-${machine.name || machine.id}.csv`
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) { toast('Export failed: ' + e.message, 'error') }
+  }
 
   function toggle(c) {
     if (!isOSFixable(c)) return
@@ -92,10 +108,10 @@
   }
 
   const sevOptions = [{ value: '', label: 'All severities' }, ...['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => ({ value: s, label: s[0] + s.slice(1).toLowerCase() }))]
-  const groupLabel = (g) => (g.class === 'os-pkgs' ? `OS · ${g.type || g.target}` : g.target)
+  const groupLabel = (g) => (g.class === 'os-pkgs' ? `OS packages` : g.project)
   const groupOptions = $derived([
-    { value: '', label: `All (${groups.reduce((a, g) => a + g.total, 0).toLocaleString()})` },
-    ...groups.map((g) => ({ value: g.target, label: `${groupLabel(g)} · ${g.total}${g.critical ? ` (${g.critical} crit)` : ''}` })),
+    { value: '', label: `All projects (${groups.reduce((a, g) => a + g.total, 0).toLocaleString()})` },
+    ...groups.map((g) => ({ value: g.project, label: `${groupLabel(g)} · ${g.total}${g.critical ? ` (${g.critical} crit)` : ''}` })),
   ])
 </script>
 
@@ -110,6 +126,7 @@
       <div class="text-lg font-semibold text-foreground truncate leading-tight">Vulnerabilities</div>
       <div class="text-[11px] text-muted-foreground truncate">{machine.name || machine.id} · {total.toLocaleString()} matching</div>
     </div>
+    <Button variant="outline" size="sm" icon="download" onclick={exportCSV}>Export CSV</Button>
     {#if selected.size > 0}
       <Button variant="primary" size="sm" icon="refresh-alert" onclick={fixSelected} loading={fixing}>Fix selected ({selected.size})</Button>
     {/if}
@@ -118,7 +135,7 @@
   <!-- filters -->
   <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-end gap-2">
     <div class="min-w-[220px] max-w-[320px] flex-1">
-      <Select bind:value={target} label="Project / OS" options={groupOptions} onchange={applyFilters} />
+      <Select bind:value={project} label="Project / OS" options={groupOptions} onchange={applyFilters} />
     </div>
     <div class="min-w-[150px]"><Select bind:value={severity} label="Severity" options={sevOptions} onchange={applyFilters} /></div>
     <div class="flex-1 min-w-[160px]"><Input bind:value={q} label="Search" prefixIcon="search" placeholder="CVE id or package" onkeydown={(e) => e.key === 'Enter' && applyFilters()} /></div>
@@ -170,15 +187,17 @@
                 <td class="py-1.5 px-2 font-mono whitespace-nowrap" title={c.title}>{c.cve_id}</td>
                 <td class="py-1.5 px-2 font-mono">{c.pkg}</td>
                 <td class="py-1.5 px-2 font-mono whitespace-nowrap"><span class="text-muted-foreground">{c.installed || '?'}</span>{#if c.fixed}<span class="text-success"> → {c.fixed}</span>{:else}<span class="text-muted-foreground"> → no fix</span>{/if}</td>
-                <td class="py-1.5 px-2 text-muted-foreground max-w-[220px] truncate" title={c.target}>{c.class === 'os-pkgs' ? 'OS' : c.target}</td>
+                <td class="py-1.5 px-2 text-muted-foreground max-w-[220px] truncate" title={c.target}>{c.class === 'os-pkgs' ? 'OS' : (c.project || c.target)}</td>
               </tr>
             {/each}
           </tbody>
         </table>
       </div>
-      {#if cves.length < total}
-        <div class="p-2 border-t border-border text-center">
-          <Button variant="ghost" size="xs" icon="chevron-down" onclick={loadMore}>Load more ({(total - cves.length).toLocaleString()} left)</Button>
+      {#if pageCount > 1}
+        <div class="p-2 border-t border-border flex items-center justify-between text-xs">
+          <Button variant="ghost" size="xs" icon="chevron-left" onclick={() => goPage(page - 1)} disabled={page === 0}>Prev</Button>
+          <span class="text-muted-foreground">Page {page + 1} of {pageCount.toLocaleString()} · {total.toLocaleString()} findings</span>
+          <Button variant="ghost" size="xs" icon="chevron-right" onclick={() => goPage(page + 1)} disabled={page >= pageCount - 1}>Next</Button>
         </div>
       {/if}
     </div>

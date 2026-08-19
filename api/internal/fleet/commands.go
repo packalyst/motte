@@ -56,6 +56,56 @@ func (s *Service) Enqueue(machineID, ctype string, payload json.RawMessage) (str
 	return id, err
 }
 
+// MachineCommand is one queued command with its lifecycle, for the admin command log.
+type MachineCommand struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Status    string `json:"status"` // pending | delivered | done | error
+	Result    string `json:"result,omitempty"`
+	CreatedAt string `json:"created_at"`
+	DoneAt    string `json:"done_at,omitempty"`
+}
+
+// ListMachineCommands returns a machine's most recent commands (newest first).
+func (s *Service) ListMachineCommands(machineID string, limit int) ([]MachineCommand, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.db.Query(
+		`SELECT id, type, status, result, created_at, done_at FROM fleet_commands
+		 WHERE machine_id = ? ORDER BY created_at DESC LIMIT ?`, machineID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MachineCommand{}
+	for rows.Next() {
+		var c MachineCommand
+		var result, doneAt sql.NullString
+		if err := rows.Scan(&c.ID, &c.Type, &c.Status, &result, &c.CreatedAt, &doneAt); err != nil {
+			return nil, err
+		}
+		c.Result, c.DoneAt = result.String, doneAt.String
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// handleMachineCommands (GET /api/fleet/machine/commands?machine_id=) — the command log.
+func (s *Service) handleMachineCommands(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("machine_id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "machine_id required")
+		return
+	}
+	cmds, err := s.ListMachineCommands(id, 20)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, cmds)
+}
+
 // HandleCommands (GET, mTLS) returns this machine's pending commands and marks
 // them delivered. The machine comes from the client cert.
 func (s *Service) HandleCommands(w http.ResponseWriter, r *http.Request) {

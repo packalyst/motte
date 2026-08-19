@@ -15,18 +15,20 @@ import (
 // fleet. Registered as the "fleet" service in endpoints.json.
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"CreateToken":    s.handleCreateToken,
-		"ListMachines":   s.handleListMachines,
-		"CAInfo":         s.handleCAInfo,
-		"EnqueueCommand": s.handleEnqueueCommand,
-		"MachineReport":  s.handleMachineReport,
-		"FleetEndpoints": s.handleEndpoints,
-		"SetConfig":      s.handleSetConfig,
-		"PushBlocks":     s.handlePushBlocks,
-		"DeleteMachine":  s.handleDeleteMachine,
-		"CVEGroups":      s.handleCVEGroups,
-		"ListCVEs":       s.handleListCVEs,
-		"FixPackages":    s.handleFixPackages,
+		"CreateToken":     s.handleCreateToken,
+		"ListMachines":    s.handleListMachines,
+		"CAInfo":          s.handleCAInfo,
+		"EnqueueCommand":  s.handleEnqueueCommand,
+		"MachineReport":   s.handleMachineReport,
+		"FleetEndpoints":  s.handleEndpoints,
+		"SetConfig":       s.handleSetConfig,
+		"PushBlocks":      s.handlePushBlocks,
+		"DeleteMachine":   s.handleDeleteMachine,
+		"CVEGroups":       s.handleCVEGroups,
+		"ListCVEs":        s.handleListCVEs,
+		"ExportCVEs":      s.handleExportCVEs,
+		"FixPackages":     s.handleFixPackages,
+		"MachineCommands": s.handleMachineCommands,
 	}
 }
 

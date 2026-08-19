@@ -12,16 +12,14 @@
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
-  import MachineCVEs from './MachineCVEs.svelte'
   import { timeAgo } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
-  let { machine, onback, ondeleted } = $props()
+  let { machine, onback, ondeleted, onviewcves } = $props()
 
   let report = $state(null)
   let loading = $state(true)
   let blockIP = $state('')
-  let showCves = $state(false) // drill into the full CVE list
 
   const st = $derived(statusInfo(machine))
   const dryRun = $derived(report?.dry_run ?? true)
@@ -42,6 +40,7 @@
     return out
   })
 
+  let commands = $state([])
   async function load() {
     try {
       report = await apiGet('/api/fleet/report?id=' + encodeURIComponent(machine.id))
@@ -50,8 +49,11 @@
     } finally {
       loading = false
     }
+    try { commands = (await apiGet('/api/fleet/machine/commands?machine_id=' + encodeURIComponent(machine.id))) || [] } catch { /* keep last */ }
   }
-  onMount(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t) })
+  onMount(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t) })
+
+  const cmdStatus = { pending: 'text-warning', delivered: 'text-info', done: 'text-success', error: 'text-destructive' }
 
   async function cmd(type, payload = null, opts = {}) {
     const ok = await confirm({
@@ -152,9 +154,6 @@
   <div class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border">{text}</div>
 {/snippet}
 
-{#if showCves}
-  <MachineCVEs {machine} onback={() => (showCves = false)} />
-{:else}
 <div class="space-y-4">
   <!-- Header -->
   <div class="flex items-center gap-3 flex-wrap">
@@ -214,6 +213,19 @@
             </div>
           {/each}
         </div>
+        {#if commands.length}
+          <div class="text-[11px] text-muted-foreground mt-3 mb-1">Recent commands</div>
+          <div class="max-h-40 overflow-y-auto -mr-1 pr-1">
+            {#each commands as c}
+              <div class="flex items-center gap-2 py-1 border-t border-border first:border-t-0 text-xs">
+                <span class="font-mono">{c.type}</span>
+                <span class="capitalize {cmdStatus[c.status] || 'text-muted-foreground'}">{c.status}</span>
+                {#if c.result}<span class="text-muted-foreground truncate flex-1" title={c.result}>· {c.result}</span>{/if}
+                <span class="text-[10px] text-muted-foreground ml-auto shrink-0">{timeAgo(c.done_at || c.created_at)}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
         {@render note('Dry-run logs actions; Live enforces. Changes apply on the next check-in (~10s).')}
       </div>
 
@@ -295,7 +307,7 @@
           <div class="text-sm text-success flex items-center gap-2 py-1"><Icon name="circle-check" size={15} />No known vulnerabilities found.</div>
         {/if}
         <div class="flex items-center gap-2 mt-3 flex-wrap">
-          {#if cves?.total}<Button variant="primary" size="sm" icon="list-details" onclick={() => (showCves = true)}>View all & fix</Button>{/if}
+          {#if cves?.total}<Button variant="primary" size="sm" icon="list-details" onclick={() => onviewcves?.(machine)}>View all & fix</Button>{/if}
           <Button variant="outline" size="sm" icon="refresh-alert" onclick={applyUpdates}>Apply all updates</Button>
           <Button variant="outline" size="sm" icon="scan" onclick={rescan}>Rescan</Button>
         </div>
@@ -363,4 +375,3 @@
     </div>
   {/if}
 </div>
-{/if}

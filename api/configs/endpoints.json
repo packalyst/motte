@@ -1583,6 +1583,22 @@
           ],
           "handler": "FixPackages",
           "description": "Queue a targeted OS-package upgrade for selected CVEs"
+        },
+        {
+          "path": "/cves/export",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ExportCVEs",
+          "description": "Export filtered machine CVEs as CSV"
+        },
+        {
+          "path": "/machine/commands",
+          "methods": [
+            "GET"
+          ],
+          "handler": "MachineCommands",
+          "description": "Recent commands for a machine (?machine_id=)"
         }
       ]
     }

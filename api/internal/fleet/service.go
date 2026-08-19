@@ -325,23 +325,28 @@ func ensureSchema(db *sql.DB) error {
 			fixed      TEXT,
 			severity   TEXT,
 			target     TEXT,
+			project    TEXT,
 			class      TEXT,
 			type       TEXT,
 			title      TEXT,
 			scanned_at TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_machine ON fleet_cves(machine_id, severity)`,
-		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_target ON fleet_cves(machine_id, target)`,
+		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_project ON fleet_cves(machine_id, project)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {
 			return err
 		}
 	}
-	// Migration for DBs created before panel_host existed (ignore "duplicate column").
-	if _, err := db.Exec(`ALTER TABLE fleet_tokens ADD COLUMN panel_host TEXT`); err != nil &&
-		!strings.Contains(err.Error(), "duplicate column") {
-		log.Printf("fleet: panel_host migration: %v", err)
+	// Migrations for DBs created before these columns existed (ignore "duplicate column").
+	for _, alt := range []string{
+		`ALTER TABLE fleet_tokens ADD COLUMN panel_host TEXT`,
+		`ALTER TABLE fleet_cves ADD COLUMN project TEXT`,
+	} {
+		if _, err := db.Exec(alt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			log.Printf("fleet: migration %q: %v", alt, err)
+		}
 	}
 	return nil
 }

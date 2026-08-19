@@ -16,6 +16,7 @@
   import Checkbox from '../components/Checkbox.svelte'
   import Select from '../components/Select.svelte'
   import MachineDetail from '../components/MachineDetail.svelte'
+  import MachineCVEs from '../components/MachineCVEs.svelte'
   import { timeAgo } from '$lib/utils/format.js'
   import { usageColor, statusInfo, round } from '$lib/fleet.js'
 
@@ -25,6 +26,7 @@
   let ep = $state(null) // { enabled, port, listening, hosts:[], fingerprint }
   let error = $state(null)
   let selected = $state(null) // machine object when a detail page is open
+  let cvesFor = $state(null)  // machine object when the CVE drill-down is open
 
   // listener config
   let cfgEnabled = $state(false)
@@ -46,13 +48,10 @@
         // Default the mTLS host to the first candidate (a public IP), not the domain.
         if (!selectedHost && ep.hosts?.length) selectedHost = ep.hosts[0]
       }
-      // keep the open detail's header fresh; restore it from the URL hash on refresh.
-      if (selected) {
-        selected = machines.find((x) => x.id === selected.id) || selected
-      } else {
-        const id = selectedIdFromHash()
-        if (id) selected = machines.find((x) => x.id === id) || null
-      }
+      // keep an open view's machine fresh; restore from the URL hash on refresh/direct link.
+      if (cvesFor) cvesFor = machines.find((x) => x.id === cvesFor.id) || cvesFor
+      else if (selected) selected = machines.find((x) => x.id === selected.id) || selected
+      else restoreFromHash()
       error = null
     } catch (e) {
       error = e.message
@@ -63,10 +62,7 @@
   onMount(() => {
     load()
     const t = setInterval(load, 15000)
-    const onHash = () => {
-      const id = selectedIdFromHash()
-      selected = id ? (machines.find((x) => x.id === id) || selected) : null
-    }
+    const onHash = () => restoreFromHash()
     window.addEventListener('hashchange', onHash)
     return () => { clearInterval(t); window.removeEventListener('hashchange', onHash) }
   })
@@ -111,13 +107,22 @@
   }
 
   // Deep-link the open machine in the URL hash (#m=<id>) so a refresh stays on it.
-  function selectedIdFromHash() {
-    if (typeof window === 'undefined') return null
-    return new URLSearchParams(window.location.hash.slice(1)).get('m')
+  const hashParams = () => (typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.hash.slice(1)))
+  function setHash(s) {
+    if (typeof window === 'undefined') return
+    if (s) window.location.hash = s
+    else if (window.location.hash) history.replaceState(null, '', window.location.pathname)
   }
-  function openDetail(m) {
-    selected = m
-    if (typeof window !== 'undefined') window.location.hash = 'm=' + encodeURIComponent(m.id)
+  function openDetail(m) { selected = m; cvesFor = null; setHash('m=' + encodeURIComponent(m.id)) }
+  function openCves(m) { cvesFor = m; selected = null; setHash('cves=' + encodeURIComponent(m.id)) }
+  function closeCves() { const m = cvesFor; cvesFor = null; selected = m; setHash('m=' + encodeURIComponent(m.id)) }
+  // Restore the open view from the hash (refresh or direct link).
+  function restoreFromHash() {
+    const p = hashParams()
+    const cid = p.get('cves'), mid = p.get('m')
+    if (cid) { const m = machines.find((x) => x.id === cid); if (m) { cvesFor = m; selected = null } }
+    else if (mid) { const m = machines.find((x) => x.id === mid); if (m) { selected = m; cvesFor = null } }
+    else { selected = null; cvesFor = null }
   }
   async function deleteMachine(m) {
     const ok = await confirm({
@@ -134,11 +139,7 @@
       toast('Failed: ' + e.message, 'error')
     }
   }
-  function closeDetail() {
-    selected = null
-    if (typeof window !== 'undefined' && window.location.hash) history.replaceState(null, '', window.location.pathname)
-    load()
-  }
+  function closeDetail() { selected = null; cvesFor = null; setHash(''); load() }
 
   const chipCls = {
     ok: 'bg-success/10 text-success',
@@ -156,8 +157,10 @@
   </span>
 {/snippet}
 
-{#if selected}
-  <MachineDetail machine={selected} onback={closeDetail} ondeleted={closeDetail} />
+{#if cvesFor}
+  <MachineCVEs machine={cvesFor} onback={closeCves} />
+{:else if selected}
+  <MachineDetail machine={selected} onback={closeDetail} ondeleted={closeDetail} onviewcves={openCves} />
 {:else}
 <div class="space-y-4">
   <InfoCard icon="device-desktop" title="Machines"
