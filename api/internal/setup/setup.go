@@ -196,14 +196,17 @@ func (s *Service) handleDetectHeadscale(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
+	// Once an admin exists, minting/handing out a Headscale API key requires auth — even in
+	// the partial-setup window (admin created, Headscale not yet linked), which the old
+	// status.Completed-only branch left open to the public. Genuine first run (no admin yet)
+	// still passes through so the wizard can generate the pending key.
+	if !s.requireAuthIfAdminExists(w, r) {
+		return
+	}
+
 	status, _ := s.GetStatus()
 
 	if status.Completed {
-		// After setup - require authentication
-		if !s.requireAuthIfAdminExists(w, r) {
-			return
-		}
-
 		// Check if current key expires in more than 7 days
 		expiresIn, err := getHeadscaleKeyExpiration()
 		if err == nil && expiresIn > 7*24*time.Hour {

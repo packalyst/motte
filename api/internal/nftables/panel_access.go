@@ -89,7 +89,7 @@ func (t *PanelAccessTable) restrictEnabled() bool {
 		return false
 	}
 	var v string
-	err := t.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, "api_direct_access").Scan(&v)
+	err := t.db.QueryRow(`SELECT value FROM settings WHERE key = ? AND encrypted = 0`, "api_direct_access").Scan(&v)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			return false // on any read error, fail open (don't restrict)
