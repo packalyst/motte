@@ -35,8 +35,12 @@
   // selection: distinct package names to fix (OS-package fixable CVEs only)
   let selected = $state(new Set())
 
-  const isOSFixable = (c) => c.class === 'os-pkgs' && !!c.fixed
+  // Kernel packages can't be targeted-upgraded (Trivy names the installed kernel; the fix
+  // is a different kernel) — they need "Update kernel & reboot", not a per-package fix.
+  const isKernelPkg = (pkg) => /^linux-(image|headers|modules|tools|cloud-tools|buildinfo|generic)/.test(pkg || '')
+  const isOSFixable = (c) => c.class === 'os-pkgs' && !!c.fixed && !isKernelPkg(c.pkg)
   const activeGroup = $derived(groups.find((g) => g.project === project))
+  const inKernel = $derived(project === 'Kernel')
   const pageCount = $derived(Math.max(1, Math.ceil(total / PAGE)))
 
   function filterParams() {
@@ -64,6 +68,19 @@
 
   function applyFilters() { selected = new Set(); page = 0; loadList() }
   function goPage(n) { page = Math.min(Math.max(0, n), pageCount - 1); loadList() }
+
+  async function updateKernel() {
+    const ok = await confirm({
+      title: `Update kernel · ${machine.name}`,
+      message: `Install the newest kernel on ${machine.name} (apt install linux-generic + autoremove)? You must REBOOT afterwards to run it — kernel CVEs clear after the reboot + a rescan. Honors dry-run.`,
+      confirmText: 'Update kernel', variant: 'primary',
+    })
+    if (!ok) return
+    try {
+      await apiPost('/api/fleet/command', { machine_id: machine.id, type: 'update-kernel' })
+      toast('Kernel update queued — reboot the host once it completes', 'success')
+    } catch (e) { toast('Failed: ' + e.message, 'error') }
+  }
 
   async function exportCSV() {
     try {
@@ -141,16 +158,23 @@
     <div class="flex-1 min-w-[160px]"><Input bind:value={q} label="Search" prefixIcon="search" placeholder="CVE id or package" onkeydown={(e) => e.key === 'Enter' && applyFilters()} /></div>
     <Checkbox bind:checked={fixable} label="Has a fix" onchange={applyFilters} class="px-1 py-2" />
     <Button size="sm" icon="filter" onclick={applyFilters}>Apply</Button>
-    {#if activeGroup && activeGroup.class === 'os-pkgs'}
+    {#if inKernel}
+      <Button variant="primary" size="sm" icon="refresh-alert" onclick={updateKernel}>Update kernel & reboot</Button>
+    {:else if activeGroup && activeGroup.class === 'os-pkgs'}
       <Button variant="outline" size="sm" icon="checks" onclick={selectAllFixableHere}>Select fixable</Button>
     {/if}
   </div>
 
   <!-- context note for the active group -->
-  {#if activeGroup && activeGroup.class !== 'os-pkgs'}
+  {#if inKernel}
     <div class="text-[11px] text-muted-foreground flex items-start gap-1.5 px-1">
       <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />
-      This is an app dependency in <span class="font-mono">{activeGroup.target}</span> — the agent can't fix it. Bump the dependency in that project to the fixed version and redeploy.
+      Kernel CVEs can't be fixed per-package (the fix is a different kernel version). Use <b>Update kernel &amp; reboot</b> → it installs the newest kernel; then reboot the host and rescan. The old kernel's findings clear once it's autoremoved after the reboot.
+    </div>
+  {:else if activeGroup && activeGroup.class !== 'os-pkgs'}
+    <div class="text-[11px] text-muted-foreground flex items-start gap-1.5 px-1">
+      <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />
+      This is an app dependency in <span class="font-mono">{activeGroup.project}</span> — the agent can't fix it. Bump the dependency in that project to the fixed version and redeploy.
     </div>
   {/if}
 

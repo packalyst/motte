@@ -40,17 +40,32 @@ type CVEGroup struct {
 	Fixable  int    `json:"fixable"` // has a fixed version
 }
 
-// deriveProject maps a finding to a project: OS packages → "OS"; an app dependency →
-// the DIRECTORY of its manifest (so go.mod + go.sum, or package.json + its lock, group
-// together), rather than the raw per-file path.
-func deriveProject(class, target string) string {
+// deriveProject buckets a finding: kernel packages → "Kernel" (fixed by a new kernel +
+// reboot, NOT a per-package upgrade); other OS packages → "OS"; an app dependency → the
+// DIRECTORY of its manifest (so go.mod + go.sum group together), not the raw file path.
+func deriveProject(class, target, pkg string) string {
 	if class == "os-pkgs" || class == "" {
+		if isKernelPkg(pkg) {
+			return "Kernel"
+		}
 		return "OS"
 	}
 	if i := strings.LastIndexByte(target, '/'); i > 0 {
 		return target[:i]
 	}
 	return target
+}
+
+// isKernelPkg matches the version-pinned kernel-family packages (linux-image-6.8.0-90,
+// linux-headers-…, linux-tools-…, …). Trivy names the installed kernel package but the
+// fix is a different kernel version, so `apt --only-upgrade` can't touch these.
+func isKernelPkg(pkg string) bool {
+	for _, p := range []string{"linux-image", "linux-headers", "linux-modules", "linux-tools", "linux-cloud-tools", "linux-buildinfo", "linux-generic"} {
+		if strings.HasPrefix(pkg, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // IngestCVEs replaces a machine's stored findings with the latest full scan (a snapshot,
@@ -75,7 +90,7 @@ func (s *Service) IngestCVEs(machineID, scannedAt string, findings []CVE) error 
 	for _, f := range findings {
 		project := f.Project
 		if project == "" {
-			project = deriveProject(f.Class, f.Target)
+			project = deriveProject(f.Class, f.Target, f.Pkg)
 		}
 		if _, err := stmt.Exec(machineID, f.CVEID, f.Pkg, f.Installed, f.Fixed, f.Severity,
 			f.Target, project, f.Class, f.Type, f.Title, scannedAt); err != nil {
@@ -126,7 +141,7 @@ func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 	cves := make([]CVE, len(payload.Findings))
 	for i, f := range payload.Findings {
 		cves[i] = CVE{CVEID: f.ID, Pkg: f.Pkg, Installed: f.Installed, Fixed: f.Fixed,
-			Severity: f.Severity, Target: f.Target, Project: deriveProject(f.Class, f.Target),
+			Severity: f.Severity, Target: f.Target, Project: deriveProject(f.Class, f.Target, f.Pkg),
 			Class: f.Class, Type: f.Type, Title: f.Title}
 	}
 	if err := s.IngestCVEs(m.ID, payload.ScannedAt, cves); err != nil {

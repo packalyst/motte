@@ -21,6 +21,7 @@ var allowedCommands = map[string]bool{
 	"rescan":        true, // re-run the Trivy CVE scan now (don't wait for the interval)
 	"sync-blocks":   true, // push the panel's explicit blocklist onto this machine
 	"fix-packages":  true, // targeted OS-package upgrades for selected CVEs
+	"update-kernel": true, // install newest kernel meta-packages (+ reboot separately)
 	"set-dry-run":   true, // flip enforcement on/off (dry-run) live
 }
 
@@ -104,6 +105,17 @@ func (s *Service) handleMachineCommands(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, cmds)
+}
+
+// HandleDeregister (POST, mTLS) — the agent calls this while uninstalling, so the panel
+// flags the machine as uninstalled (shown in the list, delete to remove).
+func (s *Service) HandleDeregister(w http.ResponseWriter, r *http.Request) {
+	m := machineFrom(r)
+	if err := s.MarkUninstalled(m.ID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // HandleCommands (GET, mTLS) returns this machine's pending commands and marks

@@ -91,9 +91,17 @@ func (s *Service) DeleteMachine(id string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM fleet_commands WHERE machine_id = ?`, id); err != nil {
-		_ = tx.Rollback()
-		return err
+	// Clear everything tied to the machine: its queued commands and its stored CVE rows.
+	// (The client cert isn't stored on the panel — only its fingerprint in the row below —
+	// so removing the row invalidates it. Tokens are one-time and already consumed.)
+	for _, q := range []string{
+		`DELETE FROM fleet_commands WHERE machine_id = ?`,
+		`DELETE FROM fleet_cves WHERE machine_id = ?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	res, err := tx.Exec(`DELETE FROM fleet_machines WHERE id = ?`, id)
 	if err != nil {
@@ -105,6 +113,15 @@ func (s *Service) DeleteMachine(id string) error {
 		return sql.ErrNoRows
 	}
 	return tx.Commit()
+}
+
+// MarkUninstalled flags a machine as uninstalled — its agent deregistered on the way
+// out — so the panel shows it as gone (list-only, delete to remove) rather than just
+// "offline". Keeps the row so the operator can see + delete it deliberately.
+func (s *Service) MarkUninstalled(id string) error {
+	_, err := s.db.Exec(`UPDATE fleet_machines SET status='uninstalled', last_seen=? WHERE id=?`,
+		time.Now().UTC().Format(time.RFC3339), id)
+	return err
 }
 
 func newMachineID() (string, error) {

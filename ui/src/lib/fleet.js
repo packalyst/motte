@@ -21,6 +21,7 @@ export function sevVariant(sev) {
 // statusInfo derives a machine's connection state from its last_seen timestamp.
 // online = reported within 2 min; idle = within 10 min; else offline.
 export function statusInfo(m) {
+  if (m?.status === 'uninstalled') return { dot: 'bg-muted-foreground', label: 'uninstalled', online: false, gone: true }
   if (m?.revoked) return { dot: 'bg-destructive', label: 'revoked', online: false }
   if (!m?.last_seen) return { dot: 'bg-muted-foreground', label: 'never reported', online: false }
   const mins = (Date.now() - new Date(m.last_seen)) / 60000

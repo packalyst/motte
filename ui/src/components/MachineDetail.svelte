@@ -191,20 +191,23 @@
 
       <!-- AGENT -->
       <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
-        {@render head('robot', 'Agent', report?.agent ? `wgscout ${report.agent}` : 'wgscout')}
-        <div class="flex flex-wrap items-center gap-3">
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full {dryRun ? 'bg-warning' : 'bg-success'}"></span>
-            <span class="text-sm font-medium">{dryRun ? 'Dry-run' : 'Live'}</span>
-            <span class="text-[11px] text-muted-foreground">{dryRun ? '— logs actions, does not enforce' : '— enforcing for real'}</span>
+        <!-- header: icon + title + version, dry-run button inline on the right -->
+        <div class="flex items-center gap-2.5 mb-3">
+          <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-muted-foreground"><Icon name="robot" size={17} /></span>
+          <div class="min-w-0 flex-1">
+            <div class="text-[13px] font-semibold text-foreground">Agent</div>
+            <div class="text-[11px] text-muted-foreground truncate">{report?.agent ? `wgscout ${report.agent}` : 'wgscout'}</div>
           </div>
-          <div class="ml-auto">
-            {#if dryRun}
-              <Button variant="destructive" size="sm" icon="bolt" onclick={() => setDryRun(false)}>Go live</Button>
-            {:else}
-              <Button variant="outline" size="sm" icon="player-pause" onclick={() => setDryRun(true)}>Switch to dry-run</Button>
-            {/if}
-          </div>
+          {#if dryRun}
+            <Button variant="destructive" size="xs" icon="bolt" onclick={() => setDryRun(false)}>Go live</Button>
+          {:else}
+            <Button variant="outline" size="xs" icon="player-pause" onclick={() => setDryRun(true)}>Switch to dry-run</Button>
+          {/if}
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full {dryRun ? 'bg-warning' : 'bg-success'}"></span>
+          <span class="text-sm font-medium">{dryRun ? 'Dry-run' : 'Live'}</span>
+          <span class="text-[11px] text-muted-foreground">{dryRun ? '— logs actions, does not enforce' : '— enforcing for real'}</span>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 mt-3">
           {#each [['Enrolled', machine.enrolled_at ? timeAgo(machine.enrolled_at) : '—'], ['Host', report?.host || '—'], ['Cert', (machine.cert_fp || '').replace('sha256:', '').slice(0, 12) || '—']] as [k, v]}

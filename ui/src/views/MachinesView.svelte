@@ -210,12 +210,12 @@
     <div class="flex flex-wrap items-end gap-2">
       {#if ep?.hosts?.length}
         <div class="flex-1 min-w-[200px]">
-          <Select bind:value={selectedHost} label="Agent connects to" options={ep.hosts.map((h) => ({ value: h, label: h }))}
-            helperText="A directly-reachable IP (mTLS can't go through Cloudflare)." />
+          <Select bind:value={selectedHost} label="Agent connects to" options={ep.hosts.map((h) => ({ value: h, label: h }))} />
         </div>
       {/if}
       <Button icon="key" onclick={addMachine} disabled={creating || !ep?.domain}>Generate install command</Button>
     </div>
+    <div class="text-[11px] text-muted-foreground mt-1.5">Pick a directly-reachable IP — the mTLS channel can't go through Cloudflare.</div>
     {#if !ep?.domain}
       <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Set a panel domain (SSL_DOMAIN) — the install downloads over the domain's HTTPS.</div>
     {/if}
@@ -246,7 +246,7 @@
         {@const st = statusInfo(m)}
         {@const s = m.summary}
         <div class="bg-card border rounded-xl p-4 flex flex-col
-                 {(s?.bans > 0 || s?.fim > 0) ? 'border-destructive/40' : 'border-border'}">
+                 {st.gone ? 'border-border opacity-60' : (s?.bans > 0 || s?.fim > 0) ? 'border-destructive/40' : 'border-border'}">
           <div class="flex items-center gap-2.5">
             <span class="w-2.5 h-2.5 rounded-full shrink-0 {st.dot}"></span>
             <div class="min-w-0 flex-1">
@@ -288,19 +288,25 @@
             </div>
           {:else}
             <div class="mt-3 text-[11px] text-muted-foreground py-4 text-center">
-              {m.revoked ? 'Revoked' : m.last_seen ? `Offline · last seen ${timeAgo(m.last_seen)}` : 'Waiting for first report'}
+              {st.gone ? 'Agent uninstalled — delete to remove' : m.revoked ? 'Revoked' : m.last_seen ? `Offline · last seen ${timeAgo(m.last_seen)}` : 'Waiting for first report'}
             </div>
           {/if}
 
           <div class="mt-4 pt-3 border-t border-border">
-            <div class="flex items-center rounded-lg border border-border overflow-hidden divide-x divide-border">
-              <button onclick={() => openDetail(m)} class="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
-                <Icon name="settings" size={13} />Manage
-              </button>
-              <button onclick={() => deleteMachine(m)} class="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
+            {#if st.gone}
+              <button onclick={() => deleteMachine(m)} class="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
                 <Icon name="trash" size={13} />Delete
               </button>
-            </div>
+            {:else}
+              <div class="flex items-center rounded-lg border border-border overflow-hidden divide-x divide-border">
+                <button onclick={() => openDetail(m)} class="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
+                  <Icon name="settings" size={13} />Manage
+                </button>
+                <button onclick={() => deleteMachine(m)} class="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
+                  <Icon name="trash" size={13} />Delete
+                </button>
+              </div>
+            {/if}
           </div>
         </div>
       {/each}
