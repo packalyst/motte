@@ -594,6 +594,21 @@ func (s *Service) handleGetRewrites(w http.ResponseWriter, r *http.Request) {
 var validRewriteActions = []string{"add", "delete"}
 
 // handleRewriteAction handles unified rewrite actions
+// validRewriteValue accepts a bounded, printable, whitespace-free string — enough to hold
+// a domain (incl. wildcards), an IP, or a CNAME answer, while rejecting control chars and
+// oversized input. Not a strict domain/IP validator by design (see caller).
+func validRewriteValue(s string) bool {
+	if len(s) == 0 || len(s) > 253 {
+		return false
+	}
+	for _, r := range s {
+		if r <= ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Service) handleRewriteAction(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action string `json:"action"`
@@ -611,6 +626,19 @@ func (s *Service) handleRewriteAction(w http.ResponseWriter, r *http.Request) {
 			"error":        "action field required",
 			"validActions": validRewriteActions,
 		})
+		return
+	}
+
+	// Sanity-check the rewrite values before forwarding them to AdGuard. We deliberately
+	// do NOT force a strict domain/IP shape — AdGuard rewrite domains allow wildcards and
+	// answers may be an IP or a CNAME — but we reject control chars, whitespace and
+	// oversized values so nothing injection-shaped is passed through unvalidated.
+	if req.Domain != "" && !validRewriteValue(req.Domain) {
+		router.JSONError(w, "invalid domain", http.StatusBadRequest)
+		return
+	}
+	if req.Answer != "" && !validRewriteValue(req.Answer) {
+		router.JSONError(w, "invalid answer", http.StatusBadRequest)
 		return
 	}
 

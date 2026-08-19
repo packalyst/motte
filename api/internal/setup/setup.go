@@ -22,12 +22,15 @@ type Service struct {
 	setupMu sync.Mutex // Protects concurrent setup attempts
 }
 
-// requireAuthIfCompleted validates authentication if setup is completed
+// requireAuthIfAdminExists validates authentication once an admin account exists. It keys
+// off HasAdmin, NOT the full Completed flag: a first run that created the admin but failed a
+// later step (e.g. Headscale) would otherwise leave these setup endpoints open to the public
+// to overwrite config. Once there's an admin, the operator can log in to finish setup.
 // Returns true if request should continue, false if an error response was sent
-func (s *Service) requireAuthIfCompleted(w http.ResponseWriter, r *http.Request) bool {
+func (s *Service) requireAuthIfAdminExists(w http.ResponseWriter, r *http.Request) bool {
 	status, _ := s.GetStatus()
-	if !status.Completed {
-		return true // No auth required during setup
+	if !status.HasAdmin {
+		return true // genuinely first run — no admin yet, no one to authenticate as
 	}
 
 	token := r.Header.Get("Authorization")
@@ -180,7 +183,7 @@ func demuxDockerStream(r io.Reader) (string, error) {
 func (s *Service) handleDetectHeadscale(w http.ResponseWriter, r *http.Request) {
 	// Once setup is complete this is admin-only: it queries the Docker socket and
 	// discloses internal Headscale topology, so it must not stay publicly reachable.
-	if !s.requireAuthIfCompleted(w, r) {
+	if !s.requireAuthIfAdminExists(w, r) {
 		return
 	}
 	url, err := detectHeadscaleURL()
@@ -197,7 +200,7 @@ func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 	if status.Completed {
 		// After setup - require authentication
-		if !s.requireAuthIfCompleted(w, r) {
+		if !s.requireAuthIfAdminExists(w, r) {
 			return
 		}
 
@@ -405,6 +408,13 @@ func (s *Service) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleCompleteSetup(w http.ResponseWriter, r *http.Request) {
+	// If an admin already exists (e.g. a first run that created the admin but failed the
+	// Headscale step), completing setup requires authentication — otherwise this endpoint
+	// would stay open to the public to overwrite the Headscale connection settings.
+	if !s.requireAuthIfAdminExists(w, r) {
+		return
+	}
+
 	// Lock to prevent race condition with concurrent setup attempts
 	s.setupMu.Lock()
 	defer s.setupMu.Unlock()
@@ -438,7 +448,7 @@ type TestHeadscaleRequest struct {
 func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
 	// Once setup is complete this must be admin-only: it performs a server-side
 	// request to a caller-supplied URL (SSRF oracle) and must not be public.
-	if !s.requireAuthIfCompleted(w, r) {
+	if !s.requireAuthIfAdminExists(w, r) {
 		return
 	}
 

@@ -53,7 +53,9 @@ func (s *Service) fetchBlocklist(rawURL string, minScore int) ([]string, error) 
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	// Dial-time-validated client: even if the (already string-validated) host rebinds to an
+	// internal IP, or a redirect points inward, the connection is refused at connect time.
+	client := helper.SafeExternalHTTPClient(60 * time.Second)
 	resp, err := client.Get(sanitizedURL)
 	if err != nil {
 		return nil, err
