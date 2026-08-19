@@ -332,7 +332,6 @@ func ensureSchema(db *sql.DB) error {
 			scanned_at TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_machine ON fleet_cves(machine_id, severity)`,
-		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_project ON fleet_cves(machine_id, project)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {
@@ -340,6 +339,7 @@ func ensureSchema(db *sql.DB) error {
 		}
 	}
 	// Migrations for DBs created before these columns existed (ignore "duplicate column").
+	// MUST run before any index that references a migrated column (below).
 	for _, alt := range []string{
 		`ALTER TABLE fleet_tokens ADD COLUMN panel_host TEXT`,
 		`ALTER TABLE fleet_cves ADD COLUMN project TEXT`,
@@ -347,6 +347,11 @@ func ensureSchema(db *sql.DB) error {
 		if _, err := db.Exec(alt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			log.Printf("fleet: migration %q: %v", alt, err)
 		}
+	}
+	// Indexes on migrated columns — created AFTER the migration so an upgraded DB (whose
+	// column was just added) doesn't choke on "no such column".
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_fleet_cves_project ON fleet_cves(machine_id, project)`); err != nil {
+		log.Printf("fleet: project index: %v", err)
 	}
 	return nil
 }
