@@ -125,7 +125,7 @@
   }
 
   const sevOptions = [{ value: '', label: 'All severities' }, ...['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => ({ value: s, label: s[0] + s.slice(1).toLowerCase() }))]
-  const groupLabel = (g) => (g.class === 'os-pkgs' ? `OS packages` : g.project)
+  const groupLabel = (g) => (g.project === 'OS' ? 'OS packages' : g.project === 'Kernel' ? 'Kernel' : g.project)
   const groupOptions = $derived([
     { value: '', label: `All projects (${groups.reduce((a, g) => a + g.total, 0).toLocaleString()})` },
     ...groups.map((g) => ({ value: g.project, label: `${groupLabel(g)} · ${g.total}${g.critical ? ` (${g.critical} crit)` : ''}` })),
