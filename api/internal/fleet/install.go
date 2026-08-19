@@ -112,14 +112,20 @@ func renderInstallScript(d installScriptData) string {
 	return b.String()
 }
 
-// writeErrorScript returns a tiny script that prints an error and exits non-zero, so a
-// `curl … | sudo sh` surfaces the problem instead of silently running nothing.
+// writeErrorScript returns a tiny script that prints a friendly, bordered error and
+// exits non-zero, so a `curl … | sudo sh` surfaces the problem cleanly instead of
+// running nothing. The message carries its own guidance (printf loops the format over
+// each arg, so a multi-line msg still renders fine).
 func writeErrorScript(w http.ResponseWriter, msg string) {
 	fmt.Fprintf(w, "#!/bin/sh\n"+
-		"echo >&2\n"+
-		"echo '  ┌─ wgscout install failed ─────────────────────────────' >&2\n"+
-		"printf '  │ %%s\\n' %s >&2\n"+
-		"echo '  └──────────────────────────────────────────────────────' >&2\n"+
+		"printf '%%s\\n' >&2 "+
+		"'' "+
+		"'   .--. ' "+
+		"'  ( o o )   wgscout' "+
+		"'   >--<    could not set you up:' "+
+		"'' "+
+		"%s "+
+		"''\n"+
 		"exit 1\n", shQuote(msg))
 }
 
