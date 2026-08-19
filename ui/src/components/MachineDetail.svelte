@@ -12,6 +12,7 @@
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
+  import MachineCVEs from './MachineCVEs.svelte'
   import { timeAgo } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
@@ -20,6 +21,7 @@
   let report = $state(null)
   let loading = $state(true)
   let blockIP = $state('')
+  let showCves = $state(false) // drill into the full CVE list
 
   const st = $derived(statusInfo(machine))
   const m = $derived(report?.metrics || {})
@@ -142,6 +144,9 @@
   <div class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border">{text}</div>
 {/snippet}
 
+{#if showCves}
+  <MachineCVEs {machine} onback={() => (showCves = false)} />
+{:else}
 <div class="space-y-4">
   <!-- Header -->
   <div class="flex items-center gap-3 flex-wrap">
@@ -217,47 +222,35 @@
         {@render note('CrowdSec bans attackers on-host automatically. The FIM lines (a watched file changed) are the "someone got in" signals worth investigating.')}
       </div>
 
-      <!-- VULNERABILITIES -->
+      <!-- VULNERABILITIES (summary — full list is the drill-down) -->
       <div class="bg-card border border-border rounded-xl p-4">
-        <!-- header with severity counts inline -->
-        <div class="flex items-center gap-2.5 mb-3">
+        <!-- header: title/subtitle left, total upper-right -->
+        <div class="flex items-start gap-2.5 mb-3">
           <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-warning"><Icon name="package" size={17} /></span>
           <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex items-center gap-2">
               <span class="text-[13px] font-semibold text-foreground">Vulnerabilities</span>
-              {#each ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as sev}
-                {#if cves?.counts?.[sev]}<Badge variant={sevVariant(sev)} size="sm">{cves.counts[sev].toLocaleString()} {sev.toLowerCase()}</Badge>{/if}
-              {/each}
               <span class="ml-auto text-[11px] text-muted-foreground shrink-0">{(cves?.total ?? 0).toLocaleString()} total{cves?.scanned_at ? ` · ${timeAgo(cves.scanned_at)}` : ''}</span>
             </div>
             <div class="text-[11px] text-muted-foreground">Trivy · OS packages + app lockfiles</div>
           </div>
         </div>
-        {#if cves?.top?.length}
-          <div class="max-h-72 overflow-y-auto -mr-1 pr-1">
-            {#each cves.top as v}
-              <div class="py-1.5 border-t border-border first:border-t-0 text-xs">
-                <div class="flex items-center gap-2.5">
-                  <Badge variant={sevVariant(v.severity)} size="sm">{(v.severity || '').toLowerCase()}</Badge>
-                  <span class="font-mono whitespace-nowrap" title={v.title}>{v.id}</span>
-                  <span class="ml-auto shrink-0 font-mono text-[11px]">{#if v.fixed}<span class="text-success">→ {v.fixed}</span>{:else}<span class="text-muted-foreground">no fix</span>{/if}</span>
-                </div>
-                <div class="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground pl-1">
-                  <span class="font-mono">{v.pkg}{v.installed ? ` ${v.installed}` : ''}</span>
-                  {#if v.target}<span class="opacity-60 truncate" title={v.target}>· {v.target}</span>{/if}
-                </div>
-              </div>
+        <!-- severity badges below -->
+        {#if cves?.total}
+          <div class="flex flex-wrap gap-1.5">
+            {#each ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as sev}
+              {#if cves?.counts?.[sev]}<Badge variant={sevVariant(sev)} size="sm">{cves.counts[sev].toLocaleString()} {sev.toLowerCase()}</Badge>{/if}
             {/each}
           </div>
-          {#if cves.total > cves.top.length}<div class="text-[11px] text-muted-foreground mt-1.5">Showing the {cves.top.length} worst of {cves.total.toLocaleString()}.</div>{/if}
         {:else}
-          <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No known vulnerabilities found.</div>
+          <div class="text-sm text-success flex items-center gap-2 py-1"><Icon name="circle-check" size={15} />No known vulnerabilities found.</div>
         {/if}
-        <div class="flex items-center gap-2 mt-3">
-          <Button variant="primary" size="sm" icon="refresh-alert" onclick={applyUpdates}>Apply updates</Button>
+        <div class="flex items-center gap-2 mt-3 flex-wrap">
+          {#if cves?.total}<Button variant="primary" size="sm" icon="list-details" onclick={() => (showCves = true)}>View all & fix</Button>{/if}
+          <Button variant="outline" size="sm" icon="refresh-alert" onclick={applyUpdates}>Apply all updates</Button>
           <Button variant="outline" size="sm" icon="scan" onclick={rescan}>Rescan</Button>
         </div>
-        {@render note('Apply updates patches OS-package CVEs (apt); a kernel CVE also needs a reboot. App-dependency CVEs come from the lockfile shown per row and are fixed by bumping that project. Rescan to confirm.')}
+        {@render note('“Apply all updates” upgrades every OS package (apt; a kernel CVE also needs a reboot). Use “View all & fix” to see the full list grouped by OS/project and upgrade only selected packages.')}
       </div>
 
       <!-- HOST & EXPOSURE -->
@@ -321,3 +314,4 @@
     </div>
   {/if}
 </div>
+{/if}
