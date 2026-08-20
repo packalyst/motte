@@ -102,12 +102,13 @@
       ? `${total} filtered entries`
       : `ALL ${total} log entries`
 
-    const confirmed = await confirm({
+    const { confirmed, checked: alsoUsage } = await confirm({
       title: 'Clear logs?',
       message: `This will permanently delete ${scope}.`,
       description: 'This action cannot be undone.',
       confirmText: 'Clear',
       variant: 'destructive',
+      checkbox: { label: 'Also clear usage & analytics history (Top Talkers, peer usage)' },
     })
     if (!confirmed) return
 
@@ -115,7 +116,9 @@
     try {
       const qs = params.toString() ? '?' + params.toString() : ''
       const res = await apiDelete('/api/logs' + qs)
-      toast(`Cleared ${res?.deleted ?? 0} entries`, 'success')
+      // The usage rollup (traffic_usage) is a separate table; clear it too when asked.
+      if (alsoUsage) await apiDelete('/api/logs/peer-usage')
+      toast(`Cleared ${res?.deleted ?? 0} entries${alsoUsage ? ' + usage history' : ''}`, 'success')
       await loadData()
     } catch (e) {
       toast('Failed to clear logs: ' + e.message, 'error')

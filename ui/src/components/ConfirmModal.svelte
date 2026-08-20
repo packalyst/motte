@@ -1,8 +1,9 @@
 <script>
-  import { confirmModalStore, closeConfirmModal } from '../stores/app.js'
+  import { confirmModalStore, closeConfirmModal, setConfirmCheckbox } from '../stores/app.js'
   import Modal from './Modal.svelte'
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
+  import Checkbox from './Checkbox.svelte'
 
   const iconMap = {
     destructive: 'alert-triangle',
@@ -95,6 +96,16 @@
       {#if $confirmModalStore.warning}
         <div class="p-3 {bgMap[$confirmModalStore.variant]} border rounded-md">
           <p class="{colorMap[$confirmModalStore.variant]} text-sm font-medium">{$confirmModalStore.warning}</p>
+        </div>
+      {/if}
+
+      {#if $confirmModalStore.checkbox}
+        <div class="pt-1 border-t border-border">
+          <Checkbox
+            checked={$confirmModalStore.checkboxChecked}
+            label={$confirmModalStore.checkbox.label}
+            onchange={(e) => setConfirmCheckbox(e.target.checked)}
+          />
         </div>
       {/if}
     </div>

@@ -140,10 +140,14 @@ export const confirmModalStore = writable({
   cancelText: 'Cancel',
   variant: 'destructive',
   loading: false,
+  checkbox: null,        // optional { label } — renders a checkbox in the dialog
+  checkboxChecked: false,
   resolve: null
 })
 
-// Show confirm modal and return a Promise
+// Show confirm modal and return a Promise.
+// Without a checkbox it resolves to a boolean (confirmed). With options.checkbox
+// it resolves to { confirmed, checked } so callers can read the checkbox state.
 export function confirm(options) {
   return new Promise((resolve) => {
     confirmModalStore.set({
@@ -158,6 +162,8 @@ export function confirm(options) {
       cancelText: options.cancelText || 'Cancel',
       variant: options.variant || 'destructive',
       loading: false,
+      checkbox: options.checkbox || null,
+      checkboxChecked: options.checkbox?.checked ?? false,
       resolve
     })
   })
@@ -166,9 +172,16 @@ export function confirm(options) {
 // Close confirm modal (called by ConfirmModal component)
 export function closeConfirmModal(confirmed) {
   confirmModalStore.update(state => {
-    if (state.resolve) state.resolve(confirmed)
+    if (state.resolve) {
+      state.resolve(state.checkbox ? { confirmed, checked: state.checkboxChecked } : confirmed)
+    }
     return { ...state, open: false, resolve: null }
   })
+}
+
+// Update the confirm dialog's checkbox state (called by ConfirmModal)
+export function setConfirmCheckbox(checked) {
+  confirmModalStore.update(state => ({ ...state, checkboxChecked: checked }))
 }
 
 // Set loading state on confirm modal
