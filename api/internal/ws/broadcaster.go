@@ -102,6 +102,8 @@ var (
 	nodeStatusChangeCallback NodeStatusChangeFunc
 	// getDockerContainersCallback returns current docker containers
 	getDockerContainersCallback func() []docker.Container
+	// getContainerStatsCallback returns live per-container resource stats
+	getContainerStatsCallback func() []docker.ContainerStats
 	// getOverviewStatsCallback returns combined stats for dashboard
 	getOverviewStatsCallback func() OverviewStats
 	// dockerLogStreamer for streaming container logs
@@ -148,6 +150,13 @@ func SetDockerProvider(containersFn func() []docker.Container) {
 	callbackMu.Lock()
 	defer callbackMu.Unlock()
 	getDockerContainersCallback = containersFn
+}
+
+// SetContainerStatsProvider sets the callback for live per-container stats
+func SetContainerStatsProvider(statsFn func() []docker.ContainerStats) {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	getContainerStatsCallback = statsFn
 }
 
 // SetDockerLogStreamer sets the docker log streamer
@@ -249,6 +258,28 @@ func checkAndBroadcastStatus() {
 
 	// Check overview stats (always broadcast to stats channel if subscribers)
 	checkAndBroadcastOverviewStats()
+
+	// Live per-container resource stats (runs last: the fan-out blocks ~1s, so
+	// keep it off the critical path of the broadcasts above).
+	checkAndBroadcastContainerStats()
+}
+
+// checkAndBroadcastContainerStats broadcasts live per-container resource usage.
+// Gated on subscribers so the (blocking) docker stats fan-out only runs while
+// the Docker page is open.
+func checkAndBroadcastContainerStats() {
+	if serviceInstance.hub.ChannelSubscriberCount("container_stats") == 0 {
+		return
+	}
+	callbackMu.RLock()
+	fn := getContainerStatsCallback
+	callbackMu.RUnlock()
+	if fn == nil {
+		return
+	}
+	serviceInstance.hub.Broadcast("container_stats", map[string]interface{}{
+		"containers": fn(),
+	})
 }
 
 // checkAndBroadcastOverviewStats broadcasts overview stats to stats channel

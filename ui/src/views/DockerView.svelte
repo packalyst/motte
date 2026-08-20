@@ -1,8 +1,9 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiPost, apiGet } from '../stores/app.js'
-  import { subscribe, unsubscribe, subscribeToLogs, unsubscribeFromLogs, dockerStore, dockerLogsStore } from '../stores/websocket.js'
+  import { subscribe, unsubscribe, subscribeToLogs, unsubscribeFromLogs, dockerStore, dockerLogsStore, containerStatsStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
+  import BarChart from '../components/BarChart.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
@@ -39,12 +40,35 @@
     }
   })
 
+  // Live per-container stats, keyed by container id.
+  let statsById = $state({})
+  $effect(() => {
+    const d = $containerStatsStore
+    if (d?.containers) {
+      const m = {}
+      for (const st of d.containers) m[st.id] = st
+      statsById = m
+    }
+  })
+
+  // CPU% per running container for the summary chart. A container can exceed
+  // 100% (multi-core), so the axis max rounds up to the next 100.
+  const cpuBars = $derived(
+    containers
+      .filter(c => c.state === 'running' && statsById[c.id])
+      .map(c => ({ label: c.name, value: statsById[c.id].cpuPercent }))
+  )
+  const maxCpu = $derived(Math.max(100, Math.ceil((cpuBars.length ? Math.max(...cpuBars.map(b => b.value)) : 0) / 100) * 100))
+  const cpuTicks = $derived([0, maxCpu * 0.25, maxCpu * 0.5, maxCpu * 0.75, maxCpu])
+
   onMount(() => {
     subscribe('docker')
+    subscribe('container_stats')
   })
 
   onDestroy(() => {
     unsubscribe('docker')
+    unsubscribe('container_stats')
   })
 
   // Get state color
@@ -234,6 +258,13 @@
     </div>
 
     <!-- Containers List -->
+    {#if cpuBars.length}
+      <div class="bg-card border border-border rounded-xl p-4 mb-4">
+        <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="cpu" size={16} class="text-primary" />Container CPU<span class="text-muted-foreground font-normal text-xs ml-auto">live · 100% = 1 core</span></h3>
+        <BarChart items={cpuBars} orientation="horizontal" color="var(--primary)" max={maxCpu} ticks={cpuTicks} labelWidth="8rem" />
+      </div>
+    {/if}
+
     {#if containers.length > 0}
       <div class="space-y-2">
         {#each containers as container}
@@ -323,6 +354,16 @@
                         </span>
                       </span>
                     {/if}
+                  </div>
+                {/if}
+
+                <!-- Live resource stats -->
+                {#if container.state === 'running' && statsById[container.id]}
+                  {@const st = statsById[container.id]}
+                  <div class="hidden lg:flex items-center gap-3 text-[11px]" data-kt-tooltip>
+                    <span class="flex items-center gap-1 text-muted-foreground"><Icon name="cpu" size={12} /><b class="text-foreground tabular-nums">{st.cpuPercent.toFixed(1)}%</b></span>
+                    <span class="flex items-center gap-1 text-muted-foreground"><Icon name="database" size={12} /><b class="text-foreground tabular-nums">{st.memUsageHR}</b><span class="opacity-70"> · {st.memPercent.toFixed(0)}%</span></span>
+                    <span data-kt-tooltip-content class="kt-tooltip hidden">CPU {st.cpuPercent.toFixed(1)}% · Mem {st.memUsageHR} / {st.memLimitHR} ({st.memPercent.toFixed(0)}%) · Net ↓{st.netRxHR} ↑{st.netTxHR}</span>
                   </div>
                 {/if}
 

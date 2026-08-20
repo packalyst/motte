@@ -21,6 +21,7 @@ export const statsStore = writable(null) // Overview dashboard stats
 export const pwaSubscriptionsStore = writable(null) // User-specific PWA subscriptions updates
 export const fleetStore = writable(null) // { machine_id, report } pushed on each agent check-in
 export const serverStatsStore = writable(null) // live host /proc stats (cpu, mem, net, load, cores)
+export const containerStatsStore = writable(null) // live per-container docker stats { containers: [...] }
 
 // Channel to store mapping
 const storeMap = {
@@ -31,7 +32,8 @@ const storeMap = {
   stats: statsStore,
   pwa_subscriptions: pwaSubscriptionsStore,
   fleet: fleetStore,
-  server_stats: serverStatsStore
+  server_stats: serverStatsStore,
+  container_stats: containerStatsStore
 }
 
 // WebSocket instance

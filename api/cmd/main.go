@@ -542,6 +542,9 @@ func main() {
 			return dockerSvc.GetContainersCached()
 		})
 
+		// Live per-container stats (subscriber-gated in the broadcaster).
+		ws.SetContainerStatsProvider(dockerSvc.GetAllContainerStats)
+
 		// Set up docker log streamer
 		ws.SetDockerLogStreamer(&dockerLogAdapter{svc: dockerSvc})
 	}

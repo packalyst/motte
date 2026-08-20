@@ -1047,6 +1047,41 @@ func (s *Service) GetContainerStats(containerID, containerName string) (*Contain
 	}, nil
 }
 
+// GetAllContainerStats fetches live resource stats for every running container.
+// The one-shot stats call blocks ~1s each (it samples twice to compute the CPU
+// delta), so the calls are fanned out concurrently with a bounded pool, keeping
+// the whole batch to roughly one call's latency regardless of container count.
+func (s *Service) GetAllContainerStats() []ContainerStats {
+	var running []Container
+	for _, c := range s.GetContainersCached() {
+		if c.State == "running" {
+			running = append(running, c)
+		}
+	}
+	if len(running) == 0 {
+		return nil
+	}
+
+	out := make([]ContainerStats, len(running))
+	sem := make(chan struct{}, 8) // cap concurrent calls to the docker proxy
+	var wg sync.WaitGroup
+	for i, c := range running {
+		wg.Add(1)
+		go func(i int, c Container) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if st, err := s.GetContainerStats(c.ID, c.Name); err == nil && st != nil {
+				out[i] = *st
+			} else {
+				out[i] = ContainerStats{ID: c.ID, Name: c.Name} // placeholder so it still lists
+			}
+		}(i, c)
+	}
+	wg.Wait()
+	return out
+}
+
 // GetContainersCached returns the last known container list without blocking,
 // refreshing in the background when stale. Used on the WebSocket broadcast hot path
 // (docker status + service-health), where a direct GetContainers() call to a slow or
