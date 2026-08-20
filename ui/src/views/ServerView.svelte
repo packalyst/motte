@@ -6,6 +6,7 @@
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import UPlotChart from '../components/UPlotChart.svelte'
+  import BarChart from '../components/BarChart.svelte'
   import Gauge from '../components/Gauge.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
 
@@ -67,10 +68,6 @@
     return r >= 1 ? 'text-destructive' : r >= 0.7 ? 'text-warning' : 'text-success'
   }
   const coreColor = (v) => (v >= 85 ? 'var(--destructive)' : v >= 60 ? 'var(--warning)' : 'var(--success)')
-  // Perceptual bar height: at idle everything sits near 0%, so a linear bar is
-  // invisible. A gentle power curve keeps light load readable; the printed
-  // number stays the exact %.
-  const barH = (v) => (v <= 0 ? 0 : Math.min(100, Math.max(4, Math.pow(v / 100, 0.55) * 100)))
   function pkgAction(a) {
     const s = (a || '').toLowerCase()
     if (s.includes('install')) return { cls: 'bg-info/15 text-info', icon: 'download', label: 'installed' }
@@ -227,18 +224,15 @@
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="cpu" size={16} class="text-primary" />CPU cores<span class="text-muted-foreground font-normal text-xs ml-auto">per-core %</span></h3>
         {#if latest?.cores?.length}
-          <div class="flex items-stretch gap-1.5 h-[132px]">
-            {#each latest.cores as v, i}
-              <div class="flex-1 flex flex-col items-center gap-1 min-w-0" title="core {i}: {v.toFixed(1)}%">
-                <span class="text-[10px] font-semibold tabular-nums" style="color:{coreColor(v)}">{v < 10 ? v.toFixed(1) : Math.round(v)}</span>
-                <div class="relative w-full max-w-[18px] flex-1 rounded bg-muted/40 overflow-hidden">
-                  <div class="absolute inset-x-0 bottom-0 rounded-t transition-[height] duration-300" style="height:{barH(v)}%; background:{coreColor(v)}"></div>
-                </div>
-                <span class="text-[9px] text-muted-foreground">c{i}</span>
-              </div>
-            {/each}
-          </div>
-          <div class="text-[10px] text-muted-foreground mt-2">Bars use a perceptual scale so light load stays visible — the number is the exact %.</div>
+          {@const many = latest.cores.length > 16}
+          <BarChart
+            items={latest.cores.map((v, i) => ({ label: `Core ${i}`, value: v }))}
+            orientation={many ? 'vertical' : 'horizontal'}
+            colorFn={coreColor}
+            catLabels={!many}
+            height={132}
+          />
+          {#if many}<div class="text-[10px] text-muted-foreground mt-2">{latest.cores.length} cores · hover a bar for its %.</div>{/if}
         {:else}
           <div class="h-[132px] grid place-items-center text-xs text-muted-foreground">waiting for first sample…</div>
         {/if}
