@@ -12,6 +12,7 @@
     headerClass = '',
     bodyClass = '',
     dismissible = true, // when false, clicking the backdrop does NOT close the modal
+    showClose = true,   // when false, the header X is hidden (e.g. gate close until an action)
     children,
     header,
     footer
@@ -102,14 +103,16 @@
       {:else}
         <h3 class="kt-modal-title">{title}</h3>
       {/if}
-      <button
-        type="button"
-        onclick={handleClose}
-        class="kt-modal-close"
-        aria-label="Close modal"
-      >
-        <Icon name="x" size={20} />
-      </button>
+      {#if showClose}
+        <button
+          type="button"
+          onclick={handleClose}
+          class="kt-modal-close"
+          aria-label="Close modal"
+        >
+          <Icon name="x" size={20} />
+        </button>
+      {/if}
     </div>
     <div class="kt-modal-body {bodyClass}">
       {@render children()}

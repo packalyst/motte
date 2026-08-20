@@ -1508,6 +1508,22 @@
           "description": "Mint a one-time agent enrollment token"
         },
         {
+          "path": "/tokens",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ListTokens",
+          "description": "Outstanding enrollment tokens (metadata only)"
+        },
+        {
+          "path": "/tokens",
+          "methods": [
+            "DELETE"
+          ],
+          "handler": "DeleteToken",
+          "description": "Cancel an outstanding enrollment token by id"
+        },
+        {
           "path": "/machines",
           "methods": [
             "GET"

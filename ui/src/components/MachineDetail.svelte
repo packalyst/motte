@@ -357,6 +357,7 @@
             {#each commands as c}
               <div class="flex items-center gap-2 py-1 border-t border-border first:border-t-0 text-xs">
                 <span class="font-mono">{c.type}</span>
+                {#if c.status === 'pending' || c.status === 'delivered'}<Icon name="loader-2" size={11} class="animate-spin {cmdStatus[c.status] || 'text-muted-foreground'}" />{/if}
                 <span class="capitalize {cmdStatus[c.status] || 'text-muted-foreground'}">{c.status}</span>
                 {#if c.result}<span class="text-muted-foreground truncate flex-1" title={c.result}>· {c.result}</span>{/if}
                 <span class="text-[10px] text-muted-foreground ml-auto shrink-0">{timeAgo(c.done_at || c.created_at)}</span>

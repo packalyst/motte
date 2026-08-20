@@ -7,8 +7,9 @@
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiPost, apiDelete, toast, confirm } from '../stores/app.js'
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
+  import Modal from '../components/Modal.svelte'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
@@ -39,6 +40,37 @@
   let selectedHost = $state('') // direct origin IP the agent dials for mTLS
   let creating = $state(false)
   let lastToken = $state(null)
+  let showInstall = $state(false) // install-command modal
+  let copied = $state(false)      // gate the modal's close until the command is copied
+  let pendingTokens = $state([])  // outstanding enrollment tokens (waiting for an agent)
+  let nowTick = $state(Date.now()) // 1s tick to drive the expiry countdowns
+
+  async function loadTokens() {
+    try { pendingTokens = (await apiGet('/api/fleet/tokens')) || [] } catch { pendingTokens = [] }
+  }
+  async function copyInstall() {
+    if (!lastToken?.install_command) return
+    try { await navigator.clipboard.writeText(lastToken.install_command); copied = true }
+    catch { toast('Copy failed — select the text and copy manually', 'error') }
+  }
+  function closeInstall() {
+    showInstall = false
+    lastToken = null
+    loadTokens() // the token is now outstanding → show its pending card
+  }
+  async function cancelToken(id) {
+    try { await apiDelete('/api/fleet/tokens?id=' + id); pendingTokens = pendingTokens.filter((t) => t.id !== id) }
+    catch (e) { toast('Failed to cancel: ' + e.message, 'error') }
+  }
+  // Compact "in 59m 30s" for a future ISO timestamp; '' once elapsed.
+  function fmtCountdown(iso) {
+    const ms = new Date(iso).getTime() - nowTick
+    if (ms <= 0) return ''
+    const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60)
+    if (h > 0) return `${h}h ${m % 60}m`
+    if (m > 0) return `${m}m ${s % 60}s`
+    return `${s}s`
+  }
 
   // Rate-limit refetches triggered by fleet check-in pushes so a busy fleet
   // can't hammer /api/fleet/machines — at most one refetch per ~8s, coalescing
@@ -66,6 +98,7 @@
     try {
       machines = (await apiGet('/api/fleet/machines')) || []
       reconcileOpen()
+      loadTokens()
       error = null
     } catch (e) {
       error = e.message
@@ -87,6 +120,7 @@
         if (!selectedHost && ep.hosts?.length) selectedHost = ep.hosts[0]
       }
       reconcileOpen()
+      loadTokens()
       error = null
     } catch (e) {
       error = e.message
@@ -96,6 +130,7 @@
   }
   onMount(() => {
     load()
+    const tick = setInterval(() => { nowTick = Date.now() }, 1000) // drive expiry countdowns
     subscribe('fleet') // each agent check-in pushes its report → refetch the list live
 
     // A check-in push already tells us the machine is alive, so update it in
@@ -127,6 +162,7 @@
     window.addEventListener('hashchange', onHash)
     return () => {
       clearInterval(t)
+      clearInterval(tick)
       if (refetchTimer) clearTimeout(refetchTimer)
       unsub()
       unsubscribe('fleet')
@@ -165,7 +201,8 @@
       // one-time-token reference, so auto-generate it.
       const label = 'machine-' + Math.random().toString(36).slice(2, 8)
       lastToken = await apiPost('/api/fleet/token', { label, ttl_seconds: 3600, panel_host: selectedHost })
-      toast('Install command ready — one-time, expires in 1h', 'success')
+      copied = false
+      showInstall = true
     } catch (e) {
       toast('Failed to create token: ' + e.message, 'error')
     } finally {
@@ -247,58 +284,98 @@
     </div>
   {/if}
 
-  <!-- Listener config -->
-  <div class="bg-card border border-border rounded-xl p-4">
-    <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
-      <div class="flex items-center gap-2.5">
-        <span class="w-9 h-9 rounded-lg grid place-items-center border {ep?.listening ? 'bg-success/10 border-success/30 text-success' : 'bg-muted border-border text-muted-foreground'}">
-          <Icon name={ep?.listening ? 'lock-open' : 'lock'} size={17} />
-        </span>
-        <Checkbox variant="switch" bind:checked={cfgEnabled} onchange={saveConfig}
-          label="Agent listener"
-          helperText={ep?.listening ? `Door open · accepting agents on :${ep.port}` : 'Closed · no agents can connect'} />
+  <!-- Listener + Add-machine, inline on desktop -->
+  <div class="grid gap-4 {ep?.enabled ? 'lg:grid-cols-2' : ''} items-start">
+    <!-- Listener config -->
+    <div class="bg-card border border-border rounded-xl p-4">
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div class="flex items-center gap-2.5">
+          <span class="w-9 h-9 rounded-lg grid place-items-center border {ep?.listening ? 'bg-success/10 border-success/30 text-success' : 'bg-muted border-border text-muted-foreground'}">
+            <Icon name={ep?.listening ? 'lock-open' : 'lock'} size={17} />
+          </span>
+          <Checkbox variant="switch" bind:checked={cfgEnabled} onchange={saveConfig}
+            label="Agent listener"
+            helperText={ep?.listening ? `Door open · accepting agents on :${ep.port}` : 'Closed · no agents can connect'} />
+        </div>
+        <div class="ml-auto w-full sm:w-auto">
+          <Input type="number" bind:value={cfgPort} min="1" max="65535" prefixIcon="plug-connected"
+            class="w-40" label="Port"
+            suffixAddonBtn={{ icon: 'device-floppy', label: 'Save', variant: 'primary', onclick: saveConfig, disabled: savingCfg }} />
+        </div>
       </div>
-      <div class="ml-auto w-full sm:w-auto">
-        <Input type="number" bind:value={cfgPort} min="1" max="65535" prefixIcon="plug-connected"
-          class="w-40" label="Port"
-          suffixAddonBtn={{ icon: 'device-floppy', label: 'Save', variant: 'primary', onclick: saveConfig, disabled: savingCfg }} />
-      </div>
+      <p class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border flex items-start gap-1.5">
+        <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />
+        Turning this on opens the port through the firewall automatically and starts the mutual-TLS listener — nothing to edit in env or compose.
+      </p>
     </div>
-    <p class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border flex items-start gap-1.5">
-      <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />
-      Turning this on opens the port through the firewall automatically and starts the mutual-TLS listener — nothing to edit in env or compose.
-    </p>
+
+    <!-- Add machine — only once the listener is on (nothing can enroll otherwise) -->
+    {#if ep?.enabled}
+    <div class="bg-card border border-border rounded-xl p-4">
+      <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="plus" size={16} class="text-primary" />Add a machine</h3>
+      <div class="flex flex-wrap items-end gap-2">
+        {#if ep?.hosts?.length}
+          <div class="flex-1 min-w-[200px]">
+            <Select bind:value={selectedHost} label="Agent connects to" options={ep.hosts.map((h) => ({ value: h, label: h }))} />
+          </div>
+        {/if}
+        <Button icon="key" onclick={addMachine} disabled={creating || !ep?.domain}>Generate install command</Button>
+      </div>
+      <div class="text-[11px] text-muted-foreground mt-1.5">Pick a directly-reachable IP — the mTLS channel can't go through Cloudflare.</div>
+      {#if !ep?.domain}
+        <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Set a panel domain (SSL_DOMAIN) — the install downloads over the domain's HTTPS.</div>
+      {/if}
+    </div>
+    {/if}
   </div>
 
-  <!-- Add machine — only once the listener is on (nothing can enroll otherwise) -->
-  {#if ep?.enabled}
-  <div class="bg-card border border-border rounded-xl p-4">
-    <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="plus" size={16} class="text-primary" />Add a machine</h3>
-    <div class="flex flex-wrap items-end gap-2">
-      {#if ep?.hosts?.length}
-        <div class="flex-1 min-w-[200px]">
-          <Select bind:value={selectedHost} label="Agent connects to" options={ep.hosts.map((h) => ({ value: h, label: h }))} />
-        </div>
-      {/if}
-      <Button icon="key" onclick={addMachine} disabled={creating || !ep?.domain}>Generate install command</Button>
-    </div>
-    <div class="text-[11px] text-muted-foreground mt-1.5">Pick a directly-reachable IP — the mTLS channel can't go through Cloudflare.</div>
-    {#if !ep?.domain}
-      <div class="text-[11px] text-warning mt-2 flex items-center gap-1.5"><Icon name="alert-triangle" size={13} />Set a panel domain (SSL_DOMAIN) — the install downloads over the domain's HTTPS.</div>
-    {/if}
-
-    {#if lastToken}
-      <div class="mt-3 border-t border-dashed border-border pt-3">
-        <div class="text-xs text-muted-foreground mb-1.5">Run on the new machine (one-time, expires {timeAgo(lastToken.expires_at)}):</div>
+  <!-- Install-command modal: no outside-click close; Close enabled only after Copy -->
+  {#if showInstall && lastToken}
+    <Modal open={showInstall} dismissible={false} showClose={copied} onclose={closeInstall} title="Install command" size="lg">
+      <div class="space-y-3">
+        <p class="text-sm text-muted-foreground">Run this on the new machine. One-time — expires in {fmtCountdown(lastToken.expires_at) || 'under a minute'}.</p>
         {#if lastToken.install_command}
-          <Input value={lastToken.install_command} readonly class="font-mono text-[11px]"
-            suffixAddonBtn={{ icon: 'copy', variant: 'outline', copyText: lastToken.install_command, title: 'Copy' }} />
+          <pre class="bg-muted rounded-lg p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all border border-border">{lastToken.install_command}</pre>
+          <div class="flex items-center gap-2">
+            <Button icon={copied ? 'check' : 'copy'} variant="primary" onclick={copyInstall}>{copied ? 'Copied' : 'Copy command'}</Button>
+            {#if !copied}<span class="text-[11px] text-muted-foreground">Copy the command to continue.</span>{/if}
+          </div>
         {:else}
-          <div class="text-xs text-warning">Pick an address above so the install command can be built.</div>
+          <div class="text-sm text-warning">Pick an address in the Add-machine card so the install command can be built.</div>
         {/if}
       </div>
-    {/if}
-  </div>
+      {#snippet footer()}
+        <Button variant="secondary" onclick={closeInstall} disabled={!copied}>Close</Button>
+      {/snippet}
+    </Modal>
+  {/if}
+
+  <!-- Pending enrollments: tokens waiting for an agent to redeem -->
+  {#if pendingTokens.length}
+    <div>
+      <div class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2">Pending enrollments</div>
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {#each pendingTokens as t (t.id)}
+          {@const left = fmtCountdown(t.expires_at)}
+          <div class="bg-card border border-dashed border-primary/40 rounded-xl p-4 flex flex-col gap-2">
+            <div class="flex items-center gap-2.5">
+              <Icon name="loader-2" size={16} class="animate-spin text-primary shrink-0" />
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-semibold text-foreground truncate">Waiting for agent…</div>
+                <div class="text-[11px] text-muted-foreground truncate font-mono">{t.panel_host || t.label}</div>
+              </div>
+              <button onclick={() => cancelToken(t.id)} title="Cancel enrollment"
+                class="h-7 w-7 grid place-items-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-destructive transition cursor-pointer shrink-0">
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+            <div class="text-[11px] text-muted-foreground">
+              {#if left}Run the install command on the box · expires in <span class="tabular-nums text-foreground">{left}</span>{:else}Expiring…{/if}
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
   {/if}
 
   <!-- Machine grid -->

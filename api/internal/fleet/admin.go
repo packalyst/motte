@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		"CreateToken":     s.handleCreateToken,
+		"ListTokens":      s.handleListTokens,
+		"DeleteToken":     s.handleDeleteToken,
 		"ListMachines":    s.handleListMachines,
 		"CAInfo":          s.handleCAInfo,
 		"EnqueueCommand":  s.handleEnqueueCommand,
@@ -211,6 +214,31 @@ func (s *Service) handleListMachines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	router.JSON(w, ms)
+}
+
+// handleListTokens (GET /api/fleet/tokens) — outstanding enrollment tokens waiting
+// for an agent to redeem them. Metadata only; never the token secret.
+func (s *Service) handleListTokens(w http.ResponseWriter, r *http.Request) {
+	toks, err := s.ListPendingTokens()
+	if err != nil {
+		router.JSONError(w, "could not list tokens", http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, toks)
+}
+
+// handleDeleteToken (DELETE /api/fleet/tokens?id=<rowid>) cancels an outstanding token.
+func (s *Service) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if id <= 0 {
+		router.JSONError(w, "id required", http.StatusBadRequest)
+		return
+	}
+	if err := s.DeletePendingToken(id); err != nil {
+		router.JSONError(w, "could not cancel token", http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, map[string]bool{"ok": true})
 }
 
 // handleCAInfo returns the CA fingerprint + PEM (for building install commands).
