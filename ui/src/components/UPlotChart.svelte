@@ -31,8 +31,17 @@
       : name
   // For the legend swatch: keep the CSS var so it re-themes for free.
   const swatch = (s) => (s && s.startsWith('--') ? `var(${s})` : s)
-  const withAlpha = (col, a) =>
-    /\)\s*$/.test(col) ? col.replace(/\)\s*$/, ` / ${a})`) : col
+  // Apply alpha to a resolved colour for the gradient fill. Handles hex
+  // (#rgb/#rrggbb → rgba) and functional notations (rgb/hsl/oklch → `… / a`).
+  function withAlpha(col, a) {
+    if (col.startsWith('#')) {
+      let h = col.slice(1)
+      if (h.length === 3) h = h.split('').map((c) => c + c).join('')
+      const n = parseInt(h, 16)
+      return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+    }
+    return /\)\s*$/.test(col) ? col.replace(/\)\s*$/, ` / ${a})`) : col
+  }
 
   function fmtY(v) {
     if (yFormat) return yFormat(v)
@@ -107,7 +116,9 @@
     const uSeries = [{}]
     series.forEach((s, idx) => {
       const col = strokes[idx]
-      const entry = { label: s.label, stroke: col, width: s.width ?? 2, show: !hidden[idx] }
+      // points.show:false → no always-on vertex markers (sparse data); the
+      // hover point still comes from cursor.points below.
+      const entry = { label: s.label, stroke: col, width: s.width ?? 2, show: !hidden[idx], points: { show: false } }
       if (s.fill) {
         const a = typeof s.fill === 'number' ? s.fill : 0.2
         entry.fill = (up) => {
