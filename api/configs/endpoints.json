@@ -1063,6 +1063,14 @@
           "description": "Get proxy usage stats (overall + per tunnel)"
         },
         {
+          "path": "/overview",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetOverview",
+          "description": "Combined status + stats in one call (for periodic polling)"
+        },
+        {
           "path": "/test",
           "methods": [
             "POST"

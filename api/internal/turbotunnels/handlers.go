@@ -20,6 +20,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		"GetStatus":      s.handleStatus,
 		"GetStats":       s.handleStats,
+		"GetOverview":    s.handleOverview,
 		"TestTunnel":     s.handleTest,
 		"GetConfig":      s.handleGetConfig,
 		"SaveConfig":     s.handleSaveConfig,
@@ -50,6 +51,12 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 // handleStats returns proxy usage (overall + per tunnel) for the last 24h.
 func (s *Service) handleStats(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, GetProxyStats())
+}
+
+// handleOverview returns status + stats in one response, so the periodic poll in
+// the Tunnels view makes a single request instead of two.
+func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, map[string]any{"status": GetStatus(), "stats": GetProxyStats()})
 }
 
 // handleTest probes a tunnel end-to-end (through the proxy) and reports up/down

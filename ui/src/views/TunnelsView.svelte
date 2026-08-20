@@ -131,6 +131,18 @@
     }
   }
 
+  // Combined status + stats in one request — used by the periodic poll so it
+  // makes a single call instead of two.
+  async function loadOverview() {
+    try {
+      const o = await apiGet('/api/turbotunnels/overview')
+      if (o?.status) status = o.status
+      if (o?.stats) stats = o.stats
+    } catch (e) {
+      status = { status: 'error', error: e.message, tunnels: [] }
+    }
+  }
+
   function formatLastSeen(ts) {
     if (!ts) return ''
     // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS"; render in local time.
@@ -507,7 +519,7 @@
   onMount(() => {
     refresh()
     // Light polling so running/stopped state stays fresh while the page is open.
-    refreshTimer = setInterval(() => { loadStatus(); loadStats() }, 5000)
+    refreshTimer = setInterval(loadOverview, 5000)
   })
   onDestroy(() => {
     clearInterval(refreshTimer)
