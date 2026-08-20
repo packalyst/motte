@@ -3,7 +3,7 @@
   import { subscribe, unsubscribe, statsStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
-  import AreaChart from '../components/AreaChart.svelte'
+  import UPlotChart from '../components/UPlotChart.svelte'
   import SecurityGlance from '../components/SecurityGlance.svelte'
   import BlockedByLayer from '../components/BlockedByLayer.svelte'
   import PublicVisitors from '../components/PublicVisitors.svelte'
@@ -59,11 +59,18 @@
     const s = $statsStore
     if (!s?.traffic) return
     untrack(() => {
-      const label = new Date().toTimeString().slice(0, 8) // HH:MM:SS
-      samples.push({ t: label, up: s.traffic.rate_tx ?? 0, down: s.traffic.rate_rx ?? 0 })
+      samples.push({ ts: Math.floor(Date.now() / 1000), up: s.traffic.rate_tx ?? 0, down: s.traffic.rate_rx ?? 0 })
       if (samples.length > MAX_SAMPLES) samples.shift()
     })
   })
+
+  // uPlot columnar data [xs, upload, download] + series. Upload/Download keep the
+  // page's semantic colours (success/info), matching the Total Transfer card.
+  const trafficData = $derived([samples.map(s => s.ts), samples.map(s => s.up), samples.map(s => s.down)])
+  const trafficSeries = [
+    { label: 'Upload', stroke: '--success', fill: 0.18 },
+    { label: 'Download', stroke: '--info', fill: 0.18 },
+  ]
 
   onMount(() => {
     subscribe('stats')
@@ -120,35 +127,14 @@
   <!-- Live Traffic -->
   <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
     <h3 class="text-sm font-semibold mb-3">Live Traffic</h3>
-    <div>
-      {#if samples.length > 1}
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div class="rounded-lg border border-border bg-muted/20 p-3 overflow-hidden">
-            <div class="text-xs text-muted-foreground mb-2 flex items-center justify-between">
-              <span class="flex items-center gap-1.5"><Icon name="arrow-up" size={14} class="text-success" />Upload</span>
-              <span class="text-success font-medium tabular-nums">{formatRate($statsStore?.traffic?.rate_tx)}</span>
-            </div>
-            <div class="text-success">
-              <AreaChart data={samples} valueKey="up" labelKey="t" height={120} format={formatRate} />
-            </div>
-          </div>
-          <div class="rounded-lg border border-border bg-muted/20 p-3 overflow-hidden">
-            <div class="text-xs text-muted-foreground mb-2 flex items-center justify-between">
-              <span class="flex items-center gap-1.5"><Icon name="arrow-down" size={14} class="text-info" />Download</span>
-              <span class="text-info font-medium tabular-nums">{formatRate($statsStore?.traffic?.rate_rx)}</span>
-            </div>
-            <div class="text-info">
-              <AreaChart data={samples} valueKey="down" labelKey="t" height={120} format={formatRate} />
-            </div>
-          </div>
-        </div>
-      {:else}
-        <div class="text-center text-muted-foreground py-8">
-          <Icon name="activity" size={32} class="mx-auto mb-2 opacity-50" />
-          <p class="text-sm">Collecting live traffic…</p>
-        </div>
-      {/if}
-    </div>
+    {#if samples.length > 1}
+      <UPlotChart data={trafficData} series={trafficSeries} height={160} yFormat={formatRate} />
+    {:else}
+      <div class="text-center text-muted-foreground py-8">
+        <Icon name="activity" size={32} class="mx-auto mb-2 opacity-50" />
+        <p class="text-sm">Collecting live traffic…</p>
+      </div>
+    {/if}
   </div>
 
     <!-- Total Transfer -->
