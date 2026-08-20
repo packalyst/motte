@@ -12,5 +12,11 @@ keys, tokens, passwords, private IPs, or hostnames. Describe *what* and *why*, n
 - When done, either delete the file or flip **Status: Done** with the commit that closed it.
 
 ## Index
+- [drop-exec-headscale-rest.md](drop-exec-headscale-rest.md) — remove docker-socket-proxy
+  `EXEC=1` by moving the 3 headscale-CLI calls to REST (closes the lateral-to-root path).
+- [sshd-config-drop-in.md](sshd-config-drop-in.md) — mount only `/etc/ssh/sshd_config.d/` into
+  the api container instead of the whole SSH config.
+- [session-token-httponly-cookie.md](session-token-httponly-cookie.md) — move the session
+  token out of localStorage into an HttpOnly cookie (needs CSRF handling; low prio post-XSS-fix).
 - [agent-release-signing.md](agent-release-signing.md) — sign release assets so a compromised
   GitHub pipeline can't ship a malicious agent (defends beyond the current sha256 pinning).
