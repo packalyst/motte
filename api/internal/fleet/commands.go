@@ -93,6 +93,18 @@ func (s *Service) ListMachineCommands(machineID string, limit int) ([]MachineCom
 	return out, rows.Err()
 }
 
+// broadcastCommands pushes a machine's command log over the fleet channel so the
+// detail page updates live (queue / deliver / ack) without polling. No-op when no
+// broadcaster is wired.
+func (s *Service) broadcastCommands(machineID string) {
+	if s.broadcast == nil {
+		return
+	}
+	if cmds, err := s.ListMachineCommands(machineID, 20); err == nil {
+		s.broadcast("fleet", map[string]any{"machine_id": machineID, "commands": cmds})
+	}
+}
+
 // handleMachineCommands (GET /api/fleet/machine/commands?machine_id=) — the command log.
 func (s *Service) handleMachineCommands(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("machine_id")
@@ -181,5 +193,6 @@ func (s *Service) HandleCommandAck(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.db.Exec(`UPDATE fleet_commands SET status=?, result=?, done_at=? WHERE id=? AND machine_id=?`,
 			status, res.Output, now, res.ID, m.ID)
 	}
+	s.broadcastCommands(m.ID) // push done/error status to a watching detail page
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

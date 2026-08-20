@@ -241,6 +241,7 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.broadcastCommands(req.MachineID) // show the newly-queued command live
 	router.JSON(w, map[string]string{"command_id": id})
 }
 

@@ -80,11 +80,14 @@
     // THIS machine instantly (no polling while the socket is up); refresh the command log,
     // and refetch the CVE roll-up only when the scan timestamp changed.
     const unsub = fleetStore.subscribe((msg) => {
-      if (!msg || msg.machine_id !== machine.id || !msg.report) return
+      if (!msg || msg.machine_id !== machine.id) return
+      // Command log now rides the push (report broadcast + queue/ack broadcasts),
+      // so no more polling /api/fleet/machine/commands on every check-in.
+      if (msg.commands) commands = msg.commands
+      if (!msg.report) return
       const prevScan = report?.cves?.scanned_at
       report = msg.report
       loading = false
-      loadCommands()
       if (msg.report?.cves?.scanned_at && msg.report.cves.scanned_at !== prevScan) loadCves()
     })
 
