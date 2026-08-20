@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"compress/gzip"
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"io"
@@ -251,6 +252,10 @@ func (s *Service) ListCVEs(machineID string, f cveFilter) ([]CVE, int, error) {
 		where = append(where, "(cve_id LIKE ? OR pkg LIKE ?)")
 		args = append(args, "%"+f.Q+"%", "%"+f.Q+"%")
 	}
+	if f.CVEID != "" {
+		where = append(where, "cve_id = ?")
+		args = append(args, f.CVEID)
+	}
 	cond := strings.Join(where, " AND ")
 
 	var total int
@@ -281,9 +286,81 @@ func (s *Service) ListCVEs(machineID string, f cveFilter) ([]CVE, int, error) {
 }
 
 type cveFilter struct {
-	Severity, Class, Project, Q string
-	Fixable                     bool
-	Limit, Offset               int
+	Severity, Class, Project, Q, CVEID string
+	Fixable                            bool
+	Limit, Offset                      int
+}
+
+// CVERow is one unique CVE across a machine's findings (for the CVE-first list).
+type CVERow struct {
+	CVEID    string `json:"cve_id"`
+	Severity string `json:"severity"`
+	Packages int    `json:"packages"` // distinct affected packages
+	Fixable  bool   `json:"fixable"`  // at least one affected package has a fix
+	Title    string `json:"title,omitempty"`
+}
+
+var sevByRank = map[int]string{4: "CRITICAL", 3: "HIGH", 2: "MEDIUM", 1: "LOW", 0: "UNKNOWN"}
+var rankBySev = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "UNKNOWN": 0}
+
+const sevRankExpr = `CASE severity WHEN 'CRITICAL' THEN 4 WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END`
+
+// ListCVEsByCVE returns unique CVEs (one row per cve_id) for a machine, worst-first
+// then fixable-first, paginated. severity/fixable filter the GROUPED result (a CVE's
+// worst severity / whether any affected package has a fix); q matches the id or any
+// package. Pairs with ListCVEs(cveFilter{CVEID: ...}) for the per-CVE drill-down.
+func (s *Service) ListCVEsByCVE(machineID string, f cveFilter) ([]CVERow, int, error) {
+	where := []string{"machine_id = ?"}
+	args := []any{machineID}
+	if f.Q != "" {
+		where = append(where, "(cve_id LIKE ? OR pkg LIKE ?)")
+		args = append(args, "%"+f.Q+"%", "%"+f.Q+"%")
+	}
+	var having []string
+	if r, ok := rankBySev[strings.ToUpper(f.Severity)]; ok {
+		having = append(having, "MAX("+sevRankExpr+") = "+strconv.Itoa(r))
+	}
+	if f.Fixable {
+		having = append(having, "MAX(fixed != '' AND fixed IS NOT NULL) = 1")
+	}
+	cond := strings.Join(where, " AND ")
+	havingClause := ""
+	if len(having) > 0 {
+		havingClause = " HAVING " + strings.Join(having, " AND ")
+	}
+
+	var total int
+	countQ := `SELECT COUNT(*) FROM (SELECT cve_id FROM fleet_cves WHERE ` + cond + ` GROUP BY cve_id` + havingClause + `)`
+	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	q := `SELECT cve_id, MAX(` + sevRankExpr + `) AS sev,
+		COUNT(DISTINCT pkg) AS packages,
+		MAX(fixed != '' AND fixed IS NOT NULL) AS fixable,
+		MAX(title) AS title
+		FROM fleet_cves WHERE ` + cond + `
+		GROUP BY cve_id` + havingClause + `
+		ORDER BY sev DESC, fixable DESC, cve_id
+		LIMIT ? OFFSET ?`
+	args = append(args, f.limit(), f.offset())
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []CVERow{}
+	for rows.Next() {
+		var c CVERow
+		var sev, fixable int
+		var title sql.NullString
+		if err := rows.Scan(&c.CVEID, &sev, &c.Packages, &fixable, &title); err != nil {
+			return nil, 0, err
+		}
+		c.Severity, c.Fixable, c.Title = sevByRank[sev], fixable == 1, title.String
+		out = append(out, c)
+	}
+	return out, total, rows.Err()
 }
 
 func (f cveFilter) limit() int {
@@ -333,7 +410,30 @@ func (s *Service) handleListCVEs(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(q.Get("offset"))
 	cves, total, err := s.ListCVEs(id, cveFilter{
 		Severity: q.Get("severity"), Class: q.Get("class"), Project: q.Get("project"),
-		Q: q.Get("q"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
+		Q: q.Get("q"), CVEID: q.Get("cve_id"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
+		Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		router.JSONError(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, map[string]any{"cves": cves, "total": total})
+}
+
+// handleListCVEsByCVE (GET /api/fleet/cves/by-cve?machine_id=&severity=&fixable=&q=&limit=&offset=)
+// returns unique CVEs (one row per cve_id) for the CVE-first list.
+func (s *Service) handleListCVEsByCVE(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	id := q.Get("machine_id")
+	if id == "" {
+		router.JSONError(w, "machine_id required", http.StatusBadRequest)
+		return
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	cves, total, err := s.ListCVEsByCVE(id, cveFilter{
+		Severity: q.Get("severity"),
+		Q:        q.Get("q"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
 		Limit: limit, Offset: offset,
 	})
 	if err != nil {

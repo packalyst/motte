@@ -1588,6 +1588,14 @@
           "description": "Filtered/paginated machine CVE list"
         },
         {
+          "path": "/cves/by-cve",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ListCVEsByCVE",
+          "description": "Filtered/paginated unique-CVE list (one row per cve_id)"
+        },
+        {
           "path": "/fix",
           "methods": [
             "POST"

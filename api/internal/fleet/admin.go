@@ -26,6 +26,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"DeleteMachine":   s.handleDeleteMachine,
 		"CVEGroups":       s.handleCVEGroups,
 		"ListCVEs":        s.handleListCVEs,
+		"ListCVEsByCVE":   s.handleListCVEsByCVE,
 		"ExportCVEs":      s.handleExportCVEs,
 		"FixPackages":     s.handleFixPackages,
 		"MachineCommands": s.handleMachineCommands,
