@@ -153,16 +153,18 @@
         <div class="grid gap-3 md:grid-cols-2">
           {#each routers as router}
             <div class="p-3 bg-muted/30 border border-border rounded-lg">
-              <div class="flex items-center justify-between mb-2">
-                <div class="flex items-center gap-2">
+              <div class="flex items-center justify-between gap-2 mb-2">
+                <div class="flex items-center gap-2 min-w-0">
                   <div class="w-8 h-8 rounded-lg flex items-center justify-center bg-info/10 text-info flex-shrink-0">
                     <Icon name="git-branch" size={16} />
                   </div>
                   <span class="text-sm font-medium text-foreground truncate">{router.name}</span>
                 </div>
-                <Badge variant={router.status === 'enabled' ? 'success' : 'danger'} size="sm">
-                  {router.status || 'unknown'}
-                </Badge>
+                <div class="shrink-0">
+                  <Badge variant={router.status === 'enabled' ? 'success' : 'danger'} size="sm">
+                    {router.status || 'unknown'}
+                  </Badge>
+                </div>
               </div>
               <div class="space-y-1.5 text-xs pl-10">
                 {#if router.rule}
