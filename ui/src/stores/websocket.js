@@ -19,6 +19,7 @@ export const dockerStore = writable(null)
 export const dockerLogsStore = writable([]) // Array of log entries for live streaming
 export const statsStore = writable(null) // Overview dashboard stats
 export const pwaSubscriptionsStore = writable(null) // User-specific PWA subscriptions updates
+export const fleetStore = writable(null) // { machine_id, report } pushed on each agent check-in
 
 // Channel to store mapping
 const storeMap = {
@@ -27,7 +28,8 @@ const storeMap = {
   docker: dockerStore,
   docker_logs: dockerLogsStore,
   stats: statsStore,
-  pwa_subscriptions: pwaSubscriptionsStore
+  pwa_subscriptions: pwaSubscriptionsStore,
+  fleet: fleetStore
 }
 
 // WebSocket instance

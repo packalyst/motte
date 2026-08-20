@@ -31,5 +31,10 @@ func (s *Service) HandleReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "store failed")
 		return
 	}
+	// Push the fresh report to any browser watching this machine, so the UI updates live
+	// instead of polling. Payload carries the machine id + the raw report JSON.
+	if s.broadcast != nil {
+		s.broadcast("fleet", map[string]any{"machine_id": m.ID, "report": json.RawMessage(body)})
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

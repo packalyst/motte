@@ -6,7 +6,9 @@
    * the detection split stays visible. Pulls the full report + polls it.
    */
   import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
   import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { subscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Badge from './Badge.svelte'
@@ -56,23 +58,40 @@
   // machine-level CVE roll-up (unique CVEs, affected packages, fixable) — the report's cves
   // summary only has raw findings + severity, so we pull the richer numbers from the panel.
   let cveSummary = $state(null)
-  async function load() {
-    try {
-      report = await apiGet('/api/fleet/report?id=' + encodeURIComponent(machine.id))
-    } catch {
-      report = null
-    } finally {
-      loading = false
-    }
+  async function loadReport() {
+    try { report = await apiGet('/api/fleet/report?id=' + encodeURIComponent(machine.id)) } catch { report = null } finally { loading = false }
+  }
+  async function loadCommands() {
     try { commands = (await apiGet('/api/fleet/machine/commands?machine_id=' + encodeURIComponent(machine.id))) || [] } catch { /* keep last */ }
   }
-  // CVE summary only changes on a rescan, so fetch it on mount + manual refresh — NOT every
-  // 10s tick (that was a wasted request per poll).
+  // CVE summary only changes on a rescan, so it's refetched only when a new scan lands (a
+  // report arrives with a newer scanned_at) — never on a timer.
   async function loadCves() {
     try { cveSummary = (await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id)))?.summary || null } catch { /* keep last */ }
   }
-  const refresh = () => { load(); loadCves() }
-  onMount(() => { refresh(); const t = setInterval(load, 10000); return () => clearInterval(t) })
+  const load = () => { loadReport(); loadCommands() }
+  const refresh = () => { loadReport(); loadCommands(); loadCves() }
+
+  onMount(() => {
+    refresh()             // initial HTTP populate
+    subscribe('fleet')    // ask the panel to push this machine's reports over WS
+
+    // Live updates: the panel broadcasts each agent check-in. Apply the pushed report for
+    // THIS machine instantly (no polling while the socket is up); refresh the command log,
+    // and refetch the CVE roll-up only when the scan timestamp changed.
+    const unsub = fleetStore.subscribe((msg) => {
+      if (!msg || msg.machine_id !== machine.id || !msg.report) return
+      const prevScan = report?.cves?.scanned_at
+      report = msg.report
+      loading = false
+      loadCommands()
+      if (msg.report?.cves?.scanned_at && msg.report.cves.scanned_at !== prevScan) loadCves()
+    })
+
+    // Fallback poll ONLY while the WS is disconnected (much lighter than the old 10s timer).
+    const t = setInterval(() => { if (!get(wsConnected)) load() }, 20000)
+    return () => { unsub(); clearInterval(t) }
+  })
 
   const cmdStatus = { pending: 'text-warning', delivered: 'text-info', done: 'text-success', error: 'text-destructive' }
 

@@ -40,6 +40,11 @@ type Service struct {
 	// and caches them on disk, so the repo ships no binaries.
 	agentCache *agentCache
 
+	// broadcast pushes a WS event to subscribed browsers (set to ws.Broadcast in main, nil
+	// otherwise). Used to push a machine's report the instant it's ingested — so the UI
+	// updates live instead of polling.
+	broadcast func(channel string, payload any)
+
 	mu      sync.Mutex
 	enabled bool
 	port    int
@@ -47,6 +52,9 @@ type Service struct {
 
 	clientCertTTL time.Duration
 }
+
+// SetBroadcast wires the WS broadcast fn so report ingests push live to the UI.
+func (s *Service) SetBroadcast(fn func(channel string, payload any)) { s.broadcast = fn }
 
 // New initializes the schema + CA. The listener is NOT started here — call
 // ReloadFromSettings() once the firewall callbacks are wired. openPort/closePort
