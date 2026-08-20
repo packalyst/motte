@@ -169,6 +169,7 @@ func (s *Service) HandleCommands(w http.ResponseWriter, r *http.Request) {
 			args = append(args, id)
 		}
 		_, _ = s.db.Exec(q, args...)
+		s.broadcastCommands(m.ID) // pending -> delivered, push to a watching detail page
 	}
 	writeJSON(w, http.StatusOK, cmds)
 }

@@ -32,15 +32,10 @@ func (s *Service) HandleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Push the fresh report to any browser watching this machine, so the UI updates live
-	// instead of polling. Payload carries the machine id, the raw report JSON, and the
-	// command log (deliver/ack happen on this same check-in), so the detail page never
-	// has to poll for commands either.
+	// instead of polling. The command log rides its own event-driven broadcasts
+	// (enqueue / deliver / ack), so we don't query it on every idle check-in here.
 	if s.broadcast != nil {
-		payload := map[string]any{"machine_id": m.ID, "report": json.RawMessage(body)}
-		if cmds, err := s.ListMachineCommands(m.ID, 20); err == nil {
-			payload["commands"] = cmds
-		}
-		s.broadcast("fleet", payload)
+		s.broadcast("fleet", map[string]any{"machine_id": m.ID, "report": json.RawMessage(body)})
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
