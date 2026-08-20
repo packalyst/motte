@@ -39,8 +39,11 @@
     {#each items as it}
       {@const c = col(it.value)}
       {#if catLabels}<span class="text-[11px] text-muted-foreground tabular-nums truncate">{it.label}</span>{:else}<span></span>{/if}
-      <div class="relative h-4 rounded overflow-hidden bg-muted/40" style={gridBg} title="{it.label}: {fmt(it.value)}">
-        <div class="absolute inset-y-0 left-0 rounded transition-[width] duration-300" style="width:{Math.max(2, pctOf(it.value))}%; background:{c}"></div>
+      <div class="relative cursor-help" data-kt-tooltip>
+        <div class="relative h-4 rounded overflow-hidden bg-muted/40" style={gridBg}>
+          <div class="absolute inset-y-0 left-0 rounded transition-[width] duration-300" style="width:{Math.max(2, pctOf(it.value))}%; background:{c}"></div>
+        </div>
+        <span data-kt-tooltip-content class="kt-tooltip hidden">{it.label}: {fmt(it.value)}</span>
       </div>
       {#if valueLabels}<span class="text-[11px] font-medium tabular-nums text-right" style="color:{c}">{fmt(it.value)}</span>{:else}<span></span>{/if}
     {/each}
@@ -66,8 +69,9 @@
         {/if}
         <div class="absolute inset-0 flex items-end gap-1.5">
           {#each items as it}
-            <div class="flex-1 min-w-0 flex justify-center" title="{it.label}: {fmt(it.value)}">
+            <div class="flex-1 min-w-0 flex justify-center cursor-help" data-kt-tooltip>
               <div class="w-full rounded-t transition-[height] duration-300" style="height:{pctOf(it.value)}%; max-width:{barMax}px; background:{col(it.value)}"></div>
+              <span data-kt-tooltip-content class="kt-tooltip hidden">{it.label}: {fmt(it.value)}</span>
             </div>
           {/each}
         </div>
