@@ -6,7 +6,9 @@
    * report). Click a card to open its structured detail page.
    */
   import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
   import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
@@ -38,7 +40,19 @@
   let creating = $state(false)
   let lastToken = $state(null)
 
+  // Rate-limit refetches triggered by fleet check-in pushes so a busy fleet
+  // can't hammer /api/fleet/machines — at most one refetch per ~8s, coalescing
+  // simultaneous check-ins.
+  let lastLoad = 0
+  let refetchTimer = null
+  function scheduleRefetch() {
+    if (refetchTimer) return
+    const wait = Math.max(500, 8000 - (Date.now() - lastLoad))
+    refetchTimer = setTimeout(() => { refetchTimer = null; load() }, wait)
+  }
+
   async function load() {
+    lastLoad = Date.now()
     try {
       const [mRes, eRes] = await Promise.allSettled([apiGet('/api/fleet/machines'), apiGet('/api/fleet/endpoints')])
       if (mRes.status === 'fulfilled') machines = mRes.value || []
@@ -61,10 +75,33 @@
   }
   onMount(() => {
     load()
-    const t = setInterval(load, 15000)
+    subscribe('fleet') // each agent check-in pushes its report → refetch the list live
+
+    // Refetch on a check-in push (rate-limited). Skip the immediate on-subscribe
+    // emission so we don't double-load right after the initial fetch.
+    let firstFleet = true
+    const unsub = fleetStore.subscribe((msg) => {
+      if (firstFleet) { firstFleet = false; return }
+      if (msg) scheduleRefetch()
+    })
+
+    // Baseline sweep: machines that go offline stop pushing, so still poll — but
+    // only every ~60s when the socket is up (pushes do the live work); fall back
+    // to the old 15s cadence when the socket is down.
+    const t = setInterval(() => {
+      if (!get(wsConnected)) load()
+      else if (Date.now() - lastLoad > 60000) load()
+    }, 15000)
+
     const onHash = () => restoreFromHash()
     window.addEventListener('hashchange', onHash)
-    return () => { clearInterval(t); window.removeEventListener('hashchange', onHash) }
+    return () => {
+      clearInterval(t)
+      if (refetchTimer) clearTimeout(refetchTimer)
+      unsub()
+      unsubscribe('fleet')
+      window.removeEventListener('hashchange', onHash)
+    }
   })
 
   // fleet summary tiles
