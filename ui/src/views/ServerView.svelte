@@ -46,10 +46,26 @@
 
   const netData = $derived([xs, rxH, txH])
   const cmData = $derived([xs, cpuH, memH])
-  const netSeries = [{ label: 'RX', stroke: '--rx', fill: 0.22 }, { label: 'TX', stroke: '--tx', fill: 0.22 }]
-  const cmSeries = [{ label: 'CPU', stroke: '--cpu' }, { label: 'Memory', stroke: '--mem' }]
   const fmtRate = (v) => formatBytes(v) + '/s'
+  const pct = (v) => Math.round(v) + '%'
+  // `val`/`fmt` feed the inline header legend (UPlotChart ignores extra keys).
+  const netSeries = [
+    { label: 'RX', stroke: '--rx', fill: 0.22, val: (s) => s.net.rx, fmt: fmtRate },
+    { label: 'TX', stroke: '--tx', fill: 0.22, val: (s) => s.net.tx, fmt: fmtRate },
+  ]
+  const cmSeries = [
+    { label: 'CPU', stroke: '--cpu', val: (s) => s.cpu, fmt: pct },
+    { label: 'Memory', stroke: '--mem', val: (s) => s.mem_pct, fmt: pct },
+  ]
+  let netHidden = $state({})
+  let cmHidden = $state({})
   const live = $derived($wsConnected && !!latest)
+  // Load average is a run-queue length, not a %. Health = load ÷ cores.
+  const loadColor = (l, cores) => {
+    if (l == null || !cores) return 'text-foreground'
+    const r = l / cores
+    return r >= 1 ? 'text-destructive' : r >= 0.7 ? 'text-warning' : 'text-success'
+  }
   const coreColor = (v) => (v >= 85 ? 'var(--destructive)' : v >= 60 ? 'var(--warning)' : 'var(--success)')
   // Perceptual bar height: at idle everything sits near 0%, so a linear bar is
   // invisible. A gentle power curve keeps light load readable; the printed
@@ -138,6 +154,16 @@
   {#if error && !data}
     <div class="bg-destructive/10 border border-destructive/30 rounded-xl p-4 text-sm text-destructive">Couldn't load server security data: {error}</div>
   {:else if data}
+    {#snippet legendChips(defs, hiddenMap, toggle)}
+      <span class="ml-auto flex items-center gap-1.5 text-[11px] font-normal text-muted-foreground">
+        {#each defs as s, i}
+          <button type="button" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full transition-opacity {hiddenMap[i] ? 'opacity-40 line-through' : 'hover:bg-muted'}" onclick={() => toggle(i)} title="Toggle {s.label}">
+            <span class="w-2 h-2 rounded-sm" style="background:var({s.stroke})"></span>{s.label}{#if latest}&nbsp;<b class="text-foreground tabular-nums">{s.fmt(s.val(latest))}</b>{/if}
+          </button>
+        {/each}
+      </span>
+    {/snippet}
+
     <!-- Verdict -->
     <div class="{card} flex items-center gap-4">
       <span class="w-3 h-3 rounded-full {verdict.dot} shrink-0"></span>
@@ -181,17 +207,17 @@
           <Gauge value={latest?.cpu ?? 0} size={150} label="CPU utilization" />
           <div class="flex-1 min-w-0 text-xs space-y-3">
             <div>
-              <div class="{tileK} mb-1.5">Load average</div>
+              <div class="{tileK} mb-1.5" title="Run-queue length — processes waiting to run, averaged over 1/5/15 min. It is not a percentage; below the core count ({latest?.cores_n ?? '?'}) means no CPU contention.">Load average <Icon name="help-circle" size={11} class="opacity-60" /></div>
               <div class="flex gap-4">
                 {#each [['1m', 0], ['5m', 1], ['15m', 2]] as pair}
-                  <div><div class="text-base font-semibold tabular-nums text-foreground">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</div><div class="text-[10px] text-muted-foreground">{pair[0]}</div></div>
+                  <div><div class="text-base font-semibold tabular-nums {loadColor(latest?.load?.[pair[1]], latest?.cores_n)}">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</div><div class="text-[10px] text-muted-foreground">{pair[0]}</div></div>
                 {/each}
               </div>
             </div>
             <div class="flex flex-wrap gap-x-5 gap-y-1.5 pt-3 border-t border-border">
-              <div class="flex items-baseline gap-1.5"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
-              <div class="flex items-baseline gap-1.5"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
-              <div class="flex items-baseline gap-1.5"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
+              <div class="flex items-center gap-1.5" title="Logical CPU cores"><Icon name="cpu" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
+              <div class="flex items-center gap-1.5" title="Time since boot"><Icon name="clock" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
+              <div class="flex items-center gap-1.5" title="When the host last booted"><Icon name="refresh" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
             </div>
           </div>
         </div>
@@ -205,7 +231,7 @@
             {#each latest.cores as v, i}
               <div class="flex-1 flex flex-col items-center gap-1 min-w-0" title="core {i}: {v.toFixed(1)}%">
                 <span class="text-[10px] font-semibold tabular-nums" style="color:{coreColor(v)}">{v < 10 ? v.toFixed(1) : Math.round(v)}</span>
-                <div class="relative w-full max-w-[12px] flex-1 rounded bg-muted/40 overflow-hidden">
+                <div class="relative w-full max-w-[18px] flex-1 rounded bg-muted/40 overflow-hidden">
                   <div class="absolute inset-x-0 bottom-0 rounded-t transition-[height] duration-300" style="height:{barH(v)}%; background:{coreColor(v)}"></div>
                 </div>
                 <span class="text-[9px] text-muted-foreground">c{i}</span>
@@ -220,14 +246,14 @@
 
       <!-- Network I/O -->
       <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O</h3>
-        <UPlotChart data={netData} series={netSeries} height={150} yFormat={fmtRate} />
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O{@render legendChips(netSeries, netHidden, (i) => (netHidden = { ...netHidden, [i]: !netHidden[i] }))}</h3>
+        <UPlotChart bind:hidden={netHidden} legend={false} data={netData} series={netSeries} height={150} yFormat={fmtRate} />
       </div>
 
       <!-- CPU / memory -->
       <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory</h3>
-        <UPlotChart data={cmData} series={cmSeries} height={150} yRange={[0, 100]} yUnit="%" />
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory{@render legendChips(cmSeries, cmHidden, (i) => (cmHidden = { ...cmHidden, [i]: !cmHidden[i] }))}</h3>
+        <UPlotChart bind:hidden={cmHidden} legend={false} data={cmData} series={cmSeries} height={150} yRange={[0, 100]} yUnit="%" />
         {#if latest}<div class="text-[11px] text-muted-foreground mt-1">{formatBytes(latest.mem_used)} / {formatBytes(latest.mem_total)} used</div>{/if}
       </div>
     </div>

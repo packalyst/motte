@@ -15,14 +15,15 @@
     yUnit = '',           // suffix on axis + tooltip values, e.g. '%'
     yFormat = null,       // (v) => string; overrides the default `${v}${yUnit}`
     tooltip = true,
-    legend = true,        // clickable legend (show/hide series + live value)
+    legend = true,        // built-in clickable legend (show/hide series + live value)
+    hidden = $bindable({}), // series index -> true when hidden; bindable so a
+                            // parent can drive the toggle from its own legend
   } = $props()
 
   let el                  // chart mount node
   let u = null            // uPlot instance
   let ro = null           // ResizeObserver
   let mo = null           // theme MutationObserver
-  let hidden = $state({}) // series index -> true when toggled off
 
   const css = (name) =>
     name && name.startsWith('--')
@@ -50,7 +51,6 @@
 
   function toggleSeries(i) {
     hidden = { ...hidden, [i]: !hidden[i] }
-    if (u) u.setSeries(i + 1, { show: !hidden[i] })
   }
 
   function tooltipPlugin(strokes) {
@@ -159,6 +159,12 @@
   // Live data push — cheap: uPlot re-renders in place, no rebuild.
   $effect(() => {
     if (u && data && data.length) u.setData(data)
+  })
+
+  // Apply show/hide when `hidden` changes (built-in legend or parent-driven).
+  $effect(() => {
+    const h = hidden
+    if (u) for (let i = 0; i < series.length; i++) u.setSeries(i + 1, { show: !h[i] })
   })
 </script>
 
