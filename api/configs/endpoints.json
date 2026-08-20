@@ -25,7 +25,8 @@
         "docker",
         "docker_logs",
         "stats",
-        "fleet"
+        "fleet",
+        "server_stats"
       ]
     }
   },

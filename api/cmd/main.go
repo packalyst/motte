@@ -29,6 +29,7 @@ import (
 	"api/internal/nftables"
 	"api/internal/router"
 	"api/internal/server"
+	"api/internal/serverstats"
 	"api/internal/settings"
 	"api/internal/setup"
 	"api/internal/stats"
@@ -419,6 +420,10 @@ func main() {
 	wsSvc := ws.New()
 	stats.SetWsClientsProvider(ws.ClientCount)
 	log.Println("WebSocket service initialized")
+
+	// Live host resource stats: one /proc collector, broadcast to all
+	// subscribers, gated on the subscriber count so it idles when unwatched.
+	go serverstats.New(ws.Broadcast, ws.ChannelSubscriberCount).Run()
 
 	// Set up node status checker for real-time updates
 	if vpnSvc != nil {

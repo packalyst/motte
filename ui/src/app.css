@@ -62,6 +62,12 @@
   --destructive-foreground: oklch(98% 0 0);
   --info: oklch(52% 0.08 250);
   --info-foreground: oklch(98% 0 0);
+  /* Chart series (validated CVD-safe, light surface). Pairs shown together:
+     network (rx/tx) and cpu/mem. */
+  --cpu: #0ea5b7;
+  --mem: #8b5cf6;
+  --rx: #3b82f6;
+  --tx: #f59e0b;
 }
 
 .dark {
@@ -97,6 +103,11 @@
   --destructive-foreground: oklch(98% 0 0);
   --info: oklch(72% 0.12 250);
   --info-foreground: oklch(98% 0 0);
+  /* Chart series (validated CVD-safe, dark surface). */
+  --cpu: #159cb4;
+  --mem: #7f6ad0;
+  --rx: #4586d4;
+  --tx: #bd8a2e;
 }
 
 @theme inline {

@@ -8,7 +8,7 @@
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
   import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
-  import { subscribe, fleetStore, wsConnected } from '../stores/websocket.js'
+  import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Badge from './Badge.svelte'
@@ -90,7 +90,7 @@
 
     // Fallback poll ONLY while the WS is disconnected (much lighter than the old 10s timer).
     const t = setInterval(() => { if (!get(wsConnected)) load() }, 20000)
-    return () => { unsub(); clearInterval(t) }
+    return () => { unsub(); clearInterval(t); unsubscribe('fleet') }
   })
 
   const cmdStatus = { pending: 'text-warning', delivered: 'text-info', done: 'text-success', error: 'text-destructive' }

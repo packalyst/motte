@@ -1,11 +1,14 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { apiGet, apiPost, apiDelete, toast, confirm } from '../stores/app.js'
+  import { serverStatsStore, wsConnected, subscribe, unsubscribe } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import StatCard from '../components/StatCard.svelte'
   import Button from '../components/Button.svelte'
-  import { timeAgo } from '$lib/utils/format.js'
+  import UPlotChart from '../components/UPlotChart.svelte'
+  import Gauge from '../components/Gauge.svelte'
+  import { timeAgo, formatBytes } from '$lib/utils/format.js'
 
   let { loading = $bindable(true), onLogout } = $props()
   let data = $state(null)
@@ -16,7 +19,39 @@
     catch (e) { error = e.message }
     finally { loading = false }
   }
-  onMount(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) })
+  onMount(() => {
+    load()
+    const t = setInterval(load, 30000)
+    subscribe('server_stats') // ref-counted; app-wide sub keeps it alive too
+    return () => clearInterval(t)
+  })
+  onDestroy(() => unsubscribe('server_stats'))
+
+  // --- Live host stats: keep a rolling window from the server_stats channel ---
+  const N = 60
+  let xs = $state([]), cpuH = $state([]), memH = $state([]), rxH = $state([]), txH = $state([])
+  let latest = $state(null)
+  let lastTs = 0
+  $effect(() => {
+    const s = $serverStatsStore
+    if (!s || s.ts === lastTs) return
+    lastTs = s.ts
+    latest = s
+    const push = (arr, v) => (arr.length >= N ? [...arr.slice(1), v] : [...arr, v])
+    xs = push(xs, s.ts)
+    cpuH = push(cpuH, s.cpu ?? 0)
+    memH = push(memH, s.mem_pct ?? 0)
+    rxH = push(rxH, s.net?.rx ?? 0)
+    txH = push(txH, s.net?.tx ?? 0)
+  })
+
+  const netData = $derived([xs, rxH, txH])
+  const cmData = $derived([xs, cpuH, memH])
+  const netSeries = [{ label: 'RX', stroke: '--rx', fill: 0.22 }, { label: 'TX', stroke: '--tx', fill: 0.22 }]
+  const cmSeries = [{ label: 'CPU', stroke: '--cpu' }, { label: 'Memory', stroke: '--mem' }]
+  const fmtRate = (v) => formatBytes(v) + '/s'
+  const live = $derived($wsConnected && !!latest)
+  const coreColor = (v) => (v >= 85 ? 'var(--destructive)' : v >= 60 ? 'var(--warning)' : 'var(--success)')
 
   async function banIP(ip) {
     if (!ip) return
@@ -43,6 +78,32 @@
     return d > 0 ? `${d}d ${h}h` : `${h}h ${Math.floor((secs % 3600) / 60)}m`
   }
 
+  // Access & escalation: show only what needs eyes — sessions connected now,
+  // plus any alarming closed session (unexpected remote root). The full recent
+  // count lives in the header badge instead of a long scroll.
+  const shownLogins = $derived.by(() => {
+    const recent = data?.logins?.recent || []
+    const active = recent.filter(l => l.active)
+    const alarms = recent.filter(l => !l.active && l.root && l.ip && !isLocal(l.ip))
+    return [...active, ...alarms]
+  })
+
+  // Exposure: group listening ports by the process that owns them.
+  const portGroups = $derived.by(() => {
+    const m = new Map()
+    for (const p of data?.ports?.listening || []) {
+      const key = p.process || 'unknown'
+      if (!m.has(key)) m.set(key, { process: key, ports: [], public: false })
+      const g = m.get(key)
+      g.ports.push(p)
+      if (p.public) g.public = true
+    }
+    const arr = [...m.values()]
+    arr.forEach(g => g.ports.sort((a, b) => (b.public - a.public) || (a.port - b.port)))
+    arr.sort((a, b) => (b.public - a.public) || (b.ports.length - a.ports.length) || a.process.localeCompare(b.process))
+    return arr
+  })
+
   const verdict = $derived.by(() => {
     const s = data?.status || 'calm'
     const m = {
@@ -57,10 +118,11 @@
   const av = 'w-8 h-8 rounded-lg bg-muted/60 border border-border grid place-items-center shrink-0'
   const chip = 'text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap'
   const l2 = 'text-[11px] text-muted-foreground font-mono truncate'
+  const badge = 'normal-case tracking-normal text-[10px] px-1.5 py-0.5 rounded-full font-semibold'
 </script>
 
 <div class="space-y-4">
-  <InfoCard icon="shield-lock" title="Server" description="What's happening on the host itself: who logged in, privilege use, what's exposed, and system health. Read-only, from the server's own logs." />
+  <InfoCard icon="shield-lock" title="Server" description="What's happening on the host itself: live load, who logged in, privilege use, what's exposed, and system health. Read-only, from the server's own logs." />
 
   {#if error && !data}
     <div class="bg-destructive/10 border border-destructive/30 rounded-xl p-4 text-sm text-destructive">Couldn't load server security data: {error}</div>
@@ -71,21 +133,83 @@
       <div class="text-sm font-semibold text-foreground">{verdict.title}</div>
     </div>
 
+    <!-- Live host stats -->
+    <h2 class="{sectionH} mt-2 mb-2 flex items-center gap-2">Live
+      <span class="{badge} {live ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'} flex items-center gap-1">
+        {#if live}<span class="w-1.5 h-1.5 rounded-full bg-success"></span>streaming{:else}connecting…{/if}</span></h2>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <!-- Current server load -->
+      <div class="{card}">
+        <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="gauge" size={16} class="text-primary" />Current server load</h3>
+        <div class="flex items-center gap-5">
+          <Gauge value={latest?.cpu ?? 0} label="CPU utilization" />
+          <div class="flex-1 min-w-0 space-y-1.5 text-sm">
+            <div class="flex items-center justify-between"><span class="text-muted-foreground">Load 1m</span><b class="tabular-nums">{latest?.load?.[0]?.toFixed(2) ?? '—'}</b></div>
+            <div class="flex items-center justify-between"><span class="text-muted-foreground">Load 5m</span><b class="tabular-nums">{latest?.load?.[1]?.toFixed(2) ?? '—'}</b></div>
+            <div class="flex items-center justify-between"><span class="text-muted-foreground">Load 15m</span><b class="tabular-nums">{latest?.load?.[2]?.toFixed(2) ?? '—'}</b></div>
+            <div class="flex items-center justify-between border-t border-border pt-1.5"><span class="text-muted-foreground">CPU cores</span><b class="tabular-nums">{latest?.cores_n ?? '—'}</b></div>
+            <div class="flex items-center justify-between"><span class="text-muted-foreground">Uptime</span><b>{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CPU cores -->
+      <div class="{card}">
+        <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="cpu" size={16} class="text-primary" />CPU cores<span class="text-muted-foreground font-normal text-xs ml-auto">per-core %</span></h3>
+        {#if latest?.cores?.length}
+          <div class="flex items-end gap-1.5 h-[132px]">
+            {#each latest.cores as v, i}
+              <div class="flex-1 flex flex-col items-center justify-end gap-1 min-w-0" title="core {i}: {v.toFixed(1)}%">
+                <span class="text-[9px] font-semibold tabular-nums text-muted-foreground">{Math.round(v)}</span>
+                <div class="w-full rounded-t transition-[height] duration-300" style="height:{Math.max(2, v)}%; background:{coreColor(v)}"></div>
+                <span class="text-[9px] text-muted-foreground">c{i}</span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="h-[132px] grid place-items-center text-xs text-muted-foreground">waiting for first sample…</div>
+        {/if}
+      </div>
+
+      <!-- Network I/O -->
+      <div class="{card}">
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O
+          <span class="ml-auto flex items-center gap-3 text-[11px] font-normal text-muted-foreground">
+            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm" style="background:var(--rx)"></span>RX {latest ? fmtRate(latest.net?.rx ?? 0) : '—'}</span>
+            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm" style="background:var(--tx)"></span>TX {latest ? fmtRate(latest.net?.tx ?? 0) : '—'}</span>
+          </span></h3>
+        <UPlotChart data={netData} series={netSeries} height={150} yFormat={fmtRate} />
+      </div>
+
+      <!-- CPU / memory -->
+      <div class="{card}">
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory
+          <span class="ml-auto flex items-center gap-3 text-[11px] font-normal text-muted-foreground">
+            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm" style="background:var(--cpu)"></span>CPU {latest ? Math.round(latest.cpu) + '%' : '—'}</span>
+            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm" style="background:var(--mem)"></span>Mem {latest ? Math.round(latest.mem_pct) + '%' : '—'}</span>
+          </span></h3>
+        <UPlotChart data={cmData} series={cmSeries} height={150} yRange={[0, 100]} yUnit="%" />
+        {#if latest}<div class="text-[11px] text-muted-foreground mt-1">{formatBytes(latest.mem_used)} / {formatBytes(latest.mem_total)} used</div>{/if}
+      </div>
+    </div>
+
     <!-- Who touched the server: logins + sudo escalation, combined -->
     <h2 class="{sectionH} mt-2 mb-2 flex items-center gap-2">Who touched the server
-      <span class="normal-case tracking-normal text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive font-semibold">breach watch</span></h2>
+      <span class="{badge} bg-destructive/10 text-destructive">breach watch</span></h2>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="{card} lg:col-span-2">
-        <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="terminal-2" size={16} class="text-primary" />Access &amp; escalation</h3>
-        {#if !data.logins.recent.length && !data.sudo.failed?.length}
+        <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="terminal-2" size={16} class="text-primary" />Access &amp; escalation
+          <span class="{badge} bg-muted text-muted-foreground ml-auto">{data.logins.recent.length} login{data.logins.recent.length === 1 ? '' : 's'} recorded</span></h3>
+        {#if !shownLogins.length && !data.sudo.failed?.length}
           <div class="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
             <Icon name="terminal-2" size={26} class="opacity-40 mb-2" />
-            <div class="text-sm">No shell logins or sudo failures recorded.</div>
+            <div class="text-sm">No active sessions or sudo failures.</div>
+            {#if data.logins.recent.length}<div class="text-[11px] mt-1">{data.logins.recent.length} past login{data.logins.recent.length === 1 ? '' : 's'} in history — none connected now.</div>{/if}
           </div>
         {:else}
           <div class="divide-y divide-border">
-            <!-- successful logins: live sessions first, then newest history -->
-            {#each data.logins.recent.slice().sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || new Date(b.when) - new Date(a.when)) as l}
+            <!-- connected-now sessions + alarming closed sessions -->
+            {#each shownLogins as l}
               {@const alarm = l.root && l.ip && !isLocal(l.ip)}
               <div class="flex items-center gap-2.5 py-2 {alarm ? 'bg-destructive/10 -mx-2 px-2 rounded-lg' : ''}">
                 <span class="{av} {alarm ? 'border-destructive/50 text-destructive' : 'text-muted-foreground'}"><Icon name={methodIcon(l.method)} size={15} /></span>
@@ -132,7 +256,7 @@
 
     <!-- Privilege & persistence -->
     <h2 class="{sectionH} mt-2 mb-2 flex items-center gap-2">Privilege &amp; persistence
-      <span class="normal-case tracking-normal text-[10px] px-1.5 py-0.5 rounded-full bg-success/10 text-success font-semibold">from logs you already have</span></h2>
+      <span class="{badge} bg-success/10 text-success">from logs you already have</span></h2>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="key" size={16} class="text-primary" />Privileged actions</h3>
@@ -201,25 +325,30 @@
       {/if}
     </div>
 
-    <!-- Exposure -->
-    <h2 class="{sectionH} mt-2 mb-2">Exposure — listening ports</h2>
+    <!-- Exposure: listening ports, grouped by the process that owns them -->
+    <h2 class="{sectionH} mt-2 mb-2 flex items-center gap-2">Exposure — listening ports
+      <span class="{badge} {data.ports.public > 0 ? 'bg-warning/10 text-warning' : 'bg-muted text-muted-foreground'} ml-auto">{data.ports.public} public · {data.ports.listening.length} total</span></h2>
     <div class="{card}">
-      <p class="text-[11px] text-muted-foreground mb-3">{data.ports.public} public-facing · {data.ports.listening.length} total. Public listeners are reachable from other machines — make sure each is intentional.</p>
-      <div class="overflow-x-auto">
-        <table class="w-full text-xs">
-          <thead><tr class="text-left text-muted-foreground border-b border-border"><th class="py-1.5 pr-3 font-medium">Port</th><th class="py-1.5 pr-3 font-medium">Proto</th><th class="py-1.5 pr-3 font-medium">Bind</th><th class="py-1.5 pr-3 font-medium">Process</th><th class="py-1.5 font-medium">Scope</th></tr></thead>
-          <tbody>
-            {#each data.ports.listening.slice().sort((a,b) => (b.public - a.public) || (a.port - b.port)) as p}
-              <tr class="border-b border-border/50">
-                <td class="py-1.5 pr-3 font-mono tabular-nums text-foreground">{p.port}</td>
-                <td class="py-1.5 pr-3 text-muted-foreground">{p.proto}</td>
-                <td class="py-1.5 pr-3 font-mono text-muted-foreground">{p.address}</td>
-                <td class="py-1.5 pr-3 text-muted-foreground">{p.process || '—'}</td>
-                <td class="py-1.5">{#if p.public}<span class="{chip} bg-warning/15 text-warning">public</span>{:else}<span class="{chip} bg-muted text-muted-foreground">local</span>{/if}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+      <p class="text-[11px] text-muted-foreground mb-3">Grouped by process. Public listeners are reachable from other machines — make sure each is intentional.</p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {#each portGroups as g}
+          <div class="border border-border rounded-lg p-3 {g.public ? 'bg-warning/5' : ''}">
+            <div class="flex items-center gap-2 mb-2">
+              <Icon name={g.public ? 'world' : 'app-window'} size={15} class={g.public ? 'text-warning' : 'text-muted-foreground'} />
+              <span class="text-[13px] font-semibold text-foreground truncate">{g.process}</span>
+              <span class="{chip} bg-muted text-muted-foreground ml-auto">{g.ports.length} port{g.ports.length === 1 ? '' : 's'}</span>
+              {#if g.public}<span class="{chip} bg-warning/15 text-warning">public</span>{/if}
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              {#each g.ports as p}
+                <span class="inline-flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 rounded border {p.public ? 'border-warning/40 bg-warning/10 text-warning' : 'border-border bg-muted/50 text-muted-foreground'}"
+                  title="{p.proto} · {p.address}">
+                  {p.port}<span class="opacity-60">/{p.proto}</span>
+                </span>
+              {/each}
+            </div>
+          </div>
+        {/each}
       </div>
     </div>
 

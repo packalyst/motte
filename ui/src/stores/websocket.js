@@ -20,6 +20,7 @@ export const dockerLogsStore = writable([]) // Array of log entries for live str
 export const statsStore = writable(null) // Overview dashboard stats
 export const pwaSubscriptionsStore = writable(null) // User-specific PWA subscriptions updates
 export const fleetStore = writable(null) // { machine_id, report } pushed on each agent check-in
+export const serverStatsStore = writable(null) // live host /proc stats (cpu, mem, net, load, cores)
 
 // Channel to store mapping
 const storeMap = {
@@ -29,7 +30,8 @@ const storeMap = {
   docker_logs: dockerLogsStore,
   stats: statsStore,
   pwa_subscriptions: pwaSubscriptionsStore,
-  fleet: fleetStore
+  fleet: fleetStore,
+  server_stats: serverStatsStore
 }
 
 // WebSocket instance
@@ -39,8 +41,13 @@ let reconnectAttempts = 0
 const maxReconnectAttempts = 5
 const reconnectDelay = 3000
 
-// Current subscriptions
+// Current subscriptions. `activeSubscriptions` is the set of channels the server
+// should have us on (drives resubscribe-on-reconnect). `subRefs` ref-counts how
+// many callers want each channel, so overlapping subscribers (e.g. an app-wide
+// server_stats plus a page that also reads it) don't tear each other down — we
+// only tell the server to unsubscribe when the last caller releases.
 let activeSubscriptions = new Set()
+const subRefs = new Map()
 
 /**
  * Connect to WebSocket server
@@ -176,13 +183,21 @@ export function subscribe(channels) {
     channels = [channels]
   }
 
-  // Track subscriptions
-  channels.forEach(ch => activeSubscriptions.add(ch))
+  // Ref-count; only the first caller of a channel actually sends to the server.
+  const fresh = []
+  channels.forEach(ch => {
+    const n = (subRefs.get(ch) || 0) + 1
+    subRefs.set(ch, n)
+    if (n === 1) {
+      activeSubscriptions.add(ch)
+      fresh.push(ch)
+    }
+  })
 
-  if (ws && ws.readyState === WebSocket.OPEN) {
+  if (fresh.length && ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       action: 'subscribe',
-      channels: channels
+      channels: fresh
     }))
   }
 }
@@ -196,13 +211,22 @@ export function unsubscribe(channels) {
     channels = [channels]
   }
 
-  // Remove from tracked subscriptions
-  channels.forEach(ch => activeSubscriptions.delete(ch))
+  // Ref-count down; only tell the server once the last caller releases.
+  const gone = []
+  channels.forEach(ch => {
+    const n = subRefs.get(ch) || 0
+    if (n <= 1) {
+      subRefs.delete(ch)
+      if (activeSubscriptions.delete(ch)) gone.push(ch)
+    } else {
+      subRefs.set(ch, n - 1)
+    }
+  })
 
-  if (ws && ws.readyState === WebSocket.OPEN) {
+  if (gone.length && ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       action: 'unsubscribe',
-      channels: channels
+      channels: gone
     }))
   }
 }
@@ -265,6 +289,7 @@ export function disconnect() {
 
   wsConnected.set(false)
   activeSubscriptions.clear()
+  subRefs.clear()
   reconnectAttempts = 0
 
   // Clear all stores

@@ -202,3 +202,12 @@ func ClientCount() int {
 	}
 	return 0
 }
+
+// ChannelSubscriberCount returns how many clients are subscribed to a channel.
+// Used to gate expensive collectors so they do no work when nobody is watching.
+func ChannelSubscriberCount(channel string) int {
+	if serviceInstance != nil && serviceInstance.hub != nil {
+		return serviceInstance.hub.ChannelSubscriberCount(channel)
+	}
+	return 0
+}

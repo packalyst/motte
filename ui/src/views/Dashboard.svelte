@@ -77,10 +77,15 @@
   onMount(() => {
     // Subscribe to real-time updates
     subscribe('general_info')
+    // App-wide live host stats: the Dashboard shell is always mounted, so this
+    // keeps the server_stats collector fed for any consumer (Server page,
+    // sidebar, etc). The backend only samples while there's ≥1 subscriber.
+    subscribe('server_stats')
   })
 
   onDestroy(() => {
     unsubscribe('general_info')
+    unsubscribe('server_stats')
   })
 
   // Trigger refresh when app becomes visible.
