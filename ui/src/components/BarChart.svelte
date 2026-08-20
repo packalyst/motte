@@ -19,7 +19,6 @@
     axis = true,                // scale ticks + gridlines
     valueLabels = true,         // horizontal: show the value beside each bar
     catLabels = true,           // show per-bar category labels
-    labelWidth = '3.4rem',      // horizontal: width of the category-label column
     format = null,              // (value) => string
   } = $props()
 
@@ -36,7 +35,7 @@
 </script>
 
 {#if orientation === 'horizontal'}
-  <div class="grid gap-x-2 gap-y-1.5 items-center" style="grid-template-columns:{catLabels ? labelWidth : '0'} 1fr {valueLabels ? '2.8rem' : '0'}">
+  <div class="grid gap-x-2 gap-y-1.5 items-center" style="grid-template-columns:{catLabels ? '3.4rem' : '0'} 1fr {valueLabels ? '2.8rem' : '0'}">
     {#each items as it}
       {@const c = col(it.value)}
       {#if catLabels}<span class="text-[11px] text-muted-foreground tabular-nums truncate">{it.label}</span>{:else}<span></span>{/if}
