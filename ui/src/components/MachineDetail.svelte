@@ -12,7 +12,7 @@
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
-  import { timeAgo } from '$lib/utils/format.js'
+  import { timeAgo, formatBytes } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
   let { machine, onback, ondeleted, onviewcves } = $props()
@@ -151,6 +151,14 @@
   ])
   // IPs this host is currently enforcing a block on (from the live report).
   const blockedIPs = $derived(report?.blocked || [])
+
+  // Live-usage rows. Memory/Disk get a tooltip with the absolute bytes (agent v0.1.17+);
+  // CPU is inherently a % so it has none.
+  const usageRows = $derived([
+    { lbl: 'CPU', val: m.cpu, tip: '' },
+    { lbl: 'Memory', val: m.mem, tip: m.mem_total ? `${formatBytes(m.mem_used)} / ${formatBytes(m.mem_total)} used` : '' },
+    { lbl: 'Disk', val: m.disk, tip: m.disk_total ? `${formatBytes(m.disk_used)} / ${formatBytes(m.disk_total)} used` : '' },
+  ])
 
   async function del() {
     await cmd(null, null, {
@@ -344,13 +352,14 @@
       <div class="bg-card border border-border rounded-xl p-4">
         {@render head('activity', 'Live usage', '')}
         <div class="space-y-2.5">
-          {#each [['CPU', m.cpu], ['Memory', m.mem], ['Disk', m.disk]] as [lbl, val]}
-            <div class="flex items-center gap-3 text-xs">
-              <span class="w-14 text-muted-foreground">{lbl}</span>
+          {#each usageRows as r}
+            <div class="flex items-center gap-3 text-xs {r.tip ? 'cursor-help' : ''}" data-kt-tooltip={r.tip ? '' : undefined}>
+              <span class="w-14 text-muted-foreground">{r.lbl}</span>
               <span class="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                <span class="block h-full rounded-full {usageColor(round(val))}" style="width:{Math.min(round(val), 100)}%"></span>
+                <span class="block h-full rounded-full {usageColor(round(r.val))}" style="width:{Math.min(round(r.val), 100)}%"></span>
               </span>
-              <span class="w-10 text-right tabular-nums font-medium">{round(val)}%</span>
+              <span class="w-10 text-right tabular-nums font-medium">{round(r.val)}%</span>
+              {#if r.tip}<span data-kt-tooltip-content class="kt-tooltip hidden">{r.tip}</span>{/if}
             </div>
           {/each}
         </div>
