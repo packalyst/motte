@@ -15,23 +15,42 @@
     yUnit = '',           // suffix on axis + tooltip values, e.g. '%'
     yFormat = null,       // (v) => string; overrides the default `${v}${yUnit}`
     tooltip = true,
+    legend = true,        // clickable legend (show/hide series + live value)
   } = $props()
 
   let el                  // chart mount node
   let u = null            // uPlot instance
   let ro = null           // ResizeObserver
   let mo = null           // theme MutationObserver
+  let hidden = $state({}) // series index -> true when toggled off
 
   const css = (name) =>
     name && name.startsWith('--')
       ? getComputedStyle(document.documentElement).getPropertyValue(name).trim()
       : name
+  // For the legend swatch: keep the CSS var so it re-themes for free.
+  const swatch = (s) => (s && s.startsWith('--') ? `var(${s})` : s)
   const withAlpha = (col, a) =>
     /\)\s*$/.test(col) ? col.replace(/\)\s*$/, ` / ${a})`) : col
 
   function fmtY(v) {
     if (yFormat) return yFormat(v)
     return `${v}${yUnit}`
+  }
+
+  // Latest non-null value per series, for the legend readout.
+  const lastVals = $derived(
+    series.map((s, i) => {
+      const col = data[i + 1]
+      if (!col || !col.length) return null
+      for (let k = col.length - 1; k >= 0; k--) if (col[k] != null) return col[k]
+      return null
+    })
+  )
+
+  function toggleSeries(i) {
+    hidden = { ...hidden, [i]: !hidden[i] }
+    if (u) u.setSeries(i + 1, { show: !hidden[i] })
   }
 
   function tooltipPlugin(strokes) {
@@ -73,19 +92,22 @@
     const gridColor = css('--border')
     const strokes = series.map((s) => css(s.stroke))
 
-    const ax = (size, values) => ({
+    const ax = (size, values, extra = {}) => ({
       stroke: axisColor,
       grid: { stroke: gridColor, width: 1 },
       ticks: { stroke: gridColor, width: 1, size: 4 },
       font: '11px ui-sans-serif, system-ui, sans-serif',
       size,
       ...(values ? { values } : {}),
+      ...extra,
     })
+    const fmtTime = (up, vals) =>
+      vals.map((v) => new Date(v * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
 
     const uSeries = [{}]
     series.forEach((s, idx) => {
       const col = strokes[idx]
-      const entry = { label: s.label, stroke: col, width: s.width ?? 2 }
+      const entry = { label: s.label, stroke: col, width: s.width ?? 2, show: !hidden[idx] }
       if (s.fill) {
         const a = typeof s.fill === 'number' ? s.fill : 0.2
         entry.fill = (up) => {
@@ -104,7 +126,7 @@
       cursor: { y: false, points: { size: 7 } },
       legend: { show: false },
       scales: yRange ? { y: { range: () => yRange } } : {},
-      axes: [ax(28), ax(36, (up, vals) => vals.map(fmtY))],
+      axes: [ax(34, fmtTime, { space: 70, gap: 6 }), ax(38, (up, vals) => vals.map(fmtY))],
       series: uSeries,
       plugins: tooltip ? [tooltipPlugin(strokes)] : [],
     }
@@ -140,12 +162,59 @@
   })
 </script>
 
+{#if legend && series.length}
+  <div class="uchart-legend">
+    {#each series as s, i}
+      <button type="button" class="uchart-leg" class:off={hidden[i]} onclick={() => toggleSeries(i)} title="Toggle {s.label}">
+        <span class="uchart-leg-sw" style="background:{swatch(s.stroke)}"></span>
+        <span>{s.label}</span>
+        {#if lastVals[i] != null}<b>{fmtY(+lastVals[i].toFixed(1))}</b>{/if}
+      </button>
+    {/each}
+  </div>
+{/if}
 <div bind:this={el} class="uchart" style="height:{height}px"></div>
 
 <style>
   .uchart {
     width: 100%;
     position: relative;
+  }
+  .uchart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .uchart-leg {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--muted-foreground);
+    background: var(--muted);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+  .uchart-leg b {
+    color: var(--foreground);
+    font-variant-numeric: tabular-nums;
+  }
+  .uchart-leg:hover {
+    border-color: var(--border);
+  }
+  .uchart-leg.off {
+    opacity: 0.4;
+    text-decoration: line-through;
+  }
+  .uchart-leg-sw {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex: none;
   }
   /* uPlot renders its own canvas; tooltip is appended into .u-over */
   :global(.uchart-tip) {

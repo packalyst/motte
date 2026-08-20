@@ -45,13 +45,13 @@
 <svg width={size} height={size} viewBox="0 0 180 180" style="flex:none">
   <circle
     cx="90" cy="90" r="70" fill="none"
-    stroke="var(--muted, oklch(90% 0 0))" stroke-opacity="0.35"
-    stroke-width="13" stroke-linecap="round"
+    stroke="var(--muted, oklch(90% 0 0))" stroke-opacity="0.4"
+    stroke-width="9" stroke-linecap="round"
     stroke-dasharray="329.9 439.8" transform="rotate(135 90 90)"
   />
   <circle
     cx="90" cy="90" r="70" fill="none"
-    stroke={arcColor} stroke-width="13" stroke-linecap="round"
+    stroke={arcColor} stroke-width="9" stroke-linecap="round"
     stroke-dasharray="{dash} 439.8" transform="rotate(135 90 90)"
     style="transition: stroke-dasharray .4s ease, stroke .3s ease"
   />

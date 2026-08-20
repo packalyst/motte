@@ -4,7 +4,6 @@
   import { serverStatsStore, wsConnected, subscribe, unsubscribe } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
-  import StatCard from '../components/StatCard.svelte'
   import Button from '../components/Button.svelte'
   import UPlotChart from '../components/UPlotChart.svelte'
   import Gauge from '../components/Gauge.svelte'
@@ -52,6 +51,17 @@
   const fmtRate = (v) => formatBytes(v) + '/s'
   const live = $derived($wsConnected && !!latest)
   const coreColor = (v) => (v >= 85 ? 'var(--destructive)' : v >= 60 ? 'var(--warning)' : 'var(--success)')
+  // Perceptual bar height: at idle everything sits near 0%, so a linear bar is
+  // invisible. A gentle power curve keeps light load readable; the printed
+  // number stays the exact %.
+  const barH = (v) => (v <= 0 ? 0 : Math.min(100, Math.max(4, Math.pow(v / 100, 0.55) * 100)))
+  function pkgAction(a) {
+    const s = (a || '').toLowerCase()
+    if (s.includes('install')) return { cls: 'bg-info/15 text-info', icon: 'download', label: 'installed' }
+    if (s.includes('upgrade') || s.includes('update')) return { cls: 'bg-success/15 text-success', icon: 'arrow-up', label: 'upgraded' }
+    if (s.includes('remove') || s.includes('purge')) return { cls: 'bg-destructive/15 text-destructive', icon: 'trash', label: 'removed' }
+    return { cls: 'bg-muted text-muted-foreground', icon: 'package', label: a || 'changed' }
+  }
 
   async function banIP(ip) {
     if (!ip) return
@@ -71,7 +81,6 @@
 
   function isLocal(ip) { return !ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.') }
   function methodIcon(m) { return m === 'publickey' ? 'key' : m === 'password' ? 'lock' : 'terminal-2' }
-  function certColor(s) { return s === 'expired' || s === 'critical' ? 'text-destructive' : s === 'warning' ? 'text-warning' : 'text-success' }
   function fmtUptime(secs) {
     if (!secs) return '—'
     const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600)
@@ -119,6 +128,8 @@
   const chip = 'text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap'
   const l2 = 'text-[11px] text-muted-foreground font-mono truncate'
   const badge = 'normal-case tracking-normal text-[10px] px-1.5 py-0.5 rounded-full font-semibold'
+  const tileK = 'text-[10px] uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-1.5'
+  const tileM = 'text-[11px] text-muted-foreground mt-0.5'
 </script>
 
 <div class="space-y-4">
@@ -137,18 +148,51 @@
     <h2 class="{sectionH} mt-2 mb-2 flex items-center gap-2">Live
       <span class="{badge} {live ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'} flex items-center gap-1">
         {#if live}<span class="w-1.5 h-1.5 rounded-full bg-success"></span>streaming{:else}connecting…{/if}</span></h2>
+
+    <!-- Headline tiles -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+      <div class="{card}">
+        <div class="{tileK}"><Icon name="cpu" size={13} />CPU</div>
+        <div class="text-2xl font-bold tabular-nums" style={latest ? `color:${coreColor(latest.cpu)}` : ''}>{latest ? Math.round(latest.cpu) : '—'}<span class="text-base text-muted-foreground">%</span></div>
+        <div class="{tileM}">{latest?.cores_n ?? '—'} cores</div>
+      </div>
+      <div class="{card}">
+        <div class="{tileK}"><Icon name="database" size={13} />Memory</div>
+        <div class="text-2xl font-bold tabular-nums">{latest ? Math.round(latest.mem_pct) : '—'}<span class="text-base text-muted-foreground">%</span></div>
+        <div class="{tileM}">{latest ? formatBytes(latest.mem_used) + ' / ' + formatBytes(latest.mem_total) : '—'}</div>
+      </div>
+      <div class="{card}">
+        <div class="{tileK}"><Icon name="network" size={13} />Network</div>
+        <div class="text-lg font-bold tabular-nums leading-tight" style="color:var(--rx)">↓ {latest ? fmtRate(latest.net.rx) : '—'}</div>
+        <div class="{tileM} tabular-nums font-medium" style="color:var(--tx)">↑ {latest ? fmtRate(latest.net.tx) : '—'}</div>
+      </div>
+      <div class="{card}">
+        <div class="{tileK}"><Icon name="activity" size={13} />Load</div>
+        <div class="text-2xl font-bold tabular-nums">{latest?.load?.[0]?.toFixed(2) ?? '—'}</div>
+        <div class="{tileM}">1m avg · {latest?.cores_n ?? '—'} cores</div>
+      </div>
+    </div>
+
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- Current server load -->
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="gauge" size={16} class="text-primary" />Current server load</h3>
-        <div class="flex items-center gap-5">
-          <Gauge value={latest?.cpu ?? 0} label="CPU utilization" />
-          <div class="flex-1 min-w-0 space-y-1.5 text-sm">
-            <div class="flex items-center justify-between"><span class="text-muted-foreground">Load 1m</span><b class="tabular-nums">{latest?.load?.[0]?.toFixed(2) ?? '—'}</b></div>
-            <div class="flex items-center justify-between"><span class="text-muted-foreground">Load 5m</span><b class="tabular-nums">{latest?.load?.[1]?.toFixed(2) ?? '—'}</b></div>
-            <div class="flex items-center justify-between"><span class="text-muted-foreground">Load 15m</span><b class="tabular-nums">{latest?.load?.[2]?.toFixed(2) ?? '—'}</b></div>
-            <div class="flex items-center justify-between border-t border-border pt-1.5"><span class="text-muted-foreground">CPU cores</span><b class="tabular-nums">{latest?.cores_n ?? '—'}</b></div>
-            <div class="flex items-center justify-between"><span class="text-muted-foreground">Uptime</span><b>{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
+        <div class="flex items-center gap-7">
+          <Gauge value={latest?.cpu ?? 0} size={150} label="CPU utilization" />
+          <div class="flex-1 min-w-0 text-xs space-y-3">
+            <div>
+              <div class="{tileK} mb-1.5">Load average</div>
+              <div class="flex gap-4">
+                {#each [['1m', 0], ['5m', 1], ['15m', 2]] as pair}
+                  <div><div class="text-base font-semibold tabular-nums text-foreground">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</div><div class="text-[10px] text-muted-foreground">{pair[0]}</div></div>
+                {/each}
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-x-4 gap-y-2 pt-3 border-t border-border">
+              <div><div class="{tileK}">Cores</div><div class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</div></div>
+              <div><div class="{tileK}">Uptime</div><div class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</div></div>
+              <div><div class="{tileK}">Last reboot</div><div class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</div></div>
+            </div>
           </div>
         </div>
       </div>
@@ -157,15 +201,18 @@
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="cpu" size={16} class="text-primary" />CPU cores<span class="text-muted-foreground font-normal text-xs ml-auto">per-core %</span></h3>
         {#if latest?.cores?.length}
-          <div class="flex items-end gap-1.5 h-[132px]">
+          <div class="flex items-stretch gap-1.5 h-[132px]">
             {#each latest.cores as v, i}
-              <div class="flex-1 flex flex-col items-center justify-end gap-1 min-w-0" title="core {i}: {v.toFixed(1)}%">
-                <span class="text-[9px] font-semibold tabular-nums text-muted-foreground">{Math.round(v)}</span>
-                <div class="w-full rounded-t transition-[height] duration-300" style="height:{Math.max(2, v)}%; background:{coreColor(v)}"></div>
+              <div class="flex-1 flex flex-col items-center gap-1 min-w-0" title="core {i}: {v.toFixed(1)}%">
+                <span class="text-[10px] font-semibold tabular-nums" style="color:{coreColor(v)}">{v < 10 ? v.toFixed(1) : Math.round(v)}</span>
+                <div class="relative w-full flex-1 rounded bg-muted/40 overflow-hidden">
+                  <div class="absolute inset-x-0 bottom-0 rounded-t transition-[height] duration-300" style="height:{barH(v)}%; background:{coreColor(v)}"></div>
+                </div>
                 <span class="text-[9px] text-muted-foreground">c{i}</span>
               </div>
             {/each}
           </div>
+          <div class="text-[10px] text-muted-foreground mt-2">Bars use a perceptual scale so light load stays visible — the number is the exact %.</div>
         {:else}
           <div class="h-[132px] grid place-items-center text-xs text-muted-foreground">waiting for first sample…</div>
         {/if}
@@ -173,21 +220,13 @@
 
       <!-- Network I/O -->
       <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O
-          <span class="ml-auto flex items-center gap-3 text-[11px] font-normal text-muted-foreground">
-            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm" style="background:var(--rx)"></span>RX {latest ? fmtRate(latest.net?.rx ?? 0) : '—'}</span>
-            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm" style="background:var(--tx)"></span>TX {latest ? fmtRate(latest.net?.tx ?? 0) : '—'}</span>
-          </span></h3>
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O<span class="text-muted-foreground font-normal text-xs ml-auto">click to toggle</span></h3>
         <UPlotChart data={netData} series={netSeries} height={150} yFormat={fmtRate} />
       </div>
 
       <!-- CPU / memory -->
       <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory
-          <span class="ml-auto flex items-center gap-3 text-[11px] font-normal text-muted-foreground">
-            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm" style="background:var(--cpu)"></span>CPU {latest ? Math.round(latest.cpu) + '%' : '—'}</span>
-            <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm" style="background:var(--mem)"></span>Mem {latest ? Math.round(latest.mem_pct) + '%' : '—'}</span>
-          </span></h3>
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory<span class="text-muted-foreground font-normal text-xs ml-auto">click to toggle</span></h3>
         <UPlotChart data={cmData} series={cmSeries} height={150} yRange={[0, 100]} yUnit="%" />
         {#if latest}<div class="text-[11px] text-muted-foreground mt-1">{formatBytes(latest.mem_used)} / {formatBytes(latest.mem_total)} used</div>{/if}
       </div>
@@ -313,7 +352,15 @@
       {#if data.packages.length}
         <div class="divide-y divide-border">
           {#each data.packages.slice().reverse() as p}
-            <div class="flex items-center justify-between py-1.5 text-xs"><span class="font-mono text-foreground truncate">{p.package} <span class="text-muted-foreground">{p.version}</span></span><span class="text-muted-foreground shrink-0 ml-2">{p.action} · {timeAgo(p.when)}</span></div>
+            {@const pa = pkgAction(p.action)}
+            <div class="flex items-center gap-2.5 py-2">
+              <span class="w-7 h-7 rounded-lg grid place-items-center shrink-0 {pa.cls}"><Icon name={pa.icon} size={14} /></span>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs font-mono text-foreground truncate">{p.package} <span class="text-muted-foreground">{p.version}</span></div>
+                <div class="text-[11px] text-muted-foreground">{timeAgo(p.when)}</div>
+              </div>
+              <span class="{chip} {pa.cls} shrink-0">{pa.label}</span>
+            </div>
           {/each}
         </div>
       {:else}
@@ -329,10 +376,14 @@
     <h2 class="{sectionH} mt-2 mb-2 flex items-center gap-2">Exposure — listening ports
       <span class="{badge} {data.ports.public > 0 ? 'bg-warning/10 text-warning' : 'bg-muted text-muted-foreground'} ml-auto">{data.ports.public} public · {data.ports.listening.length} total</span></h2>
     <div class="{card}">
-      <p class="text-[11px] text-muted-foreground mb-3">Grouped by process. Public listeners are reachable from other machines — make sure each is intentional.</p>
+      <p class="text-[11px] text-muted-foreground mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>Every listener, grouped by process — both local and public.</span>
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-warning/70"></span>public</span>
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-muted-foreground/50"></span>local-only</span>
+      </p>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         {#each portGroups as g}
-          <div class="border border-border rounded-lg p-3 {g.public ? 'bg-warning/5' : ''}">
+          <div class="border rounded-lg p-3 {g.public ? 'border-warning/40' : 'border-border'}">
             <div class="flex items-center gap-2 mb-2">
               <Icon name={g.public ? 'world' : 'app-window'} size={15} class={g.public ? 'text-warning' : 'text-muted-foreground'} />
               <span class="text-[13px] font-semibold text-foreground truncate">{g.process}</span>
@@ -342,7 +393,7 @@
             <div class="flex flex-wrap gap-1.5">
               {#each g.ports as p}
                 <span class="inline-flex items-center gap-1 text-[11px] font-mono px-1.5 py-0.5 rounded border {p.public ? 'border-warning/40 bg-warning/10 text-warning' : 'border-border bg-muted/50 text-muted-foreground'}"
-                  title="{p.proto} · {p.address}">
+                  title="{p.proto} · {p.address} · {p.public ? 'public' : 'local-only'}">
                   {p.port}<span class="opacity-60">/{p.proto}</span>
                 </span>
               {/each}
@@ -352,17 +403,5 @@
       </div>
     </div>
 
-    <!-- Health & history -->
-    <h2 class="{sectionH} mt-2 mb-2">Health &amp; history</h2>
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <StatCard icon="clock" color="primary" value={fmtUptime(data.host.uptime_seconds)} label="Host uptime" />
-      <StatCard icon="refresh" color={data.host.reboot_recent ? 'warning' : 'info'} value={data.host.boot_time ? timeAgo(data.host.boot_time) : '—'} label="Last reboot" />
-      <div class="{card}">
-        <div class="text-xs text-muted-foreground mb-2 flex items-center gap-1.5"><Icon name="certificate" size={14} />TLS certificates</div>
-        {#if !data.certs?.length}<div class="text-xs text-muted-foreground">None managed</div>
-        {:else}{#each data.certs.slice(0, 4) as c}<div class="flex items-center justify-between text-xs py-0.5"><span class="truncate text-foreground">{c.domain}</span><span class="shrink-0 ml-2 tabular-nums {certColor(c.status)}">{c.daysLeft}d</span></div>{/each}{/if}
-      </div>
-      <StatCard icon="network" color={data.phone_home.external > 0 ? 'warning' : 'success'} value={data.phone_home.external} label="Outbound destinations" />
-    </div>
   {/if}
 </div>
