@@ -4,6 +4,7 @@
   import Icon from '../components/Icon.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import UPlotChart from '../components/UPlotChart.svelte'
+  import ChartLegend from '../components/ChartLegend.svelte'
   import SecurityGlance from '../components/SecurityGlance.svelte'
   import BlockedByLayer from '../components/BlockedByLayer.svelte'
   import PublicVisitors from '../components/PublicVisitors.svelte'
@@ -68,9 +69,10 @@
   // page's semantic colours (success/info), matching the Total Transfer card.
   const trafficData = $derived([samples.map(s => s.ts), samples.map(s => s.up), samples.map(s => s.down)])
   const trafficSeries = [
-    { label: 'Upload', stroke: '--success', fill: 0.18 },
-    { label: 'Download', stroke: '--info', fill: 0.18 },
+    { label: 'Upload', stroke: '--success', fill: 0.18, val: (s) => s.traffic.rate_tx, fmt: formatRate },
+    { label: 'Download', stroke: '--info', fill: 0.18, val: (s) => s.traffic.rate_rx, fmt: formatRate },
   ]
+  let trafficHidden = $state({})
 
   onMount(() => {
     subscribe('stats')
@@ -126,9 +128,9 @@
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
   <!-- Live Traffic -->
   <div class="bg-card border border-border rounded-xl p-4 lg:col-span-2">
-    <h3 class="text-sm font-semibold mb-3">Live Traffic</h3>
+    <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">Live Traffic<ChartLegend series={trafficSeries} hidden={trafficHidden} latest={$statsStore} ontoggle={(i) => (trafficHidden = { ...trafficHidden, [i]: !trafficHidden[i] })} /></h3>
     {#if samples.length > 1}
-      <UPlotChart data={trafficData} series={trafficSeries} height={160} yFormat={formatRate} />
+      <UPlotChart data={trafficData} series={trafficSeries} height={160} yFormat={formatRate} legend={false} bind:hidden={trafficHidden} />
     {:else}
       <div class="text-center text-muted-foreground py-8">
         <Icon name="activity" size={32} class="mx-auto mb-2 opacity-50" />

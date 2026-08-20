@@ -7,6 +7,7 @@
   import Button from '../components/Button.svelte'
   import UPlotChart from '../components/UPlotChart.svelte'
   import BarChart from '../components/BarChart.svelte'
+  import ChartLegend from '../components/ChartLegend.svelte'
   import Gauge from '../components/Gauge.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
 
@@ -151,16 +152,6 @@
   {#if error && !data}
     <div class="bg-destructive/10 border border-destructive/30 rounded-xl p-4 text-sm text-destructive">Couldn't load server security data: {error}</div>
   {:else if data}
-    {#snippet legendChips(defs, hiddenMap, toggle)}
-      <span class="ml-auto flex items-center gap-1.5 text-[11px] font-normal text-muted-foreground">
-        {#each defs as s, i}
-          <button type="button" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full transition-opacity {hiddenMap[i] ? 'opacity-40 line-through' : 'hover:bg-muted'}" onclick={() => toggle(i)} title="Toggle {s.label}">
-            <span class="w-2 h-2 rounded-sm" style="background:var({s.stroke})"></span>{s.label}{#if latest}&nbsp;<b class="text-foreground tabular-nums">{s.fmt(s.val(latest))}</b>{/if}
-          </button>
-        {/each}
-      </span>
-    {/snippet}
-
     <!-- Verdict -->
     <div class="{card} flex items-center gap-4">
       <span class="w-3 h-3 rounded-full {verdict.dot} shrink-0"></span>
@@ -240,13 +231,13 @@
 
       <!-- Network I/O -->
       <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O{@render legendChips(netSeries, netHidden, (i) => (netHidden = { ...netHidden, [i]: !netHidden[i] }))}</h3>
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O<ChartLegend series={netSeries} hidden={netHidden} {latest} ontoggle={(i) => (netHidden = { ...netHidden, [i]: !netHidden[i] })} /></h3>
         <UPlotChart bind:hidden={netHidden} legend={false} data={netData} series={netSeries} height={150} yFormat={fmtRate} />
       </div>
 
       <!-- CPU / memory -->
       <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory{@render legendChips(cmSeries, cmHidden, (i) => (cmHidden = { ...cmHidden, [i]: !cmHidden[i] }))}</h3>
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory<ChartLegend series={cmSeries} hidden={cmHidden} {latest} ontoggle={(i) => (cmHidden = { ...cmHidden, [i]: !cmHidden[i] })} /></h3>
         <UPlotChart bind:hidden={cmHidden} legend={false} data={cmData} series={cmSeries} height={150} yRange={[0, 100]} yUnit="%" />
         {#if latest}<div class="text-[11px] text-muted-foreground mt-1">{formatBytes(latest.mem_used)} / {formatBytes(latest.mem_total)} used</div>{/if}
       </div>
