@@ -65,9 +65,14 @@
       loading = false
     }
     try { commands = (await apiGet('/api/fleet/machine/commands?machine_id=' + encodeURIComponent(machine.id))) || [] } catch { /* keep last */ }
+  }
+  // CVE summary only changes on a rescan, so fetch it on mount + manual refresh — NOT every
+  // 10s tick (that was a wasted request per poll).
+  async function loadCves() {
     try { cveSummary = (await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id)))?.summary || null } catch { /* keep last */ }
   }
-  onMount(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t) })
+  const refresh = () => { load(); loadCves() }
+  onMount(() => { refresh(); const t = setInterval(load, 10000); return () => clearInterval(t) })
 
   const cmdStatus = { pending: 'text-warning', delivered: 'text-info', done: 'text-success', error: 'text-destructive' }
 
@@ -127,16 +132,22 @@
     message: `REBOOT ${machine.name}? The whole host restarts and is offline for a bit.`,
   })
 
-  // Host facts shown in the Agent & Host card (icon · label · value).
+  // WG cell: pubkey (shortened) + assigned IP when we have it — one combined "WG" fact.
+  const wgVal = $derived(
+    [machine.wg_pubkey ? (machine.wg_pubkey.length > 14 ? machine.wg_pubkey.slice(0, 14) + '…' : machine.wg_pubkey) : '', machine.wg_ip || '']
+      .filter(Boolean).join(' · '),
+  )
+  // Host facts shown in the Agent & Host card (icon · label · value). 9 → a clean 3×3 grid.
   const hostFacts = $derived([
     ['device-desktop', 'OS', [facts?.os?.name, facts?.os?.version].filter(Boolean).join(' ')],
+    ['box', 'Kernel', facts?.kernel || ''],
     ['cpu', 'CPU', facts?.system?.cpu_brand],
     ['clock', 'Uptime', m.uptime ? fmtUptime(m.uptime) : ''],
     ['server', 'Host', report?.host],
     ['activity', 'Last report', report?.time ? timeAgo(report.time) : ''],
     ['calendar', 'Enrolled', machine.enrolled_at ? timeAgo(machine.enrolled_at) : ''],
     ['certificate', 'Cert', (machine.cert_fp || '').replace('sha256:', '').slice(0, 12)],
-    ['key', 'WG pubkey', machine.wg_pubkey],
+    ['key', 'WG', wgVal],
   ])
   // IPs this host is currently enforcing a block on (from the live report).
   const blockedIPs = $derived(report?.blocked || [])
@@ -216,7 +227,7 @@
     </div>
     <!-- grouped actions -->
     <div class="flex items-center rounded-lg border border-border overflow-hidden shrink-0 divide-x divide-border">
-      <button onclick={load} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
+      <button onclick={refresh} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
         <Icon name="refresh" size={14} />Refresh
       </button>
       <button onclick={del} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
@@ -292,7 +303,7 @@
               <div class="text-[10px] text-muted-foreground mb-1">Patching</div>
               <div class="flex flex-wrap gap-1.5">
                 <Button variant="outline" size="xs" icon="download" onclick={applyUpdates}>Apply updates</Button>
-                <Button variant="outline" size="xs" icon="bricks" onclick={updateKernel}>Update kernel</Button>
+                <Button variant="outline" size="xs" icon="cpu" onclick={updateKernel}>Update kernel</Button>
                 <Button variant="outline" size="xs" icon="scan" onclick={rescan}>Rescan</Button>
               </div>
             </div>
@@ -324,8 +335,10 @@
       {/if}
     </div>
 
-    <!-- rest of the cards in a 2-column masonry (CSS columns keep source order, pack by height) -->
-    <div class="columns-1 lg:columns-2 [column-gap:1rem] [&>*]:break-inside-avoid [&>*]:mb-4">
+    <!-- rest of the cards in explicit 2 columns (each stacks independently) -->
+    <div class="flex flex-col lg:flex-row gap-4 items-start">
+      <!-- LEFT column -->
+      <div class="flex-1 min-w-0 flex flex-col gap-4">
 
       <!-- LIVE USAGE -->
       <div class="bg-card border border-border rounded-xl p-4">
@@ -346,25 +359,6 @@
           <span class="text-muted-foreground">Load <span class="text-foreground font-medium tabular-nums">{(m.load1 ?? 0).toFixed(2)}</span></span>
         </div>
         {@render note('Live resource use reported by the agent. A sustained CPU spike often tracks attack traffic.')}
-      </div>
-
-      <!-- SECURITY EVENTS -->
-      <div class="bg-card border rounded-xl p-4 {feed.some((e) => e.tone === 'crit') ? 'border-destructive/40' : 'border-border'}">
-        {@render head('shield-lock', 'Security events', 'CrowdSec bans + osquery FIM', 'text-warning')}
-        {#if feed.length}
-          <div class="max-h-72 overflow-y-auto -mr-1 pr-1">
-            {#each feed.slice(0, 100) as e}
-              <div class="flex items-baseline gap-2.5 py-1.5 border-t border-border first:border-t-0 text-sm">
-                <span class="w-1.5 h-1.5 rounded-full shrink-0 self-center {toneDot[e.tone]}"></span>
-                <span class="flex-1 min-w-0 break-all"><span class="font-mono text-xs">{e.body}</span>{#if e.meta}<span class="text-muted-foreground text-xs"> — {e.meta}</span>{/if}</span>
-                <span class="text-[9px] text-muted-foreground shrink-0">{e.src}</span>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No bans and no file-integrity changes.</div>
-        {/if}
-        {@render note('CrowdSec bans attackers on-host automatically. The FIM lines (a watched file changed) are the "someone got in" signals worth investigating.')}
       </div>
 
       <!-- VULNERABILITIES (summary — full list is the drill-down) -->
@@ -414,6 +408,10 @@
         </div>
         {@render note('Fixable OS-package CVEs clear via “Apply updates” on the Agent card; kernel CVEs via “Update kernel”. “View all & fix” opens the full list grouped by OS/project to upgrade only selected packages.')}
       </div>
+      </div><!-- /LEFT column -->
+
+      <!-- RIGHT column -->
+      <div class="flex-1 min-w-0 flex flex-col gap-4">
 
       <!-- EXPOSURE (listening ports only — host facts moved to the Agent & Host card) -->
       <div class="bg-card border border-border rounded-xl p-4">
@@ -466,6 +464,26 @@
         <div class="mt-3"><Button variant="outline" size="sm" icon="arrow-down" onclick={pushBlocks}>Push panel blocklist</Button></div>
         {@render note("Block or unblock one IP, or push the panel's whole blocklist down so this host drops the same attackers the panel already knows about.")}
       </div>
+
+      <!-- SECURITY EVENTS -->
+      <div class="bg-card border rounded-xl p-4 {feed.some((e) => e.tone === 'crit') ? 'border-destructive/40' : 'border-border'}">
+        {@render head('shield-lock', 'Security events', 'CrowdSec bans + osquery FIM', 'text-warning')}
+        {#if feed.length}
+          <div class="max-h-72 overflow-y-auto -mr-1 pr-1">
+            {#each feed.slice(0, 100) as e}
+              <div class="flex items-baseline gap-2.5 py-1.5 border-t border-border first:border-t-0 text-sm">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0 self-center {toneDot[e.tone]}"></span>
+                <span class="flex-1 min-w-0 break-all"><span class="font-mono text-xs">{e.body}</span>{#if e.meta}<span class="text-muted-foreground text-xs"> — {e.meta}</span>{/if}</span>
+                <span class="text-[9px] text-muted-foreground shrink-0">{e.src}</span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No bans and no file-integrity changes.</div>
+        {/if}
+        {@render note('CrowdSec bans attackers on-host automatically. The FIM lines (a watched file changed) are the "someone got in" signals worth investigating.')}
+      </div>
+      </div><!-- /RIGHT column -->
     </div>
   {/if}
 </div>
