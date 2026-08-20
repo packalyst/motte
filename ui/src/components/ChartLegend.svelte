@@ -14,7 +14,7 @@
   {#each series as s, i}
     <button
       type="button"
-      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full transition-opacity {hidden[i] ? 'opacity-40 line-through' : 'hover:bg-muted'}"
+      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full cursor-pointer transition-opacity {hidden[i] ? 'opacity-40 line-through' : 'hover:bg-muted'}"
       onclick={() => ontoggle(i)}
       title="Toggle {s.label}"
     >
