@@ -188,10 +188,10 @@
                 {/each}
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-x-4 gap-y-2 pt-3 border-t border-border">
-              <div><div class="{tileK}">Cores</div><div class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</div></div>
-              <div><div class="{tileK}">Uptime</div><div class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</div></div>
-              <div><div class="{tileK}">Last reboot</div><div class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</div></div>
+            <div class="flex flex-wrap gap-x-5 gap-y-1.5 pt-3 border-t border-border">
+              <div class="flex items-baseline gap-1.5"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
+              <div class="flex items-baseline gap-1.5"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
+              <div class="flex items-baseline gap-1.5"><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
             </div>
           </div>
         </div>
@@ -205,7 +205,7 @@
             {#each latest.cores as v, i}
               <div class="flex-1 flex flex-col items-center gap-1 min-w-0" title="core {i}: {v.toFixed(1)}%">
                 <span class="text-[10px] font-semibold tabular-nums" style="color:{coreColor(v)}">{v < 10 ? v.toFixed(1) : Math.round(v)}</span>
-                <div class="relative w-full flex-1 rounded bg-muted/40 overflow-hidden">
+                <div class="relative w-full max-w-[12px] flex-1 rounded bg-muted/40 overflow-hidden">
                   <div class="absolute inset-x-0 bottom-0 rounded-t transition-[height] duration-300" style="height:{barH(v)}%; background:{coreColor(v)}"></div>
                 </div>
                 <span class="text-[9px] text-muted-foreground">c{i}</span>
@@ -220,13 +220,13 @@
 
       <!-- Network I/O -->
       <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O<span class="text-muted-foreground font-normal text-xs ml-auto">click to toggle</span></h3>
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O</h3>
         <UPlotChart data={netData} series={netSeries} height={150} yFormat={fmtRate} />
       </div>
 
       <!-- CPU / memory -->
       <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory<span class="text-muted-foreground font-normal text-xs ml-auto">click to toggle</span></h3>
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory</h3>
         <UPlotChart data={cmData} series={cmSeries} height={150} yRange={[0, 100]} yUnit="%" />
         {#if latest}<div class="text-[11px] text-muted-foreground mt-1">{formatBytes(latest.mem_used)} / {formatBytes(latest.mem_total)} used</div>{/if}
       </div>
