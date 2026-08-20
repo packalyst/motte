@@ -258,9 +258,15 @@ func (s *Service) handleMachineReport(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	if raw == "" {
 		raw = "null"
 	}
-	_, _ = w.Write([]byte(raw))
+	// Bundle the command log so the detail page's first paint is a single request
+	// (same shape as the live WS push: { report, commands }).
+	cmds, _ := s.ListMachineCommands(id, 20)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"report":   json.RawMessage(raw),
+		"commands": cmds,
+	})
 }

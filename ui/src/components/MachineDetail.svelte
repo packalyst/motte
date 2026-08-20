@@ -58,19 +58,21 @@
   // machine-level CVE roll-up (unique CVEs, affected packages, fixable) — the report's cves
   // summary only has raw findings + severity, so we pull the richer numbers from the panel.
   let cveSummary = $state(null)
+  // One request returns { report, commands } (same shape as the live WS push).
   async function loadReport() {
-    try { report = await apiGet('/api/fleet/report?id=' + encodeURIComponent(machine.id)) } catch { report = null } finally { loading = false }
-  }
-  async function loadCommands() {
-    try { commands = (await apiGet('/api/fleet/machine/commands?machine_id=' + encodeURIComponent(machine.id))) || [] } catch { /* keep last */ }
+    try {
+      const res = await apiGet('/api/fleet/report?id=' + encodeURIComponent(machine.id))
+      report = res?.report ?? null
+      if (res?.commands) commands = res.commands
+    } catch { report = null } finally { loading = false }
   }
   // CVE summary only changes on a rescan, so it's refetched only when a new scan lands (a
   // report arrives with a newer scanned_at) — never on a timer.
   async function loadCves() {
     try { cveSummary = (await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id)))?.summary || null } catch { /* keep last */ }
   }
-  const load = () => { loadReport(); loadCommands() }
-  const refresh = () => { loadReport(); loadCommands(); loadCves() }
+  const load = () => loadReport()
+  const refresh = () => { loadReport(); loadCves() }
 
   onMount(() => {
     refresh()             // initial HTTP populate
