@@ -5,8 +5,7 @@
    *  • Top traffic — cumulative transfer ranking from the stats stream
    * Replaces the two separate peer cards that used to stack on the Overview.
    */
-  import { onMount, onDestroy } from 'svelte'
-  import { apiGet, apiPost } from '../stores/app.js'
+  import { apiPost } from '../stores/app.js'
   import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
@@ -20,7 +19,6 @@
   let sessions = $state([])
   let geoData = $state({})
   let isolating = $state('')
-  let timer
 
   let activeTab = $state('online')
   const tabs = $derived([
@@ -30,20 +28,20 @@
 
   const byPeer = $derived($statsStore?.traffic?.by_peer?.slice(0, 6) || [])
 
-  async function load() {
-    try {
-      const res = await apiGet('/api/wg/sessions')
-      sessions = res.sessions || []
-      const ips = sessions.map(s => s.endpointIp).filter(Boolean)
-      if (ips.length) {
-        await lookupIPs(ips)
-        const next = {}
-        for (const ip of ips) { const g = getGeoData(ip); if (g) next[ip] = g }
-        geoData = next
-      }
-    } catch {
-      sessions = []
-    }
+  // Live sessions now ride the stats broadcast (no polling) — update and resolve
+  // geo whenever a fresh stats payload lands.
+  $effect(() => {
+    const s = $statsStore?.sessions
+    if (!s) return
+    sessions = s
+    const ips = s.map((x) => x.endpointIp).filter(Boolean)
+    if (ips.length) resolveGeo(ips)
+  })
+  async function resolveGeo(ips) {
+    await lookupIPs(ips)
+    const next = {}
+    for (const ip of ips) { const g = getGeoData(ip); if (g) next[ip] = g }
+    geoData = next
   }
 
   async function isolate(s) {
@@ -51,17 +49,11 @@
     isolating = s.id
     try {
       await apiPost(`/api/wg/peers/${s.id}/disable`, {})
-      await load()
+      sessions = sessions.filter((x) => x.id !== s.id) // optimistic — the next stats push confirms
     } finally {
       isolating = ''
     }
   }
-
-  onMount(() => {
-    load()
-    timer = setInterval(load, 15000)
-  })
-  onDestroy(() => clearInterval(timer))
 </script>
 
 <div class="bg-card border border-border rounded-xl shadow-sm overflow-hidden">

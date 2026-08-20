@@ -82,7 +82,10 @@ func endpointIP(endpoint string) string {
 
 // handleGetSessions returns the peers connected right now (handshake within the
 // online window), newest handshake first.
-func (s *Service) handleGetSessions(w http.ResponseWriter, r *http.Request) {
+// GetActiveSessions returns live WireGuard sessions (peers with a recent handshake),
+// newest-first. Shared by the HTTP handler and the WS stats broadcast so the Overview
+// "Online now" widget can read them from the push instead of polling.
+func (s *Service) GetActiveSessions() []Session {
 	live := s.getWgLive()
 	now := time.Now()
 
@@ -107,6 +110,9 @@ func (s *Service) handleGetSessions(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].LastHandshake > sessions[j].LastHandshake
 	})
+	return sessions
+}
 
-	router.JSON(w, map[string]any{"sessions": sessions})
+func (s *Service) handleGetSessions(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, map[string]any{"sessions": s.GetActiveSessions()})
 }

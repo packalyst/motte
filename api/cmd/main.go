@@ -506,6 +506,18 @@ func main() {
 			security = fwSvc.DashboardSecurity()
 		}
 
+		// Live WG sessions ("Online now") folded into the stats push so PeersCard
+		// reads them from the store instead of polling /api/wg/sessions.
+		var sessions []ws.SessionInfo
+		if wg := wireguard.GetService(); wg != nil {
+			for _, se := range wg.GetActiveSessions() {
+				sessions = append(sessions, ws.SessionInfo{
+					ID: se.ID, Name: se.Name, IP: se.IP, Endpoint: se.Endpoint,
+					EndpointIP: se.EndpointIP, LastHandshake: se.LastHandshake, Rx: se.Rx, Tx: se.Tx,
+				})
+			}
+		}
+
 		return ws.OverviewStats{
 			System: ws.SystemStats{
 				Uptime:       sysStats.Uptime,
@@ -532,6 +544,7 @@ func main() {
 			DockerInfo: dockerInfo,
 			DiskUsage:  diskUsage,
 			Security:   security,
+			Sessions:   sessions,
 		}
 	})
 

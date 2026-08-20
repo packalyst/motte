@@ -22,7 +22,8 @@
   }
   onMount(() => {
     load()
-    const t = setInterval(load, 30000)
+    // Host security data changes slowly; skip the poll when the tab is hidden.
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30000)
     subscribe('server_stats') // ref-counted; app-wide sub keeps it alive too
     return () => clearInterval(t)
   })

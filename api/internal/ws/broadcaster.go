@@ -37,6 +37,20 @@ type OverviewStats struct {
 	DockerInfo *docker.DockerInfo `json:"dockerInfo,omitempty"`
 	DiskUsage  *docker.DiskUsage  `json:"diskUsage,omitempty"`
 	Security   *SecurityStats     `json:"security,omitempty"`
+	Sessions   []SessionInfo      `json:"sessions,omitempty"` // live WG "online now" — read by PeersCard
+}
+
+// SessionInfo mirrors the /api/wg/sessions JSON so the Overview "Online now" widget
+// reads it from the stats push instead of polling.
+type SessionInfo struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	IP            string `json:"ip"`
+	Endpoint      string `json:"endpoint"`
+	EndpointIP    string `json:"endpointIp"`
+	LastHandshake string `json:"lastHandshake"`
+	Rx            int64  `json:"rx"`
+	Tx            int64  `json:"tx"`
 }
 
 // SecurityStats is the last-hour security summary pushed on the stats stream so the
