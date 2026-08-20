@@ -48,9 +48,33 @@
   function scheduleRefetch() {
     if (refetchTimer) return
     const wait = Math.max(500, 8000 - (Date.now() - lastLoad))
-    refetchTimer = setTimeout(() => { refetchTimer = null; load() }, wait)
+    refetchTimer = setTimeout(() => { refetchTimer = null; loadMachines() }, wait)
   }
 
+  // Reconcile an open detail/CVE view + URL hash against the current list.
+  function reconcileOpen() {
+    if (cvesFor) cvesFor = machines.find((x) => x.id === cvesFor.id) || cvesFor
+    else if (selected) selected = machines.find((x) => x.id === selected.id) || selected
+    else restoreFromHash()
+  }
+
+  // Machines only — used by the periodic sweep (offline detection + summary) and
+  // new-machine refetch. /api/fleet/endpoints is intentionally NOT fetched here;
+  // it only changes on config save (saveConfig reloads it).
+  async function loadMachines() {
+    lastLoad = Date.now()
+    try {
+      machines = (await apiGet('/api/fleet/machines')) || []
+      reconcileOpen()
+      error = null
+    } catch (e) {
+      error = e.message
+    } finally {
+      loading = false
+    }
+  }
+
+  // Full load (machines + endpoints) — mount, config save, and WS-down fallback.
   async function load() {
     lastLoad = Date.now()
     try {
@@ -62,10 +86,7 @@
         // Default the mTLS host to the first candidate (a public IP), not the domain.
         if (!selectedHost && ep.hosts?.length) selectedHost = ep.hosts[0]
       }
-      // keep an open view's machine fresh; restore from the URL hash on refresh/direct link.
-      if (cvesFor) cvesFor = machines.find((x) => x.id === cvesFor.id) || cvesFor
-      else if (selected) selected = machines.find((x) => x.id === selected.id) || selected
-      else restoreFromHash()
+      reconcileOpen()
       error = null
     } catch (e) {
       error = e.message
@@ -77,20 +98,29 @@
     load()
     subscribe('fleet') // each agent check-in pushes its report → refetch the list live
 
-    // Refetch on a check-in push (rate-limited). Skip the immediate on-subscribe
-    // emission so we don't double-load right after the initial fetch.
+    // A check-in push already tells us the machine is alive, so update it in
+    // place (mark it freshly seen → shows online) with NO HTTP request. Only a
+    // machine we don't know yet (freshly enrolled) triggers a refetch. Skip the
+    // immediate on-subscribe emission so we don't act on a stale message.
     let firstFleet = true
     const unsub = fleetStore.subscribe((msg) => {
       if (firstFleet) { firstFleet = false; return }
-      if (msg) scheduleRefetch()
+      if (!msg?.machine_id) return
+      const idx = machines.findIndex((m) => m.id === msg.machine_id)
+      if (idx === -1) {
+        scheduleRefetch() // unknown machine — pull the list once (rate-limited)
+        return
+      }
+      const now = new Date().toISOString()
+      machines = machines.map((m, i) => (i === idx ? { ...m, last_seen: now } : m))
     })
 
     // Baseline sweep: machines that go offline stop pushing, so still poll — but
     // only every ~60s when the socket is up (pushes do the live work); fall back
     // to the old 15s cadence when the socket is down.
     const t = setInterval(() => {
-      if (!get(wsConnected)) load()
-      else if (Date.now() - lastLoad > 60000) load()
+      if (!get(wsConnected)) load()                             // WS down: full poll fallback
+      else if (Date.now() - lastLoad > 60000) loadMachines()    // WS up: machines-only sweep
     }, 15000)
 
     const onHash = () => restoreFromHash()
