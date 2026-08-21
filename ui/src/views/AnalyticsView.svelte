@@ -190,7 +190,7 @@
         {/each}
       </div>
       {#if selectedType === 'client'}
-        <Select value={selectedPeer} onchange={(e) => (selectedPeer = e.target.value)} class="sm:w-56">
+        <Select value={selectedPeer} onchange={(e) => (selectedPeer = e.target.value)} class="w-44 shrink-0 truncate">
           <option value="">Choose a client…</option>
           {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
         </Select>
