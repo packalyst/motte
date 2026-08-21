@@ -476,46 +476,46 @@
       {#if selectedType === 'inbound'}
         <div class="masonry stack-gap">
           <div class="mcol">
-            {@render countriesCard('Top countries', 'who is visiting', d.top_countries, meta.cvar)}
-            {@render listCard('Top domains', d.top_domains, 'domain', meta.cvar, {})}
-            {@render ipCard('Top visitors', d.top_clients, meta.cvar)}
+            {@render barCard('Top countries', d.top_countries, meta.cvar, { icon: 'map-pin', sub: 'who is visiting', empty: 'No country data.' }, lblCountry)}
+            {@render barCard('Top domains', d.top_domains, meta.cvar, {}, lblDomain)}
+            {@render barCard('Top visitors', d.top_clients, meta.cvar, { sub: 'by IP' }, lblIp)}
           </div>
           <div class="mcol">
             <div class="card"><div class="card-h"><h3>HTTP status</h3><span class="sub">how requests were answered</span></div><div class="card-body"><Donut segments={donutSeg(d.http_status, httpColor)} format={fmtNumber} /></div></div>
-            {@render pathCard('Top paths', d.top_paths, meta.cvar)}
+            {@render barCard('Top paths', d.top_paths, meta.cvar, {}, lblPath)}
           </div>
         </div>
       {:else if selectedType === 'dns'}
         <div class="masonry stack-gap">
           <div class="mcol">
             <div class="card"><div class="card-h"><h3>Response codes</h3></div><div class="card-body"><Donut segments={donutSeg(d.status_counts, dnsColor)} format={fmtNumber} /></div></div>
-            {@render listCard('Top allowed domains', d.top_allowed, 'domain', 'var(--success)', { sub: 'most resolved' })}
+            {@render barCard('Top allowed domains', d.top_allowed, 'var(--success)', { sub: 'most resolved' }, lblDomain)}
           </div>
           <div class="mcol">
             <div class="card"><div class="card-h"><h3>Query types</h3></div><div class="card-body"><Donut segments={donutSeg(d.query_types, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
-            {@render listCard('Top blocked domains', d.top_blocked, 'domain', 'var(--destructive)', { sub: 'ads & trackers' })}
+            {@render barCard('Top blocked domains', d.top_blocked, 'var(--destructive)', { sub: 'ads & trackers' }, lblDomain)}
           </div>
         </div>
       {:else if selectedType === 'outbound'}
         <div class="masonry stack-gap">
           <div class="mcol">
             {@render mapCard('World map', 'where your traffic goes', d.top_countries, 'dest')}
-            {@render ipCard('Top destinations', d.top_dest_ips, meta.cvar, { dest: true })}
+            {@render barCard('Top destinations', d.top_dest_ips, meta.cvar, {}, lblIp)}
           </div>
           <div class="mcol">
             <div class="card"><div class="card-h"><h3>Protocol mix</h3></div><div class="card-body"><Donut segments={donutSeg(d.protocols, (_, i) => (i === 0 ? 'var(--tx)' : 'var(--info)'))} format={fmtNumber} /></div></div>
-            {@render countriesCard('Top countries', 'destination', d.top_countries, 'var(--info)')}
+            {@render barCard('Top countries', d.top_countries, 'var(--info)', { icon: 'map-pin', sub: 'destination', empty: 'No country data.' }, lblCountry)}
           </div>
         </div>
       {:else}
         <div class="masonry stack-gap">
           <div class="mcol">
             <div class="card"><div class="card-h"><h3>Most-probed ports</h3></div><div class="card-body"><Donut segments={donutSeg(d.top_dest_ports, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
-            {@render ipCard('Top attacker IPs', d.top_clients, meta.cvar)}
+            {@render barCard('Top attacker IPs', d.top_clients, meta.cvar, { sub: 'by IP' }, lblIp)}
           </div>
           <div class="mcol">
             {@render mapCard('World map', 'who is attacking', d.top_countries, 'src')}
-            {@render countriesCard('Top countries', 'source of attacks', d.top_countries, meta.cvar)}
+            {@render barCard('Top countries', d.top_countries, meta.cvar, { icon: 'map-pin', sub: 'source of attacks', empty: 'No country data.' }, lblCountry)}
           </div>
         </div>
       {/if}
@@ -544,69 +544,28 @@
   </div>
 {/snippet}
 
-{#snippet listCard(title, rows, key, cvar, opts)}
+<!-- per-row label cells — the only thing that varies between the bar-list cards -->
+{#snippet lblDomain(r)}<span class="label">{r.domain}</span>{/snippet}
+{#snippet lblPath(r)}<span class="label wide">{(r.domain || '') + (r.path || '')}</span>{/snippet}
+{#snippet lblIp(r)}<span class="flag"><CountryFlag code={r.country} size="sm" /></span><span class="label">{r.label || r.ip}</span>{/snippet}
+{#snippet lblCountry(r)}<span class="flag"><CountryFlag code={r.country} size="sm" /></span><span class="label">{r.country || '—'}</span>{/snippet}
+
+<!-- one bar-list card: header + rows of [label · bar · value]. `rowLabel` renders the
+     per-row label cell; `opts` = { icon?, sub?, empty? }. -->
+{#snippet barCard(title, rows, cvar, opts, rowLabel)}
   <div class="card">
-    <div class="card-h"><h3>{title}</h3>{#if opts.sub}<span class="sub">{opts.sub}</span>{/if}</div>
+    <div class="card-h"><h3>{#if opts.icon}<Icon name={opts.icon} size={15} />{/if}{title}</h3>{#if opts.sub}<span class="sub">{opts.sub}</span>{/if}</div>
     <div class="card-body">
       {#if rows?.length}
         {@const mx = maxOf(rows)}
         <div class="rows">{#each rows as r}
           <div class="row">
-            <span class="label {opts.wide ? 'wide' : ''}">{r[key]}</span>
+            {@render rowLabel(r)}
             <div class="track"><div class="fill" style="width:{(r.count / mx) * 100}%; background:{cvar}"></div></div>
             <span class="val">{fmtNumber(r.count)}</span>
           </div>
         {/each}</div>
-      {:else}<div class="nodata pad">No data.</div>{/if}
-    </div>
-  </div>
-{/snippet}
-
-{#snippet pathCard(title, rows, cvar)}
-  <div class="card">
-    <div class="card-h"><h3>{title}</h3></div>
-    <div class="card-body">
-      {#if rows?.length}
-        {@const mx = maxOf(rows)}
-        <div class="rows">{#each rows as r}
-          <div class="row">
-            <span class="label wide">{(r.domain || '') + (r.path || '')}</span>
-            <div class="track"><div class="fill" style="width:{(r.count / mx) * 100}%; background:{cvar}"></div></div>
-            <span class="val">{fmtNumber(r.count)}</span>
-          </div>
-        {/each}</div>
-      {:else}<div class="nodata pad">No data.</div>{/if}
-    </div>
-  </div>
-{/snippet}
-
-{#snippet ipCard(title, rows, cvar, opts = {})}
-  <div class="card">
-    <div class="card-h"><h3>{title}</h3>{#if !opts.dest}<span class="sub">by IP</span>{/if}</div>
-    <div class="card-body">
-      {#if rows?.length}
-        {@const mx = maxOf(rows)}
-        <div class="rows">{#each rows as r}
-          <div class="row">
-            <span class="flag"><CountryFlag code={r.country} size="sm" /></span>
-            <span class="label {opts.wide ? 'wide' : ''}">{r.label || r.ip}</span>
-            <div class="track"><div class="fill" style="width:{(r.count / mx) * 100}%; background:{cvar}"></div></div>
-            <span class="val">{fmtNumber(r.count)}</span>
-          </div>
-        {/each}</div>
-      {:else}<div class="nodata pad">No data.</div>{/if}
-    </div>
-  </div>
-{/snippet}
-
-{#snippet countriesCard(title, sub, rows, cvar)}
-  <div class="card">
-    <div class="card-h"><h3><Icon name="map-pin" size={15} />{title}</h3><span class="sub">{sub}</span></div>
-    <div class="card-body">
-      {#if rows?.length}
-        {@const mx = maxOf(rows)}
-        <div class="rows">{#each rows as r}{@render cRow(r.country, r.count, mx, cvar, fmtNumber)}{/each}</div>
-      {:else}<div class="nodata pad">No country data.</div>{/if}
+      {:else}<div class="nodata pad">{opts.empty || 'No data.'}</div>{/if}
     </div>
   </div>
 {/snippet}
