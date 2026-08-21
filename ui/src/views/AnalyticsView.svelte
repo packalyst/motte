@@ -34,8 +34,9 @@
     { id: 'client', label: 'Per client', icon: 'user' },
   ]
   const PERIODS = [
-    { id: 'hour', label: '1h' }, { id: 'day', label: '24h' },
-    { id: 'week', label: '7d' }, { id: 'month', label: '30d' }, { id: 'all', label: 'All' },
+    { id: 'hour', label: '1h', full: 'Last hour' }, { id: 'day', label: '24h', full: 'Last 24 hours' },
+    { id: 'week', label: '7d', full: 'Last 7 days' }, { id: 'month', label: '30d', full: 'Last 30 days' },
+    { id: 'all', label: 'All', full: 'All time' },
   ]
 
   let data = $state({ inbound: null, dns: null, outbound: null, fw: null })
@@ -129,7 +130,14 @@
   })
 
   // ── CSV export of the current type view ──
-  function csvCell(v) { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
+  function csvCell(v) {
+    let s = String(v ?? '')
+    // Neutralize spreadsheet formula injection — domain/IP values come from LAN
+    // devices (e.g. a crafted DNS query), not the admin, so a leading =,+,-,@ could
+    // execute if the export is opened in Excel/Sheets.
+    if (/^[=+\-@]/.test(s)) s = "'" + s
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+  }
   function downloadCsv() {
     const d = data[selectedType]
     if (!d) return
@@ -209,9 +217,7 @@
         {#each TABS as t}<option value={t.id ?? ''}>{t.label}</option>{/each}
       </Select>
       <Select value={period} onchange={(e) => setPeriod(e.target.value)}>
-        {#each [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 30 days'], ['all', 'All time']] as [id, label]}
-          <option value={id}>{label}</option>
-        {/each}
+        {#each PERIODS as p}<option value={p.id}>{p.full}</option>{/each}
       </Select>
     </div>
     {#if selectedType === 'client'}

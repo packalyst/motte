@@ -95,13 +95,13 @@
   let hover = $state(null)
 </script>
 
-<div class="wrap" bind:clientWidth={elW}>
-  <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
-  <svg
-    viewBox={viewBox} class="map" class:grab={!dragging} class:grabbing={dragging}
-    role="img" aria-label="World map of {kind === 'src' ? 'source' : 'destination'} countries"
-    onwheel={onWheel} onmousedown={onDown} onmousemove={onMove} onmouseup={onUp} onmouseleave={onUp}
-  >
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div
+  class="wrap" class:grab={!dragging} class:grabbing={dragging} bind:clientWidth={elW}
+  role="application" aria-label="World map of {kind === 'src' ? 'source' : 'destination'} countries"
+  onwheel={onWheel} onmousedown={onDown} onmousemove={onMove} onmouseup={onUp} onmouseleave={onUp}
+>
+  <svg viewBox={viewBox} class="map" aria-hidden="true">
     <path d={WORLD_PATH} class="land" />
     {#each plotted as d}
       <g role="button" tabindex="0" aria-label="{d.name}: {d.count.toLocaleString()}"
@@ -132,8 +132,8 @@
     width: 100%; height: auto; display: block; touch-action: none;
     background: color-mix(in oklch, var(--info) 7%, var(--card));
   }
-  .map.grab { cursor: grab; }
-  .map.grabbing { cursor: grabbing; }
+  .wrap.grab { cursor: grab; }
+  .wrap.grabbing { cursor: grabbing; }
   .land { fill: color-mix(in oklch, var(--muted-foreground) 24%, var(--card)); stroke: var(--card); stroke-width: 0.4; }
   .zoom { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; }
   .zoom button {
