@@ -43,9 +43,10 @@ var (
 // plaintext on export, re-encrypted under the destination host on import. The
 // settings table is handled separately via its per-row `encrypted` flag.
 var secretCols = map[string][]string{
-	"vpn_clients": {"private_key_enc", "preshared_key_enc"},
-	"users":       {"totp_secret_enc"},
-	"fleet_ca":    {"key_enc"},
+	"vpn_clients":       {"private_key_enc", "preshared_key_enc"},
+	"vpn_router_config": {"authkey_enc"},
+	"users":             {"totp_secret_enc"},
+	"fleet_ca":          {"key_enc"},
 }
 
 // tableLabels are human names for the import preview.

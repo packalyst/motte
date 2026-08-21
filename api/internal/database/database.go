@@ -338,7 +338,7 @@ func createSchema(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS vpn_router_config (
 		id INTEGER PRIMARY KEY CHECK(id = 1),
 		enabled BOOLEAN DEFAULT 0,
-		authkey TEXT,
+		authkey_enc TEXT,
 		headscale_user TEXT DEFAULT 'vpn-router',
 		route_id TEXT,
 		status TEXT DEFAULT 'disabled',
@@ -527,6 +527,18 @@ func runMigrations(db *sql.DB) {
 	if err == nil && count == 0 {
 		if _, err := db.Exec(`ALTER TABLE vpn_clients ADD COLUMN block_internet INTEGER DEFAULT 0`); err == nil {
 			log.Printf("Migration: added block_internet column to vpn_clients")
+		}
+	}
+
+	// Encrypt the router pre-auth key at rest: vpn_router_config.authkey (plaintext) ->
+	// authkey_enc. The key is single-use, 1-hour-lived, and never read back from the DB,
+	// so any legacy stored value is already dead — drop it rather than re-encrypt. New
+	// writes store the encrypted form (see vpn.SetupRouter).
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_router_config') WHERE name = 'authkey_enc'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE vpn_router_config ADD COLUMN authkey_enc TEXT`); err == nil {
+			db.Exec(`UPDATE vpn_router_config SET authkey = NULL`) // wipe legacy plaintext (dead keys)
+			log.Printf("Migration: vpn_router_config.authkey -> authkey_enc (encrypted at rest)")
 		}
 	}
 

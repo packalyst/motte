@@ -184,12 +184,18 @@ func SetupRouter() error {
 		return fmt.Errorf("failed to create pre-auth key: %v", err)
 	}
 
-	// 3. Store auth key in database
+	// 3. Store auth key in database — encrypted at rest, like the panel's other secrets.
+	// The plaintext authKey is still handed to the container below (in memory); only the
+	// persisted copy is sealed with ENCRYPTION_SECRET.
+	authKeyEnc, err := helper.Encrypt(authKey)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt router auth key: %v", err)
+	}
 	_, err = db.Exec(`
-		INSERT INTO vpn_router_config (id, enabled, authkey, headscale_user, status)
+		INSERT INTO vpn_router_config (id, enabled, authkey_enc, headscale_user, status)
 		VALUES (1, 1, ?, ?, 'starting')
-		ON CONFLICT(id) DO UPDATE SET enabled = 1, authkey = ?, status = 'starting', updated_at = CURRENT_TIMESTAMP
-	`, authKey, routerName, authKey)
+		ON CONFLICT(id) DO UPDATE SET enabled = 1, authkey_enc = ?, status = 'starting', updated_at = CURRENT_TIMESTAMP
+	`, authKeyEnc, routerName, authKeyEnc)
 	if err != nil {
 		return fmt.Errorf("failed to store router config: %v", err)
 	}
