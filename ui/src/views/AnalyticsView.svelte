@@ -450,32 +450,48 @@
       <!-- type-specific breakdowns -->
       {#if selectedType === 'inbound'}
         <div class="masonry stack-gap">
-          {@render countriesCard('Top countries', 'who is visiting', d.top_countries, meta.cvar)}
-          <div class="card"><div class="card-h"><h3>HTTP status</h3><span class="sub">how requests were answered</span></div><div class="card-body"><Donut segments={donutSeg(d.http_status, httpColor)} format={fmtNumber} /></div></div>
-          {@render listCard('Top domains', d.top_domains, 'domain', meta.cvar, {})}
-          {@render pathCard('Top paths', d.top_paths, meta.cvar)}
-          {@render ipCard('Top visitors', d.top_clients, meta.cvar)}
+          <div class="mcol">
+            {@render countriesCard('Top countries', 'who is visiting', d.top_countries, meta.cvar)}
+            {@render listCard('Top domains', d.top_domains, 'domain', meta.cvar, {})}
+            {@render ipCard('Top visitors', d.top_clients, meta.cvar)}
+          </div>
+          <div class="mcol">
+            <div class="card"><div class="card-h"><h3>HTTP status</h3><span class="sub">how requests were answered</span></div><div class="card-body"><Donut segments={donutSeg(d.http_status, httpColor)} format={fmtNumber} /></div></div>
+            {@render pathCard('Top paths', d.top_paths, meta.cvar)}
+          </div>
         </div>
       {:else if selectedType === 'dns'}
         <div class="masonry stack-gap">
-          <div class="card"><div class="card-h"><h3>Response codes</h3></div><div class="card-body"><Donut segments={donutSeg(d.status_counts, dnsColor)} format={fmtNumber} /></div></div>
-          <div class="card"><div class="card-h"><h3>Query types</h3></div><div class="card-body"><Donut segments={donutSeg(d.query_types, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
-          {@render listCard('Top allowed domains', d.top_allowed, 'domain', 'var(--success)', { sub: 'most resolved' })}
-          {@render listCard('Top blocked domains', d.top_blocked, 'domain', 'var(--destructive)', { sub: 'ads & trackers' })}
+          <div class="mcol">
+            <div class="card"><div class="card-h"><h3>Response codes</h3></div><div class="card-body"><Donut segments={donutSeg(d.status_counts, dnsColor)} format={fmtNumber} /></div></div>
+            {@render listCard('Top allowed domains', d.top_allowed, 'domain', 'var(--success)', { sub: 'most resolved' })}
+          </div>
+          <div class="mcol">
+            <div class="card"><div class="card-h"><h3>Query types</h3></div><div class="card-body"><Donut segments={donutSeg(d.query_types, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
+            {@render listCard('Top blocked domains', d.top_blocked, 'domain', 'var(--destructive)', { sub: 'ads & trackers' })}
+          </div>
         </div>
       {:else if selectedType === 'outbound'}
-        <div class="stack-gap">{@render mapCard('World map', 'where your traffic goes', d.top_countries, 'dest')}</div>
         <div class="masonry stack-gap">
-          <div class="card"><div class="card-h"><h3>Protocol mix</h3></div><div class="card-body"><Donut segments={donutSeg(d.protocols, (_, i) => (i === 0 ? 'var(--tx)' : 'var(--info)'))} format={fmtNumber} /></div></div>
-          {@render countriesCard('Top countries', 'destination', d.top_countries, 'var(--info)')}
-          {@render ipCard('Top destinations', d.top_dest_ips, meta.cvar, { dest: true })}
+          <div class="mcol">
+            {@render mapCard('World map', 'where your traffic goes', d.top_countries, 'dest')}
+            {@render ipCard('Top destinations', d.top_dest_ips, meta.cvar, { dest: true })}
+          </div>
+          <div class="mcol">
+            <div class="card"><div class="card-h"><h3>Protocol mix</h3></div><div class="card-body"><Donut segments={donutSeg(d.protocols, (_, i) => (i === 0 ? 'var(--tx)' : 'var(--info)'))} format={fmtNumber} /></div></div>
+            {@render countriesCard('Top countries', 'destination', d.top_countries, 'var(--info)')}
+          </div>
         </div>
       {:else}
-        <div class="stack-gap">{@render mapCard('World map', 'who is attacking', d.top_countries, 'src')}</div>
         <div class="masonry stack-gap">
-          <div class="card"><div class="card-h"><h3>Most-probed ports</h3></div><div class="card-body"><Donut segments={donutSeg(d.top_dest_ports, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
-          {@render countriesCard('Top countries', 'source of attacks', d.top_countries, meta.cvar)}
-          {@render ipCard('Top attacker IPs', d.top_clients, meta.cvar)}
+          <div class="mcol">
+            <div class="card"><div class="card-h"><h3>Most-probed ports</h3></div><div class="card-body"><Donut segments={donutSeg(d.top_dest_ports, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
+            {@render ipCard('Top attacker IPs', d.top_clients, meta.cvar)}
+          </div>
+          <div class="mcol">
+            {@render mapCard('World map', 'who is attacking', d.top_countries, 'src')}
+            {@render countriesCard('Top countries', 'source of attacks', d.top_countries, meta.cvar)}
+          </div>
         </div>
       {/if}
     {/if}
@@ -618,10 +634,10 @@
   .grid { display: grid; gap: 14px; }
   .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
   .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
-  /* masonry: variable-height cards flow into columns (real Pinterest-style) */
-  .masonry { columns: 2; column-gap: 14px; }
-  .masonry > :global(*) { break-inside: avoid; margin-bottom: 14px; }
-  @media (max-width: 720px) { .masonry { columns: 1; } }
+  /* masonry: two independent columns, each card at its natural height */
+  .masonry { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  .mcol { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  @media (max-width: 720px) { .masonry { grid-template-columns: 1fr; } }
   .grid.start { align-items: start; }
   .stack-gap { margin-bottom: 14px; }
   @media (max-width: 980px) { .grid.cols-4 { grid-template-columns: repeat(2, 1fr); } .grid.cols-2 { grid-template-columns: 1fr; } }
