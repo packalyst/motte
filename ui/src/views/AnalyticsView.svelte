@@ -189,6 +189,12 @@
           <Button variant={period === p.id ? 'mono' : 'outline'} size="sm" onclick={() => setPeriod(p.id)}>{p.label}</Button>
         {/each}
       </div>
+      {#if selectedType === 'client'}
+        <Select value={selectedPeer} onchange={(e) => (selectedPeer = e.target.value)} class="sm:w-56">
+          <option value="">Choose a client…</option>
+          {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
+        </Select>
+      {/if}
       {#if selectedType && selectedType !== 'client'}<Button variant="outline" size="sm" icon="download" onclick={downloadCsv}>Export</Button>{/if}
       <Button variant="outline" size="sm" icon="refresh" onclick={loadAll}>Refresh</Button>
     </div>
@@ -208,6 +214,14 @@
         {/each}
       </Select>
     </div>
+    {#if selectedType === 'client'}
+      <div class="frow">
+        <Select value={selectedPeer} onchange={(e) => (selectedPeer = e.target.value)}>
+          <option value="">Choose a client…</option>
+          {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
+        </Select>
+      </div>
+    {/if}
     <div class="frow">
       {#if selectedType && selectedType !== 'client'}<Button variant="outline" size="sm" icon="download" onclick={downloadCsv} class="flex-1">Export</Button>{/if}
       <Button variant="outline" size="sm" icon="refresh" onclick={loadAll} class="flex-1">Refresh</Button>
@@ -338,21 +352,6 @@
 
   <!-- ═══════════ PER CLIENT ═══════════ -->
   {:else if selectedType === 'client'}
-    <div class="card stack-gap">
-      <div class="card-h"><h3><Icon name="user" size={15} />Pick a device</h3>
-        <Select value={selectedPeer} onchange={(e) => (selectedPeer = e.target.value)} class="w-full sm:w-64">
-          <option value="">Choose a client…</option>
-          {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
-        </Select>
-      </div>
-      {#if selectedPeer}
-        <div class="client-card">
-          <span class="client-avatar"><Icon name="device-desktop" size={19} /></span>
-          <div><div class="client-name">{peerList.find((p) => p.value === selectedPeer)?.label || selectedPeer}</div><div class="client-ip">{selectedPeer}</div></div>
-        </div>
-      {/if}
-    </div>
-
     {#if !selectedPeer}
       <EmptyState icon="user" title="Pick a device" description="Choose a client above to see what it talked to, how much it sent and received, and which countries it reached." />
     {:else if peerUsageLoading}
@@ -725,10 +724,6 @@
   /* map toggle */
 
   /* per client */
-  .client-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  .client-avatar { width: 38px; height: 38px; border-radius: 10px; background: color-mix(in oklch, var(--primary) 14%, var(--card)); color: var(--primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .client-name { font-size: 14px; font-weight: 700; }
-  .client-ip { font-size: 11.5px; color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .ud-legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--muted-foreground); margin-bottom: 10px; }
   .ud-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .ud-legend .sw { width: 9px; height: 9px; border-radius: 2px; }
