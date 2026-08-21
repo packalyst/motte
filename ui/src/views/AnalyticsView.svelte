@@ -194,6 +194,26 @@
     </div>
   </div>
 
+  <!-- mobile: the segmented tabs + period wrap badly on a phone, so collapse them
+       into a compact filters card of selects (shown only ≤720px; desktop keeps the
+       toolbar above). -->
+  <div class="filters-m">
+    <div class="frow">
+      <Select value={selectedType ?? ''} onchange={(e) => setType(e.target.value || null)}>
+        {#each TABS as t}<option value={t.id ?? ''}>{t.label}</option>{/each}
+      </Select>
+      <Select value={period} onchange={(e) => setPeriod(e.target.value)}>
+        {#each [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 30 days'], ['all', 'All time']] as [id, label]}
+          <option value={id}>{label}</option>
+        {/each}
+      </Select>
+    </div>
+    <div class="frow">
+      {#if selectedType && selectedType !== 'client'}<Button variant="outline" size="sm" icon="download" onclick={downloadCsv} class="flex-1">Export</Button>{/if}
+      <Button variant="outline" size="sm" icon="refresh" onclick={loadAll} class="flex-1">Refresh</Button>
+    </div>
+  </div>
+
   {#if loading}
     <div class="center"><LoadingSpinner /></div>
 
@@ -612,6 +632,14 @@
   /* toolbar: segmented tab menu (smaller) + period controls */
   .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 16px; margin-bottom: 18px; }
   .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* mobile filters card — replaces the wrapping segmented toolbar ≤720px */
+  .filters-m { display: none; }
+  @media (max-width: 720px) {
+    .toolbar { display: none; }
+    .filters-m { display: flex; flex-direction: column; gap: 8px; background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); padding: 10px; margin: 16px 0 18px; }
+    .filters-m .frow { display: flex; gap: 8px; }
+    .filters-m .frow > :global(*) { flex: 1; min-width: 0; }
+  }
   .tabs { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: calc(var(--a-radius) + 3px); flex-wrap: wrap; }
   .tab { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; cursor: pointer; padding: 5px 11px; border-radius: calc(var(--a-radius) - 1px); font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); }
   .tab:hover { color: var(--foreground); }
