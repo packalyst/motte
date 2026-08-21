@@ -8,7 +8,7 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
-  import Tabs from '../components/Tabs.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
   import BlockedByLayer from '../components/BlockedByLayer.svelte'
   import UPlotChart from '../components/UPlotChart.svelte'
   import Donut from '../components/Donut.svelte'
@@ -27,10 +27,10 @@
 
   const TABS = [
     { id: null, label: 'Overview', icon: 'chart-bar' },
-    { id: 'inbound', label: 'Inbound', icon: 'arrow-down' },
-    { id: 'dns', label: 'DNS', icon: 'globe' },
-    { id: 'outbound', label: 'Outbound', icon: 'arrow-up' },
-    { id: 'fw', label: 'Firewall', icon: 'shield' },
+    { id: 'inbound', label: 'Inbound' },
+    { id: 'dns', label: 'DNS' },
+    { id: 'outbound', label: 'Outbound' },
+    { id: 'fw', label: 'Firewall' },
     { id: 'client', label: 'Per client', icon: 'user' },
   ]
   const PERIODS = [
@@ -115,24 +115,6 @@
   let mapKind = $state('src')
   const mapData = $derived(mapKind === 'src' ? (data.fw?.top_countries || []) : (data.outbound?.top_countries || []))
 
-  // One combined "traffic over time" chart: align all four types onto a shared time
-  // axis (union of bucket timestamps; null where a type has no bucket) so uPlot can
-  // draw them as one multi-series chart instead of four cramped tiles.
-  const trafficSeries = $derived.by(() => {
-    const types = ['inbound', 'dns', 'outbound', 'fw']
-    const tsSet = new Set()
-    for (const t of types) for (const b of data[t]?.time_series || []) tsSet.add(b.ts)
-    const xs = [...tsSet].sort((a, b) => a - b)
-    if (xs.length < 2) return null
-    const at = new Map(xs.map((t, i) => [t, i]))
-    const cols = types.map((t) => {
-      const col = new Array(xs.length).fill(null)
-      for (const b of data[t]?.time_series || []) col[at.get(b.ts)] = b.count
-      return col
-    })
-    return { data: [xs, ...cols], series: types.map((t) => ({ label: typeMeta[t].label, stroke: typeMeta[t].stroke })) }
-  })
-
   // Plain-English one-liner summarizing the period.
   const summary = $derived.by(() => {
     const fw = data.fw, inb = data.inbound, dns = data.dns
@@ -185,21 +167,22 @@
 </script>
 
 <div class="analytics">
-  <!-- masthead -->
-  <div class="masthead">
-    <div class="masthead-l">
-      <span class="icon-badge"><Icon name="chart-bar" size={18} /></span>
-      <div>
-        <h1>Analytics</h1>
-        <p>Everything your firewall, DNS resolver, and reverse proxy have seen — in plain language, with the raw numbers one click away.</p>
-      </div>
-    </div>
-    <div class="updated"><span class="live-dot"></span>Live · last {periodLabelFull}</div>
-  </div>
+  <InfoCard
+    icon="chart-bar"
+    title="Analytics"
+    description="Everything your firewall, DNS resolver, and reverse proxy have seen — in plain language, with the raw numbers one click away."
+  />
 
-  <!-- toolbar: reusable Tabs + a kt-btn-group period control (no bespoke controls) -->
+  <!-- toolbar: segmented tab menu + a kt-btn-group period control -->
   <div class="toolbar">
-    <Tabs tabs={TABS} activeTab={selectedType} onchange={setType} size="sm" class="flex-1 min-w-0" />
+    <div class="tabs">
+      {#each TABS as t}
+        <button class="tab" class:active={selectedType === t.id} onclick={() => setType(t.id)}>
+          {#if t.icon}<Icon name={t.icon} size={14} />{:else if t.id && typeMeta[t.id]}<span class="tdot" style="background:{typeMeta[t.id].cvar}"></span>{/if}
+          {t.label}
+        </button>
+      {/each}
+    </div>
     <div class="controls">
       <div class="kt-btn-group">
         {#each PERIODS as p}
@@ -261,14 +244,20 @@
       {/each}
     </div>
 
-    <!-- one full-width combined traffic chart (all four types on a shared time axis) -->
+    <!-- traffic over time: one full-width chart per type, stacked -->
     <div class="section-title">Traffic over time<span class="line"></span></div>
-    <div class="card stack-gap">
-      <div class="card-body">
-        {#if trafficSeries}
-          <UPlotChart data={trafficSeries.data} series={trafficSeries.series} height={220} legend={true} />
-        {:else}<div class="nodata pad">Not enough data in this period yet.</div>{/if}
-      </div>
+    <div class="tstack stack-gap">
+      {#each Object.entries(typeMeta) as [type, meta]}
+        {@const d = data[type]}
+        {#if d?.time_series?.length > 1}
+          <div class="card">
+            <div class="card-h"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{fmtNumber(d.total_count)} · last {periodLabelFull}</span></div>
+            <div class="card-body tight">
+              <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} legend={false} />
+            </div>
+          </div>
+        {/if}
+      {/each}
     </div>
 
     <!-- enforcement (reuses BlockedByLayer, real /api/fw/layers) -->
@@ -280,9 +269,9 @@
       <div class="card">
         <div class="card-h">
           <h3><Icon name="world" size={15} />World map</h3>
-          <div class="kt-btn-group">
-            <Button variant={mapKind === 'src' ? 'mono' : 'outline'} size="xs" onclick={() => (mapKind = 'src')}>Who's hitting us</Button>
-            <Button variant={mapKind === 'dest' ? 'mono' : 'outline'} size="xs" onclick={() => (mapKind = 'dest')}>Where traffic goes</Button>
+          <div class="map-toggle">
+            <button class:active={mapKind === 'src'} onclick={() => (mapKind = 'src')}>Who's hitting us</button>
+            <button class:active={mapKind === 'dest'} onclick={() => (mapKind = 'dest')}>Where traffic goes</button>
           </div>
         </div>
         <div class="card-body tight">
@@ -608,20 +597,21 @@
   .nodata.pad { padding: 18px 2px; }
 
   /* masthead */
-  .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  .masthead-l { display: flex; gap: 12px; align-items: flex-start; }
-  .masthead h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.01em; }
-  .masthead p { margin: 0; color: var(--muted-foreground); font-size: 13px; max-width: 60ch; line-height: 1.5; }
-  .icon-badge { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: color-mix(in oklch, var(--primary) 12%, var(--card)); color: var(--primary); flex-shrink: 0; }
+  .icon-badge { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: color-mix(in oklch, var(--primary) 12%, var(--card)); color: var(--primary); flex-shrink: 0; }
   .icon-badge.sm { width: 30px; height: 30px; border-radius: 8px; }
-  .updated { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
-  .live-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--success); box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 22%, transparent); }
-  @media (prefers-reduced-motion: no-preference) { .live-dot { animation: pulse 2.4s ease-in-out infinite; } }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
-  /* toolbar */
+  /* toolbar: segmented tab menu (smaller) + period controls */
   .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
   .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tabs { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: calc(var(--a-radius) + 3px); flex-wrap: wrap; }
+  .tab { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; cursor: pointer; padding: 5px 11px; border-radius: calc(var(--a-radius) - 1px); font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); }
+  .tab:hover { color: var(--foreground); }
+  .tab.active { background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+  .tab .tdot { width: 6px; height: 6px; border-radius: 99px; flex-shrink: 0; }
+  .map-toggle { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: 9px; }
+  .map-toggle button { border: 0; background: transparent; padding: 5px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; cursor: pointer; color: var(--muted-foreground); }
+  .map-toggle button.active { background: var(--card); color: var(--foreground); }
+  .tstack { display: flex; flex-direction: column; gap: 12px; }
 
   /* cards */
   .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); overflow: hidden; display: flex; flex-direction: column; }
