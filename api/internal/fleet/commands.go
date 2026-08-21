@@ -24,6 +24,7 @@ var allowedCommands = map[string]bool{
 	"fix-packages":  true, // targeted OS-package upgrades for selected CVEs
 	"update-kernel": true, // install newest kernel meta-packages (+ reboot separately)
 	"set-dry-run":   true, // flip enforcement on/off (dry-run) live
+	"update-agent":  true, // self-update the wgscout binary to the latest verified release
 }
 
 // Command is one queued instruction for a machine.

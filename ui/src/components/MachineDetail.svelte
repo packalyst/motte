@@ -175,6 +175,11 @@
     confirmText: enabled ? 'Dry-run' : 'Go live', variant: enabled ? 'primary' : 'destructive',
   })
   const rescan = () => cmd('rescan', null, { title: 'Rescan', message: `Re-run the Trivy CVE scan on ${machine.name} now?` })
+  const updateAgent = () => cmd('update-agent', null, {
+    title: 'Update agent',
+    message: `Update the wgscout agent on ${machine.name} to the latest release? It downloads the release binary, verifies its checksum, checks it runs, swaps it in (keeping a backup), and restarts the agent — a brief reconnect, no reboot. If it's already current, nothing changes.`,
+    confirmText: 'Update agent',
+  })
 
   // Unblock a single IP (the typed one, or a specific one from the enforced list).
   async function unblockOn(ip = null) {
@@ -373,6 +378,7 @@
                 <Button variant="outline" size="xs" icon="download" onclick={applyUpdates}>Apply updates</Button>
                 <Button variant="outline" size="xs" icon="cpu" onclick={updateKernel}>Update kernel</Button>
                 <Button variant="outline" size="xs" icon="scan" onclick={rescan}>Rescan</Button>
+                <Button variant="outline" size="xs" icon="arrow-up" onclick={updateAgent}>Update agent</Button>
               </div>
             </div>
             <div>
