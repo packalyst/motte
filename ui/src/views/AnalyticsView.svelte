@@ -443,46 +443,38 @@
       {#if d.time_series?.length}
         <div class="card stack-gap">
           <div class="card-h"><h3>Events over time</h3><span class="sub">{periodLabelFull}</span></div>
-          <div class="card-body"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} legend={false} /></div>
+          <div class="card-body tight"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} legend={false} /></div>
         </div>
       {/if}
 
       <!-- type-specific breakdowns -->
       {#if selectedType === 'inbound'}
-        <div class="grid cols-2 stack-gap start">
+        <div class="masonry stack-gap">
+          {@render countriesCard('Top countries', 'who is visiting', d.top_countries, meta.cvar)}
           <div class="card"><div class="card-h"><h3>HTTP status</h3><span class="sub">how requests were answered</span></div><div class="card-body"><Donut segments={donutSeg(d.http_status, httpColor)} format={fmtNumber} /></div></div>
-          {@render listCard('Top domains', d.top_domains, 'domain', meta.cvar, { wide: true })}
-        </div>
-        <div class="grid cols-2 stack-gap start">
+          {@render listCard('Top domains', d.top_domains, 'domain', meta.cvar, {})}
           {@render pathCard('Top paths', d.top_paths, meta.cvar)}
           {@render ipCard('Top visitors', d.top_clients, meta.cvar)}
         </div>
-        {@render countriesCard('Top countries', 'who is visiting', d.top_countries, meta.cvar)}
       {:else if selectedType === 'dns'}
-        <div class="grid cols-2 stack-gap start">
+        <div class="masonry stack-gap">
           <div class="card"><div class="card-h"><h3>Response codes</h3></div><div class="card-body"><Donut segments={donutSeg(d.status_counts, dnsColor)} format={fmtNumber} /></div></div>
           <div class="card"><div class="card-h"><h3>Query types</h3></div><div class="card-body"><Donut segments={donutSeg(d.query_types, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
-        </div>
-        <div class="grid cols-2 stack-gap start">
-          {@render listCard('Top blocked domains', d.top_blocked, 'domain', 'var(--destructive)', { wide: true, sub: 'ads & trackers' })}
-          <div class="card"><div class="card-h"><h3>What this means</h3></div><div class="card-body"><div class="caption flat"><Icon name="info-circle" size={13} /><span>Every device on your VPN resolves names through this resolver. “Blocked” queries are known ad, tracker, or malware domains — they never got an answer.</span></div></div></div>
+          {@render listCard('Top allowed domains', d.top_allowed, 'domain', 'var(--success)', { sub: 'most resolved' })}
+          {@render listCard('Top blocked domains', d.top_blocked, 'domain', 'var(--destructive)', { sub: 'ads & trackers' })}
         </div>
       {:else if selectedType === 'outbound'}
-        <div class="grid cols-2 stack-gap start">
+        <div class="stack-gap">{@render mapCard('World map', 'where your traffic goes', d.top_countries, 'dest')}</div>
+        <div class="masonry stack-gap">
           <div class="card"><div class="card-h"><h3>Protocol mix</h3></div><div class="card-body"><Donut segments={donutSeg(d.protocols, (_, i) => (i === 0 ? 'var(--tx)' : 'var(--info)'))} format={fmtNumber} /></div></div>
-          {@render ipCard('Top destinations', d.top_dest_ips, meta.cvar, { wide: true, dest: true })}
-        </div>
-        <div class="grid cols-2 stack-gap start">
-          {@render mapCard('World map', 'where your traffic goes', d.top_countries, 'dest')}
           {@render countriesCard('Top countries', 'destination', d.top_countries, 'var(--info)')}
+          {@render ipCard('Top destinations', d.top_dest_ips, meta.cvar, { dest: true })}
         </div>
       {:else}
-        <div class="grid cols-2 stack-gap start">
-          {@render listCard('Most-probed ports', d.top_dest_ports, 'status', meta.cvar, {})}
-          {@render listCard('Rules that fired', d.top_rules, 'status', meta.cvar, { wide: true })}
-        </div>
-        <div class="grid cols-2 stack-gap start">
-          {@render mapCard('World map', 'who is attacking', d.top_countries, 'src')}
+        <div class="stack-gap">{@render mapCard('World map', 'who is attacking', d.top_countries, 'src')}</div>
+        <div class="masonry stack-gap">
+          <div class="card"><div class="card-h"><h3>Most-probed ports</h3></div><div class="card-body"><Donut segments={donutSeg(d.top_dest_ports, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
+          {@render countriesCard('Top countries', 'source of attacks', d.top_countries, meta.cvar)}
           {@render ipCard('Top attacker IPs', d.top_clients, meta.cvar)}
         </div>
       {/if}
@@ -622,13 +614,14 @@
   .card-h .sub { font-size: 11.5px; color: var(--muted-foreground); font-weight: 600; }
   .card-body { padding: 16px; flex: 1; }
   .card-body.tight { padding: 0; }
-  .caption { font-size: 12px; color: var(--muted-foreground); margin: 10px 2px 0; line-height: 1.5; display: flex; gap: 6px; align-items: flex-start; }
-  .caption.flat { margin-top: 0; }
-  .caption :global(svg) { flex-shrink: 0; margin-top: 2px; }
 
   .grid { display: grid; gap: 14px; }
   .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
   .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  /* masonry: variable-height cards flow into columns (real Pinterest-style) */
+  .masonry { columns: 2; column-gap: 14px; }
+  .masonry > :global(*) { break-inside: avoid; margin-bottom: 14px; }
+  @media (max-width: 720px) { .masonry { columns: 1; } }
   .grid.start { align-items: start; }
   .stack-gap { margin-bottom: 14px; }
   @media (max-width: 980px) { .grid.cols-4 { grid-template-columns: repeat(2, 1fr); } .grid.cols-2 { grid-template-columns: 1fr; } }

@@ -55,6 +55,7 @@ type StatsResponse struct {
 	CachedCount  int           `json:"cached_count,omitempty"`
 	BlockedCount int           `json:"blocked_count,omitempty"`
 	TopBlocked   []DomainStat  `json:"top_blocked,omitempty"`
+	TopAllowed   []DomainStat  `json:"top_allowed,omitempty"` // most-queried DNS domains that were NOT blocked
 
 	// Outbound-specific
 	Protocols  []StatusCount `json:"protocols,omitempty"` // TCP/UDP mix
@@ -500,6 +501,24 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 				var stat DomainStat
 				blockedRows.Scan(&stat.Domain, &stat.Count)
 				stats.TopBlocked = append(stats.TopBlocked, stat)
+			}
+		}
+
+		// Top allowed (most-resolved) domains — queried and NOT blocked/filtered.
+		allowedRows, _ := s.db.Query(`
+			SELECT logs_domain, COUNT(*) as cnt FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_type = 'dns'
+			  AND logs_domain != ''
+			  AND logs_status NOT LIKE '%BLOCK%' AND logs_status NOT LIKE '%FILTER%'`+clientCond+`
+			GROUP BY logs_domain ORDER BY cnt DESC LIMIT 10
+		`, pArgs()...)
+		if allowedRows != nil {
+			defer allowedRows.Close()
+			for allowedRows.Next() {
+				var stat DomainStat
+				allowedRows.Scan(&stat.Domain, &stat.Count)
+				stats.TopAllowed = append(stats.TopAllowed, stat)
 			}
 		}
 	}
