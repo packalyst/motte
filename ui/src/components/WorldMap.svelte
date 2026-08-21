@@ -113,8 +113,8 @@
   </svg>
 
   <div class="zoom">
-    <button title="Zoom in" onclick={() => zoomTo(scale * 1.5)}><Icon name="plus" size={14} /></button>
-    <button title="Zoom out" onclick={() => zoomTo(scale / 1.5)}><Icon name="minus" size={14} /></button>
+    <button title="Zoom in" class="glyph" onclick={() => zoomTo(scale * 1.5)}>+</button>
+    <button title="Zoom out" class="glyph" onclick={() => zoomTo(scale / 1.5)}>&minus;</button>
     <button title="Reset" onclick={reset}><Icon name="refresh" size={13} /></button>
   </div>
 
@@ -127,7 +127,7 @@
 </div>
 
 <style>
-  .wrap { position: relative; width: 100%; overflow: hidden; border-radius: 8px; }
+  .wrap { position: relative; width: 100%; overflow: hidden; }
   .map {
     width: 100%; height: auto; display: block; touch-action: none;
     background: color-mix(in oklch, var(--info) 7%, var(--card));
@@ -142,6 +142,7 @@
     color: var(--muted-foreground); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   }
   .zoom button:hover { color: var(--foreground); }
+  .zoom button.glyph { font-size: 17px; font-weight: 600; line-height: 1; }
   .tt {
     position: absolute; transform: translate(-50%, -115%); pointer-events: none;
     background: var(--card); border: 1px solid var(--border); border-radius: 8px;

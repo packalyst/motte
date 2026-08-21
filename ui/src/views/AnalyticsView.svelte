@@ -249,14 +249,16 @@
     <div class="tstack stack-gap">
       {#each Object.entries(typeMeta) as [type, meta]}
         {@const d = data[type]}
-        {#if d?.time_series?.length > 1}
-          <div class="card">
-            <div class="card-h"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{fmtNumber(d.total_count)} · last {periodLabelFull}</span></div>
-            <div class="card-body" style="padding:0">
+        <div class="card">
+          <div class="card-h"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{d && !d.error ? fmtNumber(d.total_count) : '—'} · last {periodLabelFull}</span></div>
+          {#if d?.time_series?.length > 1}
+            <div class="card-body tight">
               <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} legend={false} />
             </div>
-          </div>
-        {/if}
+          {:else}
+            <div class="card-body"><div class="nodata">Not enough data in this period.</div></div>
+          {/if}
+        </div>
       {/each}
     </div>
 
@@ -618,7 +620,7 @@
   .card-h h3 { margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
   .card-h .sub { font-size: 11.5px; color: var(--muted-foreground); font-weight: 600; }
   .card-body { padding: 16px; flex: 1; }
-  .card-body.tight { padding: 12px 16px; }
+  .card-body.tight { padding: 0; }
   .caption { font-size: 12px; color: var(--muted-foreground); margin: 10px 2px 0; line-height: 1.5; display: flex; gap: 6px; align-items: flex-start; }
   .caption.flat { margin-top: 0; }
   .caption :global(svg) { flex-shrink: 0; margin-top: 2px; }
