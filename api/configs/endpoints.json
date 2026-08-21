@@ -32,6 +32,36 @@
     }
   },
   "services": {
+    "backup": {
+      "prefix": "/api/backup",
+      "enabled": true,
+      "endpoints": [
+        {
+          "path": "/export",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Export",
+          "description": "Build a passphrase-encrypted backup of the panel config"
+        },
+        {
+          "path": "/preview",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Preview",
+          "description": "Decrypt a backup and report what an import would replace"
+        },
+        {
+          "path": "/import",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Import",
+          "description": "Apply a backup (faithful replace) then reconcile live state"
+        }
+      ]
+    },
     "setup": {
       "prefix": "/api/setup",
       "enabled": true,

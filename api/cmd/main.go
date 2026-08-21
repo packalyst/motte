@@ -14,6 +14,7 @@ import (
 	"api/internal/adguard"
 	"api/internal/auth"
 	"api/internal/auth/pwa"
+	"api/internal/backup"
 	"api/internal/config"
 	"api/internal/database"
 	"api/internal/docker"
@@ -415,6 +416,36 @@ func main() {
 			}
 		}
 	}
+
+	// Backup & migrate: passphrase-encrypted export + faithful-replace import of the
+	// panel config. Import writes rows, then this reconciler re-applies live state
+	// (nftables, WireGuard peers, headscale ACL, fleet listener). Callbacks are
+	// injected so this package never imports the subsystems (no cycle).
+	backupSvc := backup.New(backup.Deps{
+		DB: database.Get,
+		Reconcile: func() []string {
+			var done []string
+			if fwSvc != nil {
+				fwSvc.SyncAndReapply()
+				done = append(done, "firewall")
+			}
+			if vpnSvc != nil {
+				vpnSvc.SyncClients()
+				_ = vpnSvc.ApplyRules()
+				if err := vpn.GenerateAndApplyHeadscaleACL(); err == nil {
+					done = append(done, "headscale-acl")
+				}
+				done = append(done, "vpn")
+			}
+			if flSvc != nil {
+				flSvc.ReloadFromSettings()
+				done = append(done, "fleet")
+			}
+			return done
+		},
+	})
+	r.RegisterService("backup", backupSvc.Handlers())
+	log.Println("Backup & migrate service registered")
 
 	// Initialize WebSocket service
 	wsSvc := ws.New()

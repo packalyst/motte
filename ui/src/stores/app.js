@@ -260,6 +260,21 @@ export async function apiGetBlob(endpoint) {
   return res.blob()
 }
 
+// POST that returns a file download — resolves { blob, filename } (filename read
+// from the Content-Disposition header). For endpoints that stream a file back.
+export async function apiPostBlob(endpoint, data) {
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: data ? JSON.stringify(data) : undefined,
+  })
+  if (!res.ok) throw new Error((await res.text()) || res.statusText)
+  const blob = await res.blob()
+  const cd = res.headers.get('Content-Disposition') || ''
+  const m = cd.match(/filename="?([^"]+)"?/)
+  return { blob, filename: m ? m[1] : 'download' }
+}
+
 // Generate random secure credentials for AdGuard using crypto API
 export function generateAdguardCredentials() {
   const usernameChars = 'abcdefghijklmnopqrstuvwxyz0123456789'

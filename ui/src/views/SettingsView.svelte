@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, generateAdguardCredentials, confirm } from '../stores/app.js'
+  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, apiPostBlob, generateAdguardCredentials, confirm } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
@@ -867,6 +867,95 @@
     })
     if (confirmed) {
       await removePort(port, protocol)
+    }
+  }
+
+  // ── Backup & migrate ────────────────────────────────────────────────────────
+  // Export: a passphrase-encrypted file carrying the panel config (+ opt-in tiers).
+  let bkPass = $state('')
+  let bkPass2 = $state('')
+  let bkUsers = $state(false)
+  let bkFleet = $state(false)
+  let bkExporting = $state(false)
+
+  async function exportBackup() {
+    if (bkPass.length < 8) return toast('Passphrase must be at least 8 characters', 'error')
+    if (bkPass !== bkPass2) return toast('Passphrases do not match', 'error')
+    bkExporting = true
+    try {
+      const { blob, filename } = await apiPostBlob('/api/backup/export', { passphrase: bkPass, users: bkUsers, fleet: bkFleet })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+      toast('Backup downloaded — keep it and its passphrase safe', 'success')
+      bkPass = ''
+      bkPass2 = ''
+    } catch (e) {
+      toast(e.message || 'Export failed', 'error')
+    } finally {
+      bkExporting = false
+    }
+  }
+
+  // Import: read the file locally, preview what it would replace, then apply.
+  let impFileText = $state('')
+  let impFileName = $state('')
+  let impPass = $state('')
+  let impPreview = $state(null)
+  let impLoading = $state(false)
+  let impApplying = $state(false)
+
+  function onImportFile(e) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    impFileName = f.name
+    impPreview = null
+    const reader = new FileReader()
+    reader.onload = () => (impFileText = String(reader.result || ''))
+    reader.readAsText(f)
+  }
+
+  async function previewImport() {
+    if (!impFileText) return toast('Choose a backup file', 'error')
+    if (!impPass) return toast('Enter the backup passphrase', 'error')
+    impLoading = true
+    try {
+      impPreview = await apiPost('/api/backup/preview', { passphrase: impPass, backup: impFileText })
+    } catch (e) {
+      impPreview = null
+      toast(e.message || 'Could not read backup', 'error')
+    } finally {
+      impLoading = false
+    }
+  }
+
+  async function applyImport() {
+    const ok = await confirm({
+      title: 'Replace config from backup',
+      message: 'This wipes and reloads the listed tables on THIS panel from the backup, then re-applies firewall / WireGuard / ACL state. It cannot be undone.',
+      description: (impPreview?.warnings || []).join(' '),
+      confirmText: 'Replace & reconcile',
+      variant: 'destructive',
+      alert: true,
+    })
+    if (!ok) return
+    impApplying = true
+    try {
+      const res = await apiPost('/api/backup/import', { passphrase: impPass, backup: impFileText, confirm: true })
+      toast('Backup applied' + (res.reconciled?.length ? ' — reconciled ' + res.reconciled.join(', ') : ''), 'success')
+      impPreview = null
+      impFileText = ''
+      impFileName = ''
+      impPass = ''
+      // Replacing admin users invalidates this session — reload into the login flow.
+      setTimeout(() => location.reload(), 900)
+    } catch (e) {
+      toast(e.message || 'Import failed', 'error')
+    } finally {
+      impApplying = false
     }
   }
 
@@ -1739,6 +1828,83 @@
         >
           Save
         </Button>
+      </div>
+    </div>
+
+    <!-- Backup & migrate - Full width -->
+    <div class="kt-panel">
+      <div class="kt-panel-header">
+        <h3 class="kt-panel-title">
+          <Icon name="database" size={16} />
+          Backup &amp; migrate
+        </h3>
+      </div>
+      <div class="kt-panel-body">
+        <p class="text-xs text-muted-foreground mb-4">
+          Export the whole panel configuration as one passphrase-encrypted file, then restore it here or on a fresh host. The file holds your secrets (peer keys, CA, credentials) sealed by the passphrase — keep both safe: there's no recovery without the passphrase.
+        </p>
+        <div class="grid gap-6 lg:grid-cols-2">
+          <!-- EXPORT -->
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 text-sm font-medium"><Icon name="download" size={15} class="text-muted-foreground" /> Export</div>
+            <Input label="Passphrase" type="password" bind:value={bkPass} placeholder="At least 8 characters" />
+            <Input label="Confirm passphrase" type="password" bind:value={bkPass2} placeholder="Repeat passphrase" />
+            <div class="space-y-2 pt-1">
+              <label class="flex items-center justify-between gap-3 text-sm cursor-pointer">
+                <span><span class="font-medium">Include admin users</span><span class="block text-xs text-muted-foreground">Accounts, password hashes &amp; 2FA</span></span>
+                <Checkbox variant="switch" bind:checked={bkUsers} />
+              </label>
+              <label class="flex items-center justify-between gap-3 text-sm cursor-pointer">
+                <span><span class="font-medium">Include fleet</span><span class="block text-xs text-muted-foreground">Agent CA + enrolled machines</span></span>
+                <Checkbox variant="switch" bind:checked={bkFleet} />
+              </label>
+            </div>
+            <p class="text-xs text-muted-foreground">Core config — VPN peers &amp; ACLs, firewall, routes, settings — is always included.</p>
+            <Button variant="primary" icon="download" loading={bkExporting} onclick={exportBackup} disabled={bkPass.length < 8 || bkPass !== bkPass2}>Download backup</Button>
+          </div>
+          <!-- IMPORT -->
+          <div class="space-y-3 lg:border-l lg:border-border lg:pl-6">
+            <div class="flex items-center gap-2 text-sm font-medium"><Icon name="upload" size={15} class="text-muted-foreground" /> Import</div>
+            <div>
+              <span class="kt-label">Backup file</span>
+              <label class="mt-1 flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm cursor-pointer hover:bg-muted transition">
+                <Icon name="file-text" size={15} class="text-muted-foreground shrink-0" />
+                <span class="truncate {impFileName ? 'text-foreground' : 'text-muted-foreground'}">{impFileName || 'Choose .wgbackup file…'}</span>
+                <input type="file" accept=".wgbackup,application/json" class="hidden" onchange={onImportFile} />
+              </label>
+            </div>
+            <Input label="Passphrase" type="password" bind:value={impPass} placeholder="Backup passphrase" />
+            <Button variant="outline" icon="eye" loading={impLoading} onclick={previewImport} disabled={!impFileText || !impPass}>Preview changes</Button>
+
+            {#if impPreview}
+              <div class="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                <div class="text-xs text-muted-foreground">
+                  Backup from {impPreview.header?.created_at ? new Date(impPreview.header.created_at).toLocaleString() : 'unknown date'} · includes {(impPreview.header?.includes || []).join(', ')}
+                </div>
+                <div class="divide-y divide-border">
+                  {#each impPreview.plan as p}
+                    <div class="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span class="font-medium">{p.label}</span>
+                      {#if p.missing}
+                        <span class="text-muted-foreground">skipped — not on this host</span>
+                      {:else}
+                        <span class="tabular-nums text-muted-foreground">{p.existing} <Icon name="arrow-right" size={11} class="inline" /> <span class="text-foreground font-medium">{p.incoming}</span></span>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+                {#if impPreview.warnings?.length}
+                  <div class="rounded-md bg-warning/10 border border-warning/30 p-2 text-[11px] text-warning space-y-1">
+                    {#each impPreview.warnings as wmsg}
+                      <div class="flex gap-1.5"><Icon name="alert-triangle" size={12} class="shrink-0 mt-0.5" /><span>{wmsg}</span></div>
+                    {/each}
+                  </div>
+                {/if}
+                <Button variant="destructive" icon="refresh-alert" loading={impApplying} onclick={applyImport} class="w-full">Replace &amp; reconcile</Button>
+              </div>
+            {/if}
+          </div>
+        </div>
       </div>
     </div>
 
