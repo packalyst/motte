@@ -33,31 +33,27 @@
 
   function setType(t) {
     persisted.value = { ...persisted.value, selectedType: t }
-    // Push a history entry when drilling in, so the browser Back button
-    // returns to the overview instead of leaving the Analytics page.
-    if (typeof window !== 'undefined') {
-      if (t) {
-        history.pushState({ analyticsType: t }, '', window.location.href)
-      } else if (history.state?.analyticsType) {
-        history.back()
-      }
-    }
   }
   function setPeriod(p) {
     persisted.value = { ...persisted.value, period: p }
   }
 
-  // Browser Back button: pop out of drill-in → overview.
-  onMount(() => {
-    function onPop(e) {
-      const t = e.state?.analyticsType ?? null
-      if (t !== persisted.value.selectedType) {
-        persisted.value = { ...persisted.value, selectedType: t }
-      }
-    }
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  })
+  // Top-level tabs: Overview + one per traffic type + a dedicated per-client view.
+  const TABS = [
+    { id: null, label: 'Overview', icon: 'chart-bar' },
+    { id: 'inbound', label: 'Inbound', icon: 'arrow-down' },
+    { id: 'dns', label: 'DNS', icon: 'globe' },
+    { id: 'outbound', label: 'Outbound', icon: 'arrow-up' },
+    { id: 'fw', label: 'Firewall', icon: 'shield' },
+    { id: 'client', label: 'Per client', icon: 'device-laptop' },
+  ]
+  const PERIODS = [
+    { id: 'hour', label: '1h' },
+    { id: 'day', label: '24h' },
+    { id: 'week', label: '7d' },
+    { id: 'month', label: '30d' },
+    { id: 'all', label: 'All' },
+  ]
 
   let data = $state({
     inbound: null,
@@ -154,10 +150,35 @@
     }
   }
 
-  // Reload the per-node byte breakdown when the node, period, or type changes.
+  // Reload the per-node byte breakdown when the node, period, or type changes —
+  // used by both the Outbound drill-in and the dedicated Per-client tab.
   $effect(() => {
     selectedPeer; period; selectedType
-    if (selectedType === 'outbound' && selectedPeer) loadPeerUsage()
+    if ((selectedType === 'outbound' || selectedType === 'client') && selectedPeer) loadPeerUsage()
+  })
+
+  // Overview: source countries aggregated across the "incoming" types (inbound
+  // visits + DNS clients + blocked attempts), so "where is this coming from?" reads
+  // at a glance without drilling in.
+  const overviewCountries = $derived.by(() => {
+    const agg = {}
+    for (const t of ['inbound', 'dns', 'fw']) {
+      for (const row of data[t]?.top_countries || []) {
+        if (row.country) agg[row.country] = (agg[row.country] || 0) + row.count
+      }
+    }
+    return Object.entries(agg).map(([country, count]) => ({ country, count }))
+      .sort((a, b) => b.count - a.count).slice(0, 8)
+  })
+
+  // Per-client: countries the selected client talked to, by bytes, from its destinations.
+  const clientCountries = $derived.by(() => {
+    const agg = {}
+    for (const d of peerUsage?.destinations || []) {
+      if (d.country) agg[d.country] = (agg[d.country] || 0) + (d.bytes_total || 0)
+    }
+    return Object.entries(agg).map(([country, count]) => ({ country, count }))
+      .sort((a, b) => b.count - a.count).slice(0, 8)
   })
 
   // ── Reputation enrichment for the drill-in "Top source IPs" list ──
@@ -248,54 +269,70 @@
     return httpColor[row.status] || 'bg-primary'
   }
 
-  const infoTitle = $derived(selectedType ? typeMeta[selectedType].label : 'Analytics')
-  const infoDesc = $derived(selectedType
-    ? {
-        inbound:  'Traefik-observed HTTP requests to your domain routes and catchall.',
-        dns:      'AdGuard DNS queries from clients connected to your VPN.',
-        outbound: 'Outbound connections VPN peers made to the internet.',
-        fw:       'Firewall drops — attempted connections that did not pass any rule.',
-      }[selectedType]
-    : 'Traffic overview across all log sources — inbound, DNS, outbound, firewall.')
+  const infoIcon = $derived(selectedType === 'client' ? 'device-laptop' : selectedType ? typeMeta[selectedType].icon : 'chart-bar')
+  const infoTitle = $derived(selectedType === 'client' ? 'Per client' : selectedType ? typeMeta[selectedType].label : 'Analytics')
+  const infoDesc = $derived(selectedType === 'client'
+    ? 'What each connected client talked to, how much it sent and received, and where.'
+    : selectedType
+      ? {
+          inbound:  'Traefik-observed HTTP requests to your domain routes and catchall.',
+          dns:      'AdGuard DNS queries from clients connected to your VPN.',
+          outbound: 'Outbound connections VPN peers made to the internet.',
+          fw:       'Firewall drops — attempted connections that did not pass any rule.',
+        }[selectedType]
+      : 'Traffic overview across all log sources — inbound, DNS, outbound, firewall.')
 </script>
+
+<!-- one country row: flag · code · bar · value — reused on overview, drill-ins, per-client -->
+{#snippet countryRow(code, value, ratio, barClass = 'bg-primary')}
+  <div class="flex items-center gap-3 text-sm">
+    <span class="shrink-0"><CountryFlag {code} size="sm" /></span>
+    <span class="w-8 shrink-0 text-xs font-mono uppercase">{code || '—'}</span>
+    <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden"><div class="h-full {barClass}" style="width: {(ratio || 0) * 100}%"></div></div>
+    <span class="font-mono text-xs w-16 text-right tabular-nums">{value}</span>
+  </div>
+{/snippet}
 
 <div class="space-y-4">
   <InfoCard
-    icon={selectedType ? typeMeta[selectedType].icon : 'chart-bar'}
+    icon={infoIcon}
     title={infoTitle}
     description={infoDesc}
   />
 
   <div class="kt-panel">
-    <div class="kt-panel-header flex-col sm:flex-row gap-2">
-      <div class="contents sm:flex sm:items-center sm:gap-2">
-        {#if selectedType}
-          <Button variant="outline" size="sm" icon="arrow-left" onclick={() => setType(null)}>
-            Back
-          </Button>
-        {/if}
-        <Select value={period} onchange={(e) => setPeriod(e.target.value)} class="flex-1 sm:flex-none sm:w-36">
-          <option value="hour">Last hour</option>
-          <option value="day">Last 24 hours</option>
-          <option value="week">Last 7 days</option>
-          <option value="month">Last 30 days</option>
-          <option value="all">All time</option>
-        </Select>
-        <Select value={selectedPeer} onchange={(e) => { selectedPeer = e.target.value }} class="flex-1 sm:flex-none sm:w-44">
-          <option value="">All nodes</option>
-          {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
-        </Select>
+    <div class="kt-panel-header flex-col gap-0 !p-0 items-stretch">
+      <!-- Tabs: Overview + one per traffic type + Per client -->
+      <div class="flex gap-1 overflow-x-auto px-2 pt-1 border-b border-border">
+        {#each TABS as t}
+          <button
+            type="button"
+            onclick={() => setType(t.id)}
+            class="flex items-center gap-1.5 px-3 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition cursor-pointer {selectedType === t.id ? 'border-primary text-foreground font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}"
+          >
+            <Icon name={t.icon} size={15} />{t.label}
+          </button>
+        {/each}
       </div>
-      <div class="w-full border-t border-border sm:hidden"></div>
-      <div class="kt-btn-group self-end sm:self-auto">
-        {#if selectedType}
-          <Button variant="outline" size="sm" icon="download" onclick={downloadCsv}>
-            Export
-          </Button>
+      <!-- Controls: period + (peer picker when relevant) + export/refresh -->
+      <div class="flex flex-wrap items-center gap-2 p-3">
+        <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs">
+          {#each PERIODS as p}
+            <button type="button" onclick={() => setPeriod(p.id)} class="px-2.5 py-1 rounded-md transition cursor-pointer {period === p.id ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">{p.label}</button>
+          {/each}
+        </div>
+        {#if selectedType === 'outbound' || selectedType === 'client'}
+          <Select value={selectedPeer} onchange={(e) => { selectedPeer = e.target.value }} class="w-full sm:w-52">
+            <option value="">{selectedType === 'client' ? 'Choose a client…' : 'All nodes'}</option>
+            {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
+          </Select>
         {/if}
-        <Button variant="outline" size="sm" icon="refresh" onclick={loadAll}>
-          Refresh
-        </Button>
+        <div class="ml-auto flex items-center gap-2">
+          {#if selectedType && selectedType !== 'client'}
+            <Button variant="outline" size="sm" icon="download" onclick={downloadCsv}>Export</Button>
+          {/if}
+          <Button variant="outline" size="sm" icon="refresh" onclick={loadAll}>Refresh</Button>
+        </div>
       </div>
     </div>
 
@@ -304,6 +341,64 @@
         <div class="flex justify-center py-12">
           <LoadingSpinner />
         </div>
+      {:else if selectedType === 'client'}
+        <!-- ═════════ PER CLIENT ═════════ -->
+        {#if !selectedPeer}
+          <EmptyState icon="device-laptop" title="Pick a client"
+            description="Choose a client above to see what it talked to, how much it sent and received, and which countries it reached." />
+        {:else if peerUsageLoading}
+          <div class="flex justify-center py-12"><LoadingSpinner /></div>
+        {:else if peerUsage?.error}
+          <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{peerUsage.error}</div>
+        {:else if peerUsage}
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard icon="upload" color="info" value={fmtBytes(peerUsage.total_up)} label="Uploaded" />
+            <StatCard icon="download" color="success" value={fmtBytes(peerUsage.total_down)} label="Downloaded" />
+            <StatCard icon="activity" color="warning" value={fmtBytes((peerUsage.total_up || 0) + (peerUsage.total_down || 0))} label="Total" />
+            <StatCard icon="globe" color="primary" value={peerUsage.destinations?.length || 0} label="Destinations" />
+          </div>
+
+          {#if peerUsage.series?.length}
+            <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
+              <div class="text-sm font-semibold mb-3">Traffic over time</div>
+              <div class="text-info"><AreaChart data={peerUsage.series} valueKey="total" labelKey="time" height={160} format={fmtBytes} /></div>
+            </div>
+          {/if}
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {#if peerUsage.destinations?.length}
+              {@const maxD = maxOf(peerUsage.destinations, 'bytes_total')}
+              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
+                <div class="text-sm font-semibold mb-4">Top destinations</div>
+                <div class="space-y-2.5">
+                  {#each peerUsage.destinations.slice(0, 12) as row}
+                    <div class="flex items-center gap-3 text-sm">
+                      <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
+                      <span class="w-40 shrink-0 truncate text-xs font-mono">{row.domain || row.dest_ip}</span>
+                      <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden"><div class="h-full bg-info" style="width: {(row.bytes_total / maxD) * 100}%"></div></div>
+                      <span class="font-mono text-xs w-16 text-right tabular-nums">{fmtBytes(row.bytes_total)}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              <div class="bg-card border border-border rounded-lg p-4 text-xs text-muted-foreground">No per-destination byte data yet — enable the conntrack watcher in Settings → Logs Watchers.</div>
+            {/if}
+
+            {#if clientCountries.length}
+              {@const maxC = clientCountries[0].count}
+              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
+                <div class="text-sm font-semibold mb-4">Countries talked to</div>
+                <div class="space-y-2.5">
+                  {#each clientCountries as row}
+                    {@render countryRow(row.country, fmtBytes(row.count), row.count / maxC)}
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
       {:else if !selectedType}
         <!-- ═════════ OVERVIEW ═════════ -->
         <!-- Plain-English summary of the selected period -->
@@ -462,6 +557,20 @@
           </div>
         {/if}
 
+        <!-- Where is it all coming from — source countries across inbound/DNS/firewall -->
+        {#if overviewCountries.length}
+          {@const maxOC = overviewCountries[0].count}
+          <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
+            <div class="text-sm font-semibold">Top source countries</div>
+            <div class="text-[11px] text-muted-foreground mb-4">Where visitors, DNS clients, and blocked attempts are coming from.</div>
+            <div class="grid sm:grid-cols-2 gap-x-6 gap-y-2.5">
+              {#each overviewCountries as row}
+                {@render countryRow(row.country, fmtNumber(row.count), row.count / maxOC)}
+              {/each}
+            </div>
+          </div>
+        {/if}
+
         {#if Object.values(data).every(d => !d || d.error || d.total_count === 0)}
           <EmptyState
             icon="chart-bar"
@@ -578,14 +687,7 @@
                 </div>
                 <div class="space-y-2.5">
                   {#each d.top_countries as row}
-                    <div class="flex items-center gap-3 text-sm">
-                      <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
-                      <span class="w-8 shrink-0 text-xs font-mono uppercase">{row.country || '—'}</span>
-                      <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                        <div class="h-full {typeMeta[selectedType].bar}" style="width: {(row.count / maxCountry) * 100}%"></div>
-                      </div>
-                      <span class="font-mono text-xs w-14 text-right tabular-nums">{fmtNumber(row.count)}</span>
-                    </div>
+                    {@render countryRow(row.country, fmtNumber(row.count), row.count / maxCountry, typeMeta[selectedType].bar)}
                   {/each}
                 </div>
               </div>
@@ -694,12 +796,6 @@
             {/if}
           </div>
 
-          <!-- Sanity check: are we actually getting top_paths in the response? -->
-          {#if selectedType === 'inbound' && d.top_paths?.length === 0}
-            <div class="text-xs text-muted-foreground">
-              No path data collected yet — check that the backend has been rebuilt with the extended handleGetStats.
-            </div>
-          {/if}
         {/if}
       {/if}
     </div>
