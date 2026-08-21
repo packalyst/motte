@@ -264,7 +264,7 @@
 
     <!-- enforcement (reuses BlockedByLayer, real /api/fw/layers) -->
     <div class="section-title">Enforcement — what your firewall is actually stopping<span class="line"></span></div>
-    <div class="card stack-gap"><div class="card-body"><BlockedByLayer {period} /></div></div>
+    <div class="stack-gap"><BlockedByLayer {period} /></div>
 
     <!-- world map + top countries -->
     <div class="grid cols-2 stack-gap start">
