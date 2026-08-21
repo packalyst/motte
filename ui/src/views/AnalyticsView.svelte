@@ -3,216 +3,137 @@
   import { apiGet } from '../stores/app.js'
   import { usePersistentState } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
-  import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
   import Select from '../components/Select.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
-  import InfoCard from '../components/InfoCard.svelte'
-  import StatCard from '../components/StatCard.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
   import Sparkline from '../components/Sparkline.svelte'
   import BlockedByLayer from '../components/BlockedByLayer.svelte'
   import UPlotChart from '../components/UPlotChart.svelte'
-  import BarList from '../components/BarList.svelte'
-  import IpBadge from '../components/IpBadge.svelte'
-  import { lookupIPs, getGeoData } from '../stores/geo.js'
+  import Donut from '../components/Donut.svelte'
+  import WorldMap from '../components/WorldMap.svelte'
 
   let { loading = $bindable(true) } = $props()
 
   // Persist selectedType + period across refresh / navigation
-  const persisted = usePersistentState('analytics_ui', {
-    selectedType: null,
-    period: 'day',
-  })
-
-  // Bindable proxies over the persistent store
+  const persisted = usePersistentState('analytics_ui', { selectedType: null, period: 'day' })
   let selectedType = $derived(persisted.value.selectedType)
   let period = $derived(persisted.value.period)
-  const periodLabel = $derived({ hour: '1h', day: '24h', week: '7d', month: '30d', all: 'all time' }[period] || period)
+  const periodLabelFull = $derived({ hour: '1 hour', day: '24 hours', week: '7 days', month: '30 days', all: 'all time' }[period] || period)
 
-  function setType(t) {
-    persisted.value = { ...persisted.value, selectedType: t }
-  }
-  function setPeriod(p) {
-    persisted.value = { ...persisted.value, period: p }
-  }
+  function setType(t) { persisted.value = { ...persisted.value, selectedType: t } }
+  function setPeriod(p) { persisted.value = { ...persisted.value, period: p } }
 
-  // Top-level tabs: Overview + one per traffic type + a dedicated per-client view.
   const TABS = [
     { id: null, label: 'Overview', icon: 'chart-bar' },
-    { id: 'inbound', label: 'Inbound', icon: 'arrow-down' },
-    { id: 'dns', label: 'DNS', icon: 'globe' },
-    { id: 'outbound', label: 'Outbound', icon: 'arrow-up' },
-    { id: 'fw', label: 'Firewall', icon: 'shield' },
-    { id: 'client', label: 'Per client', icon: 'device-laptop' },
+    { id: 'inbound', label: 'Inbound' },
+    { id: 'dns', label: 'DNS' },
+    { id: 'outbound', label: 'Outbound' },
+    { id: 'fw', label: 'Firewall' },
+    { id: 'client', label: 'Per client', icon: 'user' },
   ]
   const PERIODS = [
-    { id: 'hour', label: '1h' },
-    { id: 'day', label: '24h' },
-    { id: 'week', label: '7d' },
-    { id: 'month', label: '30d' },
-    { id: 'all', label: 'All' },
+    { id: 'hour', label: '1h' }, { id: 'day', label: '24h' },
+    { id: 'week', label: '7d' }, { id: 'month', label: '30d' }, { id: 'all', label: 'All' },
   ]
 
-  let data = $state({
-    inbound: null,
-    dns: null,
-    outbound: null,
-    fw: null,
-  })
+  let data = $state({ inbound: null, dns: null, outbound: null, fw: null })
 
-  // Semantic app colors + verified tabler icons (all present in existing views).
-  // `plain` is a plain-English subtitle so the cards read without jargon.
+  // Per-type identity: label, plain-English subtitle, icon, a CSS colour var for
+  // inline styles (`cvar`), and a `stroke` token for UPlotChart.
   const typeMeta = {
-    inbound:  { label: 'Inbound',  plain: 'Visits to your services', icon: 'arrow-down', color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10',     stroke: '--primary' },
-    dns:      { label: 'DNS',      plain: 'Domain lookups',          icon: 'globe',      color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10',     stroke: '--success' },
-    outbound: { label: 'Outbound', plain: 'Traffic leaving',         icon: 'arrow-up',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10',        stroke: '--tx' },
-    fw:       { label: 'Firewall', plain: 'Blocked attacks',         icon: 'shield',     color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10', stroke: '--destructive' },
+    inbound:  { label: 'Inbound',  plain: 'Visits to your services', icon: 'arrow-down', cvar: 'var(--primary)',     stroke: '--primary' },
+    dns:      { label: 'DNS',      plain: 'Domain lookups',          icon: 'globe',      cvar: 'var(--success)',     stroke: '--success' },
+    outbound: { label: 'Outbound', plain: 'Traffic leaving',         icon: 'arrow-up',   cvar: 'var(--tx)',          stroke: '--tx' },
+    fw:       { label: 'Firewall', plain: 'Blocked attacks',         icon: 'shield',     cvar: 'var(--destructive)', stroke: '--destructive' },
   }
-
-  // One plain-English sentence summarizing the current period across subsystems.
-  // Plain-English highlights for the period, as {num, text} so the banner can
-  // emphasize the numbers while keeping it a readable sentence.
-  const summaryParts = $derived.by(() => {
-    const fw = data.fw, inb = data.inbound, dns = data.dns
-    const parts = []
-    if (fw && !fw.error) {
-      const topC = fw.top_countries?.[0]?.country
-      parts.push({ num: fmtNumber(fw.total_count || 0), text: `attacks blocked${fw.unique_visitors ? ` from ${fmtNumber(fw.unique_visitors)} IPs` : ''}${topC ? ` (top ${topC})` : ''}` })
-    }
-    if (inb && !inb.error && inb.unique_visitors != null) {
-      parts.push({ num: fmtNumber(inb.unique_visitors), text: 'visitors to your services' })
-    }
-    if (dns && !dns.error && dns.total_count) {
-      parts.push({ num: fmtNumber(dns.total_count), text: `DNS lookups, ${pct(dns.blocked_count, dns.total_count)}% blocked` })
-    }
-    return parts
-  })
+  const typeDesc = {
+    inbound: 'HTTP requests that reached your self-hosted services through the reverse proxy.',
+    dns: 'Domain-name lookups made by devices on your VPN, including ad & tracker blocking.',
+    outbound: 'Connections your devices made out to the internet.',
+    fw: 'Connection attempts that were dropped before they reached anything.',
+  }
 
   async function loadType(type) {
     try {
       const clientParam = selectedPeer ? `&client=${encodeURIComponent(selectedPeer)}` : ''
-      const res = await apiGet(`/api/logs/stats?type=${type}&period=${period}${clientParam}`)
-      data[type] = res
-    } catch (e) {
-      data[type] = { error: e.message }
-    }
+      data[type] = await apiGet(`/api/logs/stats?type=${type}&period=${period}${clientParam}`)
+    } catch (e) { data[type] = { error: e.message } }
   }
-
   async function loadAll() {
     loading = true
     await Promise.all([...Object.keys(typeMeta).map(loadType), loadTopTalkers()])
     loading = false
   }
-
-  $effect(() => {
-    period; selectedPeer          // deps — reload all stats when either changes
-    loadAll()
-  })
-
+  $effect(() => { period; selectedPeer; loadAll() })
   onMount(loadAll)
 
-  // ── Per-node outbound breakdown (conntrack byte accounting) ──
+  // ── Per-client (conntrack byte accounting) ──
   let peerList = $state([])
   let selectedPeer = $state('')
   let peerUsage = $state(null)
   let peerUsageLoading = $state(false)
-
-  // Top talkers (peers by bytes, from conntrack) — shown on the overview.
   let topTalkers = $state([])
-  async function loadTopTalkers() {
-    try {
-      const res = await apiGet(`/api/logs/top-talkers?period=${period}`)
-      topTalkers = res.talkers || []
-    } catch { topTalkers = [] }
-  }
 
+  async function loadTopTalkers() {
+    try { topTalkers = (await apiGet(`/api/logs/top-talkers?period=${period}`)).talkers || [] } catch { topTalkers = [] }
+  }
   async function loadPeers() {
     try {
       const clients = await apiGet('/api/vpn/clients')
-      peerList = (Array.isArray(clients) ? clients : [])
-        .filter(c => c.ip)
-        .map(c => ({ value: c.ip, label: `${c.name || c.ip} (${c.ip})` }))
+      peerList = (Array.isArray(clients) ? clients : []).filter((c) => c.ip).map((c) => ({ value: c.ip, label: `${c.name || c.ip} (${c.ip})` }))
     } catch { peerList = [] }
   }
   onMount(loadPeers)
-
   async function loadPeerUsage() {
     if (!selectedPeer) { peerUsage = null; return }
     peerUsageLoading = true
-    try {
-      peerUsage = await apiGet(`/api/logs/peer-usage?peer=${encodeURIComponent(selectedPeer)}&period=${period}`)
-    } catch (e) {
-      peerUsage = { destinations: [], series: [], error: e.message }
-    } finally {
-      peerUsageLoading = false
-    }
+    try { peerUsage = await apiGet(`/api/logs/peer-usage?peer=${encodeURIComponent(selectedPeer)}&period=${period}`) }
+    catch (e) { peerUsage = { destinations: [], series: [], error: e.message } }
+    finally { peerUsageLoading = false }
   }
-
-  // Reload the per-node byte breakdown when the node, period, or type changes —
-  // used by both the Outbound drill-in and the dedicated Per-client tab.
   $effect(() => {
     selectedPeer; period; selectedType
-    if ((selectedType === 'outbound' || selectedType === 'client') && selectedPeer) loadPeerUsage()
+    if (selectedType === 'client' && selectedPeer) loadPeerUsage()
+  })
+  // Default the client picker to the first peer when the tab opens with none chosen.
+  $effect(() => {
+    if (selectedType === 'client' && !selectedPeer && peerList.length) selectedPeer = peerList[0].value
   })
 
-  // Overview: source countries aggregated across the "incoming" types (inbound
-  // visits + DNS clients + blocked attempts), so "where is this coming from?" reads
-  // at a glance without drilling in.
-  const overviewCountries = $derived.by(() => {
-    const agg = {}
-    for (const t of ['inbound', 'dns', 'fw']) {
-      for (const row of data[t]?.top_countries || []) {
-        if (row.country) agg[row.country] = (agg[row.country] || 0) + row.count
-      }
-    }
-    return Object.entries(agg).map(([country, count]) => ({ country, count }))
-      .sort((a, b) => b.count - a.count).slice(0, 8)
-  })
+  function openClient(ip) { selectedPeer = ip; setType('client') }
 
-  // Per-client: countries the selected client talked to, by bytes, from its destinations.
   const clientCountries = $derived.by(() => {
     const agg = {}
-    for (const d of peerUsage?.destinations || []) {
-      if (d.country) agg[d.country] = (agg[d.country] || 0) + (d.bytes_total || 0)
+    for (const d of peerUsage?.destinations || []) if (d.country) agg[d.country] = (agg[d.country] || 0) + (d.bytes_total || 0)
+    return Object.entries(agg).map(([country, count]) => ({ country, count })).sort((a, b) => b.count - a.count).slice(0, 10)
+  })
+
+  // Overview world map: source (attackers, fw) vs destination (outbound). Persisted UI.
+  let mapKind = $state('src')
+  const mapData = $derived(mapKind === 'src' ? (data.fw?.top_countries || []) : (data.outbound?.top_countries || []))
+
+  // Plain-English one-liner summarizing the period.
+  const summary = $derived.by(() => {
+    const fw = data.fw, inb = data.inbound, dns = data.dns
+    const parts = []
+    if (fw && !fw.error && fw.total_count != null) {
+      const topC = fw.top_countries?.[0]?.country
+      parts.push({ n: fmtNumber(fw.total_count), t: `attacks blocked${fw.unique_visitors ? ` from ${fmtNumber(fw.unique_visitors)} IPs` : ''}`, code: topC })
     }
-    return Object.entries(agg).map(([country, count]) => ({ country, count }))
-      .sort((a, b) => b.count - a.count).slice(0, 8)
+    if (inb && !inb.error && inb.unique_visitors != null) parts.push({ n: fmtNumber(inb.unique_visitors), t: 'visitors to your services' })
+    if (dns && !dns.error && dns.total_count) parts.push({ n: fmtNumber(dns.total_count), t: `DNS lookups, ${pct(dns.blocked_count, dns.total_count)}% blocked` })
+    return parts
   })
 
-  // ── Reputation enrichment for the drill-in "Top source IPs" list ──
-  // Batch-lookup the visible source IPs once per drill view; badges read from
-  // this reactive snapshot (parent-batched, so no per-row request).
-  let geoData = $state({})
-  $effect(() => {
-    const ips = (data[selectedType]?.top_clients || []).map(r => r.ip).filter(Boolean)
-    if (ips.length === 0) return
-    lookupIPs(ips).then(() => {
-      const next = {}
-      for (const ip of ips) {
-        const g = getGeoData(ip)
-        if (g) next[ip] = g
-      }
-      geoData = next
-    })
-  })
-
-  // ── CSV export of the current drill-in view ──
-  function csvCell(v) {
-    const s = String(v ?? '')
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
-  }
+  // ── CSV export of the current type view ──
+  function csvCell(v) { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
   function downloadCsv() {
     const d = data[selectedType]
     if (!d) return
     const lines = []
-    const section = (title, rows, cols) => {
-      if (!rows?.length) return
-      lines.push(title, cols.join(','))
-      for (const r of rows) lines.push(cols.map(c => csvCell(r[c])).join(','))
-      lines.push('')
-    }
+    const section = (title, rows, cols) => { if (!rows?.length) return; lines.push(title, cols.join(',')); for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(',')); lines.push('') }
     section('Top source IPs', d.top_clients, ['ip', 'country', 'count'])
     section('Top countries', d.top_countries, ['country', 'count'])
     if (selectedType === 'outbound') section('Top destinations', d.top_dest_ips, ['ip', 'country', 'count'])
@@ -222,591 +143,575 @@
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url
-    a.download = `analytics-${selectedType || 'all'}-${period}${selectedPeer ? '-' + selectedPeer : ''}.csv`
-    a.click()
+    a.href = url; a.download = `analytics-${selectedType || 'all'}-${period}.csv`; a.click()
     URL.revokeObjectURL(url)
   }
 
-  function trend(cur, prev) {
-    if (!prev || prev === 0) return null
-    const p = ((cur - prev) / prev) * 100
-    return { pct: p, dir: p >= 0 ? 'up' : 'down' }
-  }
+  // ── format + colour helpers ──
+  function trend(cur, prev) { if (!prev) return null; const p = ((cur - prev) / prev) * 100; return { pct: p, dir: p >= 0 ? 'up' : 'down' } }
+  function fmtNumber(n) { if (n == null) return '—'; n = Math.round(n); if (n < 1000) return String(n); if (n < 1e6) return (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + 'K'; return (n / 1e6).toFixed(1) + 'M' }
+  function fmtBytes(b) { if (!b) return '0 B'; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; let v = b; while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ } return v.toFixed(i === 0 ? 0 : 1) + ' ' + u[i] }
+  function pct(part, total) { return total ? Math.round((part / total) * 100) : 0 }
+  function maxOf(arr, key = 'count') { return arr && arr.length ? Math.max(...arr.map((x) => x[key] || 0)) : 1 }
+  const trGood = (type, tr) => (tr ? (type === 'fw' ? tr.dir === 'down' : tr.dir === 'up') : true)
 
-  function fmtNumber(n) {
-    if (n == null) return '—'
-    if (n < 1000) return n.toString()
-    if (n < 1_000_000) return (n / 1000).toFixed(1) + 'K'
-    return (n / 1_000_000).toFixed(1) + 'M'
-  }
+  // Donut segment colours: semantic where meaningful, else a stable cycle.
+  const CYCLE = ['var(--primary)', 'var(--success)', 'var(--tx)', 'var(--info)', 'var(--mem)', 'var(--warning)']
+  function httpColor(s) { const k = String(s)[0]; return { 2: 'var(--success)', 3: 'var(--primary)', 4: 'var(--warning)', 5: 'var(--destructive)' }[k] || 'var(--muted-foreground)' }
+  function dnsColor(s) { const u = String(s).toUpperCase(); if (u.includes('BLOCK') || u.includes('FILTER') || u === 'SERVFAIL') return 'var(--destructive)'; if (u === 'NOERROR') return 'var(--success)'; if (u === 'NXDOMAIN') return 'var(--warning)'; return 'var(--primary)' }
+  const donutSeg = (rows, colorFn) => (rows || []).map((r, i) => ({ label: r.status, count: r.count, color: colorFn(r.status, i) }))
 
-  function fmtBytes(b) {
-    if (!b) return '0 B'
-    const units = ['B', 'KB', 'MB', 'GB', 'TB']
-    let i = 0
-    while (b >= 1024 && i < units.length - 1) { b /= 1024; i++ }
-    return b.toFixed(i === 0 ? 0 : 1) + ' ' + units[i]
-  }
-
-  function pct(part, total) {
-    if (!total) return 0
-    return Math.round((part / total) * 100)
-  }
-
-  function maxOf(arr, key = 'count') {
-    return arr && arr.length ? Math.max(...arr.map(x => x[key] || 0)) : 1
-  }
-
-  const httpColor = {
-    '2xx': 'bg-success',
-    '3xx': 'bg-primary',
-    '4xx': 'bg-warning',
-    '5xx': 'bg-destructive',
-    'other': 'bg-muted-foreground',
-  }
-  function httpColorFor(row) {
-    return httpColor[row.status] || 'bg-primary'
-  }
-
-  const infoIcon = $derived(selectedType === 'client' ? 'device-laptop' : selectedType ? typeMeta[selectedType].icon : 'chart-bar')
-  const infoTitle = $derived(selectedType === 'client' ? 'Per client' : selectedType ? typeMeta[selectedType].label : 'Analytics')
-  const infoDesc = $derived(selectedType === 'client'
-    ? 'What each connected client talked to, how much it sent and received, and where.'
-    : selectedType
-      ? {
-          inbound:  'Traefik-observed HTTP requests to your domain routes and catchall.',
-          dns:      'AdGuard DNS queries from clients connected to your VPN.',
-          outbound: 'Outbound connections VPN peers made to the internet.',
-          fw:       'Firewall drops — attempted connections that did not pass any rule.',
-        }[selectedType]
-      : 'Traffic overview across all log sources — inbound, DNS, outbound, firewall.')
+  // Success rate for the inbound stat tile.
+  const successRate = (d) => pct(d.http_status?.find((s) => String(s.status).startsWith('2'))?.count || 0, d.http_status?.reduce((s, x) => s + x.count, 0) || 1)
 </script>
 
-<!-- one country row: flag · code · bar · value — reused on overview, drill-ins, per-client -->
-{#snippet countryRow(code, value, ratio, barClass = 'bg-primary')}
-  <div class="flex items-center gap-3 text-sm">
-    <span class="shrink-0"><CountryFlag {code} size="sm" /></span>
-    <span class="w-8 shrink-0 text-xs font-mono uppercase">{code || '—'}</span>
-    <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden"><div class="h-full {barClass}" style="width: {(ratio || 0) * 100}%"></div></div>
-    <span class="font-mono text-xs w-16 text-right tabular-nums">{value}</span>
+<div class="analytics">
+  <!-- masthead -->
+  <div class="masthead">
+    <div class="masthead-l">
+      <span class="icon-badge"><Icon name="chart-bar" size={18} /></span>
+      <div>
+        <h1>Analytics</h1>
+        <p>Everything your firewall, DNS resolver, and reverse proxy have seen — in plain language, with the raw numbers one click away.</p>
+      </div>
+    </div>
+    <div class="updated"><span class="live-dot"></span>Live · last {periodLabelFull}</div>
+  </div>
+
+  <!-- toolbar -->
+  <div class="toolbar">
+    <div class="tabs">
+      {#each TABS as t}
+        <button class="tab" class:active={selectedType === t.id} onclick={() => setType(t.id)}>
+          {#if t.icon}<Icon name={t.icon} size={15} />{:else if t.id && typeMeta[t.id]}<span class="tdot" style="background:{typeMeta[t.id].cvar}"></span>{/if}
+          {t.label}
+        </button>
+      {/each}
+    </div>
+    <div class="controls">
+      <div class="seg">
+        {#each PERIODS as p}<button class:active={period === p.id} onclick={() => setPeriod(p.id)}>{p.label}</button>{/each}
+      </div>
+      {#if selectedType && selectedType !== 'client'}<Button variant="outline" size="sm" icon="download" onclick={downloadCsv}>Export</Button>{/if}
+      <Button variant="outline" size="sm" icon="refresh" onclick={loadAll}>Refresh</Button>
+    </div>
+  </div>
+
+  {#if loading}
+    <div class="center"><LoadingSpinner /></div>
+
+  <!-- ═══════════ OVERVIEW ═══════════ -->
+  {:else if !selectedType}
+    {#if summary.length}
+      <div class="banner">
+        <span class="icon-badge sm"><Icon name="list-details" size={16} /></span>
+        <div>
+          <div class="eyebrow">Last {periodLabelFull} at a glance</div>
+          <div class="line">
+            {#each summary as s, i}{#if i > 0}<span class="sep">·</span>{/if}<b>{s.n}</b> {s.t}{#if s.code}&nbsp;(top <span class="inline-flag"><CountryFlag code={s.code} size="sm" /></span> {s.code}){/if}{/each}
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- KPI tiles -->
+    <div class="grid cols-4 stack-gap">
+      {#each Object.entries(typeMeta) as [type, meta]}
+        {@const d = data[type]}
+        {@const tr = d && !d.error ? trend(d.total_count, d.previous_total) : null}
+        {@const good = trGood(type, tr)}
+        <button class="kpi" onclick={() => setType(type)}>
+          <div class="top">
+            <span class="ic" style="background:color-mix(in oklch, {meta.cvar} 16%, var(--card)); color:{meta.cvar}"><Icon name={meta.icon} size={17} /></span>
+            <div><div class="ttl">{meta.label}</div><div class="plain">{meta.plain}</div></div>
+            <span class="chev"><Icon name="chevron-right" size={14} /></span>
+          </div>
+          <div class="num" style="color:{meta.cvar}">{d ? fmtNumber(d.total_count) : '—'}</div>
+          <div class="trend" style="color:{tr ? (good ? 'var(--success)' : 'var(--destructive)') : 'var(--muted-foreground)'}">
+            {#if tr}<Icon name={tr.dir === 'up' ? 'arrow-up' : 'arrow-down'} size={11} /><span>{Math.abs(tr.pct).toFixed(1)}%</span><span class="muted">vs previous</span>{:else}<span>no prior data</span>{/if}
+          </div>
+          <div class="spark" style="color:{meta.cvar}">
+            {#if d?.time_series?.length > 1}<Sparkline data={d.time_series} valueKey="count" height={30} />{/if}
+          </div>
+          {#if d && !d.error && d.total_count > 0}
+            <div class="foot">
+              {#if type === 'inbound'}
+                {@render footCell('user', fmtNumber(d.unique_visitors), 'visitors')}{@render footCell('activity', fmtBytes(d.total_bytes), 'bandwidth')}
+              {:else if type === 'dns'}
+                {@render footCell('check', pct(d.cached_count, d.total_count) + '%', 'cached')}{@render footCell('ban', pct(d.blocked_count, d.total_count) + '%', 'blocked')}
+              {:else if type === 'outbound'}
+                {@render footCell('globe', fmtNumber(d.top_dest_ips?.length || 0), 'destinations')}{@render footCell('activity', fmtBytes(d.total_bytes), 'bandwidth')}
+              {:else}
+                {@render footCell('user', fmtNumber(d.unique_visitors), 'attackers')}{@render footCell('plug', d.top_dest_ports?.[0]?.status || '—', 'top port')}
+              {/if}
+            </div>
+          {/if}
+        </button>
+      {/each}
+    </div>
+
+    <!-- mini charts -->
+    <div class="section-title">Traffic over time<span class="line"></span></div>
+    <div class="grid cols-4 stack-gap">
+      {#each Object.entries(typeMeta) as [type, meta]}
+        {@const d = data[type]}
+        <div class="card">
+          <div class="card-h compact"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{d ? fmtNumber(d.total_count) : '—'}</span></div>
+          <div class="card-body tight">
+            {#if d?.time_series?.length}
+              <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={92} legend={false} />
+            {:else}<div class="nodata">no data</div>{/if}
+          </div>
+        </div>
+      {/each}
+    </div>
+
+    <!-- enforcement (reuses BlockedByLayer, real /api/fw/layers) -->
+    <div class="section-title">Enforcement — what your firewall is actually stopping<span class="line"></span></div>
+    <div class="card stack-gap"><div class="card-body"><BlockedByLayer {period} /></div></div>
+
+    <!-- world map + top countries -->
+    <div class="grid cols-2 stack-gap start">
+      <div class="card">
+        <div class="card-h">
+          <h3><Icon name="world" size={15} />World map</h3>
+          <div class="map-toggle">
+            <button class:active={mapKind === 'src'} onclick={() => (mapKind = 'src')}>Who's hitting us</button>
+            <button class:active={mapKind === 'dest'} onclick={() => (mapKind = 'dest')}>Where traffic goes</button>
+          </div>
+        </div>
+        <div class="card-body tight">
+          {#if mapData.length}<WorldMap dots={mapData} kind={mapKind} />{:else}<div class="nodata pad">No country data in this period.</div>{/if}
+          <div class="caption"><Icon name="info-circle" size={13} /><span>{mapKind === 'src' ? 'Dot size = blocked attempts from that country. Hover for details.' : 'Dot size = outbound connections your devices made to that country.'}</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h3><Icon name="map-pin" size={15} />Top countries</h3><span class="sub">{mapKind === 'src' ? 'source of attacks' : 'destination of traffic'}</span></div>
+        <div class="card-body">
+          {#if mapData.length}
+            {@const mx = maxOf(mapData)}
+            <div class="rows">{#each mapData.slice(0, 10) as row}{@render cRow(row.country, row.count, mx, mapKind === 'src' ? 'var(--destructive)' : 'var(--info)', fmtNumber)}{/each}</div>
+          {:else}<div class="nodata pad">No country data yet.</div>{/if}
+        </div>
+      </div>
+    </div>
+
+    <!-- devices -->
+    <div class="section-title">Devices<span class="line"></span></div>
+    <div class="card">
+      <div class="card-h"><h3><Icon name="activity" size={15} />Top devices by data used</h3><span class="sub">click a device for full detail</span></div>
+      <div class="card-body">
+        {#if topTalkers.length}
+          {@const mx = maxOf(topTalkers, 'total')}
+          <div class="rows">
+            {#each topTalkers as t}
+              <button class="row clickable" onclick={() => openClient(t.peer)}>
+                <span class="flag"><Icon name="device-desktop" size={15} /></span>
+                <span class="label wide name">{t.name || t.peer}</span>
+                <div class="track"><div class="fill" style="width:{(t.total / mx) * 100}%; background:var(--tx)"></div></div>
+                <span class="val">{fmtBytes(t.total)}</span>
+              </button>
+            {/each}
+          </div>
+        {:else}<div class="nodata pad">No per-device byte data yet — enable the conntrack watcher in Settings → Logs Watchers.</div>{/if}
+      </div>
+    </div>
+
+    {#if Object.values(data).every((d) => !d || d.error || d.total_count === 0)}
+      <EmptyState icon="chart-bar" title="No log data in this period" description="Check that log watchers are enabled and Traefik/AdGuard are producing output." />
+    {/if}
+
+  <!-- ═══════════ PER CLIENT ═══════════ -->
+  {:else if selectedType === 'client'}
+    <div class="card stack-gap">
+      <div class="card-h"><h3><Icon name="user" size={15} />Pick a device</h3>
+        <Select value={selectedPeer} onchange={(e) => (selectedPeer = e.target.value)} class="w-full sm:w-64">
+          <option value="">Choose a client…</option>
+          {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
+        </Select>
+      </div>
+      {#if selectedPeer}
+        <div class="client-card">
+          <span class="client-avatar"><Icon name="device-desktop" size={19} /></span>
+          <div><div class="client-name">{peerList.find((p) => p.value === selectedPeer)?.label || selectedPeer}</div><div class="client-ip">{selectedPeer}</div></div>
+        </div>
+      {/if}
+    </div>
+
+    {#if !selectedPeer}
+      <EmptyState icon="user" title="Pick a device" description="Choose a client above to see what it talked to, how much it sent and received, and which countries it reached." />
+    {:else if peerUsageLoading}
+      <div class="center"><LoadingSpinner /></div>
+    {:else if peerUsage?.error}
+      <div class="errbox">{peerUsage.error}</div>
+    {:else if peerUsage}
+      <div class="grid cols-4 stack-gap">
+        {@render statTile('upload', 'var(--tx)', fmtBytes(peerUsage.total_up), 'Uploaded')}
+        {@render statTile('download', 'var(--info)', fmtBytes(peerUsage.total_down), 'Downloaded')}
+        {@render statTile('activity', 'var(--primary)', fmtBytes((peerUsage.total_up || 0) + (peerUsage.total_down || 0)), 'Total traffic')}
+        {@render statTile('globe', 'var(--success)', String(peerUsage.destinations?.length || 0), 'Destinations')}
+      </div>
+
+      {#if peerUsage.series?.length}
+        <div class="card stack-gap">
+          <div class="card-h"><h3><Icon name="activity" size={15} />Data over time</h3><span class="sub">upload + download, this device</span></div>
+          <div class="card-body"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} legend={false} /></div>
+        </div>
+      {/if}
+
+      <div class="grid cols-2">
+        <div class="card">
+          <div class="card-h"><h3><Icon name="globe" size={15} />Talked to</h3><span class="sub">by total bytes</span></div>
+          <div class="card-body">
+            <div class="ud-legend"><span><span class="sw" style="background:var(--info)"></span>download</span><span><span class="sw" style="background:var(--tx)"></span>upload</span></div>
+            {#if peerUsage.destinations?.length}
+              {@const mx = maxOf(peerUsage.destinations, 'bytes_total')}
+              <div class="rows">
+                {#each [...peerUsage.destinations].sort((a, b) => b.bytes_total - a.bytes_total).slice(0, 12) as dst}
+                  {@const t = dst.bytes_total || 1}
+                  <div class="row">
+                    <span class="flag"><CountryFlag code={dst.country} size="sm" /></span>
+                    <span class="label wide">{dst.domain || dst.dest_ip}</span>
+                    <div class="track"><div class="split" style="width:{(dst.bytes_total / mx) * 100}%">
+                      <span style="width:{((dst.bytes_down || 0) / t) * 100}%; background:var(--info)"></span>
+                      <span style="width:{((dst.bytes_up || 0) / t) * 100}%; background:var(--tx)"></span>
+                    </div></div>
+                    <span class="val">{fmtBytes(dst.bytes_total)}</span>
+                  </div>
+                {/each}
+              </div>
+            {:else}<div class="nodata pad">No per-destination byte data yet.</div>{/if}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h3><Icon name="map-pin" size={15} />By country</h3></div>
+          <div class="card-body">
+            {#if clientCountries.length}
+              {@const mx = clientCountries[0].count}
+              <div class="rows">{#each clientCountries as row}{@render cRow(row.country, row.count, mx, 'var(--primary)', fmtBytes)}{/each}</div>
+            {:else}<div class="nodata pad">No country data.</div>{/if}
+          </div>
+        </div>
+      </div>
+    {/if}
+
+  <!-- ═══════════ TYPE PANELS ═══════════ -->
+  {:else}
+    {@const meta = typeMeta[selectedType]}
+    {@const d = data[selectedType]}
+    {@const tr = d && !d.error ? trend(d.total_count, d.previous_total) : null}
+    {@const good = trGood(selectedType, tr)}
+
+    {#if !d}
+      <div class="center"><LoadingSpinner /></div>
+    {:else if d.error}
+      <div class="errbox">{d.error}</div>
+    {:else if d.total_count === 0}
+      <EmptyState icon="inbox" title="No {meta.label.toLowerCase()} events yet" description={typeDesc[selectedType]} />
+    {:else}
+      <div class="banner">
+        <span class="icon-badge sm" style="background:color-mix(in oklch, {meta.cvar} 15%, var(--card)); color:{meta.cvar}"><Icon name={meta.icon} size={16} /></span>
+        <div><div class="eyebrow">{meta.label} · {meta.plain}</div><div class="line">{typeDesc[selectedType]}</div></div>
+      </div>
+
+      <div class="grid cols-4 stack-gap">
+        {#if selectedType === 'inbound'}
+          {@render statTile('arrow-down', meta.cvar, fmtNumber(d.total_count), 'Total requests')}
+          {@render statTile('user', 'var(--primary)', fmtNumber(d.unique_visitors), 'Unique visitors')}
+          {@render statTile('activity', 'var(--warning)', fmtBytes(d.total_bytes), 'Bandwidth')}
+          {@render statTile('check', 'var(--success)', successRate(d) + '%', 'Success rate')}
+        {:else if selectedType === 'dns'}
+          {@render statTile('globe', meta.cvar, fmtNumber(d.total_count), 'Total queries')}
+          {@render statTile('user', 'var(--primary)', fmtNumber(d.unique_visitors), 'Unique clients')}
+          {@render statTile('check', 'var(--success)', pct(d.cached_count, d.total_count) + '%', 'Cache rate')}
+          {@render statTile('ban', 'var(--destructive)', pct(d.blocked_count, d.total_count) + '%', 'Blocked rate')}
+        {:else if selectedType === 'outbound'}
+          {@render statTile('arrow-up', meta.cvar, fmtNumber(d.total_count), 'Total connections')}
+          {@render statTile('user', 'var(--primary)', fmtNumber(d.unique_visitors), 'Active sources')}
+          {@render statTile('activity', 'var(--warning)', fmtBytes(d.total_bytes), 'Bandwidth')}
+          {@render statTile('globe', 'var(--info)', fmtNumber(d.top_dest_ips?.length || 0), 'Destinations')}
+        {:else}
+          {@render statTile('shield', meta.cvar, fmtNumber(d.total_count), 'Total blocks')}
+          {@render statTile('user', 'var(--primary)', fmtNumber(d.unique_visitors), 'Unique attackers')}
+          {@render statTile('filter', 'var(--warning)', String(d.top_rules?.length || 0), 'Rules fired')}
+          {@render statTile('plug', 'var(--info)', d.top_dest_ports?.[0]?.status || '—', 'Most-probed port')}
+        {/if}
+      </div>
+
+      {#if tr && period !== 'all'}
+        <div class="trend-badge" style="color:{good ? 'var(--success)' : 'var(--destructive)'}">
+          <Icon name={tr.dir === 'up' ? 'arrow-up' : 'arrow-down'} size={13} /><span>{Math.abs(tr.pct).toFixed(1)}%</span>
+          <span class="muted">vs previous {periodLabelFull}{selectedType === 'fw' ? (good ? ' — fewer attacks' : ' — more attacks') : ''}</span>
+        </div>
+      {/if}
+
+      {#if d.time_series?.length}
+        <div class="card stack-gap">
+          <div class="card-h"><h3>Events over time</h3><span class="sub">{periodLabelFull}</span></div>
+          <div class="card-body"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} legend={false} /></div>
+        </div>
+      {/if}
+
+      <!-- type-specific breakdowns -->
+      {#if selectedType === 'inbound'}
+        <div class="grid cols-2 stack-gap start">
+          <div class="card"><div class="card-h"><h3>HTTP status</h3><span class="sub">how requests were answered</span></div><div class="card-body"><Donut segments={donutSeg(d.http_status, httpColor)} format={fmtNumber} /></div></div>
+          {@render listCard('Top domains', d.top_domains, 'domain', meta.cvar, { wide: true })}
+        </div>
+        <div class="grid cols-2 stack-gap start">
+          {@render pathCard('Top paths', d.top_paths, meta.cvar)}
+          {@render ipCard('Top visitors', d.top_clients, meta.cvar)}
+        </div>
+        {@render countriesCard('Top countries', 'who is visiting', d.top_countries, meta.cvar)}
+      {:else if selectedType === 'dns'}
+        <div class="grid cols-2 stack-gap start">
+          <div class="card"><div class="card-h"><h3>Response codes</h3></div><div class="card-body"><Donut segments={donutSeg(d.status_counts, dnsColor)} format={fmtNumber} /></div></div>
+          <div class="card"><div class="card-h"><h3>Query types</h3></div><div class="card-body"><Donut segments={donutSeg(d.query_types, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
+        </div>
+        <div class="grid cols-2 stack-gap start">
+          {@render listCard('Top blocked domains', d.top_blocked, 'domain', 'var(--destructive)', { wide: true, sub: 'ads & trackers' })}
+          <div class="card"><div class="card-h"><h3>What this means</h3></div><div class="card-body"><div class="caption flat"><Icon name="info-circle" size={13} /><span>Every device on your VPN resolves names through this resolver. “Blocked” queries are known ad, tracker, or malware domains — they never got an answer.</span></div></div></div>
+        </div>
+      {:else if selectedType === 'outbound'}
+        <div class="grid cols-2 stack-gap start">
+          <div class="card"><div class="card-h"><h3>Protocol mix</h3></div><div class="card-body"><Donut segments={donutSeg(d.protocols, (_, i) => (i === 0 ? 'var(--tx)' : 'var(--info)'))} format={fmtNumber} /></div></div>
+          {@render ipCard('Top destinations', d.top_dest_ips, meta.cvar, { wide: true, dest: true })}
+        </div>
+        <div class="grid cols-2 stack-gap start">
+          {@render mapCard('World map', 'where your traffic goes', d.top_countries, 'dest')}
+          {@render countriesCard('Top countries', 'destination', d.top_countries, 'var(--info)')}
+        </div>
+      {:else}
+        <div class="grid cols-2 stack-gap start">
+          {@render listCard('Most-probed ports', d.top_dest_ports, 'status', meta.cvar, {})}
+          {@render listCard('Rules that fired', d.top_rules, 'status', meta.cvar, { wide: true })}
+        </div>
+        <div class="grid cols-2 stack-gap start">
+          {@render mapCard('World map', 'who is attacking', d.top_countries, 'src')}
+          {@render ipCard('Top attacker IPs', d.top_clients, meta.cvar)}
+        </div>
+      {/if}
+    {/if}
+  {/if}
+</div>
+
+<!-- ─────────── reusable snippets ─────────── -->
+{#snippet footCell(icon, v, l)}
+  <span class="cell"><Icon name={icon} size={13} /><span><span class="v">{v}</span><span class="l">{l}</span></span></span>
+{/snippet}
+
+{#snippet statTile(icon, cvar, value, label)}
+  <div class="stat-tile">
+    <span class="ic" style="background:color-mix(in oklch, {cvar} 15%, var(--card)); color:{cvar}"><Icon name={icon} size={18} /></span>
+    <div><div class="stat-val">{value}</div><div class="stat-lab">{label}</div></div>
   </div>
 {/snippet}
 
-<div class="space-y-4">
-  <InfoCard
-    icon={infoIcon}
-    title={infoTitle}
-    description={infoDesc}
-  />
+{#snippet cRow(code, count, max, cvar, fmt)}
+  <div class="row">
+    <span class="flag"><CountryFlag {code} size="sm" /></span>
+    <span class="label">{code || '—'}</span>
+    <div class="track"><div class="fill" style="width:{max ? (count / max) * 100 : 0}%; background:{cvar}"></div></div>
+    <span class="val">{fmt(count)}</span>
+  </div>
+{/snippet}
 
-  <div class="kt-panel">
-    <div class="kt-panel-header flex-col gap-0 !p-0 items-stretch">
-      <!-- Tabs: Overview + one per traffic type + Per client -->
-      <div class="flex gap-1 overflow-x-auto px-2 pt-1 border-b border-border">
-        {#each TABS as t}
-          <button
-            type="button"
-            onclick={() => setType(t.id)}
-            class="flex items-center gap-1.5 px-3 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition cursor-pointer {selectedType === t.id ? 'border-primary text-foreground font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}"
-          >
-            <Icon name={t.icon} size={15} />{t.label}
-          </button>
-        {/each}
-      </div>
-      <!-- Controls: period + (peer picker when relevant) + export/refresh -->
-      <div class="flex flex-wrap items-center gap-2 p-3">
-        <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs">
-          {#each PERIODS as p}
-            <button type="button" onclick={() => setPeriod(p.id)} class="px-2.5 py-1 rounded-md transition cursor-pointer {period === p.id ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">{p.label}</button>
-          {/each}
-        </div>
-        {#if selectedType === 'outbound' || selectedType === 'client'}
-          <Select value={selectedPeer} onchange={(e) => { selectedPeer = e.target.value }} class="w-full sm:w-52">
-            <option value="">{selectedType === 'client' ? 'Choose a client…' : 'All nodes'}</option>
-            {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
-          </Select>
-        {/if}
-        <div class="ml-auto flex items-center gap-2">
-          {#if selectedType && selectedType !== 'client'}
-            <Button variant="outline" size="sm" icon="download" onclick={downloadCsv}>Export</Button>
-          {/if}
-          <Button variant="outline" size="sm" icon="refresh" onclick={loadAll}>Refresh</Button>
-        </div>
-      </div>
-    </div>
-
-    <div class="p-4 space-y-4">
-      {#if loading}
-        <div class="flex justify-center py-12">
-          <LoadingSpinner />
-        </div>
-      {:else if selectedType === 'client'}
-        <!-- ═════════ PER CLIENT ═════════ -->
-        {#if !selectedPeer}
-          <EmptyState icon="device-laptop" title="Pick a client"
-            description="Choose a client above to see what it talked to, how much it sent and received, and which countries it reached." />
-        {:else if peerUsageLoading}
-          <div class="flex justify-center py-12"><LoadingSpinner /></div>
-        {:else if peerUsage?.error}
-          <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{peerUsage.error}</div>
-        {:else if peerUsage}
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard icon="upload" color="info" value={fmtBytes(peerUsage.total_up)} label="Uploaded" />
-            <StatCard icon="download" color="success" value={fmtBytes(peerUsage.total_down)} label="Downloaded" />
-            <StatCard icon="activity" color="warning" value={fmtBytes((peerUsage.total_up || 0) + (peerUsage.total_down || 0))} label="Total" />
-            <StatCard icon="globe" color="primary" value={peerUsage.destinations?.length || 0} label="Destinations" />
+{#snippet listCard(title, rows, key, cvar, opts)}
+  <div class="card">
+    <div class="card-h"><h3>{title}</h3>{#if opts.sub}<span class="sub">{opts.sub}</span>{/if}</div>
+    <div class="card-body">
+      {#if rows?.length}
+        {@const mx = maxOf(rows)}
+        <div class="rows">{#each rows as r}
+          <div class="row">
+            <span class="label {opts.wide ? 'wide' : ''}">{r[key]}</span>
+            <div class="track"><div class="fill" style="width:{(r.count / mx) * 100}%; background:{cvar}"></div></div>
+            <span class="val">{fmtNumber(r.count)}</span>
           </div>
-
-          {#if peerUsage.series?.length}
-            <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-              <div class="text-sm font-semibold mb-3">Traffic over time</div>
-              <UPlotChart
-                data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]}
-                series={[{ label: 'Traffic', stroke: '--info', fill: 0.18 }]}
-                height={160}
-                yFormat={fmtBytes}
-                legend={false}
-              />
-            </div>
-          {/if}
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {#if peerUsage.destinations?.length}
-              {@const maxD = maxOf(peerUsage.destinations, 'bytes_total')}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Top destinations</div>
-                <div class="space-y-2.5">
-                  {#each peerUsage.destinations.slice(0, 12) as row}
-                    <div class="flex items-center gap-3 text-sm">
-                      <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
-                      <span class="w-40 shrink-0 truncate text-xs font-mono">{row.domain || row.dest_ip}</span>
-                      <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden"><div class="h-full bg-info" style="width: {(row.bytes_total / maxD) * 100}%"></div></div>
-                      <span class="font-mono text-xs w-16 text-right tabular-nums">{fmtBytes(row.bytes_total)}</span>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {:else}
-              <div class="bg-card border border-border rounded-lg p-4 text-xs text-muted-foreground">No per-destination byte data yet — enable the conntrack watcher in Settings → Logs Watchers.</div>
-            {/if}
-
-            {#if clientCountries.length}
-              {@const maxC = clientCountries[0].count}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Countries talked to</div>
-                <div class="space-y-2.5">
-                  {#each clientCountries as row}
-                    {@render countryRow(row.country, fmtBytes(row.count), row.count / maxC)}
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-      {:else if !selectedType}
-        <!-- ═════════ OVERVIEW ═════════ -->
-        <!-- Plain-English summary of the selected period -->
-        {#if summaryParts.length}
-          <div class="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 to-info/5 p-4 shadow-sm">
-            <div class="flex items-start gap-3">
-              <div class="header-icon shrink-0"><Icon name="list-details" size={18} class="text-primary" /></div>
-              <div class="min-w-0">
-                <div class="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-1">Last {periodLabel} at a glance</div>
-                <div class="text-sm leading-relaxed text-muted-foreground">
-                  {#each summaryParts as p, i}
-                    {#if i > 0}<span class="mx-1 text-muted-foreground/50">·</span>{/if}
-                    <span class="font-semibold text-foreground tabular-nums">{p.num}</span> {p.text}
-                  {/each}
-                </div>
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        <!-- Blocked by layer — L3 firewall / DNS / L7 proxy / allowed (obeys the period) -->
-        <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Blocked by layer · last {periodLabel}</div>
-        <div class="mb-4"><BlockedByLayer {period} /></div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {#each Object.entries(typeMeta) as [type, meta]}
-            {@const d = data[type]}
-            {@const tr = d && !d.error ? trend(d.total_count, d.previous_total) : null}
-            <button
-              type="button"
-              onclick={() => setType(type)}
-              class="group flex cursor-pointer flex-col rounded-lg border shadow-sm transition hover:shadow-md bg-card text-left {d && d.total_count > 0 ? meta.border : 'border-border'}"
-            >
-              <div class="flex items-center gap-2.5 p-3">
-                <div class="flex h-9 w-9 items-center justify-center rounded-lg shrink-0 {meta.bg} {meta.text}">
-                  <Icon name={meta.icon} size={18} />
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h2 class="text-sm font-semibold text-foreground">{meta.label}</h2>
-                  <p class="text-[11px] text-muted-foreground truncate">{meta.plain}</p>
-                </div>
-                <Icon name="chevron-right" size={14} class="text-muted-foreground shrink-0" />
-              </div>
-
-              <div class="px-3 pb-1">
-                <div class="text-3xl font-bold tabular-nums {meta.text}">
-                  {d ? fmtNumber(d.total_count) : '—'}
-                </div>
-                {#if tr}
-                  <div class="flex items-center gap-1 text-[11px] mt-0.5 {tr.dir === 'up' ? 'text-success' : 'text-destructive'}">
-                    <Icon name={tr.dir === 'up' ? 'arrow-up' : 'arrow-down'} size={11} />
-                    <span class="font-medium">{Math.abs(tr.pct).toFixed(1)}%</span>
-                    <span class="text-muted-foreground font-normal">vs previous</span>
-                  </div>
-                {:else}
-                  <div class="text-[11px] text-muted-foreground mt-0.5">no previous data</div>
-                {/if}
-              </div>
-
-              {#if d?.time_series?.length > 1}
-                <div class="{meta.text} h-8 px-3">
-                  <Sparkline data={d.time_series} width={220} height={32} />
-                </div>
-              {/if}
-
-              {#if d && !d.error && d.total_count > 0}
-                <div class="mt-2 border-t border-border p-3 flex items-center justify-between gap-3 text-[11px]">
-                  {#if type === 'inbound'}
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <Icon name="user" size={13} class="shrink-0 text-muted-foreground" />
-                      <div class="min-w-0">
-                        <div class="font-semibold tabular-nums text-foreground">{fmtNumber(d.unique_visitors)}</div>
-                        <div class="text-muted-foreground text-[10px]">visitors</div>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <Icon name="activity" size={13} class="shrink-0 text-muted-foreground" />
-                      <div class="min-w-0">
-                        <div class="font-semibold tabular-nums text-foreground">{fmtBytes(d.total_bytes)}</div>
-                        <div class="text-muted-foreground text-[10px]">bandwidth</div>
-                      </div>
-                    </div>
-                  {:else if type === 'dns'}
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <Icon name="check" size={13} class="shrink-0 text-success" />
-                      <div class="min-w-0">
-                        <div class="font-semibold tabular-nums text-foreground">{pct(d.cached_count, d.total_count)}%</div>
-                        <div class="text-muted-foreground text-[10px]">cached</div>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <Icon name="ban" size={13} class="shrink-0 text-destructive" />
-                      <div class="min-w-0">
-                        <div class="font-semibold tabular-nums text-foreground">{pct(d.blocked_count, d.total_count)}%</div>
-                        <div class="text-muted-foreground text-[10px]">blocked</div>
-                      </div>
-                    </div>
-                  {:else if type === 'outbound'}
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <Icon name="globe" size={13} class="shrink-0 text-muted-foreground" />
-                      <div class="min-w-0">
-                        <div class="font-semibold tabular-nums text-foreground">{fmtNumber(d.top_dest_ips?.length || 0)}</div>
-                        <div class="text-muted-foreground text-[10px]">destinations</div>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <Icon name="activity" size={13} class="shrink-0 text-muted-foreground" />
-                      <div class="min-w-0">
-                        <div class="font-semibold tabular-nums text-foreground">{fmtBytes(d.total_bytes)}</div>
-                        <div class="text-muted-foreground text-[10px]">bandwidth</div>
-                      </div>
-                    </div>
-                  {:else if type === 'fw'}
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <Icon name="alert-triangle" size={13} class="shrink-0 text-destructive" />
-                      <div class="min-w-0">
-                        <div class="font-semibold tabular-nums text-foreground">{fmtNumber(d.unique_visitors)}</div>
-                        <div class="text-muted-foreground text-[10px]">attackers</div>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <Icon name="plug" size={13} class="shrink-0 text-muted-foreground" />
-                      <div class="min-w-0">
-                        <div class="font-semibold tabular-nums text-foreground">:{d.top_dest_ports?.[0]?.status || '—'}</div>
-                        <div class="text-muted-foreground text-[10px]">top port</div>
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-              {/if}
-            </button>
-          {/each}
-        </div>
-
-        <!-- Top talkers by bytes (conntrack) — click to drill into that node's outbound -->
-        {#if topTalkers.length}
-          {@const maxTalker = maxOf(topTalkers.map(t => ({ count: t.total })))}
-          <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-            <div class="text-sm font-semibold mb-4">Top talkers (by bytes)</div>
-            <div class="space-y-2.5">
-              {#each topTalkers as t}
-                <button
-                  type="button"
-                  onclick={() => { selectedPeer = t.peer; setType('outbound') }}
-                  title="View {t.name || t.peer} outbound traffic"
-                  class="flex items-center gap-3 text-sm w-full text-left rounded px-1 -mx-1 transition hover:bg-muted/50"
-                >
-                  <span class="w-40 shrink-0 truncate text-xs font-mono">{t.name || t.peer}</span>
-                  <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                    <div class="h-full bg-info" style="width: {(t.total / maxTalker) * 100}%"></div>
-                  </div>
-                  <span class="font-mono text-xs w-20 text-right tabular-nums">{fmtBytes(t.total)}</span>
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-
-        <!-- Where is it all coming from — source countries across inbound/DNS/firewall -->
-        {#if overviewCountries.length}
-          {@const maxOC = overviewCountries[0].count}
-          <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-            <div class="text-sm font-semibold">Top source countries</div>
-            <div class="text-[11px] text-muted-foreground mb-4">Where visitors, DNS clients, and blocked attempts are coming from.</div>
-            <div class="grid sm:grid-cols-2 gap-x-6 gap-y-2.5">
-              {#each overviewCountries as row}
-                {@render countryRow(row.country, fmtNumber(row.count), row.count / maxOC)}
-              {/each}
-            </div>
-          </div>
-        {/if}
-
-        {#if Object.values(data).every(d => !d || d.error || d.total_count === 0)}
-          <EmptyState
-            icon="chart-bar"
-            title="No log data in this period"
-            description="Check that log watchers are enabled and that Traefik/AdGuard are producing log output."
-          />
-        {/if}
-
-      {:else}
-        <!-- ═════════ DRILL-IN ═════════ -->
-        {@const d = data[selectedType]}
-        {@const tr = d && !d.error ? trend(d.total_count, d.previous_total) : null}
-        {@const maxCountry = d?.top_countries ? maxOf(d.top_countries) : 1}
-        {@const maxClient = d?.top_clients ? maxOf(d.top_clients) : 1}
-        {@const maxDest = d?.top_dest_ips ? maxOf(d.top_dest_ips) : 1}
-
-        {#if !d}
-          <div class="flex justify-center py-12"><LoadingSpinner /></div>
-        {:else if d.error}
-          <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-            {d.error}
-          </div>
-        {:else if d.total_count === 0}
-          <EmptyState
-            icon="inbox"
-            title="No {typeMeta[selectedType].label.toLowerCase()} events yet"
-            description={selectedType === 'inbound' ? 'Traefik has not logged requests to any user domain or catchall route yet.' :
-                         selectedType === 'outbound' ? 'The outbound watcher has not observed any peer traffic.' :
-                         selectedType === 'fw' ? 'No firewall drops in this period.' :
-                         'AdGuard has not logged any queries.'}
-          />
-        {:else}
-
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard icon={typeMeta[selectedType].icon} color={typeMeta[selectedType].color} value={fmtNumber(d.total_count)} label="Total events" />
-            <StatCard icon="user" color="info" value={fmtNumber(d.unique_visitors)} label={selectedType === 'fw' ? 'Unique attackers' : 'Unique sources'} />
-            <StatCard icon="activity" color="warning" value={fmtBytes(d.total_bytes)} label="Bandwidth" />
-            {#if selectedType === 'dns'}
-              <StatCard icon="check" color="success" value="{pct(d.cached_count, d.total_count)}%" label="Cache rate" />
-            {:else if selectedType === 'inbound'}
-              <StatCard icon="check" color="success" value="{pct((d.http_status?.find(s => s.status === '2xx')?.count || 0), (d.http_status?.reduce((s,x)=>s+x.count,0) || 1))}%" label="Success rate" />
-            {:else if selectedType === 'fw'}
-              <StatCard icon="filter" color="destructive" value={d.top_rules?.length || 0} label="Rules fired" />
-            {:else}
-              <StatCard icon="world" color="primary" value={d.top_countries?.length || 0} label="Countries" />
-            {/if}
-          </div>
-
-          {#if tr && period !== 'all'}
-            <div class="flex items-center gap-1 text-xs {tr.dir === 'up' ? 'text-success' : 'text-destructive'}">
-              <Icon name={tr.dir === 'up' ? 'arrow-up' : 'arrow-down'} size={14} />
-              <span class="font-medium">{Math.abs(tr.pct).toFixed(1)}%</span>
-              <span class="text-muted-foreground">vs previous {periodLabel}</span>
-            </div>
-          {/if}
-
-          {#if d.time_series?.length}
-            <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-              <div class="flex items-center justify-between mb-3">
-                <div class="text-sm font-semibold">Events over time</div>
-                <Badge variant="muted" size="sm">{periodLabel}</Badge>
-              </div>
-              <UPlotChart
-                data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]}
-                series={[{ label: typeMeta[selectedType].label, stroke: typeMeta[selectedType].stroke, fill: 0.18 }]}
-                height={160}
-                legend={false}
-              />
-            </div>
-          {/if}
-
-          {#if selectedType === 'outbound' && selectedPeer}
-            <!-- Byte breakdown for the selected node (from conntrack) -->
-            <div class="bg-card border border-border rounded-lg p-4 shadow-sm space-y-3">
-              <div class="text-sm font-semibold">Traffic by destination (bytes)</div>
-              {#if peerUsageLoading}
-                <div class="text-xs text-muted-foreground py-6 text-center">Loading…</div>
-              {:else if peerUsage}
-                <div class="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                  <StatCard icon="upload" color="info" value={fmtBytes(peerUsage.total_up)} label="Uploaded" />
-                  <StatCard icon="download" color="success" value={fmtBytes(peerUsage.total_down)} label="Downloaded" />
-                  <StatCard icon="globe" color="primary" value={peerUsage.destinations?.length || 0} label="Destinations" />
-                </div>
-
-                {#if peerUsage.series?.length}
-                  <div class="text-info">
-                    <AreaChart data={peerUsage.series} valueKey="total" labelKey="time" height={160} format={fmtBytes} />
-                  </div>
-                {/if}
-
-                {#if peerUsage.destinations?.length}
-                  <div>
-                    <div class="text-sm font-semibold mb-3">Top destinations</div>
-                    <BarList
-                      data={peerUsage.destinations.map(x => ({ ...x, _label: x.domain || x.dest_ip }))}
-                      labelKey="_label"
-                      valueKey="bytes_total"
-                      format={fmtBytes}
-                      labelWidth="w-44"
-                      barClass="bg-info"
-                    />
-                  </div>
-                {:else}
-                  <div class="text-xs text-muted-foreground py-2">No per-destination byte data yet — enable the conntrack watcher in Settings → Logs Watchers.</div>
-                {/if}
-              {/if}
-            </div>
-          {/if}
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-
-            <!-- Countries: use CountryFlag (real images) with inline bars -->
-            {#if d.top_countries?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">
-                  Top countries {selectedType === 'outbound' ? '(destination)' : ''}
-                </div>
-                <div class="space-y-2.5">
-                  {#each d.top_countries as row}
-                    {@render countryRow(row.country, fmtNumber(row.count), row.count / maxCountry, typeMeta[selectedType].bar)}
-                  {/each}
-                </div>
-              </div>
-            {/if}
-
-            {#if selectedType === 'inbound' && d.http_status?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">HTTP status</div>
-                <BarList data={d.http_status} labelKey="status" colorFor={httpColorFor} percent labelWidth="w-12" />
-              </div>
-            {:else if selectedType === 'dns' && d.status_counts?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">DNS response codes</div>
-                <BarList data={d.status_counts} labelKey="status" barClass="bg-success" percent labelWidth="w-28" />
-              </div>
-            {:else if selectedType === 'outbound' && d.protocols?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Protocols</div>
-                <BarList data={d.protocols} labelKey="status" barClass="bg-info" percent labelWidth="w-16" />
-              </div>
-            {:else if selectedType === 'fw' && d.top_dest_ports?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Top probed ports</div>
-                <BarList data={d.top_dest_ports} labelKey="status" barClass="bg-destructive" format={fmtNumber} labelWidth="w-14" />
-              </div>
-            {/if}
-
-            <!-- Source IPs: real flag + IP + bar -->
-            {#if d.top_clients?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Top source IPs</div>
-                <div class="space-y-2.5">
-                  {#each d.top_clients as row}
-                    <button
-                      type="button"
-                      onclick={() => { selectedPeer = row.ip }}
-                      title="Filter to {row.ip}"
-                      class="flex items-center gap-3 text-sm w-full text-left rounded px-1 -mx-1 transition hover:bg-muted/50 {selectedPeer === row.ip ? 'bg-muted/50' : ''}"
-                    >
-                      <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
-                      <span class="w-32 shrink-0 truncate text-xs font-mono">{row.ip}</span>
-                      <span class="hidden sm:inline-flex min-w-0 max-w-[40%]"><IpBadge geo={geoData[row.ip]} /></span>
-                      <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                        <div class="h-full {typeMeta[selectedType].bar}" style="width: {(row.count / maxClient) * 100}%"></div>
-                      </div>
-                      <span class="font-mono text-xs w-14 text-right tabular-nums">{fmtNumber(row.count)}</span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-
-            <!-- Inbound: show BOTH top domains and top paths as independent widgets -->
-            {#if selectedType === 'inbound' && d.top_domains?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Top domains</div>
-                <BarList data={d.top_domains} labelKey="domain" barClass="bg-primary" format={fmtNumber} labelWidth="w-40" />
-              </div>
-            {/if}
-            {#if selectedType === 'inbound' && d.top_paths?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Top paths</div>
-                <BarList
-                  data={d.top_paths.map(p => ({ ...p, _label: (p.domain || '') + (p.path || '') }))}
-                  labelKey="_label"
-                  barClass="bg-primary"
-                  format={fmtNumber}
-                  labelWidth="w-64"
-                />
-              </div>
-            {/if}
-            {#if selectedType === 'dns' && d.top_blocked?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Top blocked domains</div>
-                <BarList data={d.top_blocked} labelKey="domain" barClass="bg-destructive" format={fmtNumber} labelWidth="w-40" />
-              </div>
-            {/if}
-            {#if selectedType === 'dns' && d.query_types?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Query types</div>
-                <BarList data={d.query_types} labelKey="status" barClass="bg-success" percent labelWidth="w-16" />
-              </div>
-            {/if}
-            {#if selectedType === 'outbound' && d.top_dest_ips?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Top destinations</div>
-                <div class="space-y-2.5">
-                  {#each d.top_dest_ips as row}
-                    <div class="flex items-center gap-3 text-sm">
-                      <span class="shrink-0"><CountryFlag code={row.country} size="sm" /></span>
-                      <span class="w-32 shrink-0 truncate text-xs font-mono">{row.ip}</span>
-                      <div class="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                        <div class="h-full bg-info" style="width: {(row.count / maxDest) * 100}%"></div>
-                      </div>
-                      <span class="font-mono text-xs w-14 text-right tabular-nums">{fmtNumber(row.count)}</span>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-            {#if selectedType === 'fw' && d.top_rules?.length}
-              <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
-                <div class="text-sm font-semibold mb-4">Top firewall rules</div>
-                <BarList data={d.top_rules} labelKey="status" barClass="bg-destructive" format={fmtNumber} labelWidth="w-40" />
-              </div>
-            {/if}
-          </div>
-
-        {/if}
-      {/if}
+        {/each}</div>
+      {:else}<div class="nodata pad">No data.</div>{/if}
     </div>
   </div>
-</div>
+{/snippet}
+
+{#snippet pathCard(title, rows, cvar)}
+  <div class="card">
+    <div class="card-h"><h3>{title}</h3></div>
+    <div class="card-body">
+      {#if rows?.length}
+        {@const mx = maxOf(rows)}
+        <div class="rows">{#each rows as r}
+          <div class="row">
+            <span class="label wide">{(r.domain || '') + (r.path || '')}</span>
+            <div class="track"><div class="fill" style="width:{(r.count / mx) * 100}%; background:{cvar}"></div></div>
+            <span class="val">{fmtNumber(r.count)}</span>
+          </div>
+        {/each}</div>
+      {:else}<div class="nodata pad">No data.</div>{/if}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet ipCard(title, rows, cvar, opts = {})}
+  <div class="card">
+    <div class="card-h"><h3>{title}</h3>{#if !opts.dest}<span class="sub">by IP</span>{/if}</div>
+    <div class="card-body">
+      {#if rows?.length}
+        {@const mx = maxOf(rows)}
+        <div class="rows">{#each rows as r}
+          <div class="row">
+            <span class="flag"><CountryFlag code={r.country} size="sm" /></span>
+            <span class="label {opts.wide ? 'wide' : ''}">{r.label || r.ip}</span>
+            <div class="track"><div class="fill" style="width:{(r.count / mx) * 100}%; background:{cvar}"></div></div>
+            <span class="val">{fmtNumber(r.count)}</span>
+          </div>
+        {/each}</div>
+      {:else}<div class="nodata pad">No data.</div>{/if}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet countriesCard(title, sub, rows, cvar)}
+  <div class="card">
+    <div class="card-h"><h3><Icon name="map-pin" size={15} />{title}</h3><span class="sub">{sub}</span></div>
+    <div class="card-body">
+      {#if rows?.length}
+        {@const mx = maxOf(rows)}
+        <div class="rows">{#each rows as r}{@render cRow(r.country, r.count, mx, cvar, fmtNumber)}{/each}</div>
+      {:else}<div class="nodata pad">No country data.</div>{/if}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet mapCard(title, sub, rows, kind)}
+  <div class="card">
+    <div class="card-h"><h3><Icon name="world" size={15} />{title}</h3><span class="sub">{sub}</span></div>
+    <div class="card-body tight">{#if rows?.length}<WorldMap dots={rows} {kind} />{:else}<div class="nodata pad">No country data.</div>{/if}</div>
+  </div>
+{/snippet}
+
+<style>
+  .analytics {
+    --acc: 250 20% 50%;
+    --a-radius: 0.6rem;
+    color: var(--foreground);
+  }
+  .center { display: flex; justify-content: center; padding: 48px 0; }
+  .errbox { border: 1px solid color-mix(in oklch, var(--destructive) 30%, var(--border)); background: color-mix(in oklch, var(--destructive) 6%, var(--card)); color: var(--destructive); padding: 14px 16px; border-radius: var(--a-radius); font-size: 13px; }
+  .muted { color: var(--muted-foreground); font-weight: 500; }
+  .nodata { color: var(--muted-foreground); font-size: 12px; }
+  .nodata.pad { padding: 18px 2px; }
+
+  /* masthead */
+  .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .masthead-l { display: flex; gap: 12px; align-items: flex-start; }
+  .masthead h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .masthead p { margin: 0; color: var(--muted-foreground); font-size: 13px; max-width: 60ch; line-height: 1.5; }
+  .icon-badge { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: color-mix(in oklch, var(--primary) 12%, var(--card)); color: var(--primary); flex-shrink: 0; }
+  .icon-badge.sm { width: 30px; height: 30px; border-radius: 8px; }
+  .updated { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+  .live-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--success); box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 22%, transparent); }
+  @media (prefers-reduced-motion: no-preference) { .live-dot { animation: pulse 2.4s ease-in-out infinite; } }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+  /* toolbar */
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .tabs { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: calc(var(--a-radius) + 3px); flex-wrap: wrap; }
+  .tab { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; cursor: pointer; padding: 7px 13px; border-radius: calc(var(--a-radius) - 1px); font-size: 12.5px; font-weight: 600; color: var(--muted-foreground); }
+  .tab:hover { color: var(--foreground); }
+  .tab.active { background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+  .tab .tdot { width: 6px; height: 6px; border-radius: 99px; flex-shrink: 0; }
+  .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .seg { display: flex; background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); overflow: hidden; }
+  .seg button { border: 0; background: transparent; padding: 7px 11px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--muted-foreground); border-right: 1px solid var(--border); }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { color: var(--foreground); background: var(--muted); }
+  .seg button.active { background: var(--primary); color: var(--primary-foreground); }
+
+  /* cards */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); overflow: hidden; display: flex; flex-direction: column; }
+  .card-h { padding: 13px 16px; border-bottom: 1px solid var(--border); background: color-mix(in oklch, var(--muted) 55%, transparent); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .card-h.compact { padding: 10px 12px; }
+  .card-h h3 { margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+  .card-h.compact h3 { font-size: 12px; }
+  .card-h .sub { font-size: 11.5px; color: var(--muted-foreground); font-weight: 600; }
+  .card-body { padding: 16px; flex: 1; }
+  .card-body.tight { padding: 12px 16px; }
+  .caption { font-size: 12px; color: var(--muted-foreground); margin: 10px 2px 0; line-height: 1.5; display: flex; gap: 6px; align-items: flex-start; }
+  .caption.flat { margin-top: 0; }
+  .caption :global(svg) { flex-shrink: 0; margin-top: 2px; }
+
+  .grid { display: grid; gap: 14px; }
+  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid.start { align-items: start; }
+  .stack-gap { margin-bottom: 14px; }
+  @media (max-width: 980px) { .grid.cols-4 { grid-template-columns: repeat(2, 1fr); } .grid.cols-2 { grid-template-columns: 1fr; } }
+  @media (max-width: 620px) { .grid.cols-4 { grid-template-columns: 1fr; } }
+
+  /* banner */
+  .banner { border: 1px solid color-mix(in oklch, var(--primary) 25%, var(--border)); background: linear-gradient(90deg, color-mix(in oklch, var(--primary) 7%, var(--card)), color-mix(in oklch, var(--success) 6%, var(--card))); border-radius: var(--a-radius); padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
+  .banner .eyebrow { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); margin-bottom: 3px; }
+  .banner .line { font-size: 13.5px; color: var(--muted-foreground); line-height: 1.6; }
+  .banner .line b { color: var(--foreground); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .inline-flag { display: inline-flex; vertical-align: -2px; }
+  .sep { margin: 0 7px; color: var(--muted-foreground); opacity: 0.4; }
+
+  /* KPI */
+  .kpi { border: 1px solid var(--border); border-radius: var(--a-radius); background: var(--card); cursor: pointer; text-align: left; display: flex; flex-direction: column; width: 100%; padding: 0; color: inherit; }
+  .kpi:hover { box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); }
+  .kpi .top { display: flex; align-items: center; gap: 10px; padding: 12px 12px 0; }
+  .kpi .ic { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .kpi .ttl { font-size: 13px; font-weight: 700; }
+  .kpi .plain { font-size: 11px; color: var(--muted-foreground); }
+  .kpi .chev { color: var(--muted-foreground); margin-left: auto; flex-shrink: 0; display: flex; }
+  .kpi .num { font-size: 27px; font-weight: 800; letter-spacing: -0.02em; padding: 8px 12px 0; font-variant-numeric: tabular-nums; }
+  .kpi .trend { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 12px 8px; }
+  .kpi .spark { padding: 0 8px; min-height: 30px; }
+  .kpi .foot { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border); padding: 9px 12px; margin-top: auto; }
+  .kpi .cell { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted-foreground); }
+  .kpi .cell .v { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--foreground); display: block; }
+  .kpi .cell .l { font-size: 9.5px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: 0.03em; display: block; }
+
+  /* rows */
+  .rows { display: flex; flex-direction: column; gap: 9px; }
+  .row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; border-radius: 6px; padding: 3px 4px; margin: 0 -4px; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
+  button.row.clickable { cursor: pointer; }
+  button.row.clickable:hover { background: var(--muted); }
+  .row .flag { width: 18px; display: flex; justify-content: center; flex-shrink: 0; color: var(--muted-foreground); }
+  .row .label { width: 118px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .row .label.wide { width: 200px; }
+  .row .label.name { font-family: inherit; font-weight: 600; }
+  .row .track { flex: 1; height: 7px; border-radius: 99px; background: var(--muted); overflow: hidden; display: flex; }
+  .row .fill { height: 100%; border-radius: 99px; }
+  .row .split { display: flex; height: 100%; }
+  .row .split span { height: 100%; }
+  .row .val { width: 62px; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  @media (max-width: 720px) { .row .label { width: 92px; } .row .label.wide { width: 120px; } }
+
+  /* section titles */
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted-foreground); margin: 22px 2px 10px; display: flex; align-items: center; gap: 8px; }
+  .section-title .line { flex: 1; height: 1px; background: var(--border); }
+
+  /* stat tiles */
+  .stat-tile { background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 14px; }
+  .stat-tile .ic { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .stat-tile .stat-val { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .stat-tile .stat-lab { font-size: 11px; color: var(--muted-foreground); }
+
+  .trend-badge { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; margin-bottom: 14px; }
+
+  /* map toggle */
+  .map-toggle { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: 9px; }
+  .map-toggle button { border: 0; background: transparent; padding: 5px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; cursor: pointer; color: var(--muted-foreground); }
+  .map-toggle button.active { background: var(--card); color: var(--foreground); }
+
+  /* per client */
+  .client-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .client-avatar { width: 38px; height: 38px; border-radius: 10px; background: color-mix(in oklch, var(--primary) 14%, var(--card)); color: var(--primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .client-name { font-size: 14px; font-weight: 700; }
+  .client-ip { font-size: 11.5px; color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .ud-legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--muted-foreground); margin-bottom: 10px; }
+  .ud-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .ud-legend .sw { width: 9px; height: 9px; border-radius: 2px; }
+</style>
