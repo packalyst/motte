@@ -246,11 +246,11 @@
 
     <!-- traffic over time: one full-width chart per type, stacked -->
     <div class="section-title">Traffic over time<span class="line"></span></div>
-    <div class="tstack stack-gap">
+    <div class="grid cols-4 stack-gap">
       {#each Object.entries(typeMeta) as [type, meta]}
         {@const d = data[type]}
         <div class="card">
-          <div class="card-h"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{d && !d.error ? fmtNumber(d.total_count) : '—'} · last {periodLabelFull}</span></div>
+          <div class="card-h compact"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{d && !d.error ? fmtNumber(d.total_count) : '—'}</span></div>
           {#if d?.time_series?.length > 1}
             <div class="card-body tight">
               <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} legend={false} />
@@ -612,12 +612,13 @@
   .map-toggle { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: 9px; }
   .map-toggle button { border: 0; background: transparent; padding: 5px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; cursor: pointer; color: var(--muted-foreground); }
   .map-toggle button.active { background: var(--card); color: var(--foreground); }
-  .tstack { display: flex; flex-direction: column; gap: 12px; }
 
   /* cards */
   .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); overflow: hidden; display: flex; flex-direction: column; }
   .card-h { padding: 13px 16px; border-bottom: 1px solid var(--border); background: color-mix(in oklch, var(--muted) 55%, transparent); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
   .card-h h3 { margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+  .card-h.compact { padding: 10px 12px; }
+  .card-h.compact h3 { font-size: 12px; }
   .card-h .sub { font-size: 11.5px; color: var(--muted-foreground); font-weight: 600; }
   .card-body { padding: 16px; flex: 1; }
   .card-body.tight { padding: 0; }
