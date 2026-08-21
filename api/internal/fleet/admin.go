@@ -138,12 +138,13 @@ type createTokenRequest struct {
 func (s *Service) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 	enabled, _ := s.Status()
 	router.JSON(w, map[string]any{
-		"enabled":     enabled,
-		"port":        s.effectivePort(),
-		"listening":   enabled,
-		"domain":      s.sslDomain,        // download domain the install command uses (empty ⇒ none)
-		"hosts":       s.HostCandidates(), // addresses the agent could dial for mTLS (operator picks)
-		"fingerprint": s.ca.Fingerprint(),
+		"enabled":       enabled,
+		"port":          s.effectivePort(),
+		"listening":     enabled,
+		"domain":        s.sslDomain,        // download domain the install command uses (empty ⇒ none)
+		"hosts":         s.HostCandidates(), // addresses the agent could dial for mTLS (operator picks)
+		"fingerprint":   s.ca.Fingerprint(),
+		"agent_version": s.agentCache.LatestVersion(r.Context()), // latest published, for "update available"
 	})
 }
 

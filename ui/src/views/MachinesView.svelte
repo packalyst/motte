@@ -264,7 +264,7 @@
 {#if cvesFor}
   <MachineCVEs machine={cvesFor} onback={closeCves} />
 {:else if selected}
-  <MachineDetail machine={selected} onback={closeDetail} ondeleted={closeDetail} onviewcves={openCves} />
+  <MachineDetail machine={selected} latestAgent={ep?.agent_version} onback={closeDetail} ondeleted={closeDetail} onviewcves={openCves} />
 {:else}
 <div class="space-y-4">
   <InfoCard icon="device-desktop" title="Machines"

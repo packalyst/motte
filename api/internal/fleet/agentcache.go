@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 // they're ever served (fail-closed).
 type agentCache struct {
 	dir     string // on-disk cache dir
+	repo    string // <owner>/<repo> on GitHub
 	baseURL string // https://github.com/<repo>/releases/latest/download
 	http    *http.Client
 	ttl     time.Duration
@@ -34,6 +36,12 @@ type agentCache struct {
 	mu        sync.Mutex
 	checksums string    // cached checksums.txt content (the version marker)
 	lastCheck time.Time // when we last re-validated against the release
+
+	// Latest agent version (release tag_name, e.g. "0.1.21"), resolved from the
+	// GitHub API and cached — so the UI can show "update available" without hitting
+	// the API on every request.
+	version   string
+	versionAt time.Time
 }
 
 const agentRepoDefault = "packalyst/wireguard-admin-panel"
@@ -42,10 +50,56 @@ func newAgentCache() *agentCache {
 	repo := helper.GetEnvOptional("FLEET_AGENT_REPO", agentRepoDefault)
 	return &agentCache{
 		dir:     helper.GetEnvOptional("FLEET_AGENT_CACHE", "/data/fleet-agent"),
+		repo:    repo,
 		baseURL: fmt.Sprintf("https://github.com/%s/releases/latest/download", repo),
 		http:    &http.Client{Timeout: 90 * time.Second},
 		ttl:     5 * time.Minute,
 	}
+}
+
+// LatestVersion returns the newest published agent version (release tag_name minus the
+// "agent-v" prefix, e.g. "0.1.21"), resolved from the GitHub API and cached for 30
+// minutes. Best-effort: on any failure it returns the last known value (or "" if never
+// resolved), so the UI degrades to just showing the running version.
+func (c *agentCache) LatestVersion(ctx context.Context) string {
+	c.mu.Lock()
+	if c.version != "" && time.Since(c.versionAt) < 30*time.Minute {
+		v := c.version
+		c.mu.Unlock()
+		return v
+	}
+	c.mu.Unlock()
+
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", c.repo)
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, url, nil)
+	if err != nil {
+		return c.version
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return c.version // keep last known
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return c.version
+	}
+	var body struct {
+		TagName string `json:"tag_name"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body) != nil {
+		return c.version
+	}
+	v := strings.TrimPrefix(strings.TrimPrefix(body.TagName, "agent-v"), "v")
+	if v == "" {
+		return c.version
+	}
+	c.mu.Lock()
+	c.version, c.versionAt = v, time.Now()
+	c.mu.Unlock()
+	return v
 }
 
 // Get returns the cached (binary, manifest, install.sh) for arch, fetching+verifying from

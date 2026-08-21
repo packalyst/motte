@@ -18,7 +18,27 @@
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
-  let { machine, onback, ondeleted, onviewcves } = $props()
+  let { machine, latestAgent = null, onback, ondeleted, onviewcves } = $props()
+
+  // Self-update landed in agent 0.1.20; older agents can't be updated from the panel.
+  const MIN_SELFUPDATE = '0.1.20'
+  // Compare dotted numeric versions ("0.1.20"): -1 a<b, 0 equal, 1 a>b.
+  function cmpVer(a, b) {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number)
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0)
+      if (d) return d < 0 ? -1 : 1
+    }
+    return 0
+  }
+  // Agent-version state for the Agent & Host header: current vs latest published.
+  const agentUpdate = $derived.by(() => {
+    const cur = report?.agent
+    if (!cur || !latestAgent) return { state: 'unknown', cur }        // no data / GitHub unreachable
+    if (cmpVer(cur, latestAgent) >= 0) return { state: 'current', cur }
+    if (cmpVer(cur, MIN_SELFUPDATE) < 0) return { state: 'reinstall', cur, latest: latestAgent }
+    return { state: 'updatable', cur, latest: latestAgent }          // self-update will work
+  })
 
   let report = $state(null)
   let loading = $state(true)
@@ -177,7 +197,7 @@
   const rescan = () => cmd('rescan', null, { title: 'Rescan', message: `Re-run the Trivy CVE scan on ${machine.name} now?` })
   const updateAgent = () => cmd('update-agent', null, {
     title: 'Update agent',
-    message: `Update the wgscout agent on ${machine.name} to the latest release? It downloads the release binary, verifies its checksum, checks it runs, swaps it in (keeping a backup), and restarts the agent — a brief reconnect, no reboot. If it's already current, nothing changes.`,
+    message: `Update the wgscout agent on ${machine.name}${agentUpdate.cur && agentUpdate.latest ? ` from ${agentUpdate.cur} to ${agentUpdate.latest}` : ' to the latest release'}? It downloads the release binary, verifies its checksum, checks it runs, swaps it in (keeping a backup), and restarts the agent — a brief reconnect, no reboot.`,
     confirmText: 'Update agent',
   })
 
@@ -323,7 +343,21 @@
         <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-muted-foreground"><Icon name="robot" size={17} /></span>
         <div class="min-w-0 flex-1">
           <div class="text-[13px] font-semibold text-foreground">Agent &amp; Host</div>
-          <div class="text-[11px] text-muted-foreground truncate">{report?.agent ? `wgscout ${report.agent}` : 'wgscout'}</div>
+          <div class="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <span>{report?.agent ? `wgscout ${report.agent}` : 'wgscout'}</span>
+            {#if agentUpdate.state === 'current'}
+              <span class="inline-flex items-center gap-1 text-success"><Icon name="circle-check" size={11} /> up to date</span>
+            {:else if agentUpdate.state === 'updatable'}
+              <button onclick={updateAgent} class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition cursor-pointer font-medium">
+                <Icon name="arrow-up" size={11} /> Update → {agentUpdate.latest}
+              </button>
+            {:else if agentUpdate.state === 'reinstall'}
+              <span class="inline-flex items-center gap-1 text-warning cursor-help" data-kt-tooltip>
+                <Icon name="alert-triangle" size={11} /> {agentUpdate.latest} available — reinstall
+                <span data-kt-tooltip-content class="kt-tooltip hidden">This agent predates in-panel self-update (added in {MIN_SELFUPDATE}). Reinstall once via the install command to enable one-click updates.</span>
+              </span>
+            {/if}
+          </div>
         </div>
         <span class="hidden sm:flex items-center gap-1.5 text-xs mr-1">
           <span class="w-2 h-2 rounded-full {dryRun ? 'bg-warning' : 'bg-success'}"></span>
@@ -378,7 +412,6 @@
                 <Button variant="outline" size="xs" icon="download" onclick={applyUpdates}>Apply updates</Button>
                 <Button variant="outline" size="xs" icon="cpu" onclick={updateKernel}>Update kernel</Button>
                 <Button variant="outline" size="xs" icon="scan" onclick={rescan}>Rescan</Button>
-                <Button variant="outline" size="xs" icon="arrow-up" onclick={updateAgent}>Update agent</Button>
               </div>
             </div>
             <div>
