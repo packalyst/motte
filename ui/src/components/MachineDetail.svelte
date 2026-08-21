@@ -216,6 +216,13 @@
     title: 'Reboot host', variant: 'destructive', confirmText: 'Reboot', alert: true,
     message: `REBOOT ${machine.name}? The whole host restarts and is offline for a bit.`,
   })
+  const setLogLevel = (level) => cmd('set-log-level', { level }, {
+    title: level === 'debug' ? 'Enable debug logs' : 'Return to quiet logs',
+    message: level === 'debug'
+      ? `Turn on verbose debug logging on ${machine.name}? CrowdSec and osquery go to info level and the agent logs more — useful for troubleshooting. It restarts the sub-agents. Switch back to quiet when you're done.`
+      : `Return ${machine.name} to quiet logging (warnings & errors only)? It restarts the sub-agents.`,
+    confirmText: level === 'debug' ? 'Enable debug' : 'Go quiet',
+  })
 
   // WG cell: pubkey (shortened) + assigned IP when we have it — one combined "WG" fact.
   const wgVal = $derived(
@@ -418,6 +425,11 @@
               <div class="text-[10px] text-muted-foreground mb-1">Lifecycle</div>
               <div class="flex flex-wrap gap-1.5">
                 <Button variant="outline" size="xs" icon="refresh" onclick={restartAgents}>Restart agents</Button>
+                {#if report?.log_level === 'debug'}
+                  <Button variant="outline" size="xs" icon="file-text" onclick={() => setLogLevel('quiet')}>Quiet logs</Button>
+                {:else if report?.log_level}
+                  <Button variant="outline" size="xs" icon="file-text" onclick={() => setLogLevel('debug')}>Debug logs</Button>
+                {/if}
                 <Button variant="destructive" size="xs" icon="power" onclick={rebootHost}>Reboot host</Button>
               </div>
             </div>
