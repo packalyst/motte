@@ -12,7 +12,6 @@
   import Button from './Button.svelte'
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
-  import Select from './Select.svelte'
   import Checkbox from './Checkbox.svelte'
   import EmptyState from './EmptyState.svelte'
   import { sevVariant } from '$lib/fleet.js'
@@ -147,8 +146,24 @@
     } catch (e) { toast('Export failed: ' + e.message, 'error') }
   }
 
-  const sevOptions = [{ value: '', label: 'All severities' }, ...['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => ({ value: s, label: s[0] + s.slice(1).toLowerCase() }))]
   const isCveId = (id) => /^CVE-/i.test(id)
+  const sevDot = { CRITICAL: 'bg-destructive', HIGH: 'bg-warning', MEDIUM: 'bg-info', LOW: 'bg-muted-foreground/60', UNKNOWN: 'bg-muted-foreground/30' }
+  const sevChips = $derived(summary ? [
+    { key: '', label: 'All', count: summary.unique_cves, cls: 'bg-muted-foreground/50' },
+    { key: 'CRITICAL', label: 'Critical', count: summary.u_critical, cls: sevDot.CRITICAL },
+    { key: 'HIGH', label: 'High', count: summary.u_high, cls: sevDot.HIGH },
+    { key: 'MEDIUM', label: 'Medium', count: summary.u_medium, cls: sevDot.MEDIUM },
+    { key: 'LOW', label: 'Low', count: summary.u_low, cls: sevDot.LOW },
+    { key: 'UNKNOWN', label: 'Unknown', count: summary.u_unknown, cls: sevDot.UNKNOWN },
+  ] : [])
+  const dist = $derived(summary && summary.unique_cves ? [
+    { n: summary.u_critical, cls: sevDot.CRITICAL, label: 'Critical' },
+    { n: summary.u_high, cls: sevDot.HIGH, label: 'High' },
+    { n: summary.u_medium, cls: sevDot.MEDIUM, label: 'Medium' },
+    { n: summary.u_low, cls: sevDot.LOW, label: 'Low' },
+    { n: summary.u_unknown, cls: sevDot.UNKNOWN, label: 'Unknown' },
+  ].map((s) => ({ ...s, pct: Math.round((s.n / summary.unique_cves) * 1000) / 10 })) : [])
+  function pickSeverity(k) { severity = k; applyFilters() }
 </script>
 
 <div class="space-y-4">
@@ -166,37 +181,75 @@
     {#if hasKernel}
       <Button variant="primary" size="sm" icon="cpu" onclick={updateKernel}>Update kernel & reboot</Button>
     {/if}
-    {#if selected.size > 0}
-      <Button variant="primary" size="sm" icon="refresh-alert" onclick={fixSelected} loading={fixing}>Fix selected ({selected.size})</Button>
-    {/if}
   </div>
 
-  <!-- machine-level roll-up -->
+  <!-- KPI tiles -->
   {#if summary}
-    <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-center gap-x-5 gap-y-2">
-      <div class="flex items-center gap-1.5">
-        {#if summary.critical}<Badge variant="danger" size="sm">{summary.critical.toLocaleString()} critical</Badge>{/if}
-        {#if summary.high}<Badge variant="warning" size="sm">{summary.high.toLocaleString()} high</Badge>{/if}
-        {#if summary.medium}<Badge variant="info" size="sm">{summary.medium.toLocaleString()} medium</Badge>{/if}
-        {#if summary.low}<Badge variant="muted" size="sm">{summary.low.toLocaleString()} low</Badge>{/if}
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="bg-card border border-border rounded-xl p-3">
+        <div class="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Findings</div>
+        <div class="text-2xl font-bold tabular-nums text-foreground">{summary.total.toLocaleString()}</div>
+        <div class="text-[11px] text-muted-foreground">CVE × package rows</div>
       </div>
-      <div class="flex items-center gap-1.5 text-sm">
-        <Icon name="tool" size={14} class="text-success" />
-        <span class="font-semibold text-foreground">{summary.fixable.toLocaleString()}</span>
-        <span class="text-muted-foreground">fixable</span>
+      <div class="bg-card border border-border rounded-xl p-3">
+        <div class="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Unique CVEs</div>
+        <div class="text-2xl font-bold tabular-nums text-foreground">{summary.unique_cves.toLocaleString()}</div>
+        <div class="text-[11px] text-muted-foreground">distinct advisories</div>
       </div>
-      <div class="text-[11px] text-muted-foreground ml-auto">
-        {summary.unique_cves.toLocaleString()} CVEs · {summary.packages.toLocaleString()} packages · {summary.total.toLocaleString()} findings
+      <div class="bg-card border border-border rounded-xl p-3">
+        <div class="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Packages affected</div>
+        <div class="text-2xl font-bold tabular-nums text-foreground">{summary.packages.toLocaleString()}</div>
+        <div class="text-[11px] text-muted-foreground">across OS + app deps</div>
+      </div>
+      <div class="bg-card border border-border rounded-xl p-3">
+        <div class="text-[10px] uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-1"><Icon name="tool" size={11} class="text-success" />Fixable</div>
+        <div class="text-2xl font-bold tabular-nums text-success">{summary.fixable.toLocaleString()}</div>
+        <div class="text-[11px] text-muted-foreground">have an upgrade</div>
       </div>
     </div>
+
+    <!-- Severity distribution -->
+    {#if summary.unique_cves}
+      <div class="bg-card border border-border rounded-xl p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-foreground">Severity distribution</h3>
+          <span class="text-[11px] text-muted-foreground">share of {summary.unique_cves.toLocaleString()} unique CVEs</span>
+        </div>
+        <div class="flex h-2.5 rounded-full overflow-hidden bg-muted">
+          {#each dist as s}
+            {#if s.pct > 0}<div class={s.cls} style="width:{s.pct}%" title="{s.label}: {s.n.toLocaleString()} ({s.pct}%)"></div>{/if}
+          {/each}
+        </div>
+        <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2.5">
+          {#each dist as s}
+            <div class="flex items-center gap-1.5 text-[11px]">
+              <span class="w-2 h-2 rounded-sm {s.cls}"></span>
+              <span class="text-muted-foreground">{s.label}</span>
+              <span class="tabular-nums font-medium text-foreground">{s.n.toLocaleString()}</span>
+              <span class="text-muted-foreground">{s.pct}%</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
   {/if}
 
-  <!-- filters -->
-  <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-end gap-2">
-    <div class="min-w-[150px]"><Select bind:value={severity} label="Severity" options={sevOptions} onchange={applyFilters} /></div>
-    <div class="flex-1 min-w-[180px]"><Input bind:value={q} label="Search" prefixIcon="search" placeholder="CVE id or package" onkeydown={(e) => e.key === 'Enter' && applyFilters()} /></div>
-    <Checkbox bind:checked={fixable} label="Has a fix" onchange={applyFilters} class="px-1 py-2" />
-    <Button size="sm" icon="filter" onclick={applyFilters}>Apply</Button>
+  <!-- filters: severity chips + fixable toggle + search -->
+  <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+    <div class="flex flex-wrap items-center gap-1.5">
+      {#each sevChips as c}
+        <button onclick={() => pickSeverity(c.key)}
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition cursor-pointer
+                 {severity === c.key ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-ring'}">
+          <span class="w-1.5 h-1.5 rounded-sm {c.cls}"></span>{c.label}
+          <span class="text-[11px] opacity-80 tabular-nums">{c.count.toLocaleString()}</span>
+        </button>
+      {/each}
+    </div>
+    <Checkbox variant="switch" bind:checked={fixable} label="Has a fix" onchange={applyFilters} />
+    <div class="flex-1 min-w-[180px] ml-auto">
+      <Input bind:value={q} prefixIcon="search" placeholder="Search CVE id or package…" onkeydown={(e) => e.key === 'Enter' && applyFilters()} />
+    </div>
   </div>
 
   <!-- list -->
@@ -272,6 +325,18 @@
     {/if}
     <div class="text-[11px] text-muted-foreground px-1">
       Click a CVE to see its affected packages. Tick fixable OS packages, then <b>Fix selected</b> — the agent runs a targeted upgrade of just those.
+    </div>
+  {/if}
+
+  <!-- sticky selection bar -->
+  {#if selected.size > 0}
+    <div class="sticky bottom-4 z-10 bg-card border border-primary/40 rounded-xl shadow-lg p-3 flex items-center gap-3">
+      <Icon name="checks" size={16} class="text-primary shrink-0" />
+      <span class="text-sm text-foreground"><b class="tabular-nums">{selected.size}</b> package{selected.size === 1 ? '' : 's'} selected</span>
+      <div class="ml-auto flex items-center gap-2">
+        <Button variant="ghost" size="sm" onclick={() => (selected = new Set())}>Clear</Button>
+        <Button variant="primary" size="sm" icon="refresh-alert" onclick={fixSelected} loading={fixing}>Fix selected</Button>
+      </div>
     </div>
   {/if}
 </div>

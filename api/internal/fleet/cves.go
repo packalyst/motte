@@ -53,6 +53,12 @@ type CVESummary struct {
 	Medium     int `json:"medium"`
 	Low        int `json:"low"`
 	Fixable    int `json:"fixable"` // findings with a fixed version available
+	// unique-CVE counts per severity (for the CVE-first distribution + chips)
+	UCritical int `json:"u_critical"`
+	UHigh     int `json:"u_high"`
+	UMedium   int `json:"u_medium"`
+	ULow      int `json:"u_low"`
+	UUnknown  int `json:"u_unknown"`
 }
 
 // deriveProject buckets a finding: kernel packages → "Kernel" (fixed by a new kernel +
@@ -221,9 +227,15 @@ func (s *Service) CVESummaryFor(machineID string) (CVESummary, error) {
 		COUNT(DISTINCT pkg),
 		COALESCE(SUM(severity='CRITICAL'),0), COALESCE(SUM(severity='HIGH'),0),
 		COALESCE(SUM(severity='MEDIUM'),0), COALESCE(SUM(severity='LOW'),0),
-		COALESCE(SUM(fixed != '' AND fixed IS NOT NULL),0)
+		COALESCE(SUM(fixed != '' AND fixed IS NOT NULL),0),
+		COUNT(DISTINCT CASE WHEN severity='CRITICAL' THEN cve_id END),
+		COUNT(DISTINCT CASE WHEN severity='HIGH' THEN cve_id END),
+		COUNT(DISTINCT CASE WHEN severity='MEDIUM' THEN cve_id END),
+		COUNT(DISTINCT CASE WHEN severity='LOW' THEN cve_id END),
+		COUNT(DISTINCT CASE WHEN severity NOT IN ('CRITICAL','HIGH','MEDIUM','LOW') THEN cve_id END)
 		FROM fleet_cves WHERE machine_id = ?`, machineID).
-		Scan(&sm.Total, &sm.UniqueCVEs, &sm.Packages, &sm.Critical, &sm.High, &sm.Medium, &sm.Low, &sm.Fixable)
+		Scan(&sm.Total, &sm.UniqueCVEs, &sm.Packages, &sm.Critical, &sm.High, &sm.Medium, &sm.Low, &sm.Fixable,
+			&sm.UCritical, &sm.UHigh, &sm.UMedium, &sm.ULow, &sm.UUnknown)
 	return sm, err
 }
 
