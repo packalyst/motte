@@ -31,6 +31,9 @@ func (s *Service) HandleReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "store failed")
 		return
 	}
+	// Fold this report's live metrics into the machine's usage history (5-min buckets).
+	// Best-effort — never fail an ingest over history.
+	s.recordMetrics(m.ID, body)
 	// Push the fresh report to any browser watching this machine, so the UI updates live
 	// instead of polling. The command log rides its own event-driven broadcasts
 	// (enqueue / deliver / ack), so we don't query it on every idle check-in here.

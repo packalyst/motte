@@ -51,6 +51,11 @@ type Service struct {
 	srv     *http.Server
 
 	clientCertTTL time.Duration
+
+	// Usage-history pruning is throttled to once an hour, piggybacked on report
+	// traffic (see metrics.go) — no background goroutine.
+	metricsMu       sync.Mutex
+	metricsPrunedAt time.Time
 }
 
 // SetBroadcast wires the WS broadcast fn so report ingests push live to the UI.
@@ -340,6 +345,16 @@ func ensureSchema(db *sql.DB) error {
 			scanned_at TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_machine ON fleet_cves(machine_id, severity)`,
+		`CREATE TABLE IF NOT EXISTS fleet_metrics (
+			machine_id TEXT NOT NULL,
+			bucket     INTEGER NOT NULL,
+			cpu_avg  REAL, cpu_max  REAL,
+			mem_avg  REAL, mem_max  REAL,
+			disk_avg REAL, disk_max REAL,
+			load_avg REAL, load_max REAL,
+			samples  INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (machine_id, bucket)
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {

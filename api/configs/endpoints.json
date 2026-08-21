@@ -1556,6 +1556,14 @@
           "description": "Latest report JSON for a machine (?id=)"
         },
         {
+          "path": "/metrics",
+          "methods": [
+            "GET"
+          ],
+          "handler": "MetricsHistory",
+          "description": "Usage history (CPU/mem/disk avg+peak) for a machine (?id=&range=24h|7d|30d)"
+        },
+        {
           "path": "/endpoints",
           "methods": [
             "GET"

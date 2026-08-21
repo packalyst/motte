@@ -14,6 +14,7 @@
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
+  import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
@@ -73,6 +74,41 @@
   }
   const load = () => loadReport()
   const refresh = () => { loadReport(); loadCves() }
+
+  // Usage history — CPU/mem/disk over time, averaged into 5-min buckets on the panel
+  // (the report only carries the live snapshot). `stat` flips the lines between the
+  // bucket average and its peak; both come in one payload so the toggle never refetches.
+  let histRange = $state('24h')
+  let histStat = $state('avg')
+  let histPoints = $state([])
+  let histLoading = $state(false)
+  async function loadHistory() {
+    histLoading = true
+    try {
+      const res = await apiGet(`/api/fleet/metrics?id=${encodeURIComponent(machine.id)}&range=${histRange}`)
+      histPoints = res?.points || []
+    } catch { histPoints = [] } finally { histLoading = false }
+  }
+  // Refetch when the range (or the machine) changes; runs once on mount too.
+  $effect(() => { histRange; machine.id; loadHistory() })
+
+  const histSeries = [
+    { label: 'CPU', stroke: '--cpu' },
+    { label: 'Memory', stroke: '--mem' },
+    { label: 'Disk', stroke: '--tx' },
+  ]
+  // uPlot columnar shape: [xs, cpu, mem, disk] pulled from the chosen stat (avg|max).
+  const chartData = $derived.by(() => {
+    const p = histPoints
+    if (!p.length) return []
+    const k = histStat === 'max' ? 'max' : 'avg'
+    return [
+      p.map((d) => d.t),
+      p.map((d) => d[`cpu_${k}`]),
+      p.map((d) => d[`mem_${k}`]),
+      p.map((d) => d[`disk_${k}`]),
+    ]
+  })
 
   onMount(() => {
     refresh()             // initial HTTP populate
@@ -366,6 +402,39 @@
           </div>
         </div>
       {/if}
+    </div>
+
+    <!-- USAGE HISTORY (full width — a time chart wants the room) -->
+    <div class="bg-card border border-border rounded-xl p-4 mb-4">
+      <div class="flex items-center gap-2.5 mb-3 flex-wrap">
+        <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-muted-foreground"><Icon name="chart-line" size={17} /></span>
+        <div class="min-w-0 flex-1">
+          <div class="text-[13px] font-semibold text-foreground">Usage history</div>
+          <div class="text-[11px] text-muted-foreground truncate">CPU · memory · disk over time</div>
+        </div>
+        <!-- average vs peak (both stored; no refetch) -->
+        <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs shrink-0">
+          {#each [['avg', 'Avg'], ['max', 'Peak']] as [v, l]}
+            <button onclick={() => histStat = v} class="px-2.5 py-1 rounded-md transition cursor-pointer {histStat === v ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">{l}</button>
+          {/each}
+        </div>
+        <!-- time range -->
+        <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs shrink-0">
+          {#each ['24h', '7d', '30d'] as r}
+            <button onclick={() => histRange = r} class="px-2.5 py-1 rounded-md transition cursor-pointer {histRange === r ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">{r}</button>
+          {/each}
+        </div>
+      </div>
+      {#if histLoading && histPoints.length === 0}
+        <div class="h-[188px] grid place-items-center text-xs text-muted-foreground">Loading history…</div>
+      {:else if histPoints.length < 2}
+        <div class="h-[188px] grid place-items-center text-center text-xs text-muted-foreground px-4">
+          Not enough history yet — usage is charted as the agent checks in (every&nbsp;~15s). Check back in a few minutes.
+        </div>
+      {:else}
+        <UPlotChart data={chartData} series={histSeries} height={188} yRange={[0, 100]} yUnit="%" />
+      {/if}
+      {@render note('Averaged into 5-minute buckets, kept for 30 days. “Peak” shows the highest reading in each bucket — a brief CPU or disk spike the average smooths away.')}
     </div>
 
     <!-- rest of the cards in explicit 2 columns (each stacks independently) -->

@@ -23,6 +23,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"CAInfo":          s.handleCAInfo,
 		"EnqueueCommand":  s.handleEnqueueCommand,
 		"MachineReport":   s.handleMachineReport,
+		"MetricsHistory":  s.handleMetricsHistory,
 		"FleetEndpoints":  s.handleEndpoints,
 		"SetConfig":       s.handleSetConfig,
 		"PushBlocks":      s.handlePushBlocks,
