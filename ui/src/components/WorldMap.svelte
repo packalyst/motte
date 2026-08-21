@@ -1,20 +1,19 @@
 <script>
   /**
    * WorldMap — a self-contained SVG world map (real country outlines, no network,
-   * no runtime projection) with one bubble per country sized by count. The outline
-   * is a pre-projected path (see lib/worldPath.js); bubbles are placed from a small
-   * ISO-2 centroid table using the same equirectangular projection.
+   * no runtime projection) with one bubble per country sized by count, plus
+   * scroll/drag + button zoom. Outline is a pre-projected path (lib/worldPath.js);
+   * bubbles are placed from a small ISO-2 centroid table with the same projection.
    * dots: [{ country, count }] (country = 2-letter ISO); kind: 'src' | 'dest'.
    */
   import { WORLD_PATH, WORLD_VIEWBOX } from '../lib/worldPath.js'
   import CountryFlag from './CountryFlag.svelte'
+  import Icon from './Icon.svelte'
 
   let { dots = [], kind = 'src' } = $props()
 
   const W = 1000, H = 500 // must match worldPath.js viewBox
 
-  // Rough centroid [lon, lat, name] per country. Anything not listed is skipped as a
-  // bubble (it still appears in the ranked list beside the map).
   const COORDS = {
     US: [-98, 39, 'United States'], CA: [-106, 56, 'Canada'], MX: [-102, 23, 'Mexico'],
     BR: [-51, -10, 'Brazil'], AR: [-64, -34, 'Argentina'], CL: [-71, -30, 'Chile'], CO: [-74, 4, 'Colombia'],
@@ -49,27 +48,78 @@
           r: 4 + 26 * Math.sqrt((d.count || 0) / max),
         }
       })
-      .sort((a, b) => b.r - a.r) // largest first so small bubbles land on top
+      .sort((a, b) => b.r - a.r)
   })
+
+  // ── zoom / pan (viewBox driven, so bubble sizes + tooltips track the zoom) ──
+  let scale = $state(1)
+  let ox = $state(0), oy = $state(0) // viewBox top-left in map units
+  let elW = $state(1)
+  const vbW = $derived(W / scale)
+  const vbH = $derived(H / scale)
+  const viewBox = $derived(`${ox} ${oy} ${vbW} ${vbH}`)
+
+  function clamp() {
+    ox = Math.max(0, Math.min(W - vbW, ox))
+    oy = Math.max(0, Math.min(H - vbH, oy))
+  }
+  // Zoom keeping the point at (fracX, fracY) of the viewport fixed under the cursor.
+  function zoomTo(next, fracX = 0.5, fracY = 0.5) {
+    const ns = Math.max(1, Math.min(8, next))
+    const px = ox + fracX * vbW, py = oy + fracY * vbH
+    scale = ns
+    ox = px - fracX * (W / ns)
+    oy = py - fracY * (H / ns)
+    clamp()
+  }
+  function reset() { scale = 1; ox = 0; oy = 0 }
+  function onWheel(e) {
+    e.preventDefault()
+    const r = e.currentTarget.getBoundingClientRect()
+    zoomTo(scale * (e.deltaY < 0 ? 1.2 : 1 / 1.2), (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height)
+  }
+  // drag to pan
+  let dragging = $state(false)
+  let lastX = 0, lastY = 0
+  function onDown(e) { dragging = true; lastX = e.clientX; lastY = e.clientY }
+  function onMove(e) {
+    if (!dragging || !elW) return
+    const k = vbW / elW // map units per pixel
+    ox -= (e.clientX - lastX) * k
+    oy -= (e.clientY - lastY) * k
+    lastX = e.clientX; lastY = e.clientY
+    clamp()
+  }
+  function onUp() { dragging = false }
 
   let hover = $state(null)
 </script>
 
-<div class="wrap">
-  <svg viewBox={WORLD_VIEWBOX} class="map" role="img" aria-label="World map of {kind === 'src' ? 'source' : 'destination'} countries">
+<div class="wrap" bind:clientWidth={elW}>
+  <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
+  <svg
+    viewBox={viewBox} class="map" class:grab={!dragging} class:grabbing={dragging}
+    role="img" aria-label="World map of {kind === 'src' ? 'source' : 'destination'} countries"
+    onwheel={onWheel} onmousedown={onDown} onmousemove={onMove} onmouseup={onUp} onmouseleave={onUp}
+  >
     <path d={WORLD_PATH} class="land" />
     {#each plotted as d}
       <g role="button" tabindex="0" aria-label="{d.name}: {d.count.toLocaleString()}"
-        onmouseenter={() => (hover = d)} onmousemove={() => (hover = d)} onmouseleave={() => (hover = null)}
-        onfocus={() => (hover = d)} onblur={() => (hover = null)} style="cursor:pointer">
-        <circle cx={d.x} cy={d.y} r={d.r} style="fill:{color}; stroke:{color}" fill-opacity="0.28" stroke-width="1.4" />
-        <circle cx={d.x} cy={d.y} r="2" style="fill:{color}" />
+        onmouseenter={() => (hover = d)} onfocus={() => (hover = d)} onmouseleave={() => (hover = null)} onblur={() => (hover = null)}>
+        <circle cx={d.x} cy={d.y} r={d.r / scale} style="fill:{color}; stroke:{color}" fill-opacity="0.28" stroke-width={1.4 / scale} />
+        <circle cx={d.x} cy={d.y} r={2 / scale} style="fill:{color}" />
       </g>
     {/each}
   </svg>
 
+  <div class="zoom">
+    <button title="Zoom in" onclick={() => zoomTo(scale * 1.5)}><Icon name="plus" size={14} /></button>
+    <button title="Zoom out" onclick={() => zoomTo(scale / 1.5)}><Icon name="minus" size={14} /></button>
+    <button title="Reset" onclick={reset}><Icon name="refresh" size={13} /></button>
+  </div>
+
   {#if hover}
-    <div class="tt" style="left:{(hover.x / W) * 100}%; top:{(hover.y / H) * 100}%">
+    <div class="tt" style="left:{((hover.x - ox) / vbW) * 100}%; top:{((hover.y - oy) / vbH) * 100}%">
       <div class="tt-t"><CountryFlag code={hover.country} size="sm" /> {hover.name}</div>
       <div class="tt-v">{hover.count.toLocaleString()} {noun}</div>
     </div>
@@ -77,15 +127,21 @@
 </div>
 
 <style>
-  .wrap { position: relative; width: 100%; }
+  .wrap { position: relative; width: 100%; overflow: hidden; border-radius: 8px; }
   .map {
-    width: 100%; height: auto; display: block; border-radius: 8px;
-    background: color-mix(in oklch, var(--info) 7%, var(--card)); /* subtle ocean */
+    width: 100%; height: auto; display: block; touch-action: none;
+    background: color-mix(in oklch, var(--info) 7%, var(--card));
   }
-  .land {
-    fill: color-mix(in oklch, var(--muted-foreground) 24%, var(--card));
-    stroke: var(--card); stroke-width: 0.4;
+  .map.grab { cursor: grab; }
+  .map.grabbing { cursor: grabbing; }
+  .land { fill: color-mix(in oklch, var(--muted-foreground) 24%, var(--card)); stroke: var(--card); stroke-width: 0.4; }
+  .zoom { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .zoom button {
+    width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+    background: var(--card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+    color: var(--muted-foreground); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   }
+  .zoom button:hover { color: var(--foreground); }
   .tt {
     position: absolute; transform: translate(-50%, -115%); pointer-events: none;
     background: var(--card); border: 1px solid var(--border); border-radius: 8px;

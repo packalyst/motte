@@ -252,7 +252,7 @@
         {#if d?.time_series?.length > 1}
           <div class="card">
             <div class="card-h"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{fmtNumber(d.total_count)} · last {periodLabelFull}</span></div>
-            <div class="card-body tight">
+            <div class="card-body" style="padding:0">
               <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} legend={false} />
             </div>
           </div>
@@ -276,7 +276,6 @@
         </div>
         <div class="card-body tight">
           {#if mapData.length}<WorldMap dots={mapData} kind={mapKind} />{:else}<div class="nodata pad">No country data in this period.</div>{/if}
-          <div class="caption"><Icon name="info-circle" size={13} /><span>{mapKind === 'src' ? 'Dot size = blocked attempts from that country. Hover for details.' : 'Dot size = outbound connections your devices made to that country.'}</span></div>
         </div>
       </div>
       <div class="card">
@@ -601,7 +600,7 @@
   .icon-badge.sm { width: 30px; height: 30px; border-radius: 8px; }
 
   /* toolbar: segmented tab menu (smaller) + period controls */
-  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 16px; margin-bottom: 18px; }
   .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .tabs { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: calc(var(--a-radius) + 3px); flex-wrap: wrap; }
   .tab { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; cursor: pointer; padding: 5px 11px; border-radius: calc(var(--a-radius) - 1px); font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); }
