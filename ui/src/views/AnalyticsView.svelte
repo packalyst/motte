@@ -8,7 +8,7 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
-  import Sparkline from '../components/Sparkline.svelte'
+  import Tabs from '../components/Tabs.svelte'
   import BlockedByLayer from '../components/BlockedByLayer.svelte'
   import UPlotChart from '../components/UPlotChart.svelte'
   import Donut from '../components/Donut.svelte'
@@ -27,10 +27,10 @@
 
   const TABS = [
     { id: null, label: 'Overview', icon: 'chart-bar' },
-    { id: 'inbound', label: 'Inbound' },
-    { id: 'dns', label: 'DNS' },
-    { id: 'outbound', label: 'Outbound' },
-    { id: 'fw', label: 'Firewall' },
+    { id: 'inbound', label: 'Inbound', icon: 'arrow-down' },
+    { id: 'dns', label: 'DNS', icon: 'globe' },
+    { id: 'outbound', label: 'Outbound', icon: 'arrow-up' },
+    { id: 'fw', label: 'Firewall', icon: 'shield' },
     { id: 'client', label: 'Per client', icon: 'user' },
   ]
   const PERIODS = [
@@ -55,10 +55,11 @@
     fw: 'Connection attempts that were dropped before they reached anything.',
   }
 
+  // Overview + per-type stats are NEVER client-filtered — they show all traffic.
+  // A client is only ever scoped inside the "Per client" tab (via peer-usage).
   async function loadType(type) {
     try {
-      const clientParam = selectedPeer ? `&client=${encodeURIComponent(selectedPeer)}` : ''
-      data[type] = await apiGet(`/api/logs/stats?type=${type}&period=${period}${clientParam}`)
+      data[type] = await apiGet(`/api/logs/stats?type=${type}&period=${period}`)
     } catch (e) { data[type] = { error: e.message } }
   }
   async function loadAll() {
@@ -66,7 +67,7 @@
     await Promise.all([...Object.keys(typeMeta).map(loadType), loadTopTalkers()])
     loading = false
   }
-  $effect(() => { period; selectedPeer; loadAll() })
+  $effect(() => { period; loadAll() })
   onMount(loadAll)
 
   // ── Per-client (conntrack byte accounting) ──
@@ -113,6 +114,24 @@
   // Overview world map: source (attackers, fw) vs destination (outbound). Persisted UI.
   let mapKind = $state('src')
   const mapData = $derived(mapKind === 'src' ? (data.fw?.top_countries || []) : (data.outbound?.top_countries || []))
+
+  // One combined "traffic over time" chart: align all four types onto a shared time
+  // axis (union of bucket timestamps; null where a type has no bucket) so uPlot can
+  // draw them as one multi-series chart instead of four cramped tiles.
+  const trafficSeries = $derived.by(() => {
+    const types = ['inbound', 'dns', 'outbound', 'fw']
+    const tsSet = new Set()
+    for (const t of types) for (const b of data[t]?.time_series || []) tsSet.add(b.ts)
+    const xs = [...tsSet].sort((a, b) => a - b)
+    if (xs.length < 2) return null
+    const at = new Map(xs.map((t, i) => [t, i]))
+    const cols = types.map((t) => {
+      const col = new Array(xs.length).fill(null)
+      for (const b of data[t]?.time_series || []) col[at.get(b.ts)] = b.count
+      return col
+    })
+    return { data: [xs, ...cols], series: types.map((t) => ({ label: typeMeta[t].label, stroke: typeMeta[t].stroke })) }
+  })
 
   // Plain-English one-liner summarizing the period.
   const summary = $derived.by(() => {
@@ -178,19 +197,14 @@
     <div class="updated"><span class="live-dot"></span>Live · last {periodLabelFull}</div>
   </div>
 
-  <!-- toolbar -->
+  <!-- toolbar: reusable Tabs + a kt-btn-group period control (no bespoke controls) -->
   <div class="toolbar">
-    <div class="tabs">
-      {#each TABS as t}
-        <button class="tab" class:active={selectedType === t.id} onclick={() => setType(t.id)}>
-          {#if t.icon}<Icon name={t.icon} size={15} />{:else if t.id && typeMeta[t.id]}<span class="tdot" style="background:{typeMeta[t.id].cvar}"></span>{/if}
-          {t.label}
-        </button>
-      {/each}
-    </div>
+    <Tabs tabs={TABS} activeTab={selectedType} onchange={setType} size="sm" class="flex-1 min-w-0" />
     <div class="controls">
-      <div class="seg">
-        {#each PERIODS as p}<button class:active={period === p.id} onclick={() => setPeriod(p.id)}>{p.label}</button>{/each}
+      <div class="kt-btn-group">
+        {#each PERIODS as p}
+          <Button variant={period === p.id ? 'mono' : 'outline'} size="sm" onclick={() => setPeriod(p.id)}>{p.label}</Button>
+        {/each}
       </div>
       {#if selectedType && selectedType !== 'client'}<Button variant="outline" size="sm" icon="download" onclick={downloadCsv}>Export</Button>{/if}
       <Button variant="outline" size="sm" icon="refresh" onclick={loadAll}>Refresh</Button>
@@ -230,9 +244,6 @@
           <div class="trend" style="color:{tr ? (good ? 'var(--success)' : 'var(--destructive)') : 'var(--muted-foreground)'}">
             {#if tr}<Icon name={tr.dir === 'up' ? 'arrow-up' : 'arrow-down'} size={11} /><span>{Math.abs(tr.pct).toFixed(1)}%</span><span class="muted">vs previous</span>{:else}<span>no prior data</span>{/if}
           </div>
-          <div class="spark" style="color:{meta.cvar}">
-            {#if d?.time_series?.length > 1}<Sparkline data={d.time_series} valueKey="count" height={30} />{/if}
-          </div>
           {#if d && !d.error && d.total_count > 0}
             <div class="foot">
               {#if type === 'inbound'}
@@ -250,20 +261,14 @@
       {/each}
     </div>
 
-    <!-- mini charts -->
+    <!-- one full-width combined traffic chart (all four types on a shared time axis) -->
     <div class="section-title">Traffic over time<span class="line"></span></div>
-    <div class="grid cols-4 stack-gap">
-      {#each Object.entries(typeMeta) as [type, meta]}
-        {@const d = data[type]}
-        <div class="card">
-          <div class="card-h compact"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{d ? fmtNumber(d.total_count) : '—'}</span></div>
-          <div class="card-body tight">
-            {#if d?.time_series?.length}
-              <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={92} legend={false} />
-            {:else}<div class="nodata">no data</div>{/if}
-          </div>
-        </div>
-      {/each}
+    <div class="card stack-gap">
+      <div class="card-body">
+        {#if trafficSeries}
+          <UPlotChart data={trafficSeries.data} series={trafficSeries.series} height={220} legend={true} />
+        {:else}<div class="nodata pad">Not enough data in this period yet.</div>{/if}
+      </div>
     </div>
 
     <!-- enforcement (reuses BlockedByLayer, real /api/fw/layers) -->
@@ -275,9 +280,9 @@
       <div class="card">
         <div class="card-h">
           <h3><Icon name="world" size={15} />World map</h3>
-          <div class="map-toggle">
-            <button class:active={mapKind === 'src'} onclick={() => (mapKind = 'src')}>Who's hitting us</button>
-            <button class:active={mapKind === 'dest'} onclick={() => (mapKind = 'dest')}>Where traffic goes</button>
+          <div class="kt-btn-group">
+            <Button variant={mapKind === 'src' ? 'mono' : 'outline'} size="xs" onclick={() => (mapKind = 'src')}>Who's hitting us</Button>
+            <Button variant={mapKind === 'dest' ? 'mono' : 'outline'} size="xs" onclick={() => (mapKind = 'dest')}>Where traffic goes</Button>
           </div>
         </div>
         <div class="card-body tight">
@@ -616,24 +621,12 @@
 
   /* toolbar */
   .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
-  .tabs { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: calc(var(--a-radius) + 3px); flex-wrap: wrap; }
-  .tab { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; cursor: pointer; padding: 7px 13px; border-radius: calc(var(--a-radius) - 1px); font-size: 12.5px; font-weight: 600; color: var(--muted-foreground); }
-  .tab:hover { color: var(--foreground); }
-  .tab.active { background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
-  .tab .tdot { width: 6px; height: 6px; border-radius: 99px; flex-shrink: 0; }
   .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .seg { display: flex; background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); overflow: hidden; }
-  .seg button { border: 0; background: transparent; padding: 7px 11px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--muted-foreground); border-right: 1px solid var(--border); }
-  .seg button:last-child { border-right: 0; }
-  .seg button:hover { color: var(--foreground); background: var(--muted); }
-  .seg button.active { background: var(--primary); color: var(--primary-foreground); }
 
   /* cards */
   .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); overflow: hidden; display: flex; flex-direction: column; }
   .card-h { padding: 13px 16px; border-bottom: 1px solid var(--border); background: color-mix(in oklch, var(--muted) 55%, transparent); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-  .card-h.compact { padding: 10px 12px; }
   .card-h h3 { margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
-  .card-h.compact h3 { font-size: 12px; }
   .card-h .sub { font-size: 11.5px; color: var(--muted-foreground); font-weight: 600; }
   .card-body { padding: 16px; flex: 1; }
   .card-body.tight { padding: 12px 16px; }
@@ -667,7 +660,6 @@
   .kpi .chev { color: var(--muted-foreground); margin-left: auto; flex-shrink: 0; display: flex; }
   .kpi .num { font-size: 27px; font-weight: 800; letter-spacing: -0.02em; padding: 8px 12px 0; font-variant-numeric: tabular-nums; }
   .kpi .trend { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 12px 8px; }
-  .kpi .spark { padding: 0 8px; min-height: 30px; }
   .kpi .foot { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border); padding: 9px 12px; margin-top: auto; }
   .kpi .cell { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted-foreground); }
   .kpi .cell .v { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--foreground); display: block; }
@@ -702,9 +694,6 @@
   .trend-badge { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; margin-bottom: 14px; }
 
   /* map toggle */
-  .map-toggle { display: flex; gap: 2px; background: var(--muted); padding: 3px; border-radius: 9px; }
-  .map-toggle button { border: 0; background: transparent; padding: 5px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; cursor: pointer; color: var(--muted-foreground); }
-  .map-toggle button.active { background: var(--card); color: var(--foreground); }
 
   /* per client */
   .client-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
