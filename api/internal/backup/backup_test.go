@@ -3,6 +3,7 @@ package backup
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"api/internal/helper"
@@ -70,7 +71,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 
 	// The sealed file must not leak plaintext secrets.
-	if s := string(blob); containsAny(s, "PRIVATE-KEY-MATERIAL", "SECRET-API-KEY") {
+	if s := string(blob); strings.Contains(s, "PRIVATE-KEY-MATERIAL") || strings.Contains(s, "SECRET-API-KEY") {
 		t.Fatal("plaintext secret leaked into sealed backup file")
 	}
 
@@ -143,7 +144,7 @@ func TestOpenTamperedHeader(t *testing.T) {
 	// Flip a cleartext-header VALUE (panel_version test→prod). It's bound as GCM AAD,
 	// so the open must reject it. (Tampering a KEY wouldn't test this — Go's JSON
 	// unmarshal matches struct tags case-insensitively.)
-	tampered := replaceFirst(string(blob), `"panel_version": "test"`, `"panel_version": "prod"`)
+	tampered := strings.Replace(string(blob), `"panel_version": "test"`, `"panel_version": "prod"`, 1)
 	if tampered == string(blob) {
 		t.Fatal("test setup: panel_version not found to tamper")
 	}
@@ -158,7 +159,7 @@ func TestOpenTamperedKDFParams(t *testing.T) {
 	blob, _ := Export(db, "the right passphrase", "test", false, false)
 	// Downgrade the iteration count in the cleartext envelope. It's now bound as AAD,
 	// so the open must reject it (defends a future iter-downgrade attack).
-	tampered := replaceFirst(string(blob), `"iter": 600000`, `"iter": 1`)
+	tampered := strings.Replace(string(blob), `"iter": 600000`, `"iter": 1`, 1)
 	if tampered == string(blob) {
 		t.Fatal("test setup: iter field not found to tamper")
 	}
@@ -179,30 +180,4 @@ func TestSealOpenUnit(t *testing.T) {
 	if _, err := open("pw", salt, nonce, ct, []byte("different-aad")); err != errBadPass {
 		t.Fatal("aad mismatch should fail")
 	}
-}
-
-func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if idx := indexOf(s, sub); idx >= 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
-}
-
-func replaceFirst(s, old, new string) string {
-	i := indexOf(s, old)
-	if i < 0 {
-		return s
-	}
-	return s[:i] + new + s[i+len(old):]
 }

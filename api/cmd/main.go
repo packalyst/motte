@@ -435,12 +435,19 @@ func main() {
 				done = append(done, "firewall")
 			}
 			if vpnSvc != nil {
-				vpnSvc.SyncClients()
-				_ = vpnSvc.ApplyRules()
-				if err := vpn.GenerateAndApplyHeadscaleACL(); err == nil {
-					done = append(done, "headscale-acl")
+				if added, removed, err := vpnSvc.SyncClients(); err != nil {
+					log.Printf("backup import: vpn SyncClients failed: %v", err)
+				} else {
+					log.Printf("backup import: vpn synced (%d added, %d removed)", added, removed)
 				}
-				done = append(done, "vpn")
+				// ApplyRules regenerates + applies the Headscale ACL internally, so no
+				// separate GenerateAndApplyHeadscaleACL call here. Only report "vpn"
+				// reconciled when it actually succeeds.
+				if err := vpnSvc.ApplyRules(); err != nil {
+					log.Printf("backup import: vpn ApplyRules failed: %v", err)
+				} else {
+					done = append(done, "vpn")
+				}
 			}
 			if flSvc != nil {
 				flSvc.ReloadFromSettings()
