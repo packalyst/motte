@@ -152,6 +152,21 @@ func TestOpenTamperedHeader(t *testing.T) {
 	}
 }
 
+func TestOpenTamperedKDFParams(t *testing.T) {
+	db := testDB(t)
+	db.Exec(`INSERT INTO settings (key,value,encrypted) VALUES ('x','y',0)`)
+	blob, _ := Export(db, "the right passphrase", "test", false, false)
+	// Downgrade the iteration count in the cleartext envelope. It's now bound as AAD,
+	// so the open must reject it (defends a future iter-downgrade attack).
+	tampered := replaceFirst(string(blob), `"iter": 600000`, `"iter": 1`)
+	if tampered == string(blob) {
+		t.Fatal("test setup: iter field not found to tamper")
+	}
+	if _, _, err := Open([]byte(tampered), "the right passphrase"); err == nil {
+		t.Fatal("tampered KDF params accepted")
+	}
+}
+
 func TestSealOpenUnit(t *testing.T) {
 	salt, nonce, ct, err := seal("pw", []byte("hello"), []byte("aad"))
 	if err != nil {

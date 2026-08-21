@@ -41,6 +41,10 @@ import (
 	"api/internal/ws"
 )
 
+// version identifies this panel build; override at link time with
+// -ldflags "-X main.version=x.y.z". Stamped into backup files for compatibility.
+var version = "dev"
+
 func main() {
 	// Initialize stats (records start time for uptime)
 	stats.Init()
@@ -422,7 +426,8 @@ func main() {
 	// (nftables, WireGuard peers, headscale ACL, fleet listener). Callbacks are
 	// injected so this package never imports the subsystems (no cycle).
 	backupSvc := backup.New(backup.Deps{
-		DB: database.Get,
+		DB:           database.Get,
+		PanelVersion: version,
 		Reconcile: func() []string {
 			var done []string
 			if fwSvc != nil {

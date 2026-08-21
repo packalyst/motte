@@ -23,8 +23,10 @@ const (
 	fileFormat  = "wg-panel-backup"
 	fileVersion = 1
 	// MinPassphrase is the shortest passphrase we accept — a backup carries every
-	// secret the panel holds, so a weak passphrase is a real risk.
-	MinPassphrase = 8
+	// secret the panel holds, so a weak passphrase is a real risk offline once a
+	// file leaks. 600k PBKDF2 iterations raise per-guess cost; the length floor
+	// keeps the guess space itself large.
+	MinPassphrase = 12
 )
 
 // Table tiers. Core is always exported; users and fleet are opt-in.
@@ -127,11 +129,7 @@ func Export(db *sql.DB, passphrase, panelVersion string, includeUsers, includeFl
 		Format: fileFormat, Version: fileVersion, PanelVersion: panelVersion,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339), Includes: includes,
 	}
-	aad, err := json.Marshal(hdr)
-	if err != nil {
-		return nil, err
-	}
-	salt, nonce, ct, err := seal(passphrase, body, aad)
+	salt, nonce, ct, err := seal(passphrase, body, headerAAD(hdr, kdfName, kdfIter))
 	if err != nil {
 		return nil, err
 	}
@@ -160,11 +158,9 @@ func Open(raw []byte, passphrase string) (Header, *Document, error) {
 	if err1 != nil || err2 != nil || err3 != nil {
 		return Header{}, nil, fmt.Errorf("corrupt backup file")
 	}
-	aad, err := json.Marshal(env.Header)
-	if err != nil {
-		return Header{}, nil, err
-	}
-	body, err := open(passphrase, salt, nonce, ct, aad)
+	// Bind the file's stated KDF params too, so tampering iter/kdf (e.g. downgrading
+	// iterations) breaks the open even though they sit in the cleartext envelope.
+	body, err := open(passphrase, salt, nonce, ct, headerAAD(env.Header, env.KDF, env.Iter))
 	if err != nil {
 		return Header{}, nil, err // errBadPass
 	}
@@ -424,6 +420,18 @@ func txColumns(tx *sql.Tx, table string) map[string]bool {
 		}
 	}
 	return set
+}
+
+// headerAAD builds the additional-authenticated-data bound into the GCM seal: the
+// cleartext header plus the KDF parameters. Anything here is tamper-evident even
+// though it travels unencrypted. seal and open must build it identically.
+func headerAAD(h Header, kdf string, iter int) []byte {
+	b, _ := json.Marshal(struct {
+		Header
+		KDF  string `json:"kdf"`
+		Iter int    `json:"iter"`
+	}{h, kdf, iter})
+	return b
 }
 
 func b64(b []byte) string           { return base64.StdEncoding.EncodeToString(b) }

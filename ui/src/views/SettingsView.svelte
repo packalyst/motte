@@ -879,7 +879,7 @@
   let bkExporting = $state(false)
 
   async function exportBackup() {
-    if (bkPass.length < 8) return toast('Passphrase must be at least 8 characters', 'error')
+    if (bkPass.length < 12) return toast('Passphrase must be at least 12 characters', 'error')
     if (bkPass !== bkPass2) return toast('Passphrases do not match', 'error')
     bkExporting = true
     try {
@@ -1847,7 +1847,7 @@
           <!-- EXPORT -->
           <div class="space-y-3">
             <div class="flex items-center gap-2 text-sm font-medium"><Icon name="download" size={15} class="text-muted-foreground" /> Export</div>
-            <Input label="Passphrase" type="password" bind:value={bkPass} placeholder="At least 8 characters" />
+            <Input label="Passphrase" type="password" bind:value={bkPass} placeholder="At least 12 characters" />
             <Input label="Confirm passphrase" type="password" bind:value={bkPass2} placeholder="Repeat passphrase" />
             <div class="space-y-2 pt-1">
               <label class="flex items-center justify-between gap-3 text-sm cursor-pointer">
@@ -1860,7 +1860,7 @@
               </label>
             </div>
             <p class="text-xs text-muted-foreground">Core config — VPN peers &amp; ACLs, firewall, routes, settings — is always included.</p>
-            <Button variant="primary" icon="download" loading={bkExporting} onclick={exportBackup} disabled={bkPass.length < 8 || bkPass !== bkPass2}>Download backup</Button>
+            <Button variant="primary" icon="download" loading={bkExporting} onclick={exportBackup} disabled={bkPass.length < 12 || bkPass !== bkPass2}>Download backup</Button>
           </div>
           <!-- IMPORT -->
           <div class="space-y-3 lg:border-l lg:border-border lg:pl-6">

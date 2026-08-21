@@ -136,8 +136,10 @@ type fileReq struct {
 }
 
 func (s *Service) decodeFile(w http.ResponseWriter, r *http.Request) (fileReq, bool) {
+	// Body size is already capped by the router's global bodySizeLimit middleware,
+	// which runs ahead of every handler — no local MaxBytesReader needed here.
 	var req fileReq
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		router.JSONError(w, "bad request", http.StatusBadRequest)
 		return req, false
 	}
@@ -154,7 +156,7 @@ func warnings(h Header) []string {
 	for _, inc := range h.Includes {
 		switch inc {
 		case "users":
-			out = append(out, "Admin users will be replaced — you'll be signed out and must log in with the imported credentials.")
+			out = append(out, "Admin users will be replaced — ALL admins are signed out on every device, and you must log in with the imported credentials.")
 		case "fleet":
 			out = append(out, "The fleet CA and machines will be replaced. Existing agents keep working only if they can still reach this host at the configured panel address.")
 		}
