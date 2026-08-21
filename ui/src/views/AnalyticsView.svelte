@@ -13,7 +13,7 @@
   import CountryFlag from '../components/CountryFlag.svelte'
   import Sparkline from '../components/Sparkline.svelte'
   import BlockedByLayer from '../components/BlockedByLayer.svelte'
-  import AreaChart from '../components/AreaChart.svelte'
+  import UPlotChart from '../components/UPlotChart.svelte'
   import BarList from '../components/BarList.svelte'
   import IpBadge from '../components/IpBadge.svelte'
   import { lookupIPs, getGeoData } from '../stores/geo.js'
@@ -65,10 +65,10 @@
   // Semantic app colors + verified tabler icons (all present in existing views).
   // `plain` is a plain-English subtitle so the cards read without jargon.
   const typeMeta = {
-    inbound:  { label: 'Inbound',  plain: 'Visits to your services', icon: 'arrow-down', color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10' },
-    dns:      { label: 'DNS',      plain: 'Domain lookups',          icon: 'globe',      color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10' },
-    outbound: { label: 'Outbound', plain: 'Traffic leaving',         icon: 'arrow-up',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10' },
-    fw:       { label: 'Firewall', plain: 'Blocked attacks',         icon: 'shield',     color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10' },
+    inbound:  { label: 'Inbound',  plain: 'Visits to your services', icon: 'arrow-down', color: 'primary',     bar: 'bg-primary',     text: 'text-primary',     border: 'border-primary/30',     bg: 'bg-primary/10',     stroke: '--primary' },
+    dns:      { label: 'DNS',      plain: 'Domain lookups',          icon: 'globe',      color: 'success',     bar: 'bg-success',     text: 'text-success',     border: 'border-success/30',     bg: 'bg-success/10',     stroke: '--success' },
+    outbound: { label: 'Outbound', plain: 'Traffic leaving',         icon: 'arrow-up',   color: 'info',        bar: 'bg-info',        text: 'text-info',        border: 'border-info/30',        bg: 'bg-info/10',        stroke: '--tx' },
+    fw:       { label: 'Firewall', plain: 'Blocked attacks',         icon: 'shield',     color: 'destructive', bar: 'bg-destructive', text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10', stroke: '--destructive' },
   }
 
   // One plain-English sentence summarizing the current period across subsystems.
@@ -361,7 +361,13 @@
           {#if peerUsage.series?.length}
             <div class="bg-card border border-border rounded-lg p-4 shadow-sm">
               <div class="text-sm font-semibold mb-3">Traffic over time</div>
-              <div class="text-info"><AreaChart data={peerUsage.series} valueKey="total" labelKey="time" height={160} format={fmtBytes} /></div>
+              <UPlotChart
+                data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]}
+                series={[{ label: 'Traffic', stroke: '--info', fill: 0.18 }]}
+                height={160}
+                yFormat={fmtBytes}
+                legend={false}
+              />
             </div>
           {/if}
 
@@ -633,9 +639,12 @@
                 <div class="text-sm font-semibold">Events over time</div>
                 <Badge variant="muted" size="sm">{periodLabel}</Badge>
               </div>
-              <div class={typeMeta[selectedType].text}>
-                <AreaChart data={d.time_series} valueKey="count" labelKey="time" height={160} />
-              </div>
+              <UPlotChart
+                data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]}
+                series={[{ label: typeMeta[selectedType].label, stroke: typeMeta[selectedType].stroke, fill: 0.18 }]}
+                height={160}
+                legend={false}
+              />
             </div>
           {/if}
 

@@ -22,6 +22,7 @@ type PeerUsageDest struct {
 // PeerUsageBucket is one time-series point (hour bucket) of a peer's bytes.
 type PeerUsageBucket struct {
 	Time  string `json:"time"`
+	TS    int64  `json:"ts"` // bucket start, unix seconds (for time-axis charts)
 	Up    int64  `json:"up"`
 	Down  int64  `json:"down"`
 	Total int64  `json:"total"`
@@ -135,6 +136,7 @@ func (s *Service) handleGetPeerUsage(w http.ResponseWriter, r *http.Request) {
 			}
 			resp.Series = append(resp.Series, PeerUsageBucket{
 				Time:  bucket.Format("01-02 15h"),
+				TS:    bucket.Unix(),
 				Up:    up,
 				Down:  down,
 				Total: up + down,

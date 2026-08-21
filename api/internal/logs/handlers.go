@@ -68,6 +68,7 @@ type StatsResponse struct {
 // Bucket represents one time-series data point.
 type Bucket struct {
 	Time  string `json:"time"`
+	TS    int64  `json:"ts"` // bucket start, unix seconds (for time-axis charts)
 	Count int    `json:"count"`
 	Bytes int64  `json:"bytes,omitempty"`
 }
@@ -309,6 +310,7 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	tsArgs := append([]interface{}{bucketFmt}, args...)
 	tsRows, _ := s.db.Query(`
 		SELECT strftime(?, logs_timestamp) AS bucket,
+		       CAST(strftime('%s', MIN(logs_timestamp)) AS INTEGER) AS ts,
 		       COUNT(*) AS cnt,
 		       COALESCE(SUM(logs_bytes), 0) AS bytes
 		FROM logs
@@ -320,7 +322,7 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		defer tsRows.Close()
 		for tsRows.Next() {
 			var b Bucket
-			tsRows.Scan(&b.Time, &b.Count, &b.Bytes)
+			tsRows.Scan(&b.Time, &b.TS, &b.Count, &b.Bytes)
 			stats.TimeSeries = append(stats.TimeSeries, b)
 		}
 	}
