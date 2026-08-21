@@ -31,6 +31,17 @@ func (s *Service) handleLayers(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, s.layersData(interval, label))
 }
 
+// handleClearStats zeroes the L3/L7 block-counter samples (fw_drop_samples,
+// l7_block_samples) that feed the "blocked by layer" chart. Those tables hold only
+// (timestamp, count) — no IPs, NOT the blocklist — so this resets the chart numbers
+// only; enforcement (firewall_entries + the live nftables sets) is untouched. Invoked
+// by the Logs page's "also clear usage & analytics history" option.
+func (s *Service) handleClearStats(w http.ResponseWriter, r *http.Request) {
+	s.db.Exec(`DELETE FROM fw_drop_samples`)
+	s.db.Exec(`DELETE FROM l7_block_samples`)
+	router.JSON(w, map[string]bool{"cleared": true})
+}
+
 // layersData computes the blocked-by-layer summary for a window (reused by the
 // WebSocket dashboard-security broadcast for the fixed last-hour window).
 func (s *Service) layersData(interval, label string) map[string]interface{} {

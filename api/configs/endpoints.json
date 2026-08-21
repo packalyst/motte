@@ -269,6 +269,14 @@
           "description": "Blocked-by-layer summary (L3/DNS/L7 + allowed) for a period"
         },
         {
+          "path": "/stats/clear",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ClearStats",
+          "description": "Clear L3/L7 block-counter samples (chart only; never the blocklist)"
+        },
+        {
           "path": "/entries",
           "methods": [
             "GET"

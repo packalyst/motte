@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { toast, apiGet, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
+  import { toast, apiGet, apiDelete, apiPost, confirm, setConfirmLoading } from '../stores/app.js'
   import { lookupIPs } from '../stores/geo.js'
   import { createDebouncedSearch } from '../stores/helpers.js'
   import { usePaginatedState } from '$lib/composables/index.js'
@@ -108,7 +108,7 @@
       description: 'This action cannot be undone.',
       confirmText: 'Clear',
       variant: 'destructive',
-      checkbox: { label: 'Also clear usage & analytics history (Top Talkers, peer usage)' },
+      checkbox: { label: 'Also clear usage & analytics history (Top Talkers, peer usage, firewall/proxy chart counters — not your blocklist)' },
     })
     if (!confirmed) return
 
@@ -116,8 +116,13 @@
     try {
       const qs = params.toString() ? '?' + params.toString() : ''
       const res = await apiDelete('/api/logs' + qs)
-      // The usage rollup (traffic_usage) is a separate table; clear it too when asked.
-      if (alsoUsage) await apiDelete('/api/logs/peer-usage')
+      // The usage rollup (traffic_usage) and the L3/L7 block-counter samples that feed
+      // the "blocked by layer" chart live in separate tables — clear them too when asked.
+      // (Counters only, no IPs; the blocklist in firewall_entries is never touched.)
+      if (alsoUsage) {
+        await apiDelete('/api/logs/peer-usage')
+        await apiPost('/api/fw/stats/clear', {})
+      }
       toast(`Cleared ${res?.deleted ?? 0} entries${alsoUsage ? ' + usage history' : ''}`, 'success')
       await loadData()
     } catch (e) {
