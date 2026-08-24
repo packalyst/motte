@@ -65,18 +65,22 @@
   }
 
   function tooltipPlugin(strokes) {
+    // The tooltip lives on <body> (not inside .u-over) so a card's overflow:hidden or
+    // stacking context can't clip it or paint over it; it's positioned in viewport
+    // coordinates (position:fixed) from the plot's bounding rect + cursor offset.
     let tip
     return {
       hooks: {
-        init: (up) => {
+        init: () => {
           tip = document.createElement('div')
           tip.className = 'uchart-tip'
-          up.over.appendChild(tip)
+          document.body.appendChild(tip)
         },
         setCursor: (up) => {
           const i = up.cursor.idx
+          if (!tip) return
           if (i == null || up.cursor.left < 0) {
-            if (tip) tip.style.display = 'none'
+            tip.style.display = 'none'
             return
           }
           const t = up.data[0][i]
@@ -93,8 +97,21 @@
           }
           tip.innerHTML = h
           tip.style.display = 'block'
-          tip.style.left = Math.min(up.cursor.left + 14, up.over.clientWidth - 130) + 'px'
-          tip.style.top = up.cursor.top + 8 + 'px'
+          // Viewport-relative placement; flip/clamp so it never spills off-screen.
+          const rect = up.over.getBoundingClientRect()
+          const tw = tip.offsetWidth, th = tip.offsetHeight
+          let x = rect.left + up.cursor.left + 14
+          let y = rect.top + up.cursor.top + 8
+          if (x + tw > window.innerWidth - 8) x = rect.left + up.cursor.left - tw - 14
+          if (y + th > window.innerHeight - 8) y = window.innerHeight - th - 8
+          if (x < 8) x = 8
+          if (y < 8) y = 8
+          tip.style.left = x + 'px'
+          tip.style.top = y + 'px'
+        },
+        destroy: () => {
+          if (tip && tip.parentNode) tip.parentNode.removeChild(tip)
+          tip = null
         },
       },
     }
@@ -254,9 +271,9 @@
   }
   /* uPlot renders its own canvas; tooltip is appended into .u-over */
   :global(.uchart-tip) {
-    position: absolute;
+    position: fixed;
     pointer-events: none;
-    z-index: 10;
+    z-index: 9999;
     padding: 6px 8px;
     border-radius: 7px;
     font-size: 11px;
