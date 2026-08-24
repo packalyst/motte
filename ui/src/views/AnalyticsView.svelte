@@ -93,7 +93,9 @@
       if (!data.inbound || !data.dns || !data.outbound || !data.fw) jobs.push(loadOverview())
       if (!topTalkers.length) jobs.push(loadTopTalkers()) // top-talkers is overview-only
     }
-    if (!jobs.length) return
+    // Nothing to fetch (client tab, or already cached): clear the page spinner. The
+    // client tab loads its own data via loadPeerUsage (peerUsageLoading).
+    if (!jobs.length) { loading = false; return }
     loading = true
     await Promise.all(jobs)
     loading = false
