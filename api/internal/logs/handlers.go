@@ -213,6 +213,14 @@ func (s *Service) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 // Returns aggregated statistics for the Analytics dashboard.
 func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	logType := r.URL.Query().Get("type")
+	// Reject an unknown type rather than silently returning empty stats. (It's already
+	// a bound param, so this is a UX guard, not an injection fix.)
+	switch logType {
+	case "", "inbound", "dns", "outbound", "fw", "proxy":
+	default:
+		router.JSONError(w, "invalid type", http.StatusBadRequest)
+		return
+	}
 	period := r.URL.Query().Get("period")
 	if period == "" {
 		period = "day"

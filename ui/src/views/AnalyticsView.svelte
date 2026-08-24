@@ -63,13 +63,26 @@
       data[type] = await apiGet(`/api/logs/stats?type=${type}&period=${period}`)
     } catch (e) { data[type] = { error: e.message } }
   }
+  // Only fetch what the current view needs, cached per period: the Overview needs all
+  // four types; a drill-in needs just its type; anything already loaded for this period
+  // is reused. So switching tabs doesn't refetch, and a drill-in never pulls all four.
+  let loadedFor = $state('')
   async function loadAll() {
+    if (loadedFor !== period) {
+      data = { inbound: null, dns: null, outbound: null, fw: null }
+      topTalkers = []
+      loadedFor = period
+    }
+    const need = selectedType && selectedType !== 'client' ? [selectedType] : Object.keys(typeMeta)
+    const jobs = need.filter((t) => !data[t]).map(loadType)
+    if (!selectedType && !topTalkers.length) jobs.push(loadTopTalkers()) // top-talkers is overview-only
+    if (!jobs.length) return
     loading = true
-    await Promise.all([...Object.keys(typeMeta).map(loadType), loadTopTalkers()])
+    await Promise.all(jobs)
     loading = false
   }
-  $effect(() => { period; loadAll() })
-  onMount(loadAll)
+  // Runs on mount, on period change, and on tab change (fetches only what's missing).
+  $effect(() => { period; selectedType; loadAll() })
 
   // ── Per-client (conntrack byte accounting) ──
   let peerList = $state([])

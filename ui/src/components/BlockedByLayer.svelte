@@ -1,5 +1,4 @@
 <script>
-  import { onMount } from 'svelte'
   import { apiGet } from '../stores/app.js'
   import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
@@ -13,13 +12,11 @@
   async function load() {
     try { d = await apiGet(`/api/fw/layers?period=${period}`) } catch {}
   }
+  // Live (Overview) reads the WS stats stream; otherwise (Analytics) reload only when
+  // the period changes — no 30s poll, to match the rest of the load-once Analytics page.
   $effect(() => {
     if (live) { d = $statsStore?.security?.layers }
     else { period; load() }
-  })
-  onMount(() => {
-    if (live) return
-    const t = setInterval(load, 30000); return () => clearInterval(t)
   })
 
   const fmt = (n) => (n ?? 0).toLocaleString()

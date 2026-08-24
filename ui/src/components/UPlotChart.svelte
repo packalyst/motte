@@ -78,7 +78,13 @@
             return
           }
           const t = up.data[0][i]
-          let h = `<div class="uchart-tip-t">${new Date(t * 1000).toLocaleTimeString()}</div>`
+          const xs0 = up.data[0] || []
+          const md = xs0.length > 1 && xs0[xs0.length - 1] - xs0[0] > 36 * 3600 // span > 36h
+          const dt = new Date(t * 1000)
+          // Multi-day range: label the point with its date (+time); intraday: keep the
+          // full time (with seconds) so the live server chart still reads finely.
+          const label = md ? dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : dt.toLocaleTimeString()
+          let h = `<div class="uchart-tip-t">${label}</div>`
           for (let s = 1; s < up.series.length; s++) {
             const v = up.data[s][i]
             h += `<div class="uchart-tip-r"><span class="uchart-tip-sw" style="background:${strokes[s - 1]}"></span>${up.series[s].label} <b>${v == null ? '—' : fmtY(+v.toFixed(1))}</b></div>`
@@ -110,8 +116,19 @@
       ...(values ? { values } : {}),
       ...extra,
     })
-    const fmtTime = (up, vals) =>
-      vals.map((v) => new Date(v * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+    // Axis labels: dates for a multi-day range (week/month/fleet 7d-30d), clock time
+    // for an intraday range (1h/24h/live). Read live from up.data so it re-adapts when
+    // the period changes without a rebuild.
+    const fmtTime = (up, vals) => {
+      const xs0 = up.data[0] || []
+      const md = xs0.length > 1 && xs0[xs0.length - 1] - xs0[0] > 36 * 3600
+      return vals.map((v) => {
+        const d = new Date(v * 1000)
+        return md
+          ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+          : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      })
+    }
 
     const uSeries = [{}]
     series.forEach((s, idx) => {
