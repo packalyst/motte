@@ -30,10 +30,15 @@
     vpn: { name: 'VPN ACL', icon: 'route', color: 'success', order: 12 },
     geolocation: { name: 'Geolocation', icon: 'globe', color: 'primary', order: 13 },
     logs: { name: 'Logs', icon: 'file-text', color: 'info', order: 14 },
-    pwa: { name: 'Notifications', icon: 'bell', color: 'warning', order: 15 },
-    settings: { name: 'Settings', icon: 'settings', color: 'primary', order: 16 },
-    setup: { name: 'Setup', icon: 'wand', color: 'success', order: 17 }
+    fleet: { name: 'Fleet', icon: 'server-2', color: 'primary', order: 15 },
+    server: { name: 'Server Security', icon: 'shield-lock', color: 'destructive', order: 16 },
+    pwa: { name: 'Notifications', icon: 'bell', color: 'warning', order: 17 },
+    settings: { name: 'Settings', icon: 'settings', color: 'primary', order: 18 },
+    setup: { name: 'Setup', icon: 'wand', color: 'success', order: 19 }
   }
+
+  // Build version (git describe), surfaced by /api/schema.
+  let panelVersion = $derived(apiSchema?.panel_version)
 
   // Transform API schema for display
   let apiServices = $derived(
@@ -80,8 +85,16 @@
   <InfoCard
     icon="info-circle"
     title="About"
-    description="Unified admin panel for a full self-hosted networking stack: WireGuard & Headscale VPNs, AdGuard DNS filtering, Traefik reverse proxy, forward proxies (tunnels) with IP rotation, webhooks, firewall/fail2ban, and traffic analytics."
+    description="Unified admin panel for a full self-hosted networking stack: WireGuard & Headscale VPNs, per-peer virtual IPs & ACLs, AdGuard DNS filtering, Traefik reverse proxy with domain routes, forward proxies (tunnels) with IP rotation, webhooks, firewall/fail2ban, host security, a per-machine fleet agent (with CVE scanning), encrypted backup & migrate, and traffic analytics."
   />
+
+  {#if panelVersion}
+    <div class="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+      <Icon name="git-commit" size={14} />
+      <span>Panel build</span>
+      <Badge variant="muted" size="sm"><span class="font-mono">{panelVersion}</span></Badge>
+    </div>
+  {/if}
 
   <div class="bg-card border border-border rounded-lg overflow-hidden">
     <Tabs {tabs} bind:activeTab urlKey="tab" />
@@ -93,7 +106,7 @@
           <div>
             <h3 class="text-lg font-semibold text-foreground mb-3">What is this?</h3>
             <p class="text-sm text-muted-foreground leading-relaxed">
-              This admin panel provides a unified interface for a complete self-hosted VPN and networking stack. Beyond secure VPN access (WireGuard + Headscale), it adds DNS-level ad blocking, reverse-proxy routing to internal services, authenticated forward proxies with IP rotation, validating webhooks for automation, an intrusion-detection firewall, and traffic analytics — all managed from one place.
+              This admin panel provides a unified interface for a complete self-hosted VPN and networking stack. Beyond secure VPN access (WireGuard + Headscale), it adds per-peer virtual IPs with ACL gating, DNS-level ad blocking, reverse-proxy routing to internal services, authenticated forward proxies with IP rotation, validating webhooks for automation, an intrusion-detection firewall, read-only host security telemetry, a per-machine fleet agent with CVE scanning, encrypted backup &amp; migrate, and traffic analytics — all managed from one place.
             </p>
           </div>
 
@@ -207,6 +220,42 @@
                 iconColor="text-muted-foreground"
                 title="Docker Management"
                 description="View and manage Docker containers. Restart services, view logs and resource usage."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="server-2"
+                iconColor="text-primary"
+                title="Fleet Agent"
+                description="Enroll remote machines over mTLS: live CPU/mem/disk metrics with history, CVE scanning grouped by OS/project, targeted package fixes, and one-click agent self-update."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="shield-lock"
+                iconColor="text-destructive"
+                title="Host Security"
+                description="Read-only host telemetry for the panel server: live resource usage, listening ports, certificate expiry, and recent package changes."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="network"
+                iconColor="text-success"
+                title="Virtual IPs & ACLs"
+                description="Give a peer a virtual IP and gate reachability with ACL rules — e.g. expose a single LAN device (a camera) over the VPN without opening the whole network."
+              />
+              <ContentBlock
+                variant="box"
+                border
+                padding="lg"
+                icon="download"
+                iconColor="text-info"
+                title="Backup &amp; Migrate"
+                description="Passphrase-encrypted export of your full configuration (AES-256-GCM) and import onto a fresh host — migrate the whole panel between servers."
               />
             </div>
           </div>

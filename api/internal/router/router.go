@@ -22,6 +22,10 @@ type AuthValidator func(token string) bool
 // authValidator is the registered auth validator
 var authValidator AuthValidator
 
+// PanelVersion is the build/version string (git describe), set by main at startup and
+// surfaced on /api/schema so the UI can show which build is running.
+var PanelVersion = "dev"
+
 // HandlerFunc is the standard handler function type
 type HandlerFunc func(w http.ResponseWriter, r *http.Request)
 
@@ -499,8 +503,9 @@ func (r *Router) handleAPIInfo(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	info := map[string]interface{}{
-		"version":  r.config.Version,
-		"services": make(map[string]interface{}),
+		"version":       r.config.Version, // API/config schema version
+		"panel_version": PanelVersion,     // build version (git describe)
+		"services":      make(map[string]interface{}),
 	}
 
 	for name, svc := range r.config.Services {

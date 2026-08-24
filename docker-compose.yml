@@ -116,7 +116,10 @@ services:
   # Provides: /api/fw, /api/wg, /api/traefik, /api/hs, /api/adguard
   # ============================================
   api:
-    build: ./api
+    build:
+      context: ./api
+      args:
+        VERSION: ${PANEL_VERSION:-dev}
     container_name: api
     restart: unless-stopped
     logging: *default-logging

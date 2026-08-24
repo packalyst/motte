@@ -8,10 +8,14 @@ WORKDIR /app
 # Copy source code
 COPY . .
 
+# Build version stamped into the binary (git describe, passed by manage.sh /
+# docker compose). Defaults to "dev" for a plain `docker build`.
+ARG VERSION=dev
+
 # Download dependencies and build (build the whole ./cmd package, not just
 # main.go, so multi-file cmd packages compile correctly).
 RUN go mod tidy && \
-    CGO_ENABLED=1 go build -o /api ./cmd
+    CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION}" -o /api ./cmd
 
 # Final stage
 FROM debian:bookworm-slim

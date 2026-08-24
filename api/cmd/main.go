@@ -58,6 +58,9 @@ func main() {
 	}
 	log.Printf("Loaded configuration v%s with %d services", cfg.Version, len(cfg.Services))
 
+	// Surface the build version to the API (/api/schema) so the UI can show it.
+	router.PanelVersion = version
+
 	// Create router
 	r := router.New(cfg)
 
