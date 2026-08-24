@@ -1538,13 +1538,11 @@
           Traefik
         </h3>
       </div>
-      <div class="kt-panel-body">
-        <!-- Two columns: Rate Limiting + Switches -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <!-- Rate Limiting (4 inputs in 2x2) -->
-          <div>
-            <ContentBlock variant="header" title="Rate Limiting" />
-            <div class="grid grid-cols-2 gap-3">
+      <div class="kt-panel-body space-y-4">
+        <!-- Rate Limiting -->
+        <div>
+          <ContentBlock variant="header" title="Rate Limiting" />
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <Input
                 label="Standard (req/s)"
                 type="number"
@@ -1580,9 +1578,10 @@
             </div>
           </div>
 
-          <!-- Switches -->
-          <div class="space-y-3">
-            <ContentBlock variant="header" title="Access Control" />
+        <!-- Access Control: two columns so the switches fill the width -->
+        <div>
+          <ContentBlock variant="header" title="Access Control" />
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
             <ContentBlock title="Dashboard" description="Port 8080 (restart required)">
               <Checkbox variant="switch" bind:checked={traefikForm.dashboardEnabled} />
             </ContentBlock>
