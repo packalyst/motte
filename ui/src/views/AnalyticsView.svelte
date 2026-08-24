@@ -242,7 +242,6 @@
         </Select>
       {/if}
       {#if selectedType && selectedType !== 'client'}<Button variant="outline" size="sm" icon="download" onclick={downloadCsv}>Export</Button>{/if}
-      <Button variant="outline" size="sm" icon="refresh" onclick={loadAll}>Refresh</Button>
     </div>
   </div>
 
@@ -266,10 +265,11 @@
         </Select>
       </div>
     {/if}
-    <div class="frow">
-      {#if selectedType && selectedType !== 'client'}<Button variant="outline" size="sm" icon="download" onclick={downloadCsv} class="flex-1">Export</Button>{/if}
-      <Button variant="outline" size="sm" icon="refresh" onclick={loadAll} class="flex-1">Refresh</Button>
-    </div>
+    {#if selectedType && selectedType !== 'client'}
+      <div class="frow">
+        <Button variant="outline" size="sm" icon="download" onclick={downloadCsv} class="flex-1">Export</Button>
+      </div>
+    {/if}
   </div>
 
   {#if loading}
