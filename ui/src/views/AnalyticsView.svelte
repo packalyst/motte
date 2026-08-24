@@ -413,7 +413,7 @@
       {#if peerUsage.series?.length}
         <div class="card stack-gap">
           <div class="card-h"><h3><Icon name="activity" size={15} />Data over time</h3><span class="sub">upload + download, this device</span></div>
-          <div class="card-body"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} logScale legend={false} /></div>
+          <div class="card-body"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} legend={false} /></div>
         </div>
       {/if}
 
