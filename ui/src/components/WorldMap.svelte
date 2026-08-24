@@ -103,9 +103,10 @@
 >
   <svg viewBox={viewBox} class="map" aria-hidden="true">
     <path d={WORLD_PATH} class="land" />
-    {#each plotted as d}
+    {#each plotted as d, i}
       <g role="button" tabindex="0" aria-label="{d.name}: {d.count.toLocaleString()}"
         onmouseenter={() => (hover = d)} onfocus={() => (hover = d)} onmouseleave={() => (hover = null)} onblur={() => (hover = null)}>
+        <circle class="ping" cx={d.x} cy={d.y} r={d.r / scale} style="fill:{color}; animation-delay:{(i % 6) * 0.35}s" />
         <circle cx={d.x} cy={d.y} r={d.r / scale} style="fill:{color}; stroke:{color}" fill-opacity="0.28" stroke-width={1.4 / scale} />
         <circle cx={d.x} cy={d.y} r={2 / scale} style="fill:{color}" />
       </g>
@@ -135,6 +136,22 @@
   .wrap.grab { cursor: grab; }
   .wrap.grabbing { cursor: grabbing; }
   .land { fill: color-mix(in oklch, var(--muted-foreground) 24%, var(--card)); stroke: var(--card); stroke-width: 0.4; }
+  /* Radar-ping: the ring scales out from each marker's own centre and fades. fill-box
+     origin keeps it centred regardless of where the marker sits or the zoom level. */
+  .ping {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: mapPing 2.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+    pointer-events: none;
+  }
+  @keyframes mapPing {
+    0%   { transform: scale(0.5); opacity: 0.45; }
+    70%  { opacity: 0; }
+    100% { transform: scale(2.6); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ping { animation: none; opacity: 0; }
+  }
   .zoom { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; }
   .zoom button {
     width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
