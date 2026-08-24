@@ -186,13 +186,21 @@
       return uPlot.rangeNum(Math.min(0, mn), mx, 0.1, true)
     }
 
+    // Widen the y gutter to fit the formatted labels ("45.7 GB", "20K") so they aren't
+    // clipped on the left; short labels ("45%") keep a tight gutter. `values` are the
+    // formatted tick strings (null on the first sizing pass).
+    const yAxisSize = (self, values) => {
+      const n = (values && values.length) ? Math.max(...values.map((v) => (v == null ? 0 : String(v).length))) : 3
+      return Math.min(72, Math.max(34, n * 7 + 16))
+    }
+
     const opts = {
       width: el.clientWidth || 400,
       height,
       cursor: { y: false, points: { size: 7 } },
       legend: { show: false },
       scales: yRange ? { y: { range: () => yRange } } : { y: { range: autoYRange } },
-      axes: [ax(34, fmtTime, { space: 70, gap: 6 }), ax(38, (up, vals) => vals.map(fmtY))],
+      axes: [ax(34, fmtTime, { space: 70, gap: 6 }), ax(yAxisSize, (up, vals) => vals.map(fmtY))],
       series: uSeries,
       plugins: tooltip ? [tooltipPlugin(strokes)] : [],
     }
