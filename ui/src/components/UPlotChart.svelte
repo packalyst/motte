@@ -164,12 +164,34 @@
       uSeries.push(entry)
     })
 
+    // Explicit y auto-range that scans the LIVE data every time. uPlot caches per-series
+    // min/max and doesn't always recompute them on a full data swap (e.g. switching to a
+    // peer whose traffic is orders of magnitude larger) — which leaves the axis stuck at
+    // a stale, too-small max and clips the tall spikes. Scanning up.data here is immune to
+    // that cache. Honors hidden series; always includes the 0 baseline.
+    const autoYRange = (up2) => {
+      let mn = Infinity, mx = -Infinity
+      for (let s = 1; s < up2.series.length; s++) {
+        if (up2.series[s].show === false) continue
+        const col = up2.data[s]
+        if (!col) continue
+        for (let i = 0; i < col.length; i++) {
+          const v = col[i]
+          if (v == null) continue
+          if (v < mn) mn = v
+          if (v > mx) mx = v
+        }
+      }
+      if (mx === -Infinity) return [0, 100]
+      return uPlot.rangeNum(Math.min(0, mn), mx, 0.1, true)
+    }
+
     const opts = {
       width: el.clientWidth || 400,
       height,
       cursor: { y: false, points: { size: 7 } },
       legend: { show: false },
-      scales: yRange ? { y: { range: () => yRange } } : {},
+      scales: yRange ? { y: { range: () => yRange } } : { y: { range: autoYRange } },
       axes: [ax(34, fmtTime, { space: 70, gap: 6 }), ax(38, (up, vals) => vals.map(fmtY))],
       series: uSeries,
       plugins: tooltip ? [tooltipPlugin(strokes)] : [],
