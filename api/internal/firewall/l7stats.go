@@ -42,8 +42,7 @@ func (s *Service) HandleInternalL7Block(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.db.Exec(`INSERT INTO l7_block_samples (count) VALUES (?)`, body.Count)
-	// Bound growth — these are rollup rows, only recent windows are ever queried.
-	s.db.Exec(`DELETE FROM l7_block_samples WHERE ts < datetime('now','-60 days')`)
+	// Retention handled centrally by the retention sweep (package retention).
 	w.WriteHeader(http.StatusNoContent)
 }
 

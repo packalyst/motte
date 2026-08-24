@@ -29,7 +29,29 @@ var (
 	// main.go (function pointer avoids a settings→nftables import cycle). Used when the
 	// api_direct_access toggle changes so the panel-access table takes effect live.
 	RequestFirewallApply func()
+
+	// OnRetentionChange runs a prune sweep immediately after the retention setting is
+	// saved. Set by main.go (function pointer avoids a settings→retention import cycle).
+	OnRetentionChange func()
 )
+
+// RetentionKey holds the aggregate-metrics retention window (days). DefaultRetentionDays
+// is the fallback when unset.
+const (
+	RetentionKey         = "metrics_retention_days"
+	DefaultRetentionDays = 90
+)
+
+// GetRetentionDays returns the aggregate-retention window in days, falling back to the
+// default when unset or out of range. It drives the central retention sweep, which is
+// the single window for every aggregate table except traffic_usage.
+func GetRetentionDays() int {
+	d := getSettingInt(RetentionKey, DefaultRetentionDays)
+	if d < 1 || d > 3650 {
+		return DefaultRetentionDays
+	}
+	return d
+}
 
 // Service handles settings management
 type Service struct{}
@@ -91,7 +113,8 @@ type UpdateSettingsRequest struct {
 	AdGuardDashboardEnabled *bool   `json:"adguard_dashboard_enabled,omitempty"`
 	AdGuardQuerylogSize     *int    `json:"adguard_querylog_size,omitempty"` // querylog.size_memory in MB
 	SessionTimeout          *string `json:"session_timeout,omitempty"`
-	APIDirectAccess         *bool   `json:"api_direct_access,omitempty"` // false = close the API port to the public internet (L3)
+	APIDirectAccess         *bool   `json:"api_direct_access,omitempty"`      // false = close the API port to the public internet (L3)
+	MetricsRetentionDays    *int    `json:"metrics_retention_days,omitempty"` // window (days) for all aggregate tables
 
 	// Port Scanner
 	ScannerPortStart  *int `json:"scanner_port_start,omitempty"`
@@ -194,6 +217,9 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 	} else {
 		result["session_timeout"] = strconv.Itoa(config.GetSessionConfig().TimeoutHours)
 	}
+
+	// Aggregate-metrics retention window (days)
+	result["metrics_retention_days"] = GetRetentionDays()
 
 	// Scanner
 	result["scanner_port_start"] = getSettingInt("scanner_port_start", 1)
@@ -345,6 +371,26 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Updated session_timeout to %s hours", *req.SessionTimeout)
+	}
+
+	// Aggregate-metrics retention (days). Drives the central prune sweep across all
+	// aggregate tables (fleet_metrics, fw/l7 samples, log_rollups). Saving runs the
+	// sweep immediately so a lowered window trims right away; the daily ticker in
+	// main.go keeps it enforced afterwards.
+	if req.MetricsRetentionDays != nil {
+		d := *req.MetricsRetentionDays
+		if d < 1 || d > 3650 {
+			router.JSONError(w, "metrics_retention_days must be between 1 and 3650", http.StatusBadRequest)
+			return
+		}
+		if err := setSettingInt(RetentionKey, d); err != nil {
+			router.JSONError(w, "Failed to save metrics_retention_days: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Printf("Updated metrics_retention_days to %d", d)
+		if OnRetentionChange != nil {
+			go OnRetentionChange() // best-effort immediate prune; don't block the response
+		}
 	}
 
 	// Update Scanner settings

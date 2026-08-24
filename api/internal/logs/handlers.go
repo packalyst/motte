@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"api/internal/database"
 	"api/internal/router"
@@ -226,29 +227,36 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		period = "day"
 	}
 
-	// Current window + previous window (for trend comparison)
+	// Current window + previous window (for trend comparison). windowSecs is the same
+	// span in seconds, used for the rollup-backed path (0 = unbounded, i.e. "all").
 	var interval, prevStart, bucketFmt string
+	var windowSecs int64
 	switch period {
 	case "hour":
 		interval = "-1 hour"
 		prevStart = "-2 hours"
 		bucketFmt = "%Y-%m-%d %H:%M:00" // per-minute for 1h
+		windowSecs = 3600
 	case "week":
 		interval = "-7 days"
 		prevStart = "-14 days"
 		bucketFmt = "%Y-%m-%d" // per-day for 1w
+		windowSecs = 7 * 86400
 	case "month":
 		interval = "-30 days"
 		prevStart = "-60 days"
 		bucketFmt = "%Y-%m-%d" // per-day for 30d
+		windowSecs = 30 * 86400
 	case "all":
 		interval = "-100 years"
 		prevStart = "-200 years" // no meaningful previous window → 0
 		bucketFmt = "%Y-%m-%d"   // per-day
+		windowSecs = 0
 	default: // day
 		interval = "-1 day"
 		prevStart = "-2 days"
 		bucketFmt = "%Y-%m-%d %H:00:00" // hourly for 1d
+		windowSecs = 86400
 	}
 
 	// Optional per-node filter: restrict every aggregation to one source IP.
@@ -256,6 +264,26 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	clientCond := ""
 	if client != "" {
 		clientCond = " AND logs_src_ip = ?"
+	}
+
+	// Rollup-backed path. Raw `logs` are row-capped (~20k/type = a couple of days for
+	// busy types), so for the longer periods the additive counters and time series come
+	// from log_rollups, an hourly aggregate that survives the row cap. Only additive
+	// facts live there (count/bytes/blocked/cached, no src_ip), so it's used only when
+	// no per-client filter is active; unique counts and top-N always stay on raw logs.
+	useRollup := client == "" && (period == "week" || period == "month" || period == "all")
+	var curCutoff, prevCutoff int64
+	if period != "all" {
+		now := time.Now().Unix()
+		curCutoff = now - windowSecs
+		prevCutoff = now - 2*windowSecs
+	}
+	// rollupArgs: bucket_hour cutoff, then optional logs_type (keeps ? order aligned).
+	rollupFilter := ""
+	rollupArgs := []interface{}{curCutoff}
+	if logType != "" {
+		rollupFilter = " AND logs_type = ?"
+		rollupArgs = append(rollupArgs, logType)
 	}
 	// pArgs builds the arg list for a per-type query whose first placeholder is
 	// `interval`, appending the client filter when present (keeps ? order aligned).
@@ -281,58 +309,101 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 	// ── UNIVERSAL (all types) ─────────────────────────────────────────
 
-	// Total count in current window
-	s.db.QueryRow(`
-		SELECT COUNT(*) FROM logs
-		WHERE logs_timestamp > datetime('now', ?)`+typeFilter, args...).Scan(&stats.TotalCount)
+	// Total count + total bytes in current window
+	if useRollup {
+		s.db.QueryRow(`
+			SELECT COALESCE(SUM(cnt), 0) FROM log_rollups
+			WHERE bucket_hour >= ?`+rollupFilter, rollupArgs...).Scan(&stats.TotalCount)
+		s.db.QueryRow(`
+			SELECT COALESCE(SUM(bytes), 0) FROM log_rollups
+			WHERE bucket_hour >= ?`+rollupFilter, rollupArgs...).Scan(&stats.TotalBytes)
+	} else {
+		s.db.QueryRow(`
+			SELECT COUNT(*) FROM logs
+			WHERE logs_timestamp > datetime('now', ?)`+typeFilter, args...).Scan(&stats.TotalCount)
+		s.db.QueryRow(`
+			SELECT COALESCE(SUM(logs_bytes), 0) FROM logs
+			WHERE logs_timestamp > datetime('now', ?)`+typeFilter, args...).Scan(&stats.TotalBytes)
+	}
 
 	// Previous-period total (for % change arrow)
-	prevArgs := []interface{}{prevStart, interval}
-	prevFilter := ""
-	if logType != "" {
-		prevFilter += " AND logs_type = ?"
-		prevArgs = append(prevArgs, logType)
+	if useRollup {
+		pa := []interface{}{prevCutoff, curCutoff}
+		pf := ""
+		if logType != "" {
+			pf = " AND logs_type = ?"
+			pa = append(pa, logType)
+		}
+		// "all" has no previous window (both cutoffs 0) → the range is empty → 0.
+		s.db.QueryRow(`
+			SELECT COALESCE(SUM(cnt), 0) FROM log_rollups
+			WHERE bucket_hour >= ? AND bucket_hour < ?`+pf, pa...).Scan(&stats.PreviousTotal)
+	} else {
+		prevArgs := []interface{}{prevStart, interval}
+		prevFilter := ""
+		if logType != "" {
+			prevFilter += " AND logs_type = ?"
+			prevArgs = append(prevArgs, logType)
+		}
+		if client != "" {
+			prevFilter += " AND logs_src_ip = ?"
+			prevArgs = append(prevArgs, client)
+		}
+		s.db.QueryRow(`
+			SELECT COUNT(*) FROM logs
+			WHERE logs_timestamp > datetime('now', ?)
+			  AND logs_timestamp <= datetime('now', ?)`+prevFilter,
+			prevArgs...,
+		).Scan(&stats.PreviousTotal)
 	}
-	if client != "" {
-		prevFilter += " AND logs_src_ip = ?"
-		prevArgs = append(prevArgs, client)
-	}
-	s.db.QueryRow(`
-		SELECT COUNT(*) FROM logs
-		WHERE logs_timestamp > datetime('now', ?)
-		  AND logs_timestamp <= datetime('now', ?)`+prevFilter,
-		prevArgs...,
-	).Scan(&stats.PreviousTotal)
 
-	// Unique visitors
+	// Unique visitors — always raw (the rollup carries no src_ip); a recent-window
+	// approximation for the long periods, which is acceptable for this stat.
 	s.db.QueryRow(`
 		SELECT COUNT(DISTINCT logs_src_ip) FROM logs
 		WHERE logs_timestamp > datetime('now', ?)
 		  AND logs_src_ip != ''`+typeFilter, args...).Scan(&stats.UniqueVisitors)
 
-	// Total bytes (may be 0 for types that don't track it)
-	s.db.QueryRow(`
-		SELECT COALESCE(SUM(logs_bytes), 0) FROM logs
-		WHERE logs_timestamp > datetime('now', ?)`+typeFilter, args...).Scan(&stats.TotalBytes)
-
 	// Time series — buckets sized to the period
-	tsArgs := append([]interface{}{bucketFmt}, args...)
-	tsRows, _ := s.db.Query(`
-		SELECT strftime(?, logs_timestamp) AS bucket,
-		       CAST(strftime('%s', MIN(logs_timestamp)) AS INTEGER) AS ts,
-		       COUNT(*) AS cnt,
-		       COALESCE(SUM(logs_bytes), 0) AS bytes
-		FROM logs
-		WHERE logs_timestamp > datetime('now', ?)`+typeFilter+`
-		GROUP BY bucket
-		ORDER BY bucket
-	`, tsArgs...)
-	if tsRows != nil {
-		defer tsRows.Close()
-		for tsRows.Next() {
-			var b Bucket
-			tsRows.Scan(&b.Time, &b.TS, &b.Count, &b.Bytes)
-			stats.TimeSeries = append(stats.TimeSeries, b)
+	if useRollup {
+		// Group hourly rollup rows into per-day buckets (matching bucketFmt "%Y-%m-%d").
+		tsRows, _ := s.db.Query(`
+			SELECT (bucket_hour/86400)*86400 AS ts,
+			       strftime('%Y-%m-%d', bucket_hour, 'unixepoch') AS bucket,
+			       SUM(cnt) AS cnt,
+			       SUM(bytes) AS bytes
+			FROM log_rollups
+			WHERE bucket_hour >= ?`+rollupFilter+`
+			GROUP BY ts
+			ORDER BY ts
+		`, rollupArgs...)
+		if tsRows != nil {
+			defer tsRows.Close()
+			for tsRows.Next() {
+				var b Bucket
+				tsRows.Scan(&b.TS, &b.Time, &b.Count, &b.Bytes)
+				stats.TimeSeries = append(stats.TimeSeries, b)
+			}
+		}
+	} else {
+		tsArgs := append([]interface{}{bucketFmt}, args...)
+		tsRows, _ := s.db.Query(`
+			SELECT strftime(?, logs_timestamp) AS bucket,
+			       CAST(strftime('%s', MIN(logs_timestamp)) AS INTEGER) AS ts,
+			       COUNT(*) AS cnt,
+			       COALESCE(SUM(logs_bytes), 0) AS bytes
+			FROM logs
+			WHERE logs_timestamp > datetime('now', ?)`+typeFilter+`
+			GROUP BY bucket
+			ORDER BY bucket
+		`, tsArgs...)
+		if tsRows != nil {
+			defer tsRows.Close()
+			for tsRows.Next() {
+				var b Bucket
+				tsRows.Scan(&b.Time, &b.TS, &b.Count, &b.Bytes)
+				stats.TimeSeries = append(stats.TimeSeries, b)
+			}
 		}
 	}
 
@@ -479,20 +550,28 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Cached count
-		s.db.QueryRow(`
-			SELECT COALESCE(SUM(logs_cached), 0) FROM logs
-			WHERE logs_timestamp > datetime('now', ?)
-			  AND logs_type = 'dns'`+clientCond+`
-		`, pArgs()...).Scan(&stats.CachedCount)
-
-		// Blocked count
-		s.db.QueryRow(`
-			SELECT COUNT(*) FROM logs
-			WHERE logs_timestamp > datetime('now', ?)
-			  AND logs_type = 'dns'
-			  AND (logs_status LIKE '%BLOCK%' OR logs_status LIKE '%FILTER%')`+clientCond+`
-		`, pArgs()...).Scan(&stats.BlockedCount)
+		// Cached + blocked counts. Additive, so the rollup serves the long periods
+		// (matching its blocked = status LIKE '%BLOCK%'/'%FILTER%' and cached = SUM).
+		if useRollup {
+			s.db.QueryRow(`
+				SELECT COALESCE(SUM(cached), 0) FROM log_rollups
+				WHERE bucket_hour >= ? AND logs_type = 'dns'`, curCutoff).Scan(&stats.CachedCount)
+			s.db.QueryRow(`
+				SELECT COALESCE(SUM(blocked), 0) FROM log_rollups
+				WHERE bucket_hour >= ? AND logs_type = 'dns'`, curCutoff).Scan(&stats.BlockedCount)
+		} else {
+			s.db.QueryRow(`
+				SELECT COALESCE(SUM(logs_cached), 0) FROM logs
+				WHERE logs_timestamp > datetime('now', ?)
+				  AND logs_type = 'dns'`+clientCond+`
+			`, pArgs()...).Scan(&stats.CachedCount)
+			s.db.QueryRow(`
+				SELECT COUNT(*) FROM logs
+				WHERE logs_timestamp > datetime('now', ?)
+				  AND logs_type = 'dns'
+				  AND (logs_status LIKE '%BLOCK%' OR logs_status LIKE '%FILTER%')`+clientCond+`
+			`, pArgs()...).Scan(&stats.BlockedCount)
+		}
 
 		// Top blocked domains
 		blockedRows, _ := s.db.Query(`

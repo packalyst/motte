@@ -82,7 +82,7 @@ func (s *Service) runL3CounterSampler() {
 			if delta > 0 {
 				s.db.Exec(`INSERT INTO fw_drop_samples (packets) VALUES (?)`, delta)
 			}
-			s.db.Exec(`DELETE FROM fw_drop_samples WHERE ts < datetime('now','-60 days')`)
+			// Retention handled centrally by the retention sweep (package retention).
 		}
 	}
 }

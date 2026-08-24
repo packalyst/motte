@@ -66,6 +66,7 @@
 
   // Session settings
   let sessionTimeout = $state('24')
+  let metricsRetention = $state('90')
   let sessionChanged = $state(false)
 
   // Scanner settings
@@ -223,7 +224,8 @@
 
       // Session
       sessionTimeout = settings.session_timeout || '24'
-      originalSession = { timeout: sessionTimeout }
+      metricsRetention = String(settings.metrics_retention_days || 90)
+      originalSession = { timeout: sessionTimeout, retention: metricsRetention }
 
       // Scanner
       scannerSettings = {
@@ -296,7 +298,7 @@
   })
 
   $effect(() => {
-    sessionChanged = sessionTimeout !== originalSession.timeout
+    sessionChanged = sessionTimeout !== originalSession.timeout || metricsRetention !== originalSession.retention
   })
 
   // Derived state for scanner change detection
@@ -392,9 +394,10 @@
     savingSession = true
     try {
       await apiPut('/api/settings', {
-        session_timeout: sessionTimeout
+        session_timeout: sessionTimeout,
+        metrics_retention_days: parseInt(metricsRetention, 10)
       })
-      originalSession = { timeout: sessionTimeout }
+      originalSession = { timeout: sessionTimeout, retention: metricsRetention }
       sessionChanged = false
       toast('Session settings saved', 'success')
     } catch (e) {
@@ -1157,6 +1160,22 @@
                 { value: '100', label: '100' }
               ]}
             />
+            <div>
+              <Select
+                label="Analytics retention"
+                bind:value={metricsRetention}
+                options={[
+                  { value: '30', label: '30 days' },
+                  { value: '60', label: '60 days' },
+                  { value: '90', label: '90 days' },
+                  { value: '180', label: '180 days' },
+                  { value: '365', label: '1 year' }
+                ]}
+              />
+              <div class="text-[10px] text-muted-foreground mt-1">
+                How long analytics history &amp; fleet/firewall metrics are kept. Lowering it prunes older data on save.
+              </div>
+            </div>
           </div>
           <div class="flex items-center justify-between border-t border-border pt-3">
             <div>

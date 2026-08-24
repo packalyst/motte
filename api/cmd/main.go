@@ -28,6 +28,7 @@ import (
 	"api/internal/logs"
 	"api/internal/logs/sources"
 	"api/internal/nftables"
+	"api/internal/retention"
 	"api/internal/router"
 	"api/internal/server"
 	"api/internal/serverstats"
@@ -334,6 +335,14 @@ func main() {
 			r.RegisterService("logs", logsSvc.Handlers())
 			log.Println("Logs service registered")
 		}
+	}
+
+	// Central aggregate retention: one settings-driven window prunes every rollup
+	// table (fleet_metrics, fw/l7 samples, log_rollups) — traffic_usage excluded. Runs
+	// once at boot then daily; saving the setting also triggers an immediate sweep.
+	if rDB, dberr := database.GetDB(); dberr == nil {
+		settings.OnRetentionChange = func() { retention.Sweep(rDB.DB, settings.GetRetentionDays()) }
+		go retention.Start(context.Background(), rDB.DB, settings.GetRetentionDays)
 	}
 
 	// Host-security ("Server" page): read-only host telemetry. Uses the same host

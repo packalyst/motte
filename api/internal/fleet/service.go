@@ -51,11 +51,6 @@ type Service struct {
 	srv     *http.Server
 
 	clientCertTTL time.Duration
-
-	// Usage-history pruning is throttled to once an hour, piggybacked on report
-	// traffic (see metrics.go) — no background goroutine.
-	metricsMu       sync.Mutex
-	metricsPrunedAt time.Time
 }
 
 // SetBroadcast wires the WS broadcast fn so report ingests push live to the UI.

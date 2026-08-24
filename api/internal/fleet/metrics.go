@@ -14,10 +14,7 @@ import (
 // draw usage over time. Raw samples are never stored — a bucket is one row that
 // accumulates ~20 folds via avg = (avg*n + new)/(n+1) and MAX for the peak.
 
-const (
-	metricsBucketSec = 300                 // 5-minute buckets
-	metricsRetention = 30 * 24 * time.Hour // keep a month; pruned hourly
-)
+const metricsBucketSec = 300 // 5-minute buckets
 
 // reportMetrics is just the metrics slice of an agent report — the only part we
 // roll into history.
@@ -57,22 +54,8 @@ func (s *Service) recordMetrics(machineID string, body []byte) {
 			load_max = MAX(load_max, excluded.load_max),
 			samples  = samples + 1`,
 		machineID, bucket, mt.CPU, mt.CPU, mt.Mem, mt.Mem, mt.Disk, mt.Disk, mt.Load, mt.Load)
-	s.pruneMetricsMaybe()
-}
-
-// pruneMetricsMaybe drops buckets past the retention window, at most once an hour.
-// It piggybacks on report traffic (reports land every ~15s), so no background
-// goroutine is needed and a fresh process prunes on its first report.
-func (s *Service) pruneMetricsMaybe() {
-	s.metricsMu.Lock()
-	if !s.metricsPrunedAt.IsZero() && time.Since(s.metricsPrunedAt) < time.Hour {
-		s.metricsMu.Unlock()
-		return
-	}
-	s.metricsPrunedAt = time.Now()
-	s.metricsMu.Unlock()
-	cutoff := time.Now().Add(-metricsRetention).Unix()
-	_, _ = s.db.Exec(`DELETE FROM fleet_metrics WHERE bucket < ?`, cutoff)
+	// Pruning is handled centrally by the retention sweep (package retention), so the
+	// window is one settings-driven value across all aggregate tables.
 }
 
 // metricPoint is one regrouped point of a machine's usage history.

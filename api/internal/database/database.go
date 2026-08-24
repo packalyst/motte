@@ -417,6 +417,41 @@ func createSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_logs_domain ON logs(logs_domain);
 	CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(logs_type, logs_status);
 
+	-- Analytics rollup: hourly per-type counters, so the charts + counter KPIs have real
+	-- history that survives the raw-log row cap. Aggregate-only (no IPs/domains). Filled
+	-- automatically by the AFTER INSERT trigger below, so every log source is covered
+	-- with zero per-watcher code. Pruned by the central retention sweep.
+	CREATE TABLE IF NOT EXISTS log_rollups (
+		bucket_hour INTEGER NOT NULL,          -- unix seconds floored to the hour
+		logs_type   TEXT NOT NULL,
+		cnt     INTEGER NOT NULL DEFAULT 0,
+		bytes   INTEGER NOT NULL DEFAULT 0,
+		blocked INTEGER NOT NULL DEFAULT 0,    -- status BLOCK/FILTER (DNS)
+		cached  INTEGER NOT NULL DEFAULT 0,    -- logs_cached (DNS)
+		ok      INTEGER NOT NULL DEFAULT 0,    -- 2xx (inbound)
+		PRIMARY KEY (bucket_hour, logs_type)
+	);
+	-- One trigger folds each inserted log row into its hour bucket. The blocked/cached/ok
+	-- expressions MUST match how handleGetStats computes them from raw logs, so rollup
+	-- numbers agree with the live ones.
+	CREATE TRIGGER IF NOT EXISTS log_rollup_ai AFTER INSERT ON logs
+	BEGIN
+		INSERT INTO log_rollups (bucket_hour, logs_type, cnt, bytes, blocked, cached, ok)
+		VALUES (
+			(CAST(strftime('%s', NEW.logs_timestamp) AS INTEGER) / 3600) * 3600,
+			NEW.logs_type, 1, COALESCE(NEW.logs_bytes, 0),
+			CASE WHEN NEW.logs_status LIKE '%BLOCK%' OR NEW.logs_status LIKE '%FILTER%' THEN 1 ELSE 0 END,
+			COALESCE(NEW.logs_cached, 0),
+			CASE WHEN CAST(NEW.logs_status AS INTEGER) BETWEEN 200 AND 299 THEN 1 ELSE 0 END
+		)
+		ON CONFLICT(bucket_hour, logs_type) DO UPDATE SET
+			cnt     = cnt + 1,
+			bytes   = bytes + COALESCE(NEW.logs_bytes, 0),
+			blocked = blocked + (CASE WHEN NEW.logs_status LIKE '%BLOCK%' OR NEW.logs_status LIKE '%FILTER%' THEN 1 ELSE 0 END),
+			cached  = cached + COALESCE(NEW.logs_cached, 0),
+			ok      = ok + (CASE WHEN CAST(NEW.logs_status AS INTEGER) BETWEEN 200 AND 299 THEN 1 ELSE 0 END);
+	END;
+
 	-- Per-peer, per-destination byte rollup (populated by the conntrack watcher).
 	-- Answers "peer X sent/received N bytes to destination Y" over time buckets.
 	CREATE TABLE IF NOT EXISTS traffic_usage (

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 // report builds a minimal report body carrying just the metrics we roll into history.
@@ -85,26 +84,5 @@ func TestMetricsHistoryValidation(t *testing.T) {
 	svc.handleMetricsHistory(rec, httptest.NewRequest("GET", "/api/fleet/metrics?id=m1&range=bogus", nil))
 	if rec.Code != 200 {
 		t.Fatalf("bogus range should fall back, got %d", rec.Code)
-	}
-}
-
-// Pruning drops buckets older than the retention window while keeping recent ones.
-func TestPruneMetricsDropsOldBuckets(t *testing.T) {
-	svc := newTestService(t)
-	old := time.Now().Add(-metricsRetention - time.Hour).Unix()
-	recent := time.Now().Add(-time.Hour).Unix()
-	for _, b := range []int64{old, recent} {
-		if _, err := svc.db.Exec(
-			`INSERT INTO fleet_metrics (machine_id, bucket, cpu_avg, cpu_max, samples) VALUES ('m1', ?, 1, 1, 1)`, b,
-		); err != nil {
-			t.Fatal(err)
-		}
-	}
-	svc.pruneMetricsMaybe() // metricsPrunedAt is zero → runs
-
-	var n int
-	svc.db.QueryRow(`SELECT COUNT(*) FROM fleet_metrics WHERE machine_id='m1'`).Scan(&n)
-	if n != 1 {
-		t.Fatalf("rows after prune = %d, want 1 (old bucket dropped)", n)
 	}
 }
