@@ -91,14 +91,18 @@ func (s *Service) handleGetPeerUsage(w http.ResponseWriter, r *http.Request) {
 	resp := PeerUsageResponse{Peer: peer, Period: period, Destinations: []PeerUsageDest{}, Series: []PeerUsageBucket{}}
 	geoSvc := geolocation.GetService()
 
+	// Full totals across ALL destinations. The destinations list below is capped at 25,
+	// so summing only those rows would undercount a chatty peer — and diverge from the
+	// time-series chart, which aggregates everything.
+	s.db.QueryRow(`SELECT COALESCE(SUM(bytes_up), 0), COALESCE(SUM(bytes_down), 0)
+		FROM traffic_usage WHERE peer_ip = ? AND bucket >= ?`, peer, since).Scan(&resp.TotalUp, &resp.TotalDown)
+
 	for rows.Next() {
 		var d PeerUsageDest
 		if err := rows.Scan(&d.DestIP, &d.Protocol, &d.BytesUp, &d.BytesDown); err != nil {
 			continue
 		}
 		d.BytesTotal = d.BytesUp + d.BytesDown
-		resp.TotalUp += d.BytesUp
-		resp.TotalDown += d.BytesDown
 
 		// Best-effort domain from any outbound log row for this destination.
 		var domain string
