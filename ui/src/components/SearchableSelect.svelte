@@ -21,8 +21,22 @@
   let query = $state('')
   let highlighted = $state(0)
   let rootEl
+  let btnEl
   let inputEl
   let itemEls = $state([])
+  // The menu is position:fixed (positioned from the button's viewport rect) so a card's
+  // overflow:hidden or a sibling card's stacking context can't clip or cover it.
+  let menuStyle = $state('')
+
+  function positionMenu() {
+    if (!btnEl) return
+    const r = btnEl.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - r.bottom
+    const menuMax = 300
+    const flipUp = spaceBelow < menuMax && r.top > spaceBelow
+    const vert = flipUp ? `bottom:${window.innerHeight - r.top + 4}px` : `top:${r.bottom + 4}px`
+    menuStyle = `position:fixed; left:${r.left}px; width:${r.width}px; ${vert}; z-index:9999;`
+  }
 
   const selectedLabel = $derived(options.find((o) => o.value === value)?.label ?? '')
   const filtered = $derived(
@@ -36,7 +50,8 @@
     open = true
     query = ''
     highlighted = Math.max(0, options.findIndex((o) => o.value === value))
-    queueMicrotask(() => inputEl?.focus())
+    positionMenu()
+    queueMicrotask(() => { positionMenu(); inputEl?.focus() })
   }
   function close() { open = false; query = '' }
   function choose(opt) {
@@ -63,6 +78,7 @@
 </script>
 
 <svelte:document onclick={onDocClick} />
+<svelte:window onscroll={() => open && positionMenu()} onresize={() => open && positionMenu()} />
 
 <div>
   {#if label}<label for={id} class={labelClass}>{label}</label>{/if}
@@ -71,6 +87,7 @@
       type="button"
       {id}
       {disabled}
+      bind:this={btnEl}
       class="kt-select kt-select-sm w-full text-left flex items-center justify-between gap-2 disabled:opacity-50"
       onclick={() => (open ? close() : openList())}
       onkeydown={onKey}
@@ -82,7 +99,7 @@
     </button>
 
     {#if open}
-      <div class="absolute z-50 mt-1 w-full rounded-md border border-border bg-card shadow-lg" role="listbox">
+      <div style={menuStyle} class="rounded-md border border-border bg-card shadow-lg" role="listbox">
         <div class="p-1.5 border-b border-border">
           <!-- svelte-ignore a11y_autofocus -->
           <input
