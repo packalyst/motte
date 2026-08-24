@@ -63,6 +63,15 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 	if err := ensureSchema(db); err != nil {
 		return nil, err
 	}
+	// Self-heal any child rows left behind by a machine that no longer exists (see
+	// sweepOrphans). Reclaim the freed file space once if the cleanup was large.
+	if removed := sweepOrphans(db); removed > 1000 {
+		if _, err := db.Exec(`VACUUM`); err != nil {
+			log.Printf("fleet: VACUUM after orphan sweep failed: %v", err)
+		} else {
+			log.Printf("fleet: VACUUM reclaimed space after removing %d orphan rows", removed)
+		}
+	}
 	ca, err := loadOrCreateCA(db)
 	if err != nil {
 		return nil, err
@@ -282,6 +291,29 @@ func parsePort(v string) (int, error) {
 		return 0, errBadPort
 	}
 	return p, nil
+}
+
+// sweepOrphans deletes child rows whose machine no longer exists in fleet_machines.
+// DeleteMachine cascades today, but rows can be orphaned by a delete that predates that
+// cascade (the CVE feature shipped ~2h before delete-clears-CVEs landed). Runs once at
+// boot as a self-heal. Table names are compile-time constants, so the DELETEs carry no
+// user input; NOT EXISTS is NULL-safe (unlike NOT IN over a nullable subquery). Returns
+// the total rows removed so the caller can decide whether to VACUUM.
+func sweepOrphans(db *sql.DB) int64 {
+	var total int64
+	for _, tbl := range []string{"fleet_cves", "fleet_metrics", "fleet_commands"} {
+		res, err := db.Exec(`DELETE FROM ` + tbl + ` WHERE NOT EXISTS (` +
+			`SELECT 1 FROM fleet_machines m WHERE m.id = ` + tbl + `.machine_id)`)
+		if err != nil {
+			log.Printf("fleet: orphan sweep %s: %v", tbl, err)
+			continue
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			log.Printf("fleet: orphan sweep removed %d rows from %s", n, tbl)
+			total += n
+		}
+	}
+	return total
 }
 
 func ensureSchema(db *sql.DB) error {
