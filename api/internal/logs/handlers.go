@@ -226,7 +226,25 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	if period == "" {
 		period = "day"
 	}
+	client := r.URL.Query().Get("client")
 
+	w.Header().Set("Content-Type", "application/json")
+	if logType != "" {
+		json.NewEncoder(w).Encode(s.computeStats(logType, period, client))
+		return
+	}
+	// Overview: one no-type request returns every type's stats keyed by type, so the UI
+	// makes a single call instead of one per type. type is allowlist-validated above.
+	out := map[string]StatsResponse{}
+	for _, t := range []string{"inbound", "dns", "outbound", "fw"} {
+		out[t] = s.computeStats(t, period, client)
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
+// computeStats builds the analytics stats for one concrete (validated) log type over the
+// given period, optionally scoped to one client source IP.
+func (s *Service) computeStats(logType, period, client string) StatsResponse {
 	// Current window + previous window (for trend comparison). windowSecs is the same
 	// span in seconds, used for the rollup-backed path (0 = unbounded, i.e. "all").
 	var interval, prevStart, bucketFmt string
@@ -260,7 +278,6 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Optional per-node filter: restrict every aggregation to one source IP.
-	client := r.URL.Query().Get("client")
 	clientCond := ""
 	if client != "" {
 		clientCond = " AND logs_src_ip = ?"
@@ -452,7 +469,7 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 	// ── INBOUND (Traefik) ─────────────────────────────────────────────
 
-	if logType == "inbound" || logType == "" {
+	if logType == "inbound" {
 		// Top domains
 		domainRows, _ := s.db.Query(`
 			SELECT logs_domain, COUNT(*) as cnt FROM logs
@@ -515,7 +532,7 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 	// ── DNS (AdGuard) ─────────────────────────────────────────────────
 
-	if logType == "dns" || logType == "" {
+	if logType == "dns" {
 		// Native status counts (NOERROR/NXDOMAIN/BLOCK…)
 		statusRows, _ := s.db.Query(`
 			SELECT logs_status, COUNT(*) as cnt FROM logs
@@ -612,7 +629,7 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 	// ── OUTBOUND ──────────────────────────────────────────────────────
 
-	if logType == "outbound" || logType == "" {
+	if logType == "outbound" {
 		// Protocol mix
 		protoRows, _ := s.db.Query(`
 			SELECT logs_protocol, COUNT(*) as cnt FROM logs
@@ -650,7 +667,7 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 	// ── FIREWALL ──────────────────────────────────────────────────────
 
-	if logType == "fw" || logType == "" {
+	if logType == "fw" {
 		// Top destination ports being probed
 		portRows, _ := s.db.Query(`
 			SELECT CAST(logs_dest_port AS TEXT), COUNT(*) as cnt FROM logs
@@ -686,8 +703,7 @@ func (s *Service) handleGetStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	return stats
 }
 
 // handleGetStatus handles GET /api/logs/status

@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { apiGet } from '../stores/app.js'
   import { usePersistentState } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
@@ -17,13 +17,14 @@
   let { loading = $bindable(true) } = $props()
 
   // Persist selectedType + period across refresh / navigation
-  const persisted = usePersistentState('analytics_ui', { selectedType: null, period: 'day' })
+  const persisted = usePersistentState('analytics_ui', { selectedType: null, period: 'day', selectedPeer: '' })
   let selectedType = $derived(persisted.value.selectedType)
   let period = $derived(persisted.value.period)
   const periodLabelFull = $derived({ hour: '1 hour', day: '24 hours', week: '7 days', month: '30 days', all: 'all time' }[period] || period)
 
   function setType(t) { persisted.value = { ...persisted.value, selectedType: t } }
   function setPeriod(p) { persisted.value = { ...persisted.value, period: p } }
+  function setPeer(p) { persisted.value = { ...persisted.value, selectedPeer: p } }
 
   const TABS = [
     { id: null, label: 'Overview', icon: 'chart-bar' },
@@ -58,14 +59,26 @@
 
   // Overview + per-type stats are NEVER client-filtered — they show all traffic.
   // A client is only ever scoped inside the "Per client" tab (via peer-usage).
+  // Overview: ONE request (no type) returns every type's stats keyed by type, so the
+  // page makes a single call instead of one per type.
+  async function loadOverview() {
+    try {
+      const resp = await apiGet(`/api/logs/stats?period=${period}`)
+      data = { inbound: resp.inbound || null, dns: resp.dns || null, outbound: resp.outbound || null, fw: resp.fw || null }
+    } catch (e) {
+      const err = { error: e.message }
+      data = { inbound: err, dns: err, outbound: err, fw: err }
+    }
+  }
+  // Drill-in: just the one type.
   async function loadType(type) {
     try {
       data[type] = await apiGet(`/api/logs/stats?type=${type}&period=${period}`)
     } catch (e) { data[type] = { error: e.message } }
   }
-  // Only fetch what the current view needs, cached per period: the Overview needs all
-  // four types; a drill-in needs just its type; anything already loaded for this period
-  // is reused. So switching tabs doesn't refetch, and a drill-in never pulls all four.
+  // Fetch only what the current view needs, cached per period: the Overview pulls all
+  // four types in one call; a drill-in pulls just its type (reused if the overview
+  // already loaded it). So switching tabs doesn't refetch.
   let loadedFor = $state('')
   async function loadAll() {
     if (loadedFor !== period) {
@@ -73,20 +86,27 @@
       topTalkers = []
       loadedFor = period
     }
-    const need = selectedType && selectedType !== 'client' ? [selectedType] : Object.keys(typeMeta)
-    const jobs = need.filter((t) => !data[t]).map(loadType)
-    if (!selectedType && !topTalkers.length) jobs.push(loadTopTalkers()) // top-talkers is overview-only
+    const jobs = []
+    if (selectedType && selectedType !== 'client') {
+      if (!data[selectedType]) jobs.push(loadType(selectedType))
+    } else if (!selectedType) {
+      if (!data.inbound || !data.dns || !data.outbound || !data.fw) jobs.push(loadOverview())
+      if (!topTalkers.length) jobs.push(loadTopTalkers()) // top-talkers is overview-only
+    }
     if (!jobs.length) return
     loading = true
     await Promise.all(jobs)
     loading = false
   }
-  // Runs on mount, on period change, and on tab change (fetches only what's missing).
-  $effect(() => { period; selectedType; loadAll() })
+  // Runs on mount, on period change, and on tab change. loadAll reads+writes its own
+  // reactive state (data/loadedFor/topTalkers) before its first await, so it's wrapped in
+  // untrack — otherwise the effect would re-trigger on those writes and fire every request
+  // twice. Only period + selectedType (read here) should re-run it.
+  $effect(() => { period; selectedType; untrack(() => loadAll()) })
 
   // ── Per-client (conntrack byte accounting) ──
   let peerList = $state([])
-  let selectedPeer = $state('')
+  let selectedPeer = $derived(persisted.value.selectedPeer)
   let peerUsage = $state(null)
   let peerUsageLoading = $state(false)
   let topTalkers = $state([])
@@ -112,12 +132,15 @@
     selectedPeer; period; selectedType
     if (selectedType === 'client' && selectedPeer) loadPeerUsage()
   })
-  // Default the client picker to the first peer when the tab opens with none chosen.
+  // Keep the client picker on a valid peer: restore the persisted one if it still exists,
+  // otherwise fall back to the first. Converges (a fix makes it valid → no further write).
   $effect(() => {
-    if (selectedType === 'client' && !selectedPeer && peerList.length) selectedPeer = peerList[0].value
+    if (selectedType === 'client' && peerList.length && !peerList.some((p) => p.value === selectedPeer)) {
+      setPeer(peerList[0].value)
+    }
   })
 
-  function openClient(ip) { selectedPeer = ip; setType('client') }
+  function openClient(ip) { setPeer(ip); setType('client') }
 
   const clientCountries = $derived.by(() => {
     const agg = {}
@@ -211,7 +234,7 @@
         {/each}
       </div>
       {#if selectedType === 'client'}
-        <Select value={selectedPeer} onchange={(e) => (selectedPeer = e.target.value)} class="w-44 shrink-0 truncate">
+        <Select value={selectedPeer} onchange={(e) => setPeer(e.target.value)} class="w-44 shrink-0 truncate">
           <option value="">Choose a client…</option>
           {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
         </Select>
@@ -235,7 +258,7 @@
     </div>
     {#if selectedType === 'client'}
       <div class="frow">
-        <Select value={selectedPeer} onchange={(e) => (selectedPeer = e.target.value)}>
+        <Select value={selectedPeer} onchange={(e) => setPeer(e.target.value)}>
           <option value="">Choose a client…</option>
           {#each peerList as p}<option value={p.value}>{p.label}</option>{/each}
         </Select>
@@ -306,7 +329,7 @@
           <div class="card-h compact"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{d && !d.error ? fmtNumber(d.total_count) : '—'}</span></div>
           {#if d?.time_series?.length > 1}
             <div class="card-body tight">
-              <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} legend={false} />
+              <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} legend={false} datedTooltip />
             </div>
           {:else}
             <div class="card-body"><div class="nodata">Not enough data in this period.</div></div>
@@ -388,7 +411,7 @@
       {#if peerUsage.series?.length}
         <div class="card stack-gap">
           <div class="card-h"><h3><Icon name="activity" size={15} />Data over time</h3><span class="sub">upload + download, this device</span></div>
-          <div class="card-body"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} legend={false} /></div>
+          <div class="card-body"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} legend={false} datedTooltip /></div>
         </div>
       {/if}
 
@@ -481,7 +504,7 @@
       {#if d.time_series?.length}
         <div class="card stack-gap">
           <div class="card-h"><h3>Events over time</h3><span class="sub">{periodLabelFull}</span></div>
-          <div class="card-body tight"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} legend={false} /></div>
+          <div class="card-body tight"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} legend={false} datedTooltip /></div>
         </div>
       {/if}
 

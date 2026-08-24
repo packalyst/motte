@@ -15,6 +15,8 @@
     yUnit = '',           // suffix on axis + tooltip values, e.g. '%'
     yFormat = null,       // (v) => string; overrides the default `${v}${yUnit}`
     tooltip = true,
+    datedTooltip = false, // always show the date in the tooltip (for historical charts;
+                          // the live server chart leaves it off and keeps intraday time)
     legend = true,        // built-in clickable legend (show/hide series + live value)
     hidden = $bindable({}), // series index -> true when hidden; bindable so a
                             // parent can drive the toggle from its own legend
@@ -81,9 +83,9 @@
           const xs0 = up.data[0] || []
           const md = xs0.length > 1 && xs0[xs0.length - 1] - xs0[0] > 36 * 3600 // span > 36h
           const dt = new Date(t * 1000)
-          // Multi-day range: label the point with its date (+time); intraday: keep the
-          // full time (with seconds) so the live server chart still reads finely.
-          const label = md ? dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : dt.toLocaleTimeString()
+          // Multi-day range (or a dated chart): label the point with its date (+time);
+          // intraday live charts keep the full time (with seconds) so they read finely.
+          const label = (md || datedTooltip) ? dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : dt.toLocaleTimeString()
           let h = `<div class="uchart-tip-t">${label}</div>`
           for (let s = 1; s < up.series.length; s++) {
             const v = up.data[s][i]

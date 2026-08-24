@@ -107,6 +107,10 @@ func (s *Service) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// One-time: seed log_rollups from existing logs so the longer analytics periods have
+	// history immediately instead of waiting for the trigger to accumulate it.
+	s.backfillRollups()
+
 	for name, watcher := range s.watchers {
 		if s.enabled[name] {
 			s.startWatcher(name, watcher)
