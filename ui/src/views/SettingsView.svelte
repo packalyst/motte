@@ -7,6 +7,7 @@
   import Button from '../components/Button.svelte'
   import Badge from '../components/Badge.svelte'
   import Select from '../components/Select.svelte'
+  import SearchableSelect from '../components/SearchableSelect.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
@@ -1190,7 +1191,7 @@
               </div>
             </div>
             <div>
-              <Select
+              <SearchableSelect
                 label="Timezone"
                 bind:value={displayTimezone}
                 onchange={() => setDisplayTimezone(displayTimezone)}
