@@ -331,7 +331,7 @@
           <div class="card-h compact"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{d && !d.error ? fmtNumber(d.total_count) : '—'}</span></div>
           {#if d?.time_series?.length > 1}
             <div class="card-body tight">
-              <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} legend={false} />
+              <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} yFormat={fmtNumber} legend={false} />
             </div>
           {:else}
             <div class="card-body"><div class="nodata">Not enough data in this period.</div></div>
@@ -413,7 +413,7 @@
       {#if peerUsage.series?.length}
         <div class="card stack-gap">
           <div class="card-h"><h3><Icon name="activity" size={15} />Data over time</h3><span class="sub">upload + download, this device</span></div>
-          <div class="card-body"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} legend={false} /></div>
+          <div class="card-body"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} logScale legend={false} /></div>
         </div>
       {/if}
 
@@ -506,7 +506,7 @@
       {#if d.time_series?.length}
         <div class="card stack-gap">
           <div class="card-h"><h3>Events over time</h3><span class="sub">{periodLabelFull}</span></div>
-          <div class="card-body tight"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} legend={false} /></div>
+          <div class="card-body tight"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} yFormat={fmtNumber} legend={false} /></div>
         </div>
       {/if}
 

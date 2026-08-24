@@ -13,6 +13,7 @@
     series = [],          // [{ label, stroke:'--cpu', width?, fill? }] one per non-x column
     height = 150,
     yRange = null,        // [min,max] fixed, or null to auto-scale
+    logScale = false,     // log10 Y axis — for byte/usage data spanning KB→GB (all values > 0)
     yUnit = '',           // suffix on axis + tooltip values, e.g. '%'
     yFormat = null,       // (v) => string; overrides the default `${v}${yUnit}`
     tooltip = true,
@@ -169,7 +170,7 @@
       height,
       cursor: { y: false, points: { size: 7 } },
       legend: { show: false },
-      scales: yRange ? { y: { range: () => yRange } } : {},
+      scales: yRange ? { y: { range: () => yRange } } : (logScale ? { y: { distr: 3 } } : {}),
       axes: [ax(34, fmtTime, { space: 70, gap: 6 }), ax(38, (up, vals) => vals.map(fmtY))],
       series: uSeries,
       plugins: tooltip ? [tooltipPlugin(strokes)] : [],
