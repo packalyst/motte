@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { theme, apiGet, apiPost, currentView, validViews, setGlobalLogoutHandler, clearSessionTokens } from './stores/app.js'
   import { connect as wsConnect, disconnect as wsDisconnect, wsUserStore, stopReconnect } from './stores/websocket.js'
+  import { setDisplayTimezone } from './lib/utils/format.js'
   import Dashboard from './views/Dashboard.svelte'
   import Login from './views/Login.svelte'
   import SetupWizard from './views/SetupWizard.svelte'
@@ -81,6 +82,11 @@
     }
     try {
       user = await apiGet('/api/auth/me')
+      // Apply the display timezone app-wide before views render (best-effort).
+      try {
+        const s = await apiGet('/api/settings')
+        setDisplayTimezone(s.display_timezone || 'browser')
+      } catch { /* keep browser default */ }
       // Auth established — connect the WebSocket for live updates.
       wsConnect()
     } catch {

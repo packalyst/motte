@@ -1,6 +1,6 @@
 <script>
   import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
-  import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
+  import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry, withTz } from '$lib/utils/format.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
@@ -225,7 +225,7 @@
         { value: '90', label: '90 days' },
         { value: '365', label: '1 year' }
       ]}
-      helperText="Key will expire on {new Date(Date.now() + parseInt(newExpiration) * 24 * 60 * 60 * 1000).toLocaleDateString()}"
+      helperText="Key will expire on {new Date(Date.now() + parseInt(newExpiration) * 24 * 60 * 60 * 1000).toLocaleDateString(undefined, withTz())}"
     />
   {/if}
 

@@ -12,7 +12,7 @@
   import Icon from './Icon.svelte'
   import EmptyState from './EmptyState.svelte'
   import LoadingSpinner from './LoadingSpinner.svelte'
-  import { timeAgo, parseDate } from '$lib/utils/format.js'
+  import { timeAgo, parseDate, withTz } from '$lib/utils/format.js'
 
   let { limit = 50, compact = false, subsystem = '' } = $props()
 
@@ -62,7 +62,7 @@
     const diff = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000)
     if (diff <= 0) return 'Today'
     if (diff === 1) return 'Yesterday'
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: diff > 300 ? 'numeric' : undefined })
+    return d.toLocaleDateString(undefined, withTz({ month: 'short', day: 'numeric', year: diff > 300 ? 'numeric' : undefined }))
   }
 
   export async function reload() {

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiGet, apiPost, apiPut, confirm, setConfirmLoading } from '../stores/app.js'
   import { subscribeToLogs, unsubscribeFromLogs, dockerLogsStore } from '../stores/websocket.js'
+  import { withTz } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
@@ -147,7 +148,7 @@
     if (!ts) return ''
     // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS"; render in local time.
     const d = new Date(String(ts).replace(' ', 'T') + 'Z')
-    return isNaN(d.getTime()) ? '' : d.toLocaleString()
+    return isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, withTz())
   }
 
   async function loadClients() {

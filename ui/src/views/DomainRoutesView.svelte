@@ -2,6 +2,7 @@
   import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import { generalInfoStore } from '../stores/websocket.js'
   import { useDataLoader } from '$lib/composables/index.js'
+  import { withTz } from '$lib/utils/format.js'
   import { filterByFields } from '$lib/utils/data.js'
   import { toggleInArray } from '$lib/utils/array.js'
   import {
@@ -510,7 +511,7 @@
                 <Badge
                   variant={cert.status === 'valid' ? 'success' : cert.status === 'warning' ? 'warning' : 'destructive'}
                   size="sm"
-                  title={`Expires: ${new Date(cert.notAfter).toLocaleDateString()} (${cert.daysLeft} days)`}
+                  title={`Expires: ${new Date(cert.notAfter).toLocaleDateString(undefined, withTz())} (${cert.daysLeft} days)`}
                 >
                   SSL {cert.daysLeft}d
                 </Badge>
@@ -619,7 +620,7 @@
                       <Badge
                         variant={cert.status === 'valid' ? 'success' : cert.status === 'warning' ? 'warning' : 'destructive'}
                         size="sm"
-                        title={`Expires: ${new Date(cert.notAfter).toLocaleDateString()} (${cert.daysLeft} days)`}
+                        title={`Expires: ${new Date(cert.notAfter).toLocaleDateString(undefined, withTz())} (${cert.daysLeft} days)`}
                       >
                         SSL {cert.daysLeft}d
                       </Badge>

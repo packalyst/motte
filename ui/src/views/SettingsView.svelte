@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { theme, toast, apiGet, apiPost, apiPut, apiDelete, apiPostBlob, generateAdguardCredentials, confirm } from '../stores/app.js'
+  import { withTz, setDisplayTimezone } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
@@ -67,7 +68,15 @@
   // Session settings
   let sessionTimeout = $state('24')
   let metricsRetention = $state('90')
+  let displayTimezone = $state('browser')
   let sessionChanged = $state(false)
+
+  // Timezone options: "Browser" (automatic) + the full IANA list where supported.
+  const TZ_OPTIONS = (() => {
+    let zones
+    try { zones = Intl.supportedValuesOf('timeZone') } catch { zones = ['UTC', 'Europe/London', 'Europe/Bucharest', 'America/New_York', 'America/Los_Angeles', 'Asia/Tokyo'] }
+    return [{ value: 'browser', label: 'Browser (automatic)' }, ...zones.map((z) => ({ value: z, label: z }))]
+  })()
 
   // Scanner settings
   let scannerSettings = $state({
@@ -225,7 +234,9 @@
       // Session
       sessionTimeout = settings.session_timeout || '24'
       metricsRetention = String(settings.metrics_retention_days || 90)
-      originalSession = { timeout: sessionTimeout, retention: metricsRetention }
+      displayTimezone = settings.display_timezone || 'browser'
+      setDisplayTimezone(displayTimezone)
+      originalSession = { timeout: sessionTimeout, retention: metricsRetention, timezone: displayTimezone }
 
       // Scanner
       scannerSettings = {
@@ -298,7 +309,7 @@
   })
 
   $effect(() => {
-    sessionChanged = sessionTimeout !== originalSession.timeout || metricsRetention !== originalSession.retention
+    sessionChanged = sessionTimeout !== originalSession.timeout || metricsRetention !== originalSession.retention || displayTimezone !== originalSession.timezone
   })
 
   // Derived state for scanner change detection
@@ -395,9 +406,11 @@
     try {
       await apiPut('/api/settings', {
         session_timeout: sessionTimeout,
-        metrics_retention_days: parseInt(metricsRetention, 10)
+        metrics_retention_days: parseInt(metricsRetention, 10),
+        display_timezone: displayTimezone
       })
-      originalSession = { timeout: sessionTimeout, retention: metricsRetention }
+      setDisplayTimezone(displayTimezone)
+      originalSession = { timeout: sessionTimeout, retention: metricsRetention, timezone: displayTimezone }
       sessionChanged = false
       toast('Session settings saved', 'success')
     } catch (e) {
@@ -1176,6 +1189,17 @@
                 How long analytics history &amp; fleet/firewall metrics are kept. Lowering it prunes older data on save.
               </div>
             </div>
+            <div>
+              <Select
+                label="Timezone"
+                bind:value={displayTimezone}
+                onchange={() => setDisplayTimezone(displayTimezone)}
+                options={TZ_OPTIONS}
+              />
+              <div class="text-[10px] text-muted-foreground mt-1">
+                How dates &amp; times are shown across the panel. &ldquo;Browser&rdquo; uses each viewer&rsquo;s own zone.
+              </div>
+            </div>
           </div>
           <div class="flex items-center justify-between border-t border-border pt-3">
             <div>
@@ -1897,7 +1921,7 @@
             {#if impPreview}
               <div class="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
                 <div class="text-xs text-muted-foreground">
-                  Backup from {impPreview.header?.created_at ? new Date(impPreview.header.created_at).toLocaleString() : 'unknown date'} · includes {(impPreview.header?.includes || []).join(', ')}
+                  Backup from {impPreview.header?.created_at ? new Date(impPreview.header.created_at).toLocaleString(undefined, withTz()) : 'unknown date'} · includes {(impPreview.header?.includes || []).join(', ')}
                 </div>
                 <div class="divide-y divide-border">
                   {#each impPreview.plan as p}

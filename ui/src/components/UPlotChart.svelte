@@ -6,6 +6,7 @@
   import { onMount, onDestroy } from 'svelte'
   import uPlot from 'uplot'
   import 'uplot/dist/uPlot.min.css'
+  import { withTz } from '$lib/utils/format.js'
 
   let {
     data = [],            // [xVals(unix s), series1, series2, ...]
@@ -15,8 +16,6 @@
     yUnit = '',           // suffix on axis + tooltip values, e.g. '%'
     yFormat = null,       // (v) => string; overrides the default `${v}${yUnit}`
     tooltip = true,
-    datedTooltip = false, // always show the date in the tooltip (for historical charts;
-                          // the live server chart leaves it off and keeps intraday time)
     legend = true,        // built-in clickable legend (show/hide series + live value)
     hidden = $bindable({}), // series index -> true when hidden; bindable so a
                             // parent can drive the toggle from its own legend
@@ -84,12 +83,10 @@
             return
           }
           const t = up.data[0][i]
-          const xs0 = up.data[0] || []
-          const md = xs0.length > 1 && xs0[xs0.length - 1] - xs0[0] > 36 * 3600 // span > 36h
           const dt = new Date(t * 1000)
-          // Multi-day range (or a dated chart): label the point with its date (+time);
-          // intraday live charts keep the full time (with seconds) so they read finely.
-          const label = (md || datedTooltip) ? dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : dt.toLocaleTimeString()
+          // Always label the point with date + time, so every chart (server, machines,
+          // analytics) reads consistently instead of a bare intraday time.
+          const label = dt.toLocaleString([], withTz({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))
           let h = `<div class="uchart-tip-t">${label}</div>`
           for (let s = 1; s < up.series.length; s++) {
             const v = up.data[s][i]
@@ -144,8 +141,8 @@
       return vals.map((v) => {
         const d = new Date(v * 1000)
         return md
-          ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-          : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          ? d.toLocaleDateString([], withTz({ month: 'short', day: 'numeric' }))
+          : d.toLocaleTimeString([], withTz({ hour: '2-digit', minute: '2-digit' }))
       })
     }
 

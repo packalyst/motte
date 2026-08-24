@@ -6,6 +6,7 @@
   import ContentBlock from './ContentBlock.svelte'
   import Badge from './Badge.svelte'
   import { toast } from '../stores/app.js'
+  import { withTz } from '../lib/utils/format.js'
   import {
     platform,
     isInstalled,
@@ -282,7 +283,7 @@
   function formatDate(dateStr) {
     if (!dateStr) return '—'
     const date = new Date(dateStr)
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleDateString(undefined, withTz()) + ' ' + date.toLocaleTimeString([], withTz({ hour: '2-digit', minute: '2-digit' }))
   }
 
   function getPermissionBadge(state) {

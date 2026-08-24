@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { toast, apiGet, apiPut, getInitialTab } from '../stores/app.js'
-  import { formatNumber } from '../lib/utils/format.js'
+  import { formatNumber, withTz } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Modal from '../components/Modal.svelte'
@@ -628,7 +628,7 @@
                     <div class="flex items-center justify-between px-3 py-2 border-t border-border bg-muted/30">
                       <span class="text-[10px] text-muted-foreground">
                         {#if filter.last_updated}
-                          Updated {new Date(filter.last_updated).toLocaleDateString()}
+                          Updated {new Date(filter.last_updated).toLocaleDateString(undefined, withTz())}
                         {:else}
                           —
                         {/if}

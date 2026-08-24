@@ -42,6 +42,21 @@ const (
 	DefaultRetentionDays = 90
 )
 
+// validTimezone accepts "browser" or an IANA-style zone name (letters, digits, and the
+// separators / _ + - only). It's a charset guard, not a tz-database lookup — the value is
+// display-only and applied client-side, never used in server-side time math.
+func validTimezone(tz string) bool {
+	for _, r := range tz {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '/' || r == '_' || r == '+' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // GetRetentionDays returns the aggregate-retention window in days, falling back to the
 // default when unset or out of range. It drives the central retention sweep, which is
 // the single window for every aggregate table except traffic_usage.
@@ -115,6 +130,7 @@ type UpdateSettingsRequest struct {
 	SessionTimeout          *string `json:"session_timeout,omitempty"`
 	APIDirectAccess         *bool   `json:"api_direct_access,omitempty"`      // false = close the API port to the public internet (L3)
 	MetricsRetentionDays    *int    `json:"metrics_retention_days,omitempty"` // window (days) for all aggregate tables
+	DisplayTimezone         *string `json:"display_timezone,omitempty"`       // "browser" or an IANA zone; UI display only
 
 	// Port Scanner
 	ScannerPortStart  *int `json:"scanner_port_start,omitempty"`
@@ -220,6 +236,13 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 
 	// Aggregate-metrics retention window (days)
 	result["metrics_retention_days"] = GetRetentionDays()
+
+	// Display timezone (UI only): "browser" (default) or an IANA zone name
+	if tz, err := getSetting("display_timezone"); err == nil && tz != "" {
+		result["display_timezone"] = tz
+	} else {
+		result["display_timezone"] = "browser"
+	}
 
 	// Scanner
 	result["scanner_port_start"] = getSettingInt("scanner_port_start", 1)
@@ -391,6 +414,21 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if OnRetentionChange != nil {
 			go OnRetentionChange() // best-effort immediate prune; don't block the response
 		}
+	}
+
+	// Display timezone (UI only): "browser" (default) or an IANA zone name. Stored as an
+	// opaque string — the browser applies it when formatting; the server never uses it.
+	if req.DisplayTimezone != nil {
+		tz := strings.TrimSpace(*req.DisplayTimezone)
+		if tz == "" || len(tz) > 64 || !validTimezone(tz) {
+			router.JSONError(w, "invalid display_timezone", http.StatusBadRequest)
+			return
+		}
+		if err := setSetting("display_timezone", tz); err != nil {
+			router.JSONError(w, "Failed to save display_timezone: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Printf("Updated display_timezone to %s", tz)
 	}
 
 	// Update Scanner settings

@@ -3,6 +3,28 @@
  */
 
 // ============================================================================
+// Display timezone (UI only)
+// ============================================================================
+// "browser" (default) formats in the viewer's own zone; an IANA name (e.g.
+// "Europe/Bucharest", "UTC") overrides it app-wide. Set once at startup and on
+// save via setDisplayTimezone(); every absolute-time formatter routes its Intl
+// options through withTz() so the choice applies consistently. Relative times
+// ("5m ago") are zone-independent and untouched.
+let _displayTz // undefined => browser's own timezone
+
+/** @param {string} tz - "browser" or an IANA zone name */
+export function setDisplayTimezone(tz) {
+  _displayTz = tz && tz !== 'browser' ? tz : undefined
+}
+export function getDisplayTimezone() {
+  return _displayTz
+}
+/** Merge the configured timeZone into Intl options (no-op in browser mode). */
+export function withTz(opts = {}) {
+  return _displayTz ? { ...opts, timeZone: _displayTz } : opts
+}
+
+// ============================================================================
 // Number Formatting
 // ============================================================================
 
@@ -43,7 +65,7 @@ export function formatBytes(bytes, decimals = 1) {
  */
 export function formatTime(dateStr) {
   if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleTimeString()
+  return new Date(dateStr).toLocaleTimeString(undefined, withTz())
 }
 
 /**
@@ -85,7 +107,7 @@ export function formatDate(date) {
   if (!date) return '-'
   const d = parseDate(date)
   if (!d || isNaN(d.getTime())) return '-'
-  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleDateString(undefined, withTz()) + ' ' + d.toLocaleTimeString([], withTz({ hour: '2-digit', minute: '2-digit' }))
 }
 
 /**
@@ -110,7 +132,7 @@ export function formatRelativeDate(date) {
   if (d.getFullYear() !== now.getFullYear()) {
     options.year = 'numeric'
   }
-  return d.toLocaleDateString('en-US', options)
+  return d.toLocaleDateString('en-US', withTz(options))
 }
 
 /**
@@ -245,5 +267,5 @@ export function formatExpiryDate(date) {
 export function formatDateShort(date) {
   const d = parseDate(date)
   if (!d) return 'Never'
-  return d.toLocaleDateString()
+  return d.toLocaleDateString(undefined, withTz())
 }
