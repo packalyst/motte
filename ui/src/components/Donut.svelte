@@ -25,6 +25,13 @@
   })
 
   const pctOf = (n) => (total ? Math.round((n / total) * 100) : 0)
+
+  // Styled hover tooltip (position:fixed so a card's overflow can't clip it).
+  let tip = $state(null)
+  function showTip(e, a) {
+    tip = { label: a.label, color: a.color, count: a.count || 0, pct: pctOf(a.count), x: e.clientX, y: e.clientY }
+  }
+  const hideTip = () => (tip = null)
 </script>
 
 <div class="donut">
@@ -35,9 +42,11 @@
         stroke-dasharray="{a.len.toFixed(1)} {a.gap.toFixed(1)}"
         stroke-dashoffset={a.offset.toFixed(1)}
         transform="rotate(-90 {CX} {CY})"
-      >
-        <title>{a.label}: {(a.count || 0).toLocaleString()} ({pctOf(a.count)}%)</title>
-      </circle>
+        role="presentation"
+        onmouseenter={(e) => showTip(e, a)}
+        onmousemove={(e) => showTip(e, a)}
+        onmouseleave={hideTip}
+      ></circle>
     {/each}
     <text x="52" y="49" text-anchor="middle" font-size="17" font-weight="800" fill="var(--foreground)">{format(total)}</text>
     <text x="52" y="63" text-anchor="middle" font-size="8" fill="var(--muted-foreground)">total</text>
@@ -54,8 +63,36 @@
   </div>
 </div>
 
+{#if tip}
+  <div class="donut-tip" style="left:{Math.min(tip.x + 14, (typeof window !== 'undefined' ? window.innerWidth : 9999) - 180)}px; top:{tip.y + 14}px">
+    <span class="tip-sw" style="background:{tip.color}"></span>{tip.label}
+    <b>{tip.count.toLocaleString()}</b> <span class="tip-pct">({tip.pct}%)</span>
+  </div>
+{/if}
+
 <style>
   .donut { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .donut svg circle { transition: opacity 0.12s ease; }
+  .donut svg circle:hover { opacity: 0.82; }
+  .donut-tip {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px;
+    border-radius: 7px;
+    font-size: 11px;
+    white-space: nowrap;
+    background: var(--card);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow, 0 2px 8px rgba(0, 0, 0, 0.15));
+  }
+  .donut-tip b { font-variant-numeric: tabular-nums; }
+  .donut-tip .tip-pct { color: var(--muted-foreground); }
+  .donut-tip .tip-sw { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
   .donut svg { flex-shrink: 0; }
   .legend { display: flex; flex-wrap: wrap; gap: 9px 16px; flex: 1; min-width: 140px; }
   .item { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
