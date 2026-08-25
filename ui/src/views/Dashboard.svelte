@@ -116,8 +116,8 @@
   }
 
   const navItems = [
-    // Daily-driver items stay one click away
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
+    { id: 'divider1', divider: true },
     {
       id: 'grp-clients', label: 'Clients', icon: 'devices',
       children: [
@@ -125,17 +125,19 @@
         { id: 'fleet', label: 'Machines', icon: 'device-desktop' },
       ]
     },
-    { id: 'firewall', label: 'Firewall', icon: 'shield' },
-    { id: 'server', label: 'Host', icon: 'shield-lock' },
-    { id: 'divider1', divider: true },
     {
-      id: 'grp-monitoring', label: 'Monitoring', icon: 'chart-bar',
+      id: 'grp-headscale', label: 'Headscale', icon: 'key',
       children: [
-        { id: 'analytics', label: 'Analytics', icon: 'chart-bar' },
-        { id: 'logs', label: 'Logs', icon: 'file-text' },
-        { id: 'activity', label: 'Activity', icon: 'activity' },
+        { id: 'routes', label: 'Routes', icon: 'git-branch' },
+        { id: 'users', label: 'Users', icon: 'users' },
+        { id: 'authkeys', label: 'Auth Keys', icon: 'key' },
+        { id: 'apikeys', label: 'API Keys', icon: 'code' },
       ]
     },
+    { id: 'divider2', divider: true },
+    { id: 'firewall', label: 'Firewall', icon: 'shield' },
+    { id: 'server', label: 'Host', icon: 'shield-lock' },
+    { id: 'divider3', divider: true },
     {
       id: 'grp-web', label: 'Web & Proxy', icon: 'world-www',
       children: [
@@ -151,13 +153,13 @@
         { id: 'docker', label: 'Docker', icon: 'box' },
       ]
     },
+    { id: 'divider4', divider: true },
     {
-      id: 'grp-headscale', label: 'Headscale', icon: 'key',
+      id: 'grp-monitoring', label: 'Monitoring', icon: 'chart-bar',
       children: [
-        { id: 'routes', label: 'Routes', icon: 'git-branch' },
-        { id: 'users', label: 'Users', icon: 'users' },
-        { id: 'authkeys', label: 'Auth Keys', icon: 'key' },
-        { id: 'apikeys', label: 'API Keys', icon: 'code' },
+        { id: 'analytics', label: 'Analytics', icon: 'chart-bar' },
+        { id: 'logs', label: 'Logs', icon: 'file-text' },
+        { id: 'activity', label: 'Activity', icon: 'activity' },
       ]
     },
   ]
@@ -397,7 +399,7 @@
           class="custom_btns"
           title="IP Lookup"
         >
-          <Icon name="map-search" size={16} />
+          <Icon name="world-search" size={16} />
         </button>
         <button
           onclick={() => navigate('nodes')}

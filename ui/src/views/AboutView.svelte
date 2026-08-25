@@ -310,30 +310,39 @@
             </div>
           </div>
 
-          <!-- Documentation -->
+          <!-- Built with -->
           <div>
-            <h3 class="text-lg font-semibold text-foreground mb-3">Documentation</h3>
+            <h3 class="text-lg font-semibold text-foreground mb-1">Built with</h3>
             <p class="text-xs text-muted-foreground mb-3">
-              Reference docs for the third-party services in this stack. Source repositories are in the GitHub menu (top bar).
+              The open-source projects this panel orchestrates — with source and documentation.
             </p>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               {#each [
-                { name: 'Headscale', desc: 'Tailscale-compatible control server', href: 'https://headscale.net/stable/' },
-                { name: 'AdGuard Home', desc: 'DNS filtering & ad blocking', href: 'https://github.com/AdguardTeam/AdGuardHome/wiki' },
-                { name: 'Traefik', desc: 'Reverse proxy & load balancer', href: 'https://doc.traefik.io/traefik/' },
-                { name: 'WireGuard', desc: 'VPN tunnel protocol', href: 'https://www.wireguard.com/' }
-              ] as d}
-                <a href={d.href} target="_blank" rel="noopener noreferrer"
-                  class="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 hover:bg-muted/50 transition-colors">
-                  <div class="w-8 h-8 rounded bg-info/10 flex items-center justify-center shrink-0">
-                    <Icon name="book" size={16} class="text-info" />
+                { name: 'WireGuard', icon: 'shield-lock', color: 'text-success', desc: 'Fast, modern, encrypted VPN tunnel — the transport your peers connect over.', github: 'https://github.com/WireGuard', docs: 'https://www.wireguard.com/' },
+                { name: 'Headscale', icon: 'users', color: 'text-primary', desc: 'Self-hosted Tailscale control server — coordinates users, nodes, pre-auth keys and subnet routes.', github: 'https://github.com/juanfont/headscale', docs: 'https://headscale.net/stable/' },
+                { name: 'AdGuard Home', icon: 'shield-check', color: 'text-warning', desc: 'Network-wide DNS filtering, ad & tracker blocking, and query logging.', github: 'https://github.com/AdguardTeam/AdGuardHome', docs: 'https://github.com/AdguardTeam/AdGuardHome/wiki' },
+                { name: 'Traefik', icon: 'world', color: 'text-info', desc: 'Reverse proxy and load balancer with automatic TLS via Let’s Encrypt.', github: 'https://github.com/traefik/traefik', docs: 'https://doc.traefik.io/traefik/' },
+                { name: 'Docker', icon: 'box', color: 'text-muted-foreground', desc: 'Container runtime the whole stack is built and orchestrated on.', github: 'https://github.com/moby/moby', docs: 'https://docs.docker.com/' }
+              ] as c}
+                <div class="rounded-lg border border-border bg-muted/30 p-4">
+                  <div class="flex items-center gap-2 mb-1.5">
+                    <div class="w-7 h-7 rounded bg-muted flex items-center justify-center shrink-0">
+                      <Icon name={c.icon} size={15} class={c.color} />
+                    </div>
+                    <span class="font-medium text-foreground text-sm">{c.name}</span>
                   </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="font-medium text-foreground text-sm">{d.name}</div>
-                    <div class="text-[11px] text-muted-foreground truncate">{d.desc}</div>
+                  <p class="text-[11px] text-muted-foreground leading-relaxed mb-2.5">{c.desc}</p>
+                  <div class="flex items-center gap-4">
+                    <a href={c.github} target="_blank" rel="noopener noreferrer"
+                      class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                      <Icon name="brand-github" size={13} /> GitHub
+                    </a>
+                    <a href={c.docs} target="_blank" rel="noopener noreferrer"
+                      class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                      <Icon name="book" size={13} /> Docs
+                    </a>
                   </div>
-                  <Icon name="external-link" size={14} class="text-muted-foreground shrink-0" />
-                </a>
+                </div>
               {/each}
             </div>
           </div>

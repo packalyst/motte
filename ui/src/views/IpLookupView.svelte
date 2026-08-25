@@ -93,7 +93,7 @@
 </script>
 
 <div class="space-y-4">
-  <InfoCard icon="map-search" title="IP Lookup" description="Look up any IP: owner (ASN), country, VPN / proxy / hosting flags, reputation, and how often it has hit you — then block it in one click." />
+  <InfoCard icon="world-search" title="IP Lookup" description="Look up any IP: owner (ASN), country, VPN / proxy / hosting flags, reputation, and how often it has hit you — then block it in one click." />
 
   <!-- Big search -->
   <div class="flex items-center gap-2 bg-card border border-border rounded-xl p-2 pl-4 shadow-sm">
