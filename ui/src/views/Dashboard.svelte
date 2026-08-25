@@ -40,13 +40,11 @@
 
   // Topbar dropdown state
   let githubDropdownOpen = $state(false)
-  let docsDropdownOpen = $state(false)
 
-  // Close dropdowns when clicking outside
+  // Close the GitHub dropdown when clicking outside it
   function handleClickOutside(e) {
-    if (!e.target.closest('.dropdown-github') && !e.target.closest('.dropdown-docs')) {
+    if (!e.target.closest('.dropdown-github')) {
       githubDropdownOpen = false
-      docsDropdownOpen = false
     }
   }
 
@@ -54,9 +52,10 @@
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
     'grp-clients': ['nodes', 'fleet'],
-    'grp-access': ['routes', 'users', 'authkeys', 'apikeys'],
+    'grp-monitoring': ['analytics', 'logs', 'activity'],
     'grp-web': ['traefik', 'domains', 'tunnels'],
-    'grp-services': ['adguard', 'docker', 'logs', 'analytics'],
+    'grp-services': ['adguard', 'docker'],
+    'grp-headscale': ['routes', 'users', 'authkeys', 'apikeys'],
   }
   // Expand the group that contains the current view on load.
   let expandedMenus = $state(
@@ -127,16 +126,14 @@
       ]
     },
     { id: 'firewall', label: 'Firewall', icon: 'shield' },
-    { id: 'server', label: 'Server', icon: 'shield-lock' },
-    { id: 'activity', label: 'Activity', icon: 'activity' },
+    { id: 'server', label: 'Host', icon: 'shield-lock' },
     { id: 'divider1', divider: true },
     {
-      id: 'grp-access', label: 'Access', icon: 'key',
+      id: 'grp-monitoring', label: 'Monitoring', icon: 'chart-bar',
       children: [
-        { id: 'routes', label: 'Routes', icon: 'git-branch' },
-        { id: 'users', label: 'Users', icon: 'users' },
-        { id: 'authkeys', label: 'Auth Keys', icon: 'key' },
-        { id: 'apikeys', label: 'API Keys', icon: 'key' },
+        { id: 'analytics', label: 'Analytics', icon: 'chart-bar' },
+        { id: 'logs', label: 'Logs', icon: 'file-text' },
+        { id: 'activity', label: 'Activity', icon: 'activity' },
       ]
     },
     {
@@ -152,13 +149,17 @@
       children: [
         { id: 'adguard', label: 'AdGuard', icon: 'shield-check' },
         { id: 'docker', label: 'Docker', icon: 'box' },
-        { id: 'logs', label: 'Logs', icon: 'file-text' },
-        { id: 'analytics', label: 'Analytics', icon: 'chart-bar' },
       ]
     },
-    { id: 'divider2', divider: true },
-    { id: 'settings', label: 'Settings', icon: 'settings' },
-    { id: 'about', label: 'About', icon: 'info-circle' }
+    {
+      id: 'grp-headscale', label: 'Headscale', icon: 'key',
+      children: [
+        { id: 'routes', label: 'Routes', icon: 'git-branch' },
+        { id: 'users', label: 'Users', icon: 'users' },
+        { id: 'authkeys', label: 'Auth Keys', icon: 'key' },
+        { id: 'apikeys', label: 'API Keys', icon: 'code' },
+      ]
+    },
   ]
 
   // Check if current view is a child of a menu
@@ -199,7 +200,10 @@
   // Get label for header
   function getViewLabel(viewId) {
     if (viewId === 'profile') return 'Profile'
-    if (viewId === 'iplookup') return 'IP Lookup' // topbar-only, not in the sidebar nav
+    // Topbar-only views (not in the sidebar nav):
+    if (viewId === 'iplookup') return 'IP Lookup'
+    if (viewId === 'settings') return 'Settings'
+    if (viewId === 'about') return 'About'
     for (const item of navItems) {
       if (item.id === viewId) return item.label
       if (item.children) {
@@ -409,13 +413,20 @@
         >
           <Icon name="settings" size={16} />
         </button>
+        <button
+          onclick={() => navigate('about')}
+          class="custom_btns"
+          title="About"
+        >
+          <Icon name="info-circle" size={16} />
+        </button>
 
         <div class="mx-1 h-5 w-px bg-border"></div>
 
         <!-- GitHub Dropdown -->
         <div class="relative dropdown-github">
           <button
-            onclick={() => { githubDropdownOpen = !githubDropdownOpen; docsDropdownOpen = false }}
+            onclick={() => { githubDropdownOpen = !githubDropdownOpen }}
             class="custom_btns"
             title="GitHub"
           >
@@ -451,44 +462,6 @@
                 class="kt-dropdown-item">
                 <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
                 WireGuard
-              </a>
-            </div>
-          {/if}
-        </div>
-
-        <!-- Documentation Dropdown -->
-        <div class="relative dropdown-docs">
-          <button
-            onclick={() => { docsDropdownOpen = !docsDropdownOpen; githubDropdownOpen = false }}
-            class="custom_btns"
-            title="Documentation"
-          >
-            <Icon name="book" size={16} />
-          </button>
-          {#if docsDropdownOpen}
-            <div class="kt-dropdown">
-              <a href="https://headscale.net/stable/" target="_blank" rel="noopener noreferrer"
-                class="kt-dropdown-item">
-                <Icon name="book" size={14} class="kt-dropdown-item-icon" />
-                Headscale Docs
-              </a>
-              <div class="kt-dropdown-divider"></div>
-              <a href="https://github.com/AdguardTeam/AdGuardHome/wiki" target="_blank" rel="noopener noreferrer"
-                class="kt-dropdown-item">
-                <Icon name="book" size={14} class="kt-dropdown-item-icon" />
-                AdGuard Home Wiki
-              </a>
-              <div class="kt-dropdown-divider"></div>
-              <a href="https://doc.traefik.io/traefik/" target="_blank" rel="noopener noreferrer"
-                class="kt-dropdown-item">
-                <Icon name="book" size={14} class="kt-dropdown-item-icon" />
-                Traefik Docs
-              </a>
-              <div class="kt-dropdown-divider"></div>
-              <a href="https://www.wireguard.com/" target="_blank" rel="noopener noreferrer"
-                class="kt-dropdown-item">
-                <Icon name="book" size={14} class="kt-dropdown-item-icon" />
-                WireGuard Docs
               </a>
             </div>
           {/if}

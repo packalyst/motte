@@ -309,6 +309,34 @@
 └─────────────────────────────────────────────────────────────────────┘`}</pre>
             </div>
           </div>
+
+          <!-- Documentation -->
+          <div>
+            <h3 class="text-lg font-semibold text-foreground mb-3">Documentation</h3>
+            <p class="text-xs text-muted-foreground mb-3">
+              Reference docs for the third-party services in this stack. Source repositories are in the GitHub menu (top bar).
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {#each [
+                { name: 'Headscale', desc: 'Tailscale-compatible control server', href: 'https://headscale.net/stable/' },
+                { name: 'AdGuard Home', desc: 'DNS filtering & ad blocking', href: 'https://github.com/AdguardTeam/AdGuardHome/wiki' },
+                { name: 'Traefik', desc: 'Reverse proxy & load balancer', href: 'https://doc.traefik.io/traefik/' },
+                { name: 'WireGuard', desc: 'VPN tunnel protocol', href: 'https://www.wireguard.com/' }
+              ] as d}
+                <a href={d.href} target="_blank" rel="noopener noreferrer"
+                  class="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 hover:bg-muted/50 transition-colors">
+                  <div class="w-8 h-8 rounded bg-info/10 flex items-center justify-center shrink-0">
+                    <Icon name="book" size={16} class="text-info" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="font-medium text-foreground text-sm">{d.name}</div>
+                    <div class="text-[11px] text-muted-foreground truncate">{d.desc}</div>
+                  </div>
+                  <Icon name="external-link" size={14} class="text-muted-foreground shrink-0" />
+                </a>
+              {/each}
+            </div>
+          </div>
         </div>
 
       <!-- API Reference Tab -->
