@@ -116,7 +116,7 @@ func List(limit int, typeFilter, subsystemFilter string) ([]Event, error) {
 	}
 	defer rows.Close()
 
-	out := make([]Event, 0, limit)
+	out := make([]Event, 0, min(limit, 500)) // limit is already clamped to <=500; bound the prealloc locally too
 	for rows.Next() {
 		var e Event
 		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.Type, &e.Severity, &e.Subsystem, &e.Message); err != nil {

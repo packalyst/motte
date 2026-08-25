@@ -2,6 +2,7 @@ package helper
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -474,8 +475,8 @@ func nodeToValue(node *yaml.Node) interface{} {
 		// For explicitly tagged values, respect the tag
 		if node.Tag == "!!int" {
 			if i, err := strconv.ParseInt(node.Value, 10, 64); err == nil {
-				// Return int if it fits, otherwise int64
-				if i >= int64(int(^uint(0)>>1)*-1-1) && i <= int64(int(^uint(0)>>1)) {
+				// Return int if it fits the platform int, otherwise keep int64.
+				if i >= math.MinInt && i <= math.MaxInt {
 					return int(i)
 				}
 				return i
