@@ -116,7 +116,10 @@ func List(limit int, typeFilter, subsystemFilter string) ([]Event, error) {
 	}
 	defer rows.Close()
 
-	out := make([]Event, 0, min(limit, 500)) // limit is already clamped to <=500; bound the prealloc locally too
+	// Don't size the prealloc from `limit` (a request value) — grow on append instead, so
+	// the allocation size is input-independent. `limit` is capped at 500 in List() anyway,
+	// so at most 500 small structs are appended.
+	out := []Event{}
 	for rows.Next() {
 		var e Event
 		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.Type, &e.Severity, &e.Subsystem, &e.Message); err != nil {
