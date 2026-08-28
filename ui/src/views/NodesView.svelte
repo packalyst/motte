@@ -282,9 +282,16 @@
     }
     try {
       const blob = await apiGetBlob(`/api/wg/peers/${peerId}/qr?mode=${mode}`)
-      // Skip URL creation if component unmounted during fetch
+      // Skip if the component unmounted during the fetch
       if (!mounted) return
-      qrUrl = URL.createObjectURL(blob)
+      // Use a data: URL (not blob:) so the <img> passes the CSP img-src 'self' data: https:
+      qrUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(r.result)
+        r.onerror = () => reject(r.error)
+        r.readAsDataURL(blob)
+      })
+      if (!mounted) { qrUrl = null; return }
       qrLoadedFor = key
     } catch (e) {
       if (!mounted) return
