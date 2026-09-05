@@ -644,6 +644,11 @@ migrate_to_opt() {
     mkdir -p "$(dirname "$INSTALL_DIR")"
     mv "$SCRIPT_DIR" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
+    # mv preserves the source's (non-root) ownership. Since the systemd unit and
+    # the wire-panel wrapper run this tree as root, hand the whole install to root
+    # so a non-root user can't edit a root-executed script (privilege escalation)
+    # — and so chmod 600 on .env actually protects the secrets from that user.
+    chown -R root:root "$INSTALL_DIR"
     chmod 750 "$INSTALL_DIR"
 
     # Pin the project name so the folder no longer determines the volume, and lock
@@ -658,8 +663,10 @@ migrate_to_opt() {
     systemctl start wire-panel.service
 
     echo -e "${YELLOW}Verifying stack...${NC}"
-    if docker compose ps 2>/dev/null | grep -q "Up\|running"; then
-        echo -e "  ${GREEN}✓${NC} Containers running from $INSTALL_DIR"
+    # Gate the old-volume delete on the api (DB-consuming) container specifically,
+    # not just any container being up, so a partial bring-up can't report success.
+    if docker compose ps api 2>/dev/null | grep -qi "up\|running\|healthy"; then
+        echo -e "  ${GREEN}✓${NC} api running from $INSTALL_DIR"
         if [ "$old_vol" != "$new_vol" ]; then
             if docker volume rm "$old_vol" >/dev/null 2>&1; then
                 echo -e "  ${GREEN}✓${NC} Removed old volume $old_vol"
