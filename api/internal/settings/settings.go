@@ -129,6 +129,7 @@ type UpdateSettingsRequest struct {
 	AdGuardQuerylogSize     *int    `json:"adguard_querylog_size,omitempty"` // querylog.size_memory in MB
 	SessionTimeout          *string `json:"session_timeout,omitempty"`
 	APIDirectAccess         *bool   `json:"api_direct_access,omitempty"`      // false = close the API port to the public internet (L3)
+	WebCloudflareOnly       *bool   `json:"web_cloudflare_only,omitempty"`    // true = allow only Cloudflare edge IPs to reach 80/443 (L3)
 	MetricsRetentionDays    *int    `json:"metrics_retention_days,omitempty"` // window (days) for all aggregate tables
 	DisplayTimezone         *string `json:"display_timezone,omitempty"`       // "browser" or an IANA zone; UI display only
 
@@ -226,6 +227,12 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 	// turned off — closing the API port is only safe once a domain gives another way in.
 	result["api_direct_access"] = GetAPIDirectAccess()
 	result["api_direct_access_domain_set"] = panelDomainConfigured()
+
+	// Cloudflare-only web access (L3). `_ssl_set` tells the UI whether the toggle may be
+	// turned on — restricting 80/443 to Cloudflare is only safe when a public domain is
+	// actually served behind Cloudflare.
+	result["web_cloudflare_only"] = GetWebCloudflareOnly()
+	result["web_cloudflare_only_ssl_set"] = sslConfigured()
 
 	// Session
 	if timeout, err := getSetting("session_timeout"); err == nil {
@@ -337,6 +344,30 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			events.Log("settings", "api_direct_access", events.SeverityWarning, "Panel direct IP access disabled — API port now reachable only via the domain, localhost and WireGuard")
 		}
 		// Re-apply the firewall so the panel-access table reflects the new state immediately.
+		if RequestFirewallApply != nil {
+			RequestFirewallApply()
+		}
+	}
+
+	// Cloudflare-only web access (L3). Turning it ON restricts ports 80/443 to Cloudflare's
+	// edge ranges via the cf_only nftables table. Guarded: only allowed once SSL/a public
+	// domain is configured, otherwise closing 80/443 to non-Cloudflare cuts off all web access.
+	if req.WebCloudflareOnly != nil {
+		if *req.WebCloudflareOnly && !sslConfigured() {
+			router.JSONError(w, "Enable SSL (SSL_DOMAIN) and put the domain behind Cloudflare before restricting web access to Cloudflare — otherwise you'd cut off all web access.", http.StatusBadRequest)
+			return
+		}
+		if err := SetWebCloudflareOnly(*req.WebCloudflareOnly); err != nil {
+			router.JSONError(w, "Failed to save web_cloudflare_only: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if *req.WebCloudflareOnly {
+			log.Printf("Cloudflare-only web access ENABLED (80/443 restricted to Cloudflare)")
+			events.Log("settings", "web_cloudflare_only", events.SeverityWarning, "Cloudflare-only web access enabled — ports 80/443 now reachable only from Cloudflare (plus localhost, Docker and WireGuard)")
+		} else {
+			log.Printf("Cloudflare-only web access DISABLED (80/443 open)")
+			events.Log("settings", "web_cloudflare_only", events.SeverityInfo, "Cloudflare-only web access disabled — ports 80/443 open to all sources")
+		}
 		if RequestFirewallApply != nil {
 			RequestFirewallApply()
 		}
@@ -576,6 +607,33 @@ func SetAPIDirectAccess(on bool) error {
 		v = "on"
 	}
 	return SetSetting("api_direct_access", v)
+}
+
+// GetWebCloudflareOnly reports whether ports 80/443 are restricted to Cloudflare edge
+// ranges (L3). Default OFF — the web ports are open until an operator explicitly turns
+// it on (which the cf_only nftables table then enforces).
+func GetWebCloudflareOnly() bool {
+	v, err := GetSetting("web_cloudflare_only")
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(v), "on")
+}
+
+// SetWebCloudflareOnly persists the Cloudflare-only-web toggle ("on"/"off").
+func SetWebCloudflareOnly(on bool) error {
+	v := "off"
+	if on {
+		v = "on"
+	}
+	return SetSetting("web_cloudflare_only", v)
+}
+
+// sslConfigured reports whether a public SSL domain (SSL_DOMAIN) is set. Cloudflare-only
+// web access may only be turned ON when one exists — otherwise restricting 80/443 to
+// Cloudflare would cut off all web access.
+func sslConfigured() bool {
+	return strings.TrimSpace(os.Getenv("SSL_DOMAIN")) != ""
 }
 
 // panelDomainConfigured reports whether a domain is set for the panel (SSL_DOMAIN or

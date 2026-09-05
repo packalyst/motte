@@ -190,10 +190,17 @@ func main() {
 		// Register panel-access table (closes the API port to the public internet when
 		// the api_direct_access setting is off — see nftables/panel_access.go).
 		nftSvc.RegisterTable(nftables.NewPanelAccessTable(db))
+		// Register Cloudflare-only table (restricts 80/443 to Cloudflare edge ranges
+		// when the web_cloudflare_only setting is on — see nftables/cf_only.go).
+		nftSvc.RegisterTable(nftables.NewCloudflareOnlyTable(db))
 
 		// Let the settings service trigger a firewall re-apply when the panel-access
-		// toggle changes (function pointer avoids a settings→nftables import cycle).
+		// or Cloudflare-only toggle changes (function pointer avoids a settings→nftables
+		// import cycle).
 		settings.RequestFirewallApply = func() { nftSvc.RequestApply() }
+		// Re-apply when the Cloudflare edge-range list refreshes, so the cf_only set
+		// tracks Cloudflare's ranges automatically.
+		helper.SetCloudflareUpdateHook(func() { nftSvc.RequestApply() })
 
 		log.Println("nftables service initialized")
 	}

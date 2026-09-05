@@ -161,6 +161,27 @@ func cloudflareRanges() []*net.IPNet {
 	return nets
 }
 
+// CloudflareCIDRs returns the current Cloudflare edge ranges as CIDR strings
+// (v4 and v6). Used by the firewall's Cloudflare-only table so it can allow only
+// Cloudflare to reach the web ports.
+func CloudflareCIDRs() []string {
+	nets := cloudflareRanges()
+	out := make([]string, 0, len(nets))
+	for _, n := range nets {
+		out = append(out, n.String())
+	}
+	return out
+}
+
+// cfUpdateHook, if set, is invoked after each successful Cloudflare range
+// refresh so a consumer (the firewall) can rebuild rules from the new list.
+// Plain func var, set once at startup — matches settings.RequestFirewallApply.
+var cfUpdateHook func()
+
+// SetCloudflareUpdateHook registers a callback run after every Cloudflare range
+// refresh. Set it once, after the firewall is ready.
+func SetCloudflareUpdateHook(fn func()) { cfUpdateHook = fn }
+
 func mustParseCIDRs(list []string) []*net.IPNet {
 	out := make([]*net.IPNet, 0, len(list))
 	for _, c := range list {
@@ -198,6 +219,9 @@ func StartCloudflareIPUpdater(ctx context.Context) {
 			}
 			cloudflareCIDRsStore.Store(nets)
 			log.Printf("Cloudflare IP list refreshed: %d ranges", len(nets))
+			if cfUpdateHook != nil {
+				cfUpdateHook() // let the firewall rebuild its Cloudflare set
+			}
 		}
 		refresh()
 		t := time.NewTicker(24 * time.Hour)

@@ -65,6 +65,9 @@
   let apiDirectAccess = $state(true)
   let apiDirectAccessDomainSet = $state(false)
   let apiAccessLoading = $state(false)
+  let webCloudflareOnly = $state(false)
+  let webCloudflareOnlySslSet = $state(false)
+  let cfOnlyLoading = $state(false)
 
   // Session settings
   let sessionTimeout = $state('24')
@@ -209,6 +212,8 @@
       // Panel direct-IP access
       apiDirectAccess = settings.api_direct_access !== false
       apiDirectAccessDomainSet = settings.api_direct_access_domain_set === true
+      webCloudflareOnly = settings.web_cloudflare_only === true
+      webCloudflareOnlySslSet = settings.web_cloudflare_only_ssl_set === true
 
       // Traefik (from aggregated response)
       const traefikConfig = settings.traefik
@@ -651,6 +656,29 @@
       toast(e.message || 'Failed to update direct IP access', 'error')
     } finally {
       apiAccessLoading = false
+    }
+  }
+
+  async function setWebCloudflareOnly(enabled) {
+    // Restricting 80/443 to Cloudflare can cut off all web access — confirm, and be explicit.
+    if (enabled) {
+      const ok = await confirm({
+        title: 'Restrict web ports to Cloudflare?',
+        message: 'Ports 80/443 will be dropped at the firewall (L3) for any source that is not Cloudflare — localhost, Traefik and WireGuard still work. Your domain must be proxied through Cloudflare (orange cloud), or visitors will be blocked. Continue?',
+        confirmText: 'Restrict to Cloudflare', variant: 'danger',
+      })
+      if (!ok) { webCloudflareOnly = false; return } // revert the switch
+    }
+    cfOnlyLoading = true
+    try {
+      await apiPut('/api/settings', { web_cloudflare_only: enabled })
+      webCloudflareOnly = enabled
+      toast(enabled ? 'Web ports now restricted to Cloudflare' : 'Cloudflare-only web access disabled — ports 80/443 open to all', 'success')
+    } catch (e) {
+      webCloudflareOnly = !enabled // revert on failure (e.g. no SSL domain configured)
+      toast(e.message || 'Failed to update Cloudflare-only web access', 'error')
+    } finally {
+      cfOnlyLoading = false
     }
   }
 
@@ -1635,12 +1663,20 @@
                 <Checkbox variant="switch" bind:checked={fwBlockEnabled} disabled={fwBlockLoading} onchange={() => setFWBlock(fwBlockEnabled)} />
               </div>
             </ContentBlock>
-            <ContentBlock title="Direct IP Access" description={apiDirectAccessDomainSet ? 'Reach the panel by raw server IP. Turn off once you use your domain — closes the API port to the public internet (localhost, Traefik and WireGuard still work).' : 'Set up a domain (SSL_DOMAIN) first — without one, closing IP access would lock you out.'}>
+            <ContentBlock title="Direct IP Access" description={apiDirectAccessDomainSet ? "Reach the panel by the server's raw IP. Turn off once you use your domain — drops the panel API port from the public internet (localhost, Traefik and WireGuard still work)." : 'Set up a domain (SSL_DOMAIN or ADMIN_DOMAIN) first — without one, closing IP access would lock you out.'}>
               <div class="flex items-center gap-2">
                 {#if apiAccessLoading}
                   <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
                 {/if}
                 <Checkbox variant="switch" bind:checked={apiDirectAccess} disabled={apiAccessLoading || (!apiDirectAccessDomainSet && apiDirectAccess)} onchange={() => setApiDirectAccess(apiDirectAccess)} />
+              </div>
+            </ContentBlock>
+            <ContentBlock title="Cloudflare-Only Web Access" description={webCloudflareOnlySslSet ? "Allow only Cloudflare to reach the web ports (80/443). Blocks anyone hitting the raw server IP to bypass Cloudflare (localhost, Traefik and WireGuard still work). Your domain must be proxied through Cloudflare." : 'Enable SSL with a domain behind Cloudflare first — otherwise this would block all web access.'}>
+              <div class="flex items-center gap-2">
+                {#if cfOnlyLoading}
+                  <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                {/if}
+                <Checkbox variant="switch" bind:checked={webCloudflareOnly} disabled={cfOnlyLoading || (!webCloudflareOnlySslSet && !webCloudflareOnly)} onchange={() => setWebCloudflareOnly(webCloudflareOnly)} />
               </div>
             </ContentBlock>
           </div>
