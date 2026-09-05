@@ -5,8 +5,11 @@
   import Icon from './Icon.svelte'
   import Checkbox from './Checkbox.svelte'
 
+  // 'danger' is an accepted alias for 'destructive' so callers using either name
+  // render correctly (otherwise the lookups return undefined → an empty icon).
   const iconMap = {
     destructive: 'alert-triangle',
+    danger: 'alert-triangle',
     warning: 'alert-circle',
     primary: 'help-circle',
     success: 'lock-open'
@@ -14,6 +17,7 @@
 
   const colorMap = {
     destructive: 'text-destructive',
+    danger: 'text-destructive',
     warning: 'text-warning',
     primary: 'text-primary',
     success: 'text-success'
@@ -21,6 +25,7 @@
 
   const bgMap = {
     destructive: 'bg-destructive/10 border-destructive/20',
+    danger: 'bg-destructive/10 border-destructive/20',
     warning: 'bg-warning/10 border-warning/20',
     primary: 'bg-primary/10 border-primary/20',
     success: 'bg-success/10 border-success/20'
@@ -29,6 +34,7 @@
   // Map variant to kt-alert class
   const alertMap = {
     destructive: 'kt-alert-destructive',
+    danger: 'kt-alert-destructive',
     warning: 'kt-alert-warning',
     primary: 'kt-alert-primary',
     success: 'kt-alert-success'
@@ -37,6 +43,7 @@
   // Map modal variant to button variant (success -> primary since Button doesn't have success)
   const buttonVariantMap = {
     destructive: 'destructive',
+    danger: 'destructive',
     warning: 'primary',
     primary: 'primary',
     success: 'primary'
