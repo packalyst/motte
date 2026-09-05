@@ -24,6 +24,11 @@ PROJECT_NAME="wire-panel"
 SYSTEMD_UNIT="/etc/systemd/system/wire-panel.service"
 CLI_WRAPPER="/usr/local/bin/wire-panel"
 
+# Rebuild mode: regenerate configs from the saved .env and rebuild/restart the
+# stack without re-asking the interactive setup questions. Set by the `rebuild`
+# command, the menu, and the update flow.
+REBUILD_MODE=false
+
 echo -e "${GREEN}=== VPN Stack Management ===${NC}"
 echo ""
 
@@ -49,10 +54,15 @@ case "${1:-}" in
         echo "  (none)     Interactive mode - manage containers"
         echo "  update     Check for and install updates"
         echo "  backup     Backup SSL certificates"
+        echo "  rebuild    Regenerate configs from saved .env and rebuild (no prompts)"
         echo "  migrate    Move this install to $INSTALL_DIR and register the service"
         echo "  help       Show this help message"
         echo ""
         exit 0
+        ;;
+    rebuild)
+        # Non-interactive: reuse saved answers in .env, skip the setup Q&A.
+        REBUILD_MODE=true
         ;;
     migrate)
         RUN_MIGRATE=true
@@ -1073,15 +1083,9 @@ perform_update() {
         echo ""
         echo -e "${YELLOW}Rebuilding containers...${NC}"
 
-        # Regenerate configs
-        if [ -f ".env" ]; then
-            set -a
-            source .env
-            set +a
-        fi
-
-        # Run the rest of the script to rebuild
-        exec "$0"
+        # Re-run in rebuild mode: regenerate configs from the saved .env and
+        # rebuild/restart without re-asking the setup questions.
+        exec "$0" rebuild
     else
         echo ""
         echo -e "${CYAN}Run ./manage.sh to rebuild when ready${NC}"
@@ -1133,7 +1137,7 @@ if command -v docker &> /dev/null; then
     fi
 fi
 
-if [ "$DOCKER_RUNNING" = true ]; then
+if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
     echo -e "${CYAN}Docker containers are already running.${NC}"
     echo ""
     docker compose ps
@@ -1145,12 +1149,13 @@ if [ "$DOCKER_RUNNING" = true ]; then
     echo "  3) View logs"
     echo "  4) Clean everything (stop, remove containers, volumes, images)"
     echo "  5) Continue to reconfigure and restart"
-    echo "  6) Check for updates"
-    echo "  7) Backup SSL certificates"
-    echo "  8) Exit"
+    echo "  6) Rebuild from saved config (regenerate + rebuild, no prompts)"
+    echo "  7) Check for updates"
+    echo "  8) Backup SSL certificates"
+    echo "  9) Exit"
     echo ""
 
-    read -p "Enter your choice [1-8]: " choice
+    read -p "Enter your choice [1-9]: " choice
 
     case "$choice" in
         1)
@@ -1221,14 +1226,18 @@ if [ "$DOCKER_RUNNING" = true ]; then
             echo ""
             ;;
         6)
+            # Rebuild: skip the setup Q&A below, reuse saved answers in .env.
+            REBUILD_MODE=true
+            ;;
+        7)
             check_for_updates
             exit 0
             ;;
-        7)
+        8)
             backup_certificates
             exit 0
             ;;
-        8)
+        9)
             echo -e "${BLUE}Exiting...${NC}"
             exit 0
             ;;
@@ -1326,6 +1335,23 @@ fi
 
 echo -e "${GREEN}✓ All dependencies satisfied${NC}"
 echo ""
+
+# In rebuild mode, skip every interactive step below (host-conflict checks and
+# the setup Q&A) and reuse the answers already saved in .env. The config
+# generation + bring-up further down is fully .env-driven, so this reproduces the
+# exact same stack without re-asking anything or touching external DNS.
+if [ "$REBUILD_MODE" = true ]; then
+    if [ ! -f .env ]; then
+        echo -e "${RED}✗ .env not found — run ./manage.sh (setup) first.${NC}"
+        exit 1
+    fi
+    set -a
+    source .env
+    set +a
+    echo -e "${CYAN}Rebuild: using saved configuration from .env${NC}"
+fi
+
+if [ "$REBUILD_MODE" != true ]; then
 
 # ===========================================
 # Check Port 53 (DNS) Availability
@@ -1762,13 +1788,18 @@ echo "  - Production: Optimized build, nginx server"
 echo "  - Development: Hot reload, instant code changes"
 echo ""
 
-if prompt_yes_no "Enable development mode with hot reload?" "n"; then
+# Default to the currently-saved choice so reconfigure keeps it, and persist the
+# answer so `rebuild` (which reads .env, not the prompt) picks prod vs dev.
+DEV_MODE_DEFAULT="n"
+[ "${DEV_MODE:-}" = "true" ] && DEV_MODE_DEFAULT="y"
+if prompt_yes_no "Enable development mode with hot reload?" "$DEV_MODE_DEFAULT"; then
     DEV_MODE="true"
     echo -e "${GREEN}✓ Development mode enabled${NC}"
 else
     DEV_MODE="false"
     echo -e "${GREEN}✓ Production mode enabled${NC}"
 fi
+update_env_value "DEV_MODE" "$DEV_MODE"
 
 echo ""
 
@@ -1777,17 +1808,20 @@ echo -e "${YELLOW}[3/5] Admin Panel Domain (VPN-only):${NC}"
 echo "  Configure a custom domain for the admin panel (requires VPN connection)"
 echo ""
 
+# Default to the currently-saved domain so pressing Enter keeps it (only falls
+# back to manage.me on a fresh install with nothing saved).
+CURRENT_ADMIN_DOMAIN="${ADMIN_DOMAIN:-manage.me}"
 ADMIN_DOMAIN_VALID="false"
 while [ "$ADMIN_DOMAIN_VALID" = "false" ]; do
-    read -p "Enter domain name [manage.me]: " ADMIN_DOMAIN
-    ADMIN_DOMAIN=${ADMIN_DOMAIN:-manage.me}
+    read -p "Enter domain name [$CURRENT_ADMIN_DOMAIN]: " ADMIN_DOMAIN
+    ADMIN_DOMAIN=${ADMIN_DOMAIN:-$CURRENT_ADMIN_DOMAIN}
 
     if ! validate_domain_format "$ADMIN_DOMAIN"; then
         echo -e "${RED}✗ Invalid domain format: ${ADMIN_DOMAIN}${NC}"
         echo -e "  Domain must be a valid format like: manage.me or admin.local"
         if ! prompt_yes_no "Try again?" "y"; then
-            ADMIN_DOMAIN="manage.me"
-            echo -e "${YELLOW}Using default: manage.me${NC}"
+            ADMIN_DOMAIN="$CURRENT_ADMIN_DOMAIN"
+            echo -e "${YELLOW}Using: $CURRENT_ADMIN_DOMAIN${NC}"
             break
         fi
         continue
@@ -2196,7 +2230,9 @@ fi
 update_env_value "PROXY_DOMAIN" "$PROXY_DOMAIN"
 echo ""
 
-# 5. Check AdGuard credentials
+fi  # end interactive setup (skipped in rebuild mode)
+
+# 5. Check AdGuard credentials (first-install-only guard inside; safe on rebuild)
 echo -e "${YELLOW}[5/5] Checking AdGuard credentials...${NC}"
 
 GENERATED_PASSWORD=""
