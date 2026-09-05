@@ -29,7 +29,11 @@ CLI_WRAPPER="/usr/local/bin/wire-panel"
 # command, the menu, and the update flow.
 REBUILD_MODE=false
 
-echo -e "${GREEN}=== VPN Stack Management ===${NC}"
+# Command name shown in help/messages: `wire-panel` for the managed install,
+# `./manage.sh` when run from a plain checkout.
+if [ "$SCRIPT_DIR" = "$INSTALL_DIR" ]; then CMD="wire-panel"; else CMD="./manage.sh"; fi
+
+echo -e "${GREEN}=== Wire Panel ===${NC}"
 echo ""
 
 # ===========================================
@@ -48,17 +52,38 @@ case "${1:-}" in
         RUN_BACKUP=true
         ;;
     help|--help|-h)
-        echo "Usage: ./manage.sh [command]"
+        echo "Usage: $CMD <command>"
         echo ""
-        echo "Commands:"
-        echo "  (none)     Interactive mode - manage containers"
+        echo "  (none)     Interactive menu"
+        echo "  start      Start the stack"
+        echo "  stop       Stop the stack"
+        echo "  restart    Restart the stack"
+        echo "  status     Show service status"
+        echo "  logs       Follow container logs"
+        echo "  rebuild    Regenerate configs and rebuild (no prompts)"
         echo "  update     Check for and install updates"
-        echo "  backup     Backup SSL certificates"
-        echo "  rebuild    Regenerate configs from saved .env and rebuild (no prompts)"
-        echo "  migrate    Move this install to $INSTALL_DIR and register the service"
-        echo "  help       Show this help message"
+        echo "  backup     Back up SSL certificates"
+        if [ "$CMD" != "wire-panel" ]; then
+            echo "  migrate    Move this install to $INSTALL_DIR and register the service"
+        fi
+        echo "  help       Show this help"
         echo ""
         exit 0
+        ;;
+    start)
+        RUN_START=true
+        ;;
+    stop)
+        RUN_STOP=true
+        ;;
+    restart)
+        RUN_RESTART=true
+        ;;
+    status)
+        RUN_STATUS=true
+        ;;
+    logs)
+        RUN_LOGS=true
         ;;
     rebuild)
         # Non-interactive: reuse saved answers in .env, skip the setup Q&A.
@@ -652,6 +677,41 @@ migrate_to_opt() {
     echo -e "  (Host logrotate config refreshes on your next 'wire-panel update'.)"
 }
 
+# show_services prints one clean, colored status line per compose service — a
+# green dot for running, yellow for restarting/paused, red otherwise — keeping
+# the useful detail (uptime + health from Status, published ports) and dropping
+# the noisy image/command/created columns. Falls back to plain `docker compose
+# ps` if the JSON format or jq isn't available.
+show_services() {
+    echo -e "${CYAN}Services${NC}"
+    local json
+    json=$(docker compose ps --format json 2>/dev/null)
+    if [ -z "$json" ] || ! command -v jq >/dev/null 2>&1; then
+        docker compose ps
+        return
+    fi
+    echo "$json" | jq -r '
+        (if type=="array" then .[] else . end)
+        | [ .Service, .State, .Status,
+            ( (.Publishers // [])
+              | map(select(.PublishedPort > 0))
+              | unique_by(.PublishedPort) | sort_by(.PublishedPort)
+              | map((.PublishedPort|tostring) + (if .Protocol=="udp" then "/udp" else "" end))
+              | join(", ") ) ]
+        | @tsv' \
+    | while IFS=$'\t' read -r svc state status ports; do
+        case "$state" in
+            running)           dot="${GREEN}●${NC}" ;;
+            restarting|paused) dot="${YELLOW}●${NC}" ;;
+            *)                 dot="${RED}●${NC}" ;;
+        esac
+        printf -v padsvc '%-20s' "$svc"
+        line="  ${dot} ${padsvc} ${status}"
+        [ -n "$ports" ] && line="${line}  ${BLUE}${ports}${NC}"
+        echo -e "$line"
+    done
+}
+
 check_dependency() {
     local cmd="$1"
     local name="$2"
@@ -1126,6 +1186,32 @@ if [ "${RUN_MIGRATE:-}" = true ]; then
     exit 0
 fi
 
+# Simple lifecycle commands (operate on the current checkout / managed install).
+if [ "${RUN_START:-}" = true ]; then
+    docker compose up -d
+    exit $?
+fi
+
+if [ "${RUN_STOP:-}" = true ]; then
+    docker compose down
+    exit $?
+fi
+
+if [ "${RUN_RESTART:-}" = true ]; then
+    docker compose restart
+    exit $?
+fi
+
+if [ "${RUN_STATUS:-}" = true ]; then
+    show_services
+    exit 0
+fi
+
+if [ "${RUN_LOGS:-}" = true ]; then
+    docker compose logs -f
+    exit $?
+fi
+
 # ===========================================
 # Check if Docker is already running
 # ===========================================
@@ -1138,40 +1224,61 @@ if command -v docker &> /dev/null; then
 fi
 
 if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
-    echo -e "${CYAN}Docker containers are already running.${NC}"
-    echo ""
-    docker compose ps
+    show_services
     echo ""
 
     echo -e "${YELLOW}What would you like to do?${NC}"
-    echo "  1) Stop containers"
-    echo "  2) Restart containers"
-    echo "  3) View logs"
-    echo "  4) Clean everything (stop, remove containers, volumes, images)"
-    echo "  5) Continue to reconfigure and restart"
-    echo "  6) Rebuild from saved config (regenerate + rebuild, no prompts)"
-    echo "  7) Check for updates"
-    echo "  8) Backup SSL certificates"
-    echo "  9) Exit"
+    echo ""
+    echo -e "  ${CYAN}Manage${NC}"
+    echo "    1) Restart        Bounce all containers"
+    echo "    2) Rebuild        Regenerate configs + rebuild images (no prompts)"
+    echo "    3) Reconfigure    Change settings (interactive)"
+    echo "    4) Stop           Stop all containers"
+    echo ""
+    echo -e "  ${CYAN}Maintenance${NC}"
+    echo "    5) Update         Check for & install updates"
+    echo "    6) Backup         Back up SSL certificates"
+    echo "    7) Logs           Follow container logs"
+    echo "    8) Clean          Remove containers, volumes, images"
+    echo ""
+    echo "    9) Exit"
     echo ""
 
     read -p "Enter your choice [1-9]: " choice
 
     case "$choice" in
         1)
+            echo -e "${YELLOW}Restarting containers...${NC}"
+            docker compose restart
+            echo -e "${GREEN}✓ Containers restarted${NC}"
+            echo ""
+            show_services
+            exit 0
+            ;;
+        2)
+            # Rebuild: skip the setup Q&A below, reuse saved answers in .env.
+            REBUILD_MODE=true
+            ;;
+        3)
+            echo -e "${YELLOW}Stopping containers for reconfiguration...${NC}"
+            docker compose down
+            echo ""
+            ;;
+        4)
             echo -e "${YELLOW}Stopping containers...${NC}"
             docker compose down
             echo -e "${GREEN}✓ Containers stopped${NC}"
             exit 0
             ;;
-        2)
-            echo -e "${YELLOW}Restarting containers...${NC}"
-            docker compose restart
-            echo -e "${GREEN}✓ Containers restarted${NC}"
-            docker compose ps
+        5)
+            check_for_updates
             exit 0
             ;;
-        3)
+        6)
+            backup_certificates
+            exit 0
+            ;;
+        7)
             echo -e "${YELLOW}Choose service to view logs:${NC}"
             echo "  1) All services"
             echo "  2) UI"
@@ -1193,7 +1300,7 @@ if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
             esac
             exit 0
             ;;
-        4)
+        8)
             echo -e "${RED}⚠ WARNING: This will remove all containers, volumes, and images!${NC}"
             if prompt_yes_no "Are you sure?" "n"; then
                 echo -e "${YELLOW}Cleaning everything...${NC}"
@@ -1218,23 +1325,6 @@ if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
 
                 echo -e "${GREEN}✓ Everything cleaned${NC}"
             fi
-            exit 0
-            ;;
-        5)
-            echo -e "${YELLOW}Stopping containers for reconfiguration...${NC}"
-            docker compose down
-            echo ""
-            ;;
-        6)
-            # Rebuild: skip the setup Q&A below, reuse saved answers in .env.
-            REBUILD_MODE=true
-            ;;
-        7)
-            check_for_updates
-            exit 0
-            ;;
-        8)
-            backup_certificates
             exit 0
             ;;
         9)
