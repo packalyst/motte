@@ -17,6 +17,13 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Managed-install locations (systemd service + protected folder). Used by the
+# `migrate` / `install-service` commands and install.sh.
+INSTALL_DIR="/opt/wire-panel"
+PROJECT_NAME="wire-panel"
+SYSTEMD_UNIT="/etc/systemd/system/wire-panel.service"
+CLI_WRAPPER="/usr/local/bin/wire-panel"
+
 echo -e "${GREEN}=== VPN Stack Management ===${NC}"
 echo ""
 
@@ -42,9 +49,24 @@ case "${1:-}" in
         echo "  (none)     Interactive mode - manage containers"
         echo "  update     Check for and install updates"
         echo "  backup     Backup SSL certificates"
+        echo "  migrate    Move this install to $INSTALL_DIR and register the service"
         echo "  help       Show this help message"
         echo ""
         exit 0
+        ;;
+    migrate)
+        RUN_MIGRATE=true
+        ;;
+    install-service)
+        # Install/refresh the systemd unit + wire-panel CLI (used by install.sh).
+        RUN_INSTALL_SERVICE=true
+        ;;
+    service-up)
+        # Non-interactive lifecycle hook for the systemd unit.
+        RUN_SERVICE_UP=true
+        ;;
+    service-down)
+        RUN_SERVICE_DOWN=true
         ;;
 esac
 
@@ -460,6 +482,164 @@ update_env_value() {
     else
         echo "${key}=${value}" >> .env
     fi
+}
+
+# ===========================================
+# Managed Install (systemd service + /opt)
+# ===========================================
+
+# reexec_as_root re-runs manage.sh under sudo for the privileged install paths
+# (writing /opt, /etc/systemd, /usr/local/bin) so they can't half-apply. Pass the
+# subcommand to resume with.
+reexec_as_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo -e "${YELLOW}Root required — re-running with sudo...${NC}"
+        exec sudo bash "$SCRIPT_DIR/manage.sh" "$@"
+    fi
+}
+
+# install_systemd_unit installs and enables the wire-panel service from the
+# in-repo unit file. Assumes the checkout already lives at $INSTALL_DIR.
+install_systemd_unit() {
+    echo -e "${CYAN}Installing systemd unit...${NC}"
+    cp "$INSTALL_DIR/deploy/wire-panel.service" "$SYSTEMD_UNIT"
+    chmod 644 "$SYSTEMD_UNIT"
+    systemctl daemon-reload
+    systemctl enable wire-panel.service >/dev/null 2>&1 || true
+    echo -e "  ${GREEN}✓${NC} $SYSTEMD_UNIT"
+}
+
+# install_cli_wrapper installs the `wire-panel` command so the install can be
+# managed from anywhere.
+install_cli_wrapper() {
+    echo -e "${CYAN}Installing wire-panel command...${NC}"
+    cp "$INSTALL_DIR/deploy/wire-panel" "$CLI_WRAPPER"
+    chmod 755 "$CLI_WRAPPER"
+    echo -e "  ${GREEN}✓${NC} $CLI_WRAPPER"
+}
+
+# install_service registers the systemd unit + CLI wrapper. Shared by install.sh
+# and migrate so the logic lives in one place. Requires root.
+install_service() {
+    reexec_as_root install-service
+    install_systemd_unit
+    install_cli_wrapper
+}
+
+# service_up / service_down are the non-interactive lifecycle hooks the systemd
+# unit calls. Compose reads COMPOSE_PROJECT_NAME + vars from .env in $INSTALL_DIR.
+service_up() {
+    cd "$INSTALL_DIR"
+    docker compose up -d
+}
+
+service_down() {
+    cd "$INSTALL_DIR"
+    docker compose down
+}
+
+# migrate_to_opt moves an existing checkout to $INSTALL_DIR, copy-renames the one
+# project-scoped Docker volume (api_data) so the SQLite DB follows, registers the
+# systemd service + CLI, and brings the stack up under the fixed project name. It
+# verifies the copied volume before removing the old one, and refuses if the
+# target already exists.
+migrate_to_opt() {
+    reexec_as_root migrate
+
+    echo -e "${GREEN}=== Migrate to $INSTALL_DIR ===${NC}"
+
+    if [ "$SCRIPT_DIR" = "$INSTALL_DIR" ]; then
+        echo -e "${YELLOW}Already at $INSTALL_DIR — nothing to migrate.${NC}"
+        exit 0
+    fi
+    if [ -e "$INSTALL_DIR" ]; then
+        echo -e "${RED}✗ $INSTALL_DIR already exists.${NC}"
+        echo -e "  A managed install is already there — refusing to overwrite it."
+        echo -e "  Remove it first if you really mean to migrate this checkout."
+        exit 1
+    fi
+    command -v docker >/dev/null 2>&1 || { echo -e "${RED}✗ docker not found${NC}"; exit 1; }
+
+    # The current project name (what created the volume) is COMPOSE_PROJECT_NAME
+    # from this checkout's .env if set, else the folder name. .env isn't sourced
+    # yet at this point, so read it from the file.
+    local old_project old_vol new_vol reply
+    old_project=$(grep -m1 '^COMPOSE_PROJECT_NAME=' .env 2>/dev/null | cut -d= -f2- | sed 's/[[:space:]]*#.*//' | tr -d '[:space:]')
+    [ -n "$old_project" ] || old_project=$(basename "$SCRIPT_DIR")
+    old_vol="${old_project}_api_data"
+    new_vol="${PROJECT_NAME}_api_data"
+
+    echo -e "  Source:        $SCRIPT_DIR"
+    echo -e "  Target:        $INSTALL_DIR"
+    [ "$old_vol" != "$new_vol" ] && echo -e "  Volume rename: $old_vol → $new_vol"
+    echo ""
+    read -r -p "Proceed? Containers will be stopped during migration. [y/N] " reply
+    case "$reply" in
+        y|Y) ;;
+        *) echo "Cancelled."; exit 0 ;;
+    esac
+
+    echo -e "${YELLOW}Stopping containers...${NC}"
+    docker compose down
+
+    # Copy-rename the api_data volume (the only project-named volume; the compose
+    # networks have fixed names). Verify the DB copied before touching the old one.
+    if [ "$old_vol" != "$new_vol" ]; then
+        if docker volume inspect "$new_vol" >/dev/null 2>&1; then
+            echo -e "${RED}✗ Target volume $new_vol already exists — aborting.${NC}"
+            exit 1
+        fi
+        if ! docker volume inspect "$old_vol" >/dev/null 2>&1; then
+            echo -e "${RED}✗ Source volume $old_vol not found — cannot migrate data.${NC}"
+            exit 1
+        fi
+        echo -e "${YELLOW}Copying volume $old_vol → $new_vol...${NC}"
+        docker volume create "$new_vol" >/dev/null
+        docker run --rm -v "$old_vol":/from:ro -v "$new_vol":/to alpine sh -c 'cp -a /from/. /to/'
+        if ! docker run --rm -v "$new_vol":/v:ro alpine sh -c '[ -f /v/app.db ]'; then
+            echo -e "${RED}✗ Copy verification failed (app.db missing in $new_vol).${NC}"
+            echo -e "  Old volume $old_vol is untouched. Aborting."
+            docker volume rm "$new_vol" >/dev/null 2>&1 || true
+            exit 1
+        fi
+        echo -e "  ${GREEN}✓${NC} Volume copied and verified"
+    fi
+
+    echo -e "${YELLOW}Moving $SCRIPT_DIR → $INSTALL_DIR...${NC}"
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    mv "$SCRIPT_DIR" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    chmod 750 "$INSTALL_DIR"
+
+    # Pin the project name so the folder no longer determines the volume, and lock
+    # down the secrets file.
+    update_env_value COMPOSE_PROJECT_NAME "$PROJECT_NAME"
+    chmod 600 .env 2>/dev/null || true
+
+    install_systemd_unit
+    install_cli_wrapper
+
+    echo -e "${YELLOW}Starting service (may build images, this can take a few minutes)...${NC}"
+    systemctl start wire-panel.service
+
+    echo -e "${YELLOW}Verifying stack...${NC}"
+    if docker compose ps 2>/dev/null | grep -q "Up\|running"; then
+        echo -e "  ${GREEN}✓${NC} Containers running from $INSTALL_DIR"
+        if [ "$old_vol" != "$new_vol" ]; then
+            if docker volume rm "$old_vol" >/dev/null 2>&1; then
+                echo -e "  ${GREEN}✓${NC} Removed old volume $old_vol"
+            else
+                echo -e "  ${YELLOW}⚠${NC} Kept old volume $old_vol — remove it once confirmed: docker volume rm $old_vol"
+            fi
+        fi
+    else
+        echo -e "${RED}✗ Stack not healthy after migration.${NC}"
+        echo -e "  Old volume $old_vol was kept. Investigate before removing it."
+    fi
+
+    echo ""
+    echo -e "${GREEN}Migration complete.${NC} Manage it from anywhere with: ${CYAN}wire-panel${NC}"
+    echo -e "  (Host logrotate config refreshes on your next 'wire-panel update'.)"
 }
 
 check_dependency() {
@@ -919,6 +1099,26 @@ fi
 
 if [ "${RUN_BACKUP:-}" = true ]; then
     backup_certificates
+    exit 0
+fi
+
+if [ "${RUN_SERVICE_UP:-}" = true ]; then
+    service_up
+    exit $?
+fi
+
+if [ "${RUN_SERVICE_DOWN:-}" = true ]; then
+    service_down
+    exit $?
+fi
+
+if [ "${RUN_INSTALL_SERVICE:-}" = true ]; then
+    install_service
+    exit 0
+fi
+
+if [ "${RUN_MIGRATE:-}" = true ]; then
+    migrate_to_opt
     exit 0
 fi
 

@@ -40,7 +40,13 @@ The About page inside the panel lists every capability, the running **build vers
 - Docker & Docker Compose
 - WireGuard kernel module
 
-### Quick start
+### Quick start (managed install)
+```bash
+curl -fsSL https://raw.githubusercontent.com/packalyst/wireguard-admin-panel/main/install.sh | sudo bash
+```
+This clones the panel into `/opt/wire-panel`, registers a `wire-panel.service` systemd unit (starts on boot), installs a `wire-panel` command, and runs first-time setup. Afterwards manage it from anywhere with `sudo wire-panel` (interactive), `sudo wire-panel update`, `sudo systemctl {start,stop,status} wire-panel`.
+
+### Manual install
 ```bash
 git clone https://github.com/packalyst/wireguard-admin-panel.git
 cd wireguard-admin-panel
@@ -49,6 +55,12 @@ chmod +x manage.sh
 ```
 
 `manage.sh` checks/installs dependencies, auto-detects your public IP, walks you through interactive setup, generates the configuration, stamps the build version, and starts every service. Re-run it any time to reconfigure; `./manage.sh update` pulls and rebuilds.
+
+### Migrate an existing checkout to the managed layout
+Already running from a plain `git clone`? Move it into `/opt/wire-panel` + systemd in one step — it stops the stack, carries the database volume across (verified before the old one is removed), and brings everything back up:
+```bash
+./manage.sh migrate
+```
 
 ### Access
 | Service | URL |
@@ -120,8 +132,10 @@ Enable hot reload during setup (`./manage.sh` → answer `y` to development mode
 ├── ui/                      # Svelte 5 frontend
 │   └── src/{views,components,stores,lib}/
 ├── headscale/ traefik/ adguard/   # Service configs
+├── deploy/                  # systemd unit + wire-panel CLI wrapper
 ├── docker-compose.yml       # Container orchestration
-└── manage.sh                # Install / update / configure
+├── install.sh               # Managed install (clone → /opt/wire-panel + service)
+└── manage.sh                # Install / update / configure / migrate
 ```
 
 ## API

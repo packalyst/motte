@@ -1,0 +1,5 @@
+#!/bin/bash
+# Wire Panel CLI — manage the install at /opt/wire-panel from anywhere.
+# Thin wrapper: `wire-panel <command>` == `/opt/wire-panel/manage.sh <command>`.
+# Most subcommands need Docker/root, so run it with sudo (e.g. `sudo wire-panel`).
+exec /opt/wire-panel/manage.sh "$@"

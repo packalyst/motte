@@ -1,0 +1,21 @@
+[Unit]
+Description=Wire Panel — WireGuard/Headscale admin stack
+Documentation=https://github.com/packalyst/wireguard-admin-panel
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+# The stack is long-lived Docker containers (restart: unless-stopped); this unit
+# just brings the compose project up on boot and down on stop. oneshot +
+# RemainAfterExit models "the stack is up" without supervising a foreground pid.
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/wire-panel
+ExecStart=/opt/wire-panel/manage.sh service-up
+ExecStop=/opt/wire-panel/manage.sh service-down
+# First start after an install/migration may build images — don't time it out.
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
