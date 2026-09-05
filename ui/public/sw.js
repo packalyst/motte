@@ -1,27 +1,71 @@
 // Service Worker for Wire Panel PWA
 // Handles push notifications and basic PWA requirements
 
-const CACHE_VERSION = 'v2'
+const CACHE_VERSION = 'v3'
 
-// Install - activate immediately
-self.addEventListener('install', () => self.skipWaiting())
+// The app shell. Cached so a failed SPA navigation can still boot the app
+// instead of the browser's network-error page. It only loads the SPA bundle,
+// which then makes its own fresh /api/ calls — no dynamic data is cached.
+const SHELL = '/index.html'
 
-// Activate - claim all clients
-self.addEventListener('activate', (e) => e.waitUntil(clients.claim()))
+// Install - precache the shell, then activate immediately.
+self.addEventListener('install', (e) =>
+  e.waitUntil(
+    caches
+      .open(CACHE_VERSION)
+      .then((c) => c.add(SHELL))
+      .catch(() => {}) // offline at install: shell fills in on first online nav
+      .then(() => self.skipWaiting())
+  )
+)
 
-// Fetch - pass through (no caching). We deliberately do NOT intercept the API or
-// the WebSocket: letting the browser handle /api/* natively means live/live-data
-// and /api/ws are never routed through the Service Worker, so switching the panel
-// between its public (Cloudflare) IP and its VPN IP can't leave them pinned to a
-// stale kept-alive connection. Everything else is a plain pass-through, with the
-// failure caught so a blocked/offline request resolves to a network-error Response
-// instead of an uncaught promise rejection.
+// Activate - drop old cache versions, then claim all clients.
+self.addEventListener('activate', (e) =>
+  e.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
+      )
+      .then(() => clients.claim())
+  )
+)
+
+// Fetch. We deliberately do NOT intercept the API or the WebSocket: letting the
+// browser handle /api/* natively means live/live-data and /api/ws are never
+// routed through the Service Worker, so switching the panel between its public
+// (Cloudflare) IP and its VPN IP can't leave them pinned to a stale kept-alive
+// connection.
 self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url)
+  const { request } = e
+  const url = new URL(request.url)
+
   if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) {
     return // don't call respondWith → default browser handling (fresh connection)
   }
-  e.respondWith(fetch(e.request).catch(() => Response.error()))
+
+  // SPA navigations: network-first, falling back to the cached shell. A
+  // transient failure (or an IP switch mid-navigation) then boots the app
+  // rather than surfacing a "FetchEvent resulted in a network error" page.
+  if (request.mode === 'navigate') {
+    e.respondWith(
+      fetch(request)
+        .then((res) => {
+          if (res && res.ok) {
+            const copy = res.clone() // keep the cached shell fresh while online
+            caches.open(CACHE_VERSION).then((c) => c.put(SHELL, copy)).catch(() => {})
+          }
+          return res
+        })
+        .catch(() => caches.match(SHELL).then((cached) => cached || Response.error()))
+    )
+    return
+  }
+
+  // Everything else: plain pass-through, with the failure caught so a
+  // blocked/offline request resolves to a network-error Response instead of an
+  // uncaught promise rejection.
+  e.respondWith(fetch(request).catch(() => Response.error()))
 })
 
 // Push notification received

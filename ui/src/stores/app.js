@@ -49,7 +49,15 @@ currentView.subscribe(value => {
     // Update URL without reload (skip if handling popstate)
     const newPath = '/' + value
     if (!handlingPopstate && window.location.pathname !== newPath) {
-      window.history.pushState({ view: value }, '', newPath)
+      // In a trivial session history (one entry — a fresh tab or standalone
+      // PWA) pushState is treated as replaceState and Chrome logs a warning;
+      // call replaceState directly there to keep the console clean. Once there
+      // is real history to go back to, push so back/forward still work.
+      if (window.history.length <= 1) {
+        window.history.replaceState({ view: value }, '', newPath)
+      } else {
+        window.history.pushState({ view: value }, '', newPath)
+      }
     }
   }
 })
