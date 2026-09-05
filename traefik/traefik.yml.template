@@ -1,6 +1,6 @@
 # Traefik Static Configuration
 api:
-  dashboard: true
+  dashboard: ${TRAEFIK_DASHBOARD}
   insecure: true
 
 # Local plugins

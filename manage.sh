@@ -2156,6 +2156,18 @@ if [ -f "headscale/config/config.yaml.template" ]; then
 fi
 
 # Traefik configs - with SSL support
+#
+# The dashboard on/off toggle is written into traefik/traefik.yml by the panel
+# (api.dashboard, via Settings). Regeneration below would otherwise hardcode it
+# back to true on every reconfigure/restart, so read the current value first and
+# preserve it — same spirit as the AdGuard config, which is preserved on re-run.
+TRAEFIK_DASHBOARD=true
+if [ -f "traefik/traefik.yml" ]; then
+    _existing_dash=$(grep -m1 'dashboard:' traefik/traefik.yml | sed 's/.*dashboard:[[:space:]]*//' | tr -d '[:space:]')
+    [ "$_existing_dash" = "false" ] && TRAEFIK_DASHBOARD=false
+fi
+export TRAEFIK_DASHBOARD
+
 if [ "$SSL_ENABLED" = "true" ]; then
     echo -e "  ${GREEN}SSL enabled${NC} - configuring Let's Encrypt for ${SSL_DOMAIN}"
 
@@ -2181,7 +2193,7 @@ if [ "$SSL_ENABLED" = "true" ]; then
     cat > traefik/traefik.yml << EOF
 # Traefik Static Configuration (SSL enabled)
 api:
-  dashboard: true
+  dashboard: ${TRAEFIK_DASHBOARD}
   insecure: true
 
 experimental:
