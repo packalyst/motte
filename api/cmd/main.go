@@ -47,6 +47,12 @@ import (
 var version = "dev"
 
 func main() {
+	// One-shot re-key subcommands (`api --rekey` / `--rekey-check`) run with the
+	// main api stopped and exit without starting the servers.
+	if maybeRunRekey() {
+		return
+	}
+
 	// Initialize stats (records start time for uptime)
 	stats.Init()
 

@@ -21,84 +21,90 @@ var encryptionKey []byte
 // feed (in addition to the startup-log warning below) recommending rotation.
 var WeakEncryptionKey bool
 
-// InitEncryption initializes the encryption key from environment.
+// ParseKey turns an ENCRYPTION_SECRET string into a 32-byte AES key using the
+// same rule everywhere: a 32-byte hex string is used directly; anything else
+// falls back to SHA-256 of the raw string (weak=true). Kept in one place so the
+// live process key and the rotation tool derive keys identically — otherwise
+// re-encrypted data could not be read back.
+func ParseKey(secret string) (key []byte, weak bool) {
+	if k, err := hex.DecodeString(secret); err == nil && len(k) == 32 {
+		return k, false
+	}
+	h := sha256.Sum256([]byte(secret))
+	return h[:], true
+}
+
+// InitEncryption initializes the process encryption key from environment.
 // Must be called early in main() before any encryption/decryption operations.
 func InitEncryption() {
 	keyHex := os.Getenv("ENCRYPTION_SECRET")
 	if keyHex == "" {
 		log.Fatal("FATAL: ENCRYPTION_SECRET environment variable is required but not set. Generate one with: openssl rand -hex 32")
 	}
-
-	key, err := hex.DecodeString(keyHex)
-	if err != nil || len(key) != 32 {
-		// Not a 32-byte hex key: fall back to SHA-256 of the raw string so any secret still
-		// works, but WARN — this is materially weaker than a real random key and secrets at
-		// rest (WG keys, TOTP, fleet CA) inherit that weakness. Changing the derivation later
-		// would make existing ciphertext undecryptable, so we keep it and flag for rotation.
-		log.Printf("WARNING: ENCRYPTION_SECRET is not a 32-byte hex key — using a weaker SHA-256-derived key. Rotate to a strong key: openssl rand -hex 32 (note: rotating re-keys and invalidates existing encrypted secrets).")
-		WeakEncryptionKey = true
-		hash := sha256.Sum256([]byte(keyHex))
-		encryptionKey = hash[:]
-		return
+	encryptionKey, WeakEncryptionKey = ParseKey(keyHex)
+	if WeakEncryptionKey {
+		// Materially weaker than a real random key; changing the derivation later would
+		// make existing ciphertext undecryptable, so we keep it and flag for rotation.
+		log.Printf("WARNING: ENCRYPTION_SECRET is not a 32-byte hex key — using a weaker SHA-256-derived key. Rotate to a strong key (openssl rand -hex 32) with: wire-panel rotate-key")
 	}
-	encryptionKey = key
 }
 
-// Encrypt encrypts a string value using AES-256-GCM
-func Encrypt(plaintext string) (string, error) {
-	if encryptionKey == nil {
-		return "", errors.New("encryption not initialized")
-	}
-
-	block, err := aes.NewCipher(encryptionKey)
+// EncryptWith encrypts a string with an explicit AES-256-GCM key. A fresh random
+// nonce is prepended to the ciphertext, then the whole thing is base64-encoded.
+func EncryptWith(key []byte, plaintext string) (string, error) {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", err
 	}
-
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-
 	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// Decrypt decrypts an AES-256-GCM encrypted string
-func Decrypt(ciphertext string) (string, error) {
-	if encryptionKey == nil {
-		return "", errors.New("encryption not initialized")
-	}
-
+// DecryptWith decrypts a value produced by EncryptWith using an explicit key.
+func DecryptWith(key []byte, ciphertext string) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
 		return "", err
 	}
-
-	block, err := aes.NewCipher(encryptionKey)
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", err
 	}
-
 	if len(data) < gcm.NonceSize() {
 		return "", errors.New("ciphertext too short")
 	}
-
 	nonce, cipherData := data[:gcm.NonceSize()], data[gcm.NonceSize():]
 	plaintext, err := gcm.Open(nil, nonce, cipherData, nil)
 	if err != nil {
 		return "", err
 	}
-
 	return string(plaintext), nil
+}
+
+// Encrypt encrypts a string value using the process key (AES-256-GCM).
+func Encrypt(plaintext string) (string, error) {
+	if encryptionKey == nil {
+		return "", errors.New("encryption not initialized")
+	}
+	return EncryptWith(encryptionKey, plaintext)
+}
+
+// Decrypt decrypts an AES-256-GCM value using the process key.
+func Decrypt(ciphertext string) (string, error) {
+	if encryptionKey == nil {
+		return "", errors.New("encryption not initialized")
+	}
+	return DecryptWith(encryptionKey, ciphertext)
 }

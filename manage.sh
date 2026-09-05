@@ -63,6 +63,7 @@ case "${1:-}" in
         echo "  rebuild    Regenerate configs and rebuild (no prompts)"
         echo "  update     Check for and install updates"
         echo "  backup     Back up SSL certificates"
+        echo "  rotate-key Re-encrypt all secrets under a new encryption key"
         if [ "$CMD" != "wire-panel" ]; then
             echo "  migrate    Move this install to $INSTALL_DIR and register the service"
         fi
@@ -88,6 +89,9 @@ case "${1:-}" in
     rebuild)
         # Non-interactive: reuse saved answers in .env, skip the setup Q&A.
         REBUILD_MODE=true
+        ;;
+    rotate-key)
+        RUN_ROTATE_KEY=true
         ;;
     migrate)
         RUN_MIGRATE=true
@@ -719,6 +723,95 @@ show_services() {
     done
 }
 
+# rotate_key re-encrypts every at-rest secret under a fresh ENCRYPTION_SECRET and
+# swaps the key. Safety: a full DB backup is taken first (kept until verified),
+# the api is stopped for exclusive access, the re-encrypt is one atomic
+# transaction (all-or-nothing, in `api --rekey`), the key is swapped only after
+# that succeeds, and the result is verified under the new key — with automatic
+# rollback (restore backup + revert key) if verification fails.
+rotate_key() {
+    reexec_as_root rotate-key
+
+    echo -e "${GREEN}=== Wire Panel — Rotate Encryption Key ===${NC}"
+    echo ""
+
+    [ -f .env ] || { echo -e "${RED}✗ .env not found — run setup first.${NC}"; exit 1; }
+    local old new ts backup_dir reply del
+    old=$(grep -m1 '^ENCRYPTION_SECRET=' .env | cut -d= -f2- | tr -d '[:space:]')
+    [ -n "$old" ] || { echo -e "${RED}✗ ENCRYPTION_SECRET not set in .env.${NC}"; exit 1; }
+
+    echo "Re-encrypts every secret in the database under a NEW key, then swaps the"
+    echo "key. The api is briefly stopped. A full backup is taken first and kept"
+    echo "until you confirm success; the database is never left half-rotated."
+    echo ""
+    read -r -p "Proceed? [y/N] " reply
+    case "$reply" in y|Y) ;; *) echo "Cancelled."; exit 0 ;; esac
+
+    new=$(openssl rand -hex 32)
+    ts=$(date +%Y%m%d-%H%M%S)
+    backup_dir="$SCRIPT_DIR/backups/rekey-$ts"
+    mkdir -p "$backup_dir"
+    chmod 700 "$SCRIPT_DIR/backups" "$backup_dir"
+
+    echo -e "${YELLOW}[1/7] Stopping api (exclusive DB access)...${NC}"
+    docker compose stop api >/dev/null
+
+    echo -e "${YELLOW}[2/7] Backing up database → $backup_dir${NC}"
+    if ! docker compose run --rm --no-deps -v "$backup_dir":/backup --entrypoint sh api -c 'cp -a /data/app.db* /backup/'; then
+        echo -e "${RED}✗ Backup failed — restarting api, nothing changed.${NC}"
+        docker compose up -d >/dev/null
+        exit 1
+    fi
+    printf '%s' "$old" > "$backup_dir/old-key.txt"
+    chmod 600 "$backup_dir/old-key.txt"
+    echo -e "  ${GREEN}✓${NC} DB snapshot + old key saved"
+
+    echo -e "${YELLOW}[3/7] Pre-flight + [4/7] atomic re-encrypt...${NC}"
+    if ! docker compose run --rm --no-deps \
+            -e ENCRYPTION_SECRET="$old" -e ENCRYPTION_SECRET_NEW="$new" \
+            --entrypoint /app/api api --rekey; then
+        echo -e "${RED}✗ Re-key failed — database unchanged, key NOT swapped.${NC}"
+        echo -e "  Backup kept at $backup_dir"
+        docker compose up -d >/dev/null
+        exit 1
+    fi
+
+    echo -e "${YELLOW}[5/7] Swapping key in .env...${NC}"
+    update_env_value ENCRYPTION_SECRET "$new"
+    chmod 600 .env 2>/dev/null || true
+
+    echo -e "${YELLOW}[6/7] Restarting stack...${NC}"
+    docker compose up -d >/dev/null
+
+    echo -e "${YELLOW}[7/7] Verifying every secret decrypts with the new key...${NC}"
+    if ! docker compose run --rm --no-deps -e ENCRYPTION_SECRET="$new" --entrypoint /app/api api --rekey-check; then
+        echo -e "${RED}✗ Verification FAILED — rolling back.${NC}"
+        docker compose stop api >/dev/null
+        docker compose run --rm --no-deps -v "$backup_dir":/backup --entrypoint sh api -c 'cp -a /backup/app.db* /data/' >/dev/null || true
+        update_env_value ENCRYPTION_SECRET "$old"
+        chmod 600 .env 2>/dev/null || true
+        docker compose up -d >/dev/null
+        echo -e "${YELLOW}Restored the pre-rotation database and reverted the key. Backup kept at $backup_dir${NC}"
+        exit 1
+    fi
+
+    echo ""
+    echo -e "${GREEN}✓ Rotation complete and verified.${NC} Every secret re-encrypted under the new key."
+    echo ""
+    echo -e "The backup at ${CYAN}$backup_dir${NC} holds the pre-rotation database and the OLD key."
+    read -r -p "Delete this backup now? [y/N] " del
+    case "$del" in
+        y|Y)
+            rm -rf "$backup_dir"
+            echo -e "  ${GREEN}✓${NC} Backup deleted — no leftovers."
+            ;;
+        *)
+            echo -e "  ${YELLOW}Kept${NC} (it contains the old key). Delete it once you're confident:"
+            echo -e "    rm -rf $backup_dir"
+            ;;
+    esac
+}
+
 check_dependency() {
     local cmd="$1"
     local name="$2"
@@ -1191,6 +1284,11 @@ fi
 if [ "${RUN_MIGRATE:-}" = true ]; then
     migrate_to_opt
     exit 0
+fi
+
+if [ "${RUN_ROTATE_KEY:-}" = true ]; then
+    rotate_key
+    exit $?
 fi
 
 # Simple lifecycle commands (operate on the current checkout / managed install).
