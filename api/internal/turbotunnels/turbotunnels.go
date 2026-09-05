@@ -210,6 +210,7 @@ func createContainer(cfg Config) error {
 		"HostConfig": map[string]interface{}{
 			"RestartPolicy": map[string]interface{}{"Name": "unless-stopped"},
 			"PortBindings":  bindings,
+			"LogConfig":     helper.DockerLogConfig(),
 		},
 		"NetworkingConfig": map[string]interface{}{
 			"EndpointsConfig": map[string]interface{}{
@@ -243,20 +244,18 @@ func createContainer(cfg Config) error {
 	return nil
 }
 
-// Stop stops the container and reconciles the firewall so the now-unused ports
-// stop being allowed.
+// Stop removes the container and reconciles the firewall so the now-unused ports
+// stop being allowed. It force-removes rather than leaving a stopped container
+// behind: turbotunnels is stateless (all config lives encrypted in the DB and is
+// re-injected at create time) and Start() always recreates from scratch, so a
+// stopped container would only be leftover cruft on the Docker page — never
+// reused. This mirrors the vpn-router, which also removes rather than stops.
 func Stop() error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	resp, err := helper.DockerRequest("POST", "/containers/"+ContainerName+"/stop?t=10", nil)
-	if err != nil {
-		return fmt.Errorf("failed to stop container: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to stop container (status %d): %s", resp.StatusCode, string(body))
+	if err := removeIfExists(); err != nil {
+		return fmt.Errorf("failed to remove container: %v", err)
 	}
 
 	reconcileFirewall()

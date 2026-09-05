@@ -110,3 +110,18 @@ func DockerExec(container string, cmd []string) error {
 
 	return nil
 }
+
+// DockerLogConfig returns the log-driver config for panel-created containers so
+// they get the same bounded json-file logging as the compose services (which
+// use the x-logging anchor). Without this, containers the panel creates via the
+// Docker API (turbotunnels, vpn-router) default to unbounded json-file logs.
+// Bounds come from the same env vars compose reads, with matching defaults.
+func DockerLogConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"Type": "json-file",
+		"Config": map[string]string{
+			"max-size": GetEnvOptional("DOCKER_LOG_MAX_SIZE", "10m"),
+			"max-file": GetEnvOptional("DOCKER_LOG_MAX_FILE", "3"),
+		},
+	}
+}

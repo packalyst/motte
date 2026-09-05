@@ -253,6 +253,7 @@ func SetupRouter() error {
 			"RestartPolicy": map[string]interface{}{
 				"Name": "unless-stopped",
 			},
+			"LogConfig": helper.DockerLogConfig(),
 		},
 	}
 
