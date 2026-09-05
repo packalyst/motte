@@ -1543,6 +1543,9 @@ if [ "$REBUILD_MODE" = true ]; then
     set -a
     source .env
     set +a
+    # Drop any positional args (e.g. the `rebuild` subcommand) so they aren't
+    # passed to `docker compose up -d --build "$@"` and mistaken for a service.
+    set --
     echo -e "${CYAN}Rebuild: using saved configuration from .env${NC}"
 fi
 
