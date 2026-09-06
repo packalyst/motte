@@ -54,26 +54,6 @@ func (t *CloudflareOnlyTable) Build() (string, error) {
 
 	trusted := trustedPanelSources() // loopback, Docker bridge, WireGuard, Headscale (v4)
 
-	rules := []string{
-		"# Always-allowed local sources reach the web ports (never lock the admin out).",
-		"ip saddr { " + strings.Join(trusted, ", ") + " } tcp dport { 80, 443 } accept",
-		"ip6 saddr ::1/128 tcp dport { 80, 443 } accept",
-		"",
-		"# Cloudflare edge ranges — the only public source allowed to reach 80/443.",
-	}
-	if len(v4) > 0 {
-		rules = append(rules, "ip saddr @cf_v4 tcp dport { 80, 443 } accept")
-	}
-	if len(v6) > 0 {
-		rules = append(rules, "ip6 saddr @cf_v6 tcp dport { 80, 443 } accept")
-	}
-	rules = append(rules,
-		"",
-		"# Log (rate-limited) then drop 80/443 from every other source.",
-		`tcp dport { 80, 443 } limit rate 5/minute log prefix "CF_ONLY_DROP: "`,
-		"tcp dport { 80, 443 } drop",
-	)
-
 	sb.WriteString("table inet wgadmin_cf_only {\n")
 	if len(v4) > 0 {
 		sb.WriteString(BuildSet("cf_v4", "ipv4_addr", []string{"interval", "auto-merge"}, v4))
@@ -81,9 +61,40 @@ func (t *CloudflareOnlyTable) Build() (string, error) {
 	if len(v6) > 0 {
 		sb.WriteString(BuildSet("cf_v6", "ipv6_addr", []string{"interval", "auto-merge"}, v6))
 	}
-	sb.WriteString(BuildChain("input", "filter", "input", -10, "accept", rules))
+	// Two chains, both priority -10 (before the main firewall):
+	//   - input: host-destined web ports (a host-networked service, if any).
+	//   - forward: Traefik's 80/443 are Docker-PUBLISHED, so that traffic is DNAT'd and
+	//     FORWARDED to the container — it never reaches the input hook. Scope the forward
+	//     rules to `ct status dnat` so only externally-published traffic is filtered and
+	//     WireGuard / container-to-container forwarding is untouched.
+	sb.WriteString(BuildChain("input", "filter", "input", -10, "accept", cfRules(v4, v6, trusted, "")))
+	sb.WriteString(BuildChain("forward", "filter", "forward", -10, "accept", cfRules(v4, v6, trusted, "ct status dnat ")))
 	sb.WriteString("}\n")
 	return sb.String(), nil
+}
+
+// cfRules builds the accept-Cloudflare-and-trusted / drop-everyone-else rules for the web
+// ports. prefix is prepended to each rule — "" for the input chain, "ct status dnat " for
+// the forward chain (so it only matches externally-published, DNAT'd traffic).
+func cfRules(v4, v6, trusted []string, prefix string) []string {
+	rules := []string{
+		"# Always-allowed local/VPN sources reach the web ports (never lock the admin out).",
+		prefix + "ip saddr { " + strings.Join(trusted, ", ") + " } tcp dport { 80, 443 } accept",
+		prefix + "ip6 saddr ::1/128 tcp dport { 80, 443 } accept",
+		"# Cloudflare edge ranges — the only public source allowed to reach 80/443.",
+	}
+	if len(v4) > 0 {
+		rules = append(rules, prefix+"ip saddr @cf_v4 tcp dport { 80, 443 } accept")
+	}
+	if len(v6) > 0 {
+		rules = append(rules, prefix+"ip6 saddr @cf_v6 tcp dport { 80, 443 } accept")
+	}
+	rules = append(rules,
+		"# Log (rate-limited) then drop 80/443 from every other source.",
+		prefix+`tcp dport { 80, 443 } limit rate 5/minute log prefix "CF_ONLY_DROP: "`,
+		prefix+"tcp dport { 80, 443 } drop",
+	)
+	return rules
 }
 
 // restrictEnabled reports whether 80/443 should be Cloudflare-only. True only when

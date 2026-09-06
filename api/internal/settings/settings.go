@@ -228,11 +228,11 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 	result["api_direct_access"] = GetAPIDirectAccess()
 	result["api_direct_access_domain_set"] = panelDomainConfigured()
 
-	// Cloudflare-only web access (L3). `_ssl_set` tells the UI whether the toggle may be
-	// turned on — restricting 80/443 to Cloudflare is only safe when a public domain is
-	// actually served behind Cloudflare.
+	// Cloudflare-only web access (L3). `_available` tells the UI whether the toggle may be
+	// turned on — restricting 80/443 to Cloudflare only makes sense (and is only safe) when
+	// the domain is actually proxied through Cloudflare (set at setup).
 	result["web_cloudflare_only"] = GetWebCloudflareOnly()
-	result["web_cloudflare_only_ssl_set"] = sslConfigured()
+	result["web_cloudflare_only_available"] = domainBehindCloudflare()
 
 	// Session
 	if timeout, err := getSetting("session_timeout"); err == nil {
@@ -353,8 +353,8 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	// edge ranges via the cf_only nftables table. Guarded: only allowed once SSL/a public
 	// domain is configured, otherwise closing 80/443 to non-Cloudflare cuts off all web access.
 	if req.WebCloudflareOnly != nil {
-		if *req.WebCloudflareOnly && !sslConfigured() {
-			router.JSONError(w, "Enable SSL (SSL_DOMAIN) and put the domain behind Cloudflare before restricting web access to Cloudflare — otherwise you'd cut off all web access.", http.StatusBadRequest)
+		if *req.WebCloudflareOnly && !domainBehindCloudflare() {
+			router.JSONError(w, "Your domain isn't marked as behind Cloudflare (set during setup) — restricting web access to Cloudflare would cut off all visitors. Put the domain behind Cloudflare first.", http.StatusBadRequest)
 			return
 		}
 		if err := SetWebCloudflareOnly(*req.WebCloudflareOnly); err != nil {
@@ -629,11 +629,12 @@ func SetWebCloudflareOnly(on bool) error {
 	return SetSetting("web_cloudflare_only", v)
 }
 
-// sslConfigured reports whether a public SSL domain (SSL_DOMAIN) is set. Cloudflare-only
-// web access may only be turned ON when one exists — otherwise restricting 80/443 to
-// Cloudflare would cut off all web access.
-func sslConfigured() bool {
-	return strings.TrimSpace(os.Getenv("SSL_DOMAIN")) != ""
+// domainBehindCloudflare reports whether the SSL domain is proxied through Cloudflare
+// (the operator's answer at setup, persisted as BEHIND_CLOUDFLARE). Cloudflare-only web
+// access may only be turned ON when true — otherwise restricting 80/443 to Cloudflare
+// would cut off all visitors.
+func domainBehindCloudflare() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("BEHIND_CLOUDFLARE")), "true")
 }
 
 // panelDomainConfigured reports whether a domain is set for the panel (SSL_DOMAIN or

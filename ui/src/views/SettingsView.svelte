@@ -66,7 +66,7 @@
   let apiDirectAccessDomainSet = $state(false)
   let apiAccessLoading = $state(false)
   let webCloudflareOnly = $state(false)
-  let webCloudflareOnlySslSet = $state(false)
+  let webCloudflareOnlyAvailable = $state(false)
   let cfOnlyLoading = $state(false)
 
   // Session settings
@@ -213,7 +213,7 @@
       apiDirectAccess = settings.api_direct_access !== false
       apiDirectAccessDomainSet = settings.api_direct_access_domain_set === true
       webCloudflareOnly = settings.web_cloudflare_only === true
-      webCloudflareOnlySslSet = settings.web_cloudflare_only_ssl_set === true
+      webCloudflareOnlyAvailable = settings.web_cloudflare_only_available === true
 
       // Traefik (from aggregated response)
       const traefikConfig = settings.traefik
@@ -1655,6 +1655,8 @@
                 />
               </div>
             </ContentBlock>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-3 mt-3">
             <ContentBlock title="Enforce Firewall on Proxied Traffic" description="Apply the firewall block list at the proxy, so blocks work behind Cloudflare too">
               <div class="flex items-center gap-2">
                 {#if fwBlockLoading}
@@ -1671,12 +1673,12 @@
                 <Checkbox variant="switch" bind:checked={apiDirectAccess} disabled={apiAccessLoading || (!apiDirectAccessDomainSet && apiDirectAccess)} onchange={() => setApiDirectAccess(apiDirectAccess)} />
               </div>
             </ContentBlock>
-            <ContentBlock title="Cloudflare-Only Web Access" description={webCloudflareOnlySslSet ? "Allow only Cloudflare to reach the web ports (80/443). Blocks anyone hitting the raw server IP to bypass Cloudflare (localhost, Traefik and WireGuard still work). Your domain must be proxied through Cloudflare." : 'Enable SSL with a domain behind Cloudflare first — otherwise this would block all web access.'}>
+            <ContentBlock title="Cloudflare-Only Web Access" description={webCloudflareOnlyAvailable ? "Allow only Cloudflare to reach the web ports (80/443). Blocks anyone hitting the raw server IP to bypass Cloudflare (localhost, Traefik and WireGuard still work)." : 'Available only when your domain is proxied through Cloudflare (set at setup).'}>
               <div class="flex items-center gap-2">
                 {#if cfOnlyLoading}
                   <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
                 {/if}
-                <Checkbox variant="switch" bind:checked={webCloudflareOnly} disabled={cfOnlyLoading || (!webCloudflareOnlySslSet && !webCloudflareOnly)} onchange={() => setWebCloudflareOnly(webCloudflareOnly)} />
+                <Checkbox variant="switch" bind:checked={webCloudflareOnly} disabled={cfOnlyLoading || (!webCloudflareOnlyAvailable && !webCloudflareOnly)} onchange={() => setWebCloudflareOnly(webCloudflareOnly)} />
               </div>
             </ContentBlock>
           </div>

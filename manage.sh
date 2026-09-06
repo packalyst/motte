@@ -2090,6 +2090,9 @@ if prompt_yes_no "Enable HTTPS with Let's Encrypt?" "y"; then
         if prompt_yes_no "Is this domain behind Cloudflare proxy (orange cloud)?" "n"; then
             BEHIND_CLOUDFLARE="true"
         fi
+        # Persist it so the panel can offer Cloudflare-only web access only when the
+        # domain is actually proxied through Cloudflare.
+        update_env_value "BEHIND_CLOUDFLARE" "$BEHIND_CLOUDFLARE"
 
         # DNS validation loop
         DNS_VALID="false"

@@ -63,6 +63,15 @@ func TestCloudflareOnlyBuild_Enabled(t *testing.T) {
 			t.Errorf("enabled build missing %q:\n%s", want, out)
 		}
 	}
+	// MUST filter both hooks: input (host-networked) AND forward (Docker-published
+	// Traefik traffic is DNAT'd and forwarded, so an input-only rule would miss it).
+	if !strings.Contains(out, "hook input") || !strings.Contains(out, "hook forward") {
+		t.Errorf("expected both input and forward chains:\n%s", out)
+	}
+	// The forward rules must be scoped to DNAT'd (externally-published) traffic only.
+	if !strings.Contains(out, "ct status dnat tcp dport { 80, 443 } drop") {
+		t.Errorf("forward drop must be scoped to ct status dnat:\n%s", out)
+	}
 	// Never-lock-out invariant: the accept rules MUST precede the drop.
 	firstAccept := strings.Index(out, "accept")
 	drop := strings.Index(out, "tcp dport { 80, 443 } drop")
