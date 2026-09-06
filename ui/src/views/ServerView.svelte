@@ -172,45 +172,10 @@
       <span class="{badge} {live ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'} flex items-center gap-1">
         {#if live}<span class="w-1.5 h-1.5 rounded-full bg-success"></span>streaming{:else}connecting…{/if}</span></h2>
 
-    <!-- Row A: current server load + the 4 stat tiles (2×2) -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 items-start">
-      <!-- Current server load -->
-      <div class="{card}">
-        <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="gauge" size={16} class="text-primary" />Current server load</h3>
-        <div class="flex items-center gap-7">
-          <Gauge value={latest?.cpu ?? 0} size={150} label="CPU utilization" />
-          <div class="flex-1 min-w-0 text-xs space-y-3">
-            <div>
-              <div class="{tileK} mb-1.5" title="Run-queue length — processes waiting to run, averaged over 1/5/15 min. It is not a percentage; below the core count ({latest?.cores_n ?? '?'}) means no CPU contention.">Load average <Icon name="help-circle" size={11} class="opacity-60" /></div>
-              <div class="flex gap-4">
-                {#each [['1m', 0], ['5m', 1], ['15m', 2]] as pair}
-                  <div><div class="text-base font-semibold tabular-nums {loadColor(latest?.load?.[pair[1]], latest?.cores_n)}">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</div><div class="text-[10px] text-muted-foreground">{pair[0]}</div></div>
-                {/each}
-              </div>
-            </div>
-            <div class="flex flex-wrap gap-x-5 gap-y-1.5 pt-3 border-t border-border">
-              <div class="flex items-center gap-1.5" title="Logical CPU cores"><Icon name="cpu" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
-              <div class="flex items-center gap-1.5" title="Time since boot"><Icon name="clock" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
-              <div class="flex items-center gap-1.5" title="When the host last booted"><Icon name="refresh" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
-            </div>
-          </div>
-        </div>
-        <!-- Host details + package changes -->
-        <div class="mt-4 pt-3 border-t border-border">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs">
-            {#if data.host.distro}<div class="flex items-center gap-1.5 min-w-0"><Icon name="box" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Distro</span><b class="font-medium text-foreground truncate">{data.host.distro}</b></div>{/if}
-            {#if data.host.kernel}<div class="flex items-center gap-1.5 min-w-0"><Icon name="code" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Kernel</span><b class="font-medium text-foreground truncate font-mono">{data.host.kernel}</b></div>{/if}
-            {#if data.host.hostname}<div class="flex items-center gap-1.5 min-w-0"><Icon name="device-desktop" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Host</span><b class="font-medium text-foreground truncate">{data.host.hostname}</b></div>{/if}
-            {#if data.host.timezone}<div class="flex items-center gap-1.5 min-w-0"><Icon name="map-pin" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Timezone</span><b class="font-medium text-foreground truncate">{data.host.timezone}</b></div>{/if}
-          </div>
-          <div class="mt-3">
-            <Button variant="outline" size="sm" icon="package" onclick={() => (showPackages = true)}>Package changes{data.packages.length ? ` (${data.packages.length})` : ''}</Button>
-          </div>
-        </div>
-      </div>
-
+    <!-- Row A: 4 stat tiles (left, 1/3) + current server load (right, 2/3) — same grid as "Who touched the server" below -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4 items-start">
       <!-- Stat tiles: memory, disk, network, load (2×2) -->
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-2 gap-4 lg:col-span-1">
         <div class="{card}">
           <div class="{tileK}"><Icon name="database" size={13} />Memory</div>
           <div class="text-2xl font-bold tabular-nums">{latest ? Math.round(latest.mem_pct) : '—'}<span class="text-base text-muted-foreground">%</span></div>
@@ -230,6 +195,43 @@
           <div class="{tileK}"><Icon name="activity" size={13} />Load</div>
           <div class="text-2xl font-bold tabular-nums">{latest?.load?.[0]?.toFixed(2) ?? '—'}</div>
           <div class="{tileM}">1m avg · {latest?.cores_n ?? '—'} cores</div>
+        </div>
+      </div>
+
+      <!-- Current server load -->
+      <div class="{card} lg:col-span-2">
+        <h3 class="text-sm font-semibold mb-4 flex items-center gap-2"><Icon name="gauge" size={16} class="text-primary" />Current server load</h3>
+        <div class="flex flex-col sm:flex-row gap-6">
+          <!-- Left: gauge + load average -->
+          <div class="flex flex-col items-center gap-4 shrink-0 sm:w-52">
+            <Gauge value={latest?.cpu ?? 0} size={150} label="CPU utilization" />
+            <div class="w-full">
+              <div class="{tileK} justify-center mb-1.5" title="Run-queue length — processes waiting to run, averaged over 1/5/15 min. It is not a percentage; below the core count ({latest?.cores_n ?? '?'}) means no CPU contention.">Load average <Icon name="help-circle" size={11} class="opacity-60" /></div>
+              <div class="flex gap-5 justify-center">
+                {#each [['1m', 0], ['5m', 1], ['15m', 2]] as pair}
+                  <div class="text-center"><div class="text-base font-semibold tabular-nums {loadColor(latest?.load?.[pair[1]], latest?.cores_n)}">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</div><div class="text-[10px] text-muted-foreground">{pair[0]}</div></div>
+                {/each}
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: host details (vertical divider on desktop) -->
+          <div class="flex-1 min-w-0 text-xs space-y-3 sm:border-l sm:border-border sm:pl-6">
+            <div class="flex flex-wrap gap-x-5 gap-y-2">
+              <div class="flex items-center gap-1.5" title="Logical CPU cores"><Icon name="cpu" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
+              <div class="flex items-center gap-1.5" title="Time since boot"><Icon name="clock" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
+              <div class="flex items-center gap-1.5" title="When the host last booted"><Icon name="refresh" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
+            </div>
+            <div class="pt-3 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+              {#if data.host.distro}<div class="flex items-center gap-1.5 min-w-0"><Icon name="box" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Distro</span><b class="font-medium text-foreground truncate">{data.host.distro}</b></div>{/if}
+              {#if data.host.kernel}<div class="flex items-center gap-1.5 min-w-0"><Icon name="code" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Kernel</span><b class="font-medium text-foreground truncate font-mono">{data.host.kernel}</b></div>{/if}
+              {#if data.host.hostname}<div class="flex items-center gap-1.5 min-w-0"><Icon name="device-desktop" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Host</span><b class="font-medium text-foreground truncate">{data.host.hostname}</b></div>{/if}
+              {#if data.host.timezone}<div class="flex items-center gap-1.5 min-w-0"><Icon name="map-pin" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Timezone</span><b class="font-medium text-foreground truncate">{data.host.timezone}</b></div>{/if}
+            </div>
+            <div class="pt-1">
+              <Button variant="outline" size="sm" icon="package" onclick={() => (showPackages = true)}>Package changes{data.packages.length ? ` (${data.packages.length})` : ''}</Button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
