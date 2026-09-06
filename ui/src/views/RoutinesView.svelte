@@ -2,11 +2,10 @@
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import Badge from '../components/Badge.svelte'
-  import Icon from '../components/Icon.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import { apiGet, apiPost, toast } from '../stores/app.js'
   import { subscribe, unsubscribe, routinesStore } from '../stores/websocket.js'
-  import { formatRelativeDate } from '../lib/utils/format.js'
+  import { relativeShort } from '../lib/utils/format.js'
 
   let { loading = $bindable(true) } = $props()
 
@@ -26,15 +25,14 @@
     }
   }
 
-  // Initial fetch for immediate data, then live updates over WebSocket — the
-  // supervisor broadcasts the full list on every state change, so no polling.
+  // Initial fetch, then live updates over WebSocket (the supervisor broadcasts
+  // the full list on every state change — no polling).
   $effect(() => {
     load()
     subscribe(['routines'])
     return () => unsubscribe(['routines'])
   })
 
-  // Apply pushed updates.
   $effect(() => {
     const s = $routinesStore
     if (s?.routines) {
@@ -48,7 +46,6 @@
     try {
       await apiPost(`/api/routines/${name}/${action}`)
       toast(label, 'success')
-      // The supervisor broadcasts the change over WS; also refresh for instant feedback.
       await load()
     } catch (e) {
       toast(e.message || `Failed to ${action} ${name}`, 'error')
@@ -61,7 +58,7 @@
   const pause = (n) => act(n, 'pause', 'Routine paused')
   const resume = (n) => act(n, 'resume', 'Routine resumed')
 
-  const when = (ts) => (ts ? formatRelativeDate(new Date(ts * 1000)) : '—')
+  const when = (ts) => (ts ? relativeShort(new Date(ts * 1000)) : '—')
 
   function statusBadge(r) {
     if (r.status === 'running') return { variant: 'info', label: 'Running' }
@@ -81,78 +78,94 @@
 
   {#if error}
     <div class="p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">{error}</div>
-  {/if}
-
-  {#if !loading && routines.length === 0 && !error}
-    <EmptyState icon="clock" title="No routines registered" description="Background routines will appear here as they register with the supervisor." />
+  {:else if !loading && routines.length === 0}
+    <EmptyState icon="clock" title="No routines registered" description="Background routines appear here as they register with the supervisor." />
   {:else}
-    <div class="rounded-lg border border-border overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="text-xs text-muted-foreground border-b border-border">
-          <tr>
-            <th class="text-left font-medium px-3 py-2">Routine</th>
-            <th class="text-left font-medium px-3 py-2">Status</th>
-            <th class="text-left font-medium px-3 py-2">Schedule</th>
-            <th class="text-left font-medium px-3 py-2">Last run</th>
-            <th class="text-left font-medium px-3 py-2">Next run</th>
-            <th class="text-right font-medium px-3 py-2">Runs</th>
-            <th class="text-right font-medium px-3 py-2">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each routines as r (r.name)}
-            {@const b = statusBadge(r)}
-            <tr class="border-b border-border last:border-0 align-top">
-              <td class="px-3 py-2.5">
-                <div class="font-medium text-foreground font-mono">{r.name}</div>
-                <div class="text-xs text-muted-foreground">{r.description}</div>
-              </td>
-              <td class="px-3 py-2.5">
-                <div class="flex items-center gap-1.5">
-                  {#if r.status === 'running'}
-                    <span class="w-2.5 h-2.5 border-2 border-info border-t-transparent rounded-full animate-spin"></span>
-                  {/if}
-                  <Badge variant={b.variant} size="sm">{b.label}</Badge>
-                </div>
-              </td>
-              <td class="px-3 py-2.5 text-muted-foreground">{r.schedule}</td>
-              <td class="px-3 py-2.5">
-                <div class="flex items-center gap-2">
-                  <span>{when(r.last_run)}</span>
-                  {#if r.history?.length}
-                    <span class="flex items-center gap-0.5" title="recent runs">
-                      {#each r.history.slice(-10) as h}
-                        <span class="w-1.5 h-1.5 rounded-sm {h.error ? 'bg-destructive' : 'bg-success'}"></span>
-                      {/each}
-                    </span>
-                  {/if}
-                </div>
-                {#if r.last_error}
-                  <div class="text-xs text-destructive" title={r.last_error}>failed: {r.last_error}</div>
-                {:else if r.last_duration_ms != null}
-                  <div class="text-xs text-muted-foreground">{r.last_duration_ms < 1 ? '<1' : Math.round(r.last_duration_ms)} ms</div>
-                {/if}
-              </td>
-              <td class="px-3 py-2.5 text-muted-foreground">{r.paused ? '—' : when(r.next_run)}</td>
-              <td class="px-3 py-2.5 text-right font-mono text-muted-foreground">{r.runs}</td>
-              <td class="px-3 py-2.5">
-                {#if r.kind === 'daemon'}
-                  <div class="text-right text-xs text-muted-foreground">read-only</div>
-                {:else}
-                  <div class="flex items-center justify-end gap-1">
-                    <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
-                    {#if r.paused}
-                      <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
-                    {:else}
-                      <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
-                    {/if}
-                  </div>
-                {/if}
-              </td>
+    <div class="border border-border rounded-lg overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="data-table-table">
+          <thead>
+            <tr>
+              <th>Routine</th>
+              <th>Status</th>
+              <th class="hidden md:table-cell">Schedule</th>
+              <th class="hidden sm:table-cell">Last run</th>
+              <th class="hidden lg:table-cell">Next</th>
+              <th class="hidden lg:table-cell text-right">Runs</th>
+              <th class="text-right">Actions</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each routines as r (r.name)}
+              {@const b = statusBadge(r)}
+              <tr class="even:bg-muted/50 align-top">
+                <td>
+                  <div class="font-medium text-foreground font-mono text-xs">{r.name}</div>
+                  <div class="text-xs text-muted-foreground">{r.description}</div>
+                  <!-- Mobile: fold the hidden columns (schedule/last/next) into one line -->
+                  <div class="sm:hidden text-[11px] text-muted-foreground mt-0.5">
+                    {r.schedule}{#if r.kind !== 'daemon'} · last {when(r.last_run)} · next {when(r.next_run)}{/if}
+                    {#if r.last_error}<span class="text-destructive"> · failed</span>{/if}
+                  </div>
+                </td>
+                <td>
+                  <div class="flex items-center gap-1.5">
+                    {#if r.status === 'running'}
+                      <span class="w-2.5 h-2.5 border-2 border-info border-t-transparent rounded-full animate-spin"></span>
+                    {/if}
+                    <Badge variant={b.variant} size="sm">{b.label}</Badge>
+                  </div>
+                </td>
+                <td class="hidden md:table-cell text-muted-foreground">{r.schedule}</td>
+                <td class="hidden sm:table-cell">
+                  {#if r.kind === 'daemon'}
+                    <span class="text-muted-foreground">—</span>
+                  {:else}
+                    <div class="flex items-center gap-2">
+                      <span>{when(r.last_run)}</span>
+                      {#if r.history?.length}
+                        <span class="hidden sm:flex items-center gap-0.5" title="Recent runs (green = ok, red = failed)">
+                          {#each r.history.slice(-10) as h}
+                            <span class="w-1.5 h-1.5 rounded-sm {h.error ? 'bg-destructive' : 'bg-success'}"></span>
+                          {/each}
+                        </span>
+                      {/if}
+                    </div>
+                    {#if r.last_error}
+                      <div class="text-xs text-destructive truncate max-w-[16rem]" title={r.last_error}>failed: {r.last_error}</div>
+                    {:else if r.last_duration_ms != null}
+                      <div class="text-xs text-muted-foreground">{r.last_duration_ms < 1 ? '<1' : Math.round(r.last_duration_ms)} ms</div>
+                    {/if}
+                  {/if}
+                </td>
+                <td class="hidden lg:table-cell text-muted-foreground">{r.kind === 'daemon' ? '—' : when(r.next_run)}</td>
+                <td class="hidden lg:table-cell text-right font-mono text-muted-foreground">{r.runs}</td>
+                <td class="text-right">
+                  {#if r.kind === 'daemon'}
+                    <span class="text-xs text-muted-foreground">read-only</span>
+                  {:else}
+                    <div class="flex items-center justify-end gap-1">
+                      <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
+                      {#if r.paused}
+                        <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
+                      {:else}
+                        <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
+                      {/if}
+                    </div>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     </div>
+
+    <p class="text-xs text-muted-foreground px-1">
+      <span class="inline-block w-1.5 h-1.5 rounded-sm bg-success align-middle"></span>
+      /
+      <span class="inline-block w-1.5 h-1.5 rounded-sm bg-destructive align-middle"></span>
+      show the last 10 runs (ok / failed). Daemons are always-on loops — status only.
+    </p>
   {/if}
 </div>

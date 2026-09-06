@@ -158,6 +158,30 @@ export function timeAgo(date) {
   return formatRelativeDate(date)
 }
 
+/**
+ * Compact relative time for both past and future, with second granularity,
+ * falling back to a short date past ~a day. E.g. "12s ago", "in 5m", "now".
+ * @param {string|Date|object|number} date
+ * @returns {string}
+ */
+export function relativeShort(date) {
+  if (!date) return '—'
+  const d = parseDate(date)
+  if (!d || isNaN(d.getTime())) return '—'
+
+  let secs = Math.round((d.getTime() - Date.now()) / 1000)
+  const future = secs >= 0
+  secs = Math.abs(secs)
+
+  if (secs < 5) return 'now'
+  let unit
+  if (secs < 60) unit = `${secs}s`
+  else if (secs < 3600) unit = `${Math.floor(secs / 60)}m`
+  else if (secs < 86400) unit = `${Math.floor(secs / 3600)}h`
+  else return formatRelativeDate(date) // far off → short date
+  return future ? `in ${unit}` : `${unit} ago`
+}
+
 // ============================================================================
 // Date Parsing
 // ============================================================================
