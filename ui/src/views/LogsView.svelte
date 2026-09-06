@@ -171,10 +171,10 @@
     description="Unified view of DNS queries, VPN outbound traffic, and HTTP inbound requests."
   />
 
-  <div class="kt-panel">
+  <div class="data-table">
     <!-- Header -->
-    <div class="kt-panel-header flex-col sm:flex-row gap-2">
-      <div class="contents sm:flex sm:items-center sm:gap-2">
+    <div class="data-table-header">
+      <div class="data-table-header-start">
         <Input
           type="search"
           value={searchQuery}
@@ -206,8 +206,8 @@
           </Select>
         </div>
       </div>
-      <div class="w-full border-t border-border sm:hidden"></div>
-      <div class="kt-btn-group self-end sm:self-auto">
+      <div class="data-table-header-end">
+        <div class="kt-btn-group">
         <Button
           variant={autoRefresh ? 'mono' : 'outline'}
           size="sm"
@@ -222,16 +222,17 @@
         <Button variant="destructive" size="sm" icon="trash" onclick={clearFilteredLogs}>
           Clear
         </Button>
+        </div>
       </div>
     </div>
 
     <!-- Content -->
     {#if isLoading && logs.length === 0}
-      <div class="kt-panel-body flex items-center justify-center py-12">
+      <div class="data-table-loading">
         <LoadingSpinner size="lg" />
       </div>
     {:else if logs.length === 0}
-      <div class="kt-panel-body">
+      <div class="data-table-empty">
         <EmptyState
           icon="list-details"
           title="No logs yet"
@@ -239,10 +240,8 @@
         />
       </div>
     {:else}
-      <div class="kt-panel-body">
-        <div class="border border-border rounded-lg overflow-hidden">
-          <div class="overflow-x-auto">
-            <table class="data-table-table">
+      <div class="data-table-content">
+        <table>
           <thead>
             <tr>
               <th>Time</th>
@@ -406,13 +405,11 @@
               </tr>
             {/each}
           </tbody>
-            </table>
-          </div>
-        </div>
+        </table>
       </div>
 
       <!-- Footer -->
-      <div class="kt-panel-footer">
+      <div class="data-table-footer">
         <Pagination
           page={pagination.page}
           perPage={pagination.perPage}
