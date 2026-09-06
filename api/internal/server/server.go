@@ -312,13 +312,19 @@ func (a *authAccum) finish() authScan {
 	return a.out
 }
 
-// scanLogins reads recent auth events, preferring journald (Ubuntu 24.04+ ships no
-// /var/log/auth.log by default — sshd logs only to the journal) and falling back to
-// the log file when the journal isn't reachable.
+// scanLogins reads recent auth events. It prefers the systemd journal: unlike
+// /var/log/auth.log (which rotates — the current file holds only the slice since the last
+// rotation, and we don't read the rotated auth.log.N/.gz files), the journal keeps the
+// full window and is distro-neutral. It falls back to the text log file only when the
+// journal isn't reachable (older/non-systemd hosts): Debian/Ubuntu = /var/log/auth.log,
+// RHEL/Fedora = /var/log/secure. An unparseable timestamp never drops an event.
 func (s *Service) scanLogins(now time.Time) authScan {
-	// Prefer a log file when one exists with content: Debian/Ubuntu = /var/log/auth.log,
-	// RHEL/Fedora = /var/log/secure. Timestamp format varies by distro/version but the
-	// content phrasing is stable, and an unparseable timestamp never drops an event.
+	// 1) Journal first — used when it's reachable AND actually carried auth events.
+	jsc, jok := s.scanJournal(now)
+	if jok && authScanHasSignal(jsc) {
+		return jsc
+	}
+	// 2) Text log file fallback (older/non-systemd hosts, or a journal with nothing useful).
 	for _, path := range s.authLogCandidates() {
 		acc := newAuthAccum(now)
 		forEachTailLine(path, func(line string) {
@@ -326,16 +332,13 @@ func (s *Service) scanLogins(now time.Time) authScan {
 			acc.line(line, ts, ok)
 		})
 		sc := acc.finish()
-		// Use the file only if it actually yielded auth events. A file that exists but
-		// holds no logins/sudo (Ubuntu 24.04 keeps /var/log/auth.log for sudo/cron while
-		// sshd logs logins only to the journal) must NOT shadow the journal below.
 		if authScanHasSignal(sc) {
 			return sc
 		}
 	}
-	// No usable log file (systemd-only hosts like Ubuntu 24.04) — read the journal.
-	if sc, ok := s.scanJournal(now); ok {
-		return sc
+	// 3) A reachable-but-empty journal still beats an empty scan.
+	if jok {
+		return jsc
 	}
 	return newAuthAccum(now).finish()
 }
