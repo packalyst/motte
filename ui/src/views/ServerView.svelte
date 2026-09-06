@@ -113,12 +113,10 @@
   // Access & escalation: show only what needs eyes — sessions connected now,
   // plus any alarming closed session (unexpected remote root). The full recent
   // count lives in the header badge instead of a long scroll.
-  const shownLogins = $derived.by(() => {
-    const recent = data?.logins?.recent || []
-    const active = recent.filter(l => l.active)
-    const alarms = recent.filter(l => !l.active && l.root && l.ip && !isLocal(l.ip))
-    return [...active, ...alarms]
-  })
+  // Active sessions come from loginctl (one row per user+IP, real live count). Alarms are
+  // closed remote-root logins from the ledger (root that is NOT currently connected).
+  const activeSessions = $derived(data?.logins?.active || [])
+  const alarmLogins = $derived((data?.logins?.recent || []).filter(l => !l.active && l.root && l.ip && !isLocal(l.ip)))
 
   // Exposure: group listening ports by the process that owns them.
   const portGroups = $derived.by(() => {
@@ -270,7 +268,7 @@
       <div class="{card} lg:col-span-2">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="terminal-2" size={16} class="text-primary" />Access &amp; escalation
           <span class="{badge} bg-muted text-muted-foreground ml-auto">{data.logins.recent.length} login{data.logins.recent.length === 1 ? '' : 's'} recorded</span></h3>
-        {#if !shownLogins.length && !data.sudo.failed?.length}
+        {#if !activeSessions.length && !alarmLogins.length && !data.sudo.failed?.length}
           <div class="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
             <Icon name="terminal-2" size={26} class="opacity-40 mb-2" />
             <div class="text-sm">No active sessions or sudo failures.</div>
@@ -278,20 +276,31 @@
           </div>
         {:else}
           <div class="divide-y divide-border">
-            <!-- connected-now sessions + alarming closed sessions -->
-            {#each shownLogins as l}
-              {@const alarm = l.root && l.ip && !isLocal(l.ip)}
-              <div class="flex items-center gap-2.5 py-2 {alarm ? 'bg-destructive/10 -mx-2 px-2 rounded-lg' : ''}">
-                <span class="{av} {alarm ? 'border-destructive/50 text-destructive' : 'text-muted-foreground'}"><Icon name={methodIcon(l.method)} size={15} /></span>
+            <!-- connected-now sessions: one row per user+IP, live count from loginctl -->
+            {#each activeSessions as s}
+              <div class="flex items-center gap-2.5 py-2">
+                <span class="{av} text-success"><Icon name="terminal-2" size={15} /></span>
                 <div class="flex-1 min-w-0">
-                  <div class="text-[13px] font-medium flex items-center gap-1.5 {alarm ? 'text-destructive' : 'text-foreground'}">{l.user}
-                    {#if l.active}<span class="{chip} bg-success/15 text-success flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>active</span>{/if}
-                    <span class="{chip} bg-muted text-muted-foreground">{l.method}</span>
-                    {#if l.root}<span class="{chip} {alarm ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground'}">{alarm ? 'unexpected root' : 'root'}</span>{/if}
-                    {#if isLocal(l.ip)}<span class="{chip} bg-success/15 text-success">local</span>{/if}</div>
-                  <div class="{l2}">{isLocal(l.ip) ? 'local session' : l.ip}{l.country ? ' · ' + l.country : ''}{l.owner ? ' · ' + l.owner : ''} · {l.active ? 'connected now · since ' + timeAgo(l.when) : timeAgo(l.when)}</div>
+                  <div class="text-[13px] font-medium flex items-center gap-1.5 text-foreground">{s.user}
+                    <span class="{chip} bg-success/15 text-success flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-success"></span>{s.count} connected</span>
+                    {#if s.root}<span class="{chip} bg-destructive/15 text-destructive">root</span>{/if}
+                    {#if isLocal(s.ip)}<span class="{chip} bg-success/15 text-success">local</span>{/if}</div>
+                  <div class="{l2}">{isLocal(s.ip) ? 'local session' : s.ip}{s.country ? ' · ' + s.country : ''}{s.owner ? ' · ' + s.owner : ''}{s.when ? ' · latest login ' + timeAgo(s.when) : ''}</div>
                 </div>
-                {#if alarm}<Button variant="destructive" size="xs" icon="ban" onclick={() => banIP(l.ip)}>Ban</Button>{/if}
+              </div>
+            {/each}
+            <!-- alarming closed sessions: remote root logins not currently connected -->
+            {#each alarmLogins as l}
+              <div class="flex items-center gap-2.5 py-2 bg-destructive/10 -mx-2 px-2 rounded-lg">
+                <span class="{av} border-destructive/50 text-destructive"><Icon name={methodIcon(l.method)} size={15} /></span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] font-medium flex items-center gap-1.5 text-destructive">{l.user}
+                    <span class="{chip} bg-muted text-muted-foreground">{l.method}</span>
+                    <span class="{chip} bg-destructive/15 text-destructive">unexpected root</span>
+                    {#if isLocal(l.ip)}<span class="{chip} bg-success/15 text-success">local</span>{/if}</div>
+                  <div class="{l2}">{isLocal(l.ip) ? 'local session' : l.ip}{l.country ? ' · ' + l.country : ''}{l.owner ? ' · ' + l.owner : ''} · {timeAgo(l.when)}</div>
+                </div>
+                <Button variant="destructive" size="xs" icon="ban" onclick={() => banIP(l.ip)}>Ban</Button>
               </div>
             {/each}
             <!-- sudo failures (escalation) -->

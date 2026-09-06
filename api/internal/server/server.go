@@ -78,10 +78,25 @@ type loginEvent struct {
 	Active  bool      `json:"active,omitempty"` // session still open right now (per `who`)
 }
 type loginsBlock struct {
-	Recent       []loginEvent `json:"recent"`
-	Failed1h     int          `json:"failed_1h"`
-	FailedPrev1h int          `json:"failed_prev_1h"`
-	FailedIPs1h  int          `json:"failed_ips_1h"`
+	Recent       []loginEvent    `json:"recent"`
+	Active       []activeSession `json:"active"` // one row per currently-connected (user, IP)
+	Failed1h     int             `json:"failed_1h"`
+	FailedPrev1h int             `json:"failed_prev_1h"`
+	FailedIPs1h  int             `json:"failed_ips_1h"`
+}
+
+// activeSession is one currently-connected (user, IP) group for the Access & escalation
+// card: how many live connections (from loginctl) and the most recent matching login for
+// its time/geo. Sourced from live sessions, not the login ledger, so it can't surface a
+// stale record.
+type activeSession struct {
+	User    string    `json:"user"`
+	IP      string    `json:"ip"`
+	Count   int       `json:"count"`
+	When    time.Time `json:"when"` // most recent matching login (zero if none in the ledger)
+	Country string    `json:"country,omitempty"`
+	Owner   string    `json:"owner,omitempty"`
+	Root    bool      `json:"root"`
 }
 type sudoEvent struct {
 	User    string    `json:"user"`
@@ -170,10 +185,13 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Flag which of the historical logins are still-open sessions right now, by
-	// cross-referencing `who`. The login list is a ledger of past Accepted events;
-	// this marks the ones currently connected so "live vs history" reads at a glance.
-	markActiveLogins(rep.Logins.Recent, activeSessionCounts())
+	// Live sessions come from loginctl (per-connection truth). Flag which ledger records
+	// belong to a still-connected (user, IP) so the alarms can exclude them, and build the
+	// one-row-per-(user,IP) active list the card shows — from live sessions, not the ledger,
+	// so it never surfaces a stale login.
+	counts := activeSessionCounts()
+	markActiveMembership(rep.Logins.Recent, counts)
+	rep.Logins.Active = buildActiveSessions(rep.Logins.Recent, counts)
 
 	rep.Packages = s.recentPackages(now)
 	rep.Sudo.Failed = s.recentSudoFailures(now) // persisted failures with session IP

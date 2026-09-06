@@ -256,32 +256,52 @@ func loginctlSessionCounts() map[string]int {
 	return counts
 }
 
-// markActiveLogins flags the still-connected logins. For each (user, IP) group it
-// marks the k most-recent login events active, where k is that pair's live-session
-// count from `who`. Best-effort: a `who` host shown as a name (reverse DNS) simply
-// won't match an IP-based login, so it stays unflagged rather than mislabeled.
-func markActiveLogins(recent []loginEvent, counts map[string]int) {
-	if len(counts) == 0 {
-		return
-	}
-	groups := map[string][]int{}
-	for i, l := range recent {
-		if l.IP == "" {
+// markActiveMembership flags each ledger record whose (user, IP) currently has at least one
+// live session, so the "closed session" alarms can exclude the ones that are still connected.
+// It does NOT drive the active-session display — that comes from buildActiveSessions, which
+// is sourced from live sessions rather than the ledger (so it can't surface a stale login).
+func markActiveMembership(recent []loginEvent, counts map[string]int) {
+	for i := range recent {
+		if recent[i].IP == "" {
 			continue
 		}
-		key := l.User + "\x00" + l.IP
-		groups[key] = append(groups[key], i)
+		if counts[recent[i].User+"\x00"+recent[i].IP] > 0 {
+			recent[i].Active = true
+		}
 	}
-	for key, idxs := range groups {
-		k := counts[key]
-		if k <= 0 {
+}
+
+// buildActiveSessions turns the live session counts (from loginctl) into one row per
+// (user, IP): how many live connections, plus the most recent matching login from the
+// ledger for its time/geo. This replaces the old "flag the k newest ledger records"
+// heuristic, which could surface a stale (long-closed) login as if it were current.
+func buildActiveSessions(recent []loginEvent, counts map[string]int) []activeSession {
+	out := []activeSession{}
+	for key, n := range counts {
+		if n <= 0 {
 			continue
 		}
-		sort.Slice(idxs, func(a, b int) bool { return recent[idxs[a]].When.After(recent[idxs[b]].When) })
-		for n := 0; n < k && n < len(idxs); n++ {
-			recent[idxs[n]].Active = true
+		user, ip, ok := strings.Cut(key, "\x00")
+		if !ok || ip == "" {
+			continue
 		}
+		s := activeSession{User: user, IP: ip, Count: n, Root: user == "root"}
+		for _, l := range recent { // newest matching ledger record → time + geo
+			if l.User == user && l.IP == ip && l.When.After(s.When) {
+				s.When = l.When
+				s.Country, s.Owner = l.Country, l.Owner
+			}
+		}
+		out = append(out, s)
 	}
+	// Most recent first, then by user for stability.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].When.Equal(out[j].When) {
+			return out[i].When.After(out[j].When)
+		}
+		return out[i].User < out[j].User
+	})
+	return out
 }
 
 // ---------- phone-home watch ----------
