@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,10 +45,14 @@ type agentCache struct {
 	versionAt time.Time
 }
 
-const agentRepoDefault = "packalyst/wireguard-admin-panel"
-
 func newAgentCache() *agentCache {
-	repo := helper.GetEnvOptional("FLEET_AGENT_REPO", agentRepoDefault)
+	// Repo comes from the environment (FLEET_AGENT_REPO), defaulted in docker-compose
+	// and documented in .env.example — not baked into the binary. If it is somehow
+	// empty, agent asset serving and version checks fail gracefully (best-effort).
+	repo := helper.GetEnvOptional("FLEET_AGENT_REPO", "")
+	if repo == "" {
+		log.Print("fleet: FLEET_AGENT_REPO is not set; agent asset serving and version checks are disabled")
+	}
 	return &agentCache{
 		dir:     helper.GetEnvOptional("FLEET_AGENT_CACHE", "/data/fleet-agent"),
 		repo:    repo,

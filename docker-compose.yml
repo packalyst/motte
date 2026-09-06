@@ -182,6 +182,8 @@ services:
       - HEADSCALE_ACL_PATH=${HEADSCALE_ACL_PATH:-/headscale/config/acl.json}
       - NFTABLES_ACL_PATH=${NFTABLES_ACL_PATH:-/etc/nftables.d/vpn-acl.nft}
       - HEADSCALE_BASE_DOMAIN=${HEADSCALE_BASE_DOMAIN}
+      # Fleet agent release source (GitHub owner/repo)
+      - FLEET_AGENT_REPO=${FLEET_AGENT_REPO:-packalyst/wireguard-admin-panel}
     volumes:
       - api_data:/data
       - /var/log:/var/log:ro
