@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"api/internal/router"
+	"api/internal/routines"
 )
 
 // ---------- live sudo-failure capture ----------
@@ -42,14 +44,15 @@ func (s *Service) ensureSudoTable() {
 // runSudoWatcher polls the auth log for sudo failures, resolving each to its
 // session IP while the session is still active, and persists it. Runs for the
 // process lifetime.
-func (s *Service) runSudoWatcher() {
+func (s *Service) registerSudoWatcher() {
 	s.ensureSudoTable()
-	s.scanSudoFailures()
-	tick := time.NewTicker(15 * time.Second)
-	defer tick.Stop()
-	for range tick.C {
-		s.scanSudoFailures()
-	}
+	routines.Register(routines.Spec{
+		Name:        "sudo-watcher",
+		Description: "Scan the host auth log for sudo failures and persist their session IP",
+		Interval:    15 * time.Second,
+		RunAtStart:  true,
+		Run:         func(context.Context) error { s.scanSudoFailures(); return nil },
+	})
 }
 
 func (s *Service) scanSudoFailures() {

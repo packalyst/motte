@@ -91,11 +91,13 @@ func main() {
 
 	// Start the background-routine supervisor before anything registers a routine,
 	// so those jobs are visible/controllable on the Routines page. Push state
-	// changes to the UI over WebSocket (no polling).
-	routines.Init(context.Background())
+	// changes to the UI over WebSocket (no polling). The supervisor runs under a
+	// cancellable context so shutdown can stop the loops before the DB is closed.
+	routinesCtx, routinesCancel := context.WithCancel(context.Background())
 	routines.SetBroadcaster(func(list []routines.Info) {
 		ws.Broadcast("routines", map[string]interface{}{"routines": list})
 	})
+	routines.Init(routinesCtx)
 
 	// Keep the Cloudflare edge-range list current so CF-Connecting-IP is trusted
 	// only for requests that genuinely transit Cloudflare (falls back to the
@@ -342,7 +344,7 @@ func main() {
 		// Mirror the proxy's log markers: auth failures → the firewall jail
 		// file (ban brute-forcers), authenticated connections → the logs table
 		// (shown on the Logs page).
-		turbotunnels.StartLogStreamer(context.Background())
+		turbotunnels.StartLogStreamer()
 		// Evict expired rotation abuse-guard entries so the in-memory maps stay bounded.
 		turbotunnels.StartRotateGuardCleanup()
 		log.Println("Turbotunnels service registered")
@@ -704,7 +706,9 @@ func main() {
 		// Stop WebSocket status checker
 		ws.StopStatusChecker()
 
-		// VPN traffic sync is a supervised routine; it stops with the process.
+		// Stop the background routines before closing the DB, so no tick fires an
+		// Exec against a closed pool.
+		routinesCancel()
 
 		// Close database
 		if err := database.Close(); err != nil {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"api/internal/helper"
+	"api/internal/routines"
 )
 
 // runJailMonitors starts monitors for all enabled jails
@@ -37,6 +38,7 @@ func (s *Service) runJailMonitors() {
 		s.startJailMonitor(jail.ID, jail.Name, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.LastLogPos)
 	}
 
+	routines.RegisterDaemon("firewall-jails", "Brute-force jail engine: one monitor per enabled jail")
 	log.Printf("Started %d jail monitors", len(jails))
 }
 

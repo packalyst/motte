@@ -16,8 +16,13 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// manualRunCooldown throttles back-to-back run-now requests per routine so an
+// authenticated caller can't drive a heavy job (e.g. geo-update) in a tight loop.
+const manualRunCooldown = 3 * time.Second
 
 // Status is a routine's current lifecycle state.
 type Status string
@@ -82,15 +87,16 @@ type routine struct {
 	schedule string
 	next     func(now time.Time) time.Time // nil for daemons
 
-	mu      sync.Mutex
-	status  Status
-	paused  bool
-	lastRun time.Time
-	lastDur time.Duration
-	lastErr error
-	nextRun time.Time
-	runs    int64
-	history []RunRecord
+	mu         sync.Mutex
+	status     Status
+	paused     bool
+	lastRun    time.Time
+	lastManual time.Time // last accepted run-now (for the cooldown)
+	lastDur    time.Duration
+	lastErr    error
+	nextRun    time.Time
+	runs       int64
+	history    []RunRecord
 
 	trigger chan struct{} // run-now (buffered 1)
 }
@@ -107,6 +113,9 @@ var (
 func Init(ctx context.Context) {
 	mu.Lock()
 	defer mu.Unlock()
+	if started {
+		return // idempotent: never spawn a second loop per routine
+	}
 	rootCtx = ctx
 	started = true
 	for _, r := range reg {
@@ -332,6 +341,13 @@ func RunNow(name string) bool {
 	if !r.controllable() {
 		return false
 	}
+	r.mu.Lock()
+	if time.Since(r.lastManual) < manualRunCooldown {
+		r.mu.Unlock()
+		return true // throttled: recently run by hand, coalesce
+	}
+	r.lastManual = time.Now()
+	r.mu.Unlock()
 	select {
 	case r.trigger <- struct{}{}:
 	default:
@@ -373,15 +389,16 @@ func Resume(name string) bool {
 
 // broadcaster, if set, is called with the full routine list whenever a routine's
 // state changes, so the UI can update live over WebSocket instead of polling.
-var broadcaster func([]Info)
+// Stored atomically so setting it can't race with the routine goroutines reading it.
+var broadcaster atomic.Pointer[func([]Info)]
 
-// SetBroadcaster registers the live-update callback. Set once at startup. Called
-// outside all locks, so it is safe to call List()/anything from within it.
-func SetBroadcaster(fn func([]Info)) { broadcaster = fn }
+// SetBroadcaster registers the live-update callback. Called outside all locks, so
+// it is safe to call List()/anything from within it.
+func SetBroadcaster(fn func([]Info)) { broadcaster.Store(&fn) }
 
 func notify() {
-	if broadcaster != nil {
-		broadcaster(List())
+	if p := broadcaster.Load(); p != nil {
+		(*p)(List())
 	}
 }
 

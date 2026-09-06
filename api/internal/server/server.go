@@ -53,7 +53,7 @@ func New(db *sql.DB) *Service {
 		authLogPath: envOr("AUTH_LOG", "/var/log/auth.log"),
 		dpkgLogPath: envOr("DPKG_LOG", "/var/log/dpkg.log"),
 	}
-	go s.runSudoWatcher() // capture sudo failures live and persist their session IP
+	s.registerSudoWatcher() // capture sudo failures live and persist their session IP
 	return s
 }
 

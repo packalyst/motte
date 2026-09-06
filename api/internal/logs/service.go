@@ -139,6 +139,7 @@ func (s *Service) Start() {
 
 // startWatcher starts a single watcher
 func (s *Service) startWatcher(name string, watcher Watcher) {
+	routines.RegisterDaemon("log-watcher:"+name, "Tail the "+name+" source into the logs table")
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()

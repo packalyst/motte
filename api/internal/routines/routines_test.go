@@ -15,7 +15,7 @@ func reset() {
 	rootCtx = nil
 	started = false
 	mu.Unlock()
-	broadcaster = nil
+	broadcaster.Store(nil)
 }
 
 func waitFor(t *testing.T, cond func() bool) {

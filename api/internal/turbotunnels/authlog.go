@@ -15,6 +15,7 @@ import (
 
 	"api/internal/database"
 	"api/internal/helper"
+	"api/internal/routines"
 )
 
 // Markers the patched proxy (https.py) emits, both anchored so no other
@@ -38,9 +39,9 @@ func AuthLogPath() string {
 //     page as outbound traffic tagged 'turbotunnels').
 //
 // It polls with the Docker logs `since` parameter rather than holding a follow
-// stream: polling is resilient to container restarts and request timeouts. Runs
-// until ctx is cancelled.
-func StartLogStreamer(ctx context.Context) {
+// stream: polling is resilient to container restarts and request timeouts.
+// Registered as a supervised routine.
+func StartLogStreamer() {
 	path := AuthLogPath()
 	// Create the file up front so the jail monitor finds it at boot (a jail
 	// whose log file is missing at startup is skipped and not retried).
@@ -55,21 +56,18 @@ func StartLogStreamer(ctx context.Context) {
 		log.Printf("turbotunnels: log streamer has no DB, connection logging disabled: %v", err)
 	}
 
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		since := time.Now().Unix()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				next := time.Now().Unix()
-				processLogLines(fetchLogLines(since), path, db)
-				since = next
-			}
-		}
-	}()
+	since := time.Now().Unix()
+	routines.Register(routines.Spec{
+		Name:        "turbotunnels-log-streamer",
+		Description: "Poll turbotunnels container logs into the jail file + logs table",
+		Interval:    10 * time.Second,
+		Run: func(context.Context) error {
+			next := time.Now().Unix()
+			processLogLines(fetchLogLines(since), path, db)
+			since = next
+			return nil
+		},
+	})
 }
 
 // processLogLines classifies each container log line: auth-failure markers are
