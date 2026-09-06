@@ -31,7 +31,7 @@
 
   // --- Live host stats: keep a rolling window from the server_stats channel ---
   const N = 60
-  let xs = $state([]), cpuH = $state([]), memH = $state([]), rxH = $state([]), txH = $state([])
+  let xs = $state([]), cpuH = $state([]), memH = $state([]), rxH = $state([]), txH = $state([]), dskRH = $state([]), dskWH = $state([])
   let latest = $state(null)
   let lastTs = 0
   $effect(() => {
@@ -45,9 +45,12 @@
     memH = push(memH, s.mem_pct ?? 0)
     rxH = push(rxH, s.net?.rx ?? 0)
     txH = push(txH, s.net?.tx ?? 0)
+    dskRH = push(dskRH, s.disk?.read_bps ?? 0)
+    dskWH = push(dskWH, s.disk?.write_bps ?? 0)
   })
 
   const netData = $derived([xs, rxH, txH])
+  const diskData = $derived([xs, dskRH, dskWH])
   const cmData = $derived([xs, cpuH, memH])
   const fmtRate = (v) => formatBytes(v) + '/s'
   const pct = (v) => Math.round(v) + '%'
@@ -56,11 +59,16 @@
     { label: 'RX', stroke: '--rx', fill: 0.22, val: (s) => s.net.rx, fmt: fmtRate },
     { label: 'TX', stroke: '--tx', fill: 0.22, val: (s) => s.net.tx, fmt: fmtRate },
   ]
+  const diskSeries = [
+    { label: 'Read', stroke: '--rx', fill: 0.22, val: (s) => s.disk?.read_bps ?? 0, fmt: fmtRate },
+    { label: 'Write', stroke: '--tx', fill: 0.22, val: (s) => s.disk?.write_bps ?? 0, fmt: fmtRate },
+  ]
   const cmSeries = [
     { label: 'CPU', stroke: '--cpu', val: (s) => s.cpu, fmt: pct },
     { label: 'Memory', stroke: '--mem', val: (s) => s.mem_pct, fmt: pct },
   ]
   let netHidden = $state({})
+  let diskHidden = $state({})
   let cmHidden = $state({})
   const live = $derived($wsConnected && !!latest)
   // Load average is a run-queue length, not a %. Health = load ÷ cores.
@@ -165,7 +173,7 @@
         {#if live}<span class="w-1.5 h-1.5 rounded-full bg-success"></span>streaming{:else}connecting…{/if}</span></h2>
 
     <!-- Headline tiles -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
       <div class="{card}">
         <div class="{tileK}"><Icon name="cpu" size={13} />CPU</div>
         <div class="text-2xl font-bold tabular-nums" style={latest ? `color:${coreColor(latest.cpu)}` : ''}>{latest ? Math.round(latest.cpu) : '—'}<span class="text-base text-muted-foreground">%</span></div>
@@ -180,6 +188,11 @@
         <div class="{tileK}"><Icon name="network" size={13} />Network</div>
         <div class="text-lg font-bold tabular-nums leading-tight" style="color:var(--rx)">↓ {latest ? fmtRate(latest.net.rx) : '—'}</div>
         <div class="{tileM} tabular-nums font-medium" style="color:var(--tx)">↑ {latest ? fmtRate(latest.net.tx) : '—'}</div>
+      </div>
+      <div class="{card}">
+        <div class="{tileK}"><Icon name="server" size={13} />Disk</div>
+        <div class="text-2xl font-bold tabular-nums">{latest?.disk ? Math.round(latest.disk.used_pct) : '—'}<span class="text-base text-muted-foreground">%</span></div>
+        <div class="{tileM}">{latest?.disk ? formatBytes(latest.disk.used) + ' / ' + formatBytes(latest.disk.total) : '—'}</div>
       </div>
       <div class="{card}">
         <div class="{tileK}"><Icon name="activity" size={13} />Load</div>
@@ -234,6 +247,12 @@
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O<ChartLegend series={netSeries} hidden={netHidden} {latest} ontoggle={(i) => (netHidden = { ...netHidden, [i]: !netHidden[i] })} /></h3>
         <UPlotChart bind:hidden={netHidden} legend={false} data={netData} series={netSeries} height={150} yFormat={fmtRate} />
+      </div>
+
+      <!-- Disk I/O -->
+      <div class="{card}">
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="server" size={16} class="text-primary" />Disk I/O<ChartLegend series={diskSeries} hidden={diskHidden} {latest} ontoggle={(i) => (diskHidden = { ...diskHidden, [i]: !diskHidden[i] })} /></h3>
+        <UPlotChart bind:hidden={diskHidden} legend={false} data={diskData} series={diskSeries} height={150} yFormat={fmtRate} />
       </div>
 
       <!-- CPU / memory -->

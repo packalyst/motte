@@ -10,9 +10,11 @@ package serverstats
 import (
 	"bufio"
 	"os"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -36,6 +38,7 @@ type Stats struct {
 	MemUsed  int64      `json:"mem_used"`  // bytes
 	MemTotal int64      `json:"mem_total"` // bytes
 	Net      NetRate    `json:"net"`       // bytes/sec
+	Disk     DiskStat   `json:"disk"`      // space usage + I/O throughput
 	Load     [3]float64 `json:"load"`      // 1m, 5m, 15m
 	Cores0   int        `json:"cores_n"`   // logical CPU count
 	Uptime   int64      `json:"uptime"`    // seconds since boot
@@ -48,6 +51,16 @@ type NetRate struct {
 	TX int64 `json:"tx"` // bytes/sec transmitted
 }
 
+// DiskStat is root-filesystem usage (like df's Use%) plus aggregate disk I/O across
+// the host's whole physical disks.
+type DiskStat struct {
+	UsedPct  float64 `json:"used_pct"`  // 0..100 (df-style: used / (used+avail))
+	Used     int64   `json:"used"`      // bytes used
+	Total    int64   `json:"total"`     // bytes total
+	ReadBps  int64   `json:"read_bps"`  // bytes/sec read
+	WriteBps int64   `json:"write_bps"` // bytes/sec written
+}
+
 // cpuSample is the raw jiffie counters for one CPU line in /proc/stat.
 type cpuSample struct {
 	total, idle uint64
@@ -58,11 +71,13 @@ type Collector struct {
 	broadcast func(channel string, payload interface{})
 	subCount  func(channel string) int
 
-	prevAt   time.Time
-	prevCPU  cpuSample
-	prevCore []cpuSample
-	prevRX   uint64
-	prevTX   uint64
+	prevAt    time.Time
+	prevCPU   cpuSample
+	prevCore  []cpuSample
+	prevRX    uint64
+	prevTX    uint64
+	prevDiskR uint64 // sectors read across whole disks (for the I/O delta)
+	prevDiskW uint64 // sectors written
 }
 
 // New builds a collector. broadcast/subCount are injected (ws.Broadcast /
@@ -99,6 +114,7 @@ func (c *Collector) sample() (Stats, bool) {
 
 	aggr, cores := readCPU()
 	rx, tx := readNet()
+	diskR, diskW := readDiskIO()
 
 	var s Stats
 	s.TS = now.Unix()
@@ -106,6 +122,8 @@ func (c *Collector) sample() (Stats, bool) {
 	s.MemPct, s.MemUsed, s.MemTotal = readMem()
 	s.Load = readLoad()
 	s.Uptime = readUptime()
+	// Disk space is a point-in-time reading — no baseline needed (unlike the I/O rate).
+	s.Disk.UsedPct, s.Disk.Used, s.Disk.Total = readDiskSpace()
 
 	if fresh {
 		s.CPU = cpuBusy(c.prevCPU, aggr)
@@ -123,6 +141,8 @@ func (c *Collector) sample() (Stats, bool) {
 				RX: int64(float64(rx-c.prevRX) / dt),
 				TX: int64(float64(tx-c.prevTX) / dt),
 			}
+			s.Disk.ReadBps = int64(float64((diskR-c.prevDiskR)*sectorSize) / dt)
+			s.Disk.WriteBps = int64(float64((diskW-c.prevDiskW)*sectorSize) / dt)
 		}
 	}
 
@@ -132,6 +152,8 @@ func (c *Collector) sample() (Stats, bool) {
 	c.prevCore = cores
 	c.prevRX = rx
 	c.prevTX = tx
+	c.prevDiskR = diskR
+	c.prevDiskW = diskW
 
 	return s, fresh
 }
@@ -145,6 +167,58 @@ func cpuBusy(prev, cur cpuSample) float64 {
 	di := cur.idle - prev.idle
 	busy := 100 * (1 - float64(di)/float64(dt))
 	return round1(clamp(busy))
+}
+
+// diskProbePath is a host directory bind-mounted into the api container, so statfs on it
+// reports the HOST filesystem's usage (statfs on "/" would measure the container overlay).
+// /var/log is always mounted and normally sits on the host root fs.
+const diskProbePath = "/var/log"
+
+const sectorSize = 512 // /proc/diskstats counts 512-byte sectors
+
+// wholeDisk matches whole physical disks (sda, vdb, nvme0n1, mmcblk0), NOT their
+// partitions (sda1, nvme0n1p1) or virtual devices (loop, ram, dm-*) — so summing their
+// I/O doesn't double-count partition traffic already tallied on the parent disk.
+var wholeDisk = regexp.MustCompile(`^(sd[a-z]+|vd[a-z]+|hd[a-z]+|xvd[a-z]+|nvme\d+n\d+|mmcblk\d+)$`)
+
+// readDiskSpace returns the host root-fs usage the way df reports it: used% =
+// used / (used + available). Returns zeros if the probe path can't be stat'd.
+func readDiskSpace() (pct float64, used, total int64) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(diskProbePath, &st); err != nil {
+		return 0, 0, 0
+	}
+	bs := int64(st.Bsize)
+	total = int64(st.Blocks) * bs
+	usedBlocks := int64(st.Blocks) - int64(st.Bfree)
+	availBlocks := int64(st.Bavail)
+	used = usedBlocks * bs
+	if denom := usedBlocks + availBlocks; denom > 0 {
+		pct = round1(clamp(100 * float64(usedBlocks) / float64(denom)))
+	}
+	return pct, used, total
+}
+
+// readDiskIO sums sectors read/written across the host's whole physical disks from
+// /proc/diskstats (fields: …[2]=name [5]=sectors_read [9]=sectors_written).
+func readDiskIO() (sectorsRead, sectorsWritten uint64) {
+	f, err := os.Open("/proc/diskstats")
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 10 || !wholeDisk.MatchString(fields[2]) {
+			continue
+		}
+		r, _ := strconv.ParseUint(fields[5], 10, 64)
+		w, _ := strconv.ParseUint(fields[9], 10, 64)
+		sectorsRead += r
+		sectorsWritten += w
+	}
+	return sectorsRead, sectorsWritten
 }
 
 // readCPU parses /proc/stat: the aggregate "cpu" line plus each "cpuN" line.
