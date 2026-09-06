@@ -77,107 +77,115 @@
     description="Background jobs the panel runs on a schedule — status, last/next run, and manual controls."
   />
 
-  {#if error}
-    <div class="p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">{error}</div>
-  {:else if !loading && routines.length === 0}
-    <EmptyState icon="clock" title="No routines registered" description="Background routines appear here as they register with the supervisor." />
-  {:else}
-    <div class="border border-border rounded-lg overflow-hidden">
-      <div class="overflow-x-auto">
-        <table class="data-table-table">
-          <thead>
-            <tr>
-              <th>Routine</th>
-              <th>Status</th>
-              <th class="hidden md:table-cell">Schedule</th>
-              <th class="hidden sm:table-cell">Last run</th>
-              <th class="hidden lg:table-cell">Next</th>
-              <th class="hidden lg:table-cell text-right">Runs</th>
-              <th class="text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each routines as r (r.name)}
-              {@const b = statusBadge(r)}
-              <tr class="even:bg-muted/50 align-top">
-                <td>
-                  <div class="flex items-center gap-1.5">
-                    <span class="font-medium text-foreground font-mono text-xs">{r.name}</span>
-                    <!-- Mobile: description behind an info tooltip to save space -->
-                    <span class="sm:hidden inline-flex" data-kt-tooltip>
-                      <Icon name="info-circle" size={13} class="text-muted-foreground" />
-                      <span data-kt-tooltip-content class="kt-tooltip hidden">{r.description}</span>
-                    </span>
-                  </div>
-                  <div class="hidden sm:block text-xs text-muted-foreground">{r.description}</div>
-                  <!-- Mobile: fold the hidden columns (schedule/last/next) into one line -->
-                  <div class="sm:hidden text-[11px] text-muted-foreground mt-0.5">
-                    {r.schedule}{#if r.kind !== 'daemon'} · last {when(r.last_run)} · next {when(r.next_run)}{/if}
-                    {#if r.last_error}<span class="text-destructive"> · failed</span>{/if}
-                  </div>
-                </td>
-                <td>
-                  <div class="flex items-center gap-1.5">
-                    {#if r.status === 'running'}
-                      <span class="w-2.5 h-2.5 border-2 border-info border-t-transparent rounded-full animate-spin"></span>
-                    {/if}
-                    <Badge variant={b.variant} size="sm">{b.label}</Badge>
-                  </div>
-                </td>
-                <td class="hidden md:table-cell text-muted-foreground">{r.schedule}</td>
-                <td class="hidden sm:table-cell">
-                  {#if r.kind === 'daemon'}
-                    <span class="text-muted-foreground">—</span>
-                  {:else}
-                    <div>{when(r.last_run)}</div>
-                    {#if r.last_error}
-                      <div class="text-xs text-destructive truncate max-w-[16rem]" title={r.last_error}>failed: {r.last_error}</div>
-                    {:else if r.last_duration_ms != null}
-                      <div class="text-xs text-muted-foreground">{r.last_duration_ms < 1 ? '<1' : Math.round(r.last_duration_ms)} ms</div>
-                    {/if}
-                  {/if}
-                </td>
-                <td class="hidden lg:table-cell text-muted-foreground">{r.kind === 'daemon' ? '—' : when(r.next_run)}</td>
-                <td class="hidden lg:table-cell text-right">
-                  {#if r.kind === 'daemon' || !r.history?.length}
-                    <span class="font-mono text-muted-foreground">{r.kind === 'daemon' ? '—' : r.runs}</span>
-                  {:else}
-                    <!-- Run count; hover shows the recent-run history (replaces the dots) -->
-                    <span class="font-mono text-muted-foreground cursor-help underline decoration-dotted" data-kt-tooltip>
-                      {r.runs}
-                      <span data-kt-tooltip-content class="kt-tooltip hidden text-left">
-                        {#each [...r.history].reverse() as h}
-                          <div class={h.error ? 'text-destructive' : ''}>{when(h.at)} · {h.error ? 'failed' : 'ok'}{h.duration_ms != null ? ` · ${h.duration_ms < 1 ? '<1' : Math.round(h.duration_ms)}ms` : ''}</div>
-                        {/each}
-                      </span>
-                    </span>
-                  {/if}
-                </td>
-                <td class="text-right">
-                  {#if r.kind === 'daemon'}
-                    <span class="text-xs text-muted-foreground">read-only</span>
-                  {:else}
-                    <div class="flex justify-end">
-                      <div class="kt-btn-group">
-                        <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
-                        {#if r.paused}
-                          <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
-                        {:else}
-                          <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
-                        {/if}
-                      </div>
-                    </div>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+  <div class="kt-panel">
+    {#if error}
+      <div class="kt-panel-body">
+        <div class="p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">{error}</div>
       </div>
-    </div>
+    {:else if !loading && routines.length === 0}
+      <div class="kt-panel-body">
+        <EmptyState icon="clock" title="No routines registered" description="Background routines appear here as they register with the supervisor." />
+      </div>
+    {:else}
+      <div class="kt-panel-body">
+        <div class="border border-border rounded-lg overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="data-table-table">
+              <thead>
+                <tr>
+                  <th>Routine</th>
+                  <th>Status</th>
+                  <th class="hidden md:table-cell">Schedule</th>
+                  <th class="hidden sm:table-cell">Last run</th>
+                  <th class="hidden lg:table-cell">Next</th>
+                  <th class="hidden lg:table-cell text-right">Runs</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each routines as r (r.name)}
+                  {@const b = statusBadge(r)}
+                  <tr class="even:bg-muted/50 align-top">
+                    <td>
+                      <div class="flex items-center gap-1.5">
+                        <span class="font-medium text-foreground font-mono text-xs">{r.name}</span>
+                        <!-- Mobile: description behind an info tooltip to save space -->
+                        <span class="sm:hidden inline-flex" data-kt-tooltip>
+                          <Icon name="info-circle" size={13} class="text-muted-foreground" />
+                          <span data-kt-tooltip-content class="kt-tooltip hidden">{r.description}</span>
+                        </span>
+                      </div>
+                      <div class="hidden sm:block text-xs text-muted-foreground">{r.description}</div>
+                      <!-- Mobile: fold the hidden columns (schedule/last/next) into one line -->
+                      <div class="sm:hidden text-[11px] text-muted-foreground mt-0.5">
+                        {r.schedule}{#if r.kind !== 'daemon'} · last {when(r.last_run)} · next {when(r.next_run)}{/if}
+                        {#if r.last_error}<span class="text-destructive"> · failed</span>{/if}
+                      </div>
+                    </td>
+                    <td>
+                      <div class="flex items-center gap-1.5">
+                        {#if r.status === 'running'}
+                          <span class="w-2.5 h-2.5 border-2 border-info border-t-transparent rounded-full animate-spin"></span>
+                        {/if}
+                        <Badge variant={b.variant} size="sm">{b.label}</Badge>
+                      </div>
+                    </td>
+                    <td class="hidden md:table-cell text-muted-foreground">{r.schedule}</td>
+                    <td class="hidden sm:table-cell">
+                      {#if r.kind === 'daemon'}
+                        <span class="text-muted-foreground">—</span>
+                      {:else}
+                        <div>{when(r.last_run)}</div>
+                        {#if r.last_error}
+                          <div class="text-xs text-destructive truncate max-w-[16rem]" title={r.last_error}>failed: {r.last_error}</div>
+                        {:else if r.last_duration_ms != null}
+                          <div class="text-xs text-muted-foreground">{r.last_duration_ms < 1 ? '<1' : Math.round(r.last_duration_ms)} ms</div>
+                        {/if}
+                      {/if}
+                    </td>
+                    <td class="hidden lg:table-cell text-muted-foreground">{r.kind === 'daemon' ? '—' : when(r.next_run)}</td>
+                    <td class="hidden lg:table-cell text-right">
+                      {#if r.kind === 'daemon' || !r.history?.length}
+                        <span class="font-mono text-muted-foreground">{r.kind === 'daemon' ? '—' : r.runs}</span>
+                      {:else}
+                        <!-- Run count; hover shows the recent-run history (replaces the dots) -->
+                        <span class="font-mono text-muted-foreground cursor-help underline decoration-dotted" data-kt-tooltip>
+                          {r.runs}
+                          <span data-kt-tooltip-content class="kt-tooltip hidden text-left">
+                            {#each [...r.history].reverse() as h}
+                              <div class={h.error ? 'text-destructive' : ''}>{when(h.at)} · {h.error ? 'failed' : 'ok'}{h.duration_ms != null ? ` · ${h.duration_ms < 1 ? '<1' : Math.round(h.duration_ms)}ms` : ''}</div>
+                            {/each}
+                          </span>
+                        </span>
+                      {/if}
+                    </td>
+                    <td class="text-right">
+                      {#if r.kind === 'daemon'}
+                        <span class="text-xs text-muted-foreground">read-only</span>
+                      {:else}
+                        <div class="flex justify-end">
+                          <div class="kt-btn-group">
+                            <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
+                            {#if r.paused}
+                              <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
+                            {:else}
+                              <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
+                            {/if}
+                          </div>
+                        </div>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
-    <p class="text-xs text-muted-foreground px-1">
-      Hover a run count to see recent-run history. Daemons are always-on loops — status only.
-    </p>
-  {/if}
+        <p class="text-xs text-muted-foreground mt-3">
+          Hover a run count to see recent-run history. Daemons are always-on loops — status only.
+        </p>
+      </div>
+    {/if}
+  </div>
 </div>
