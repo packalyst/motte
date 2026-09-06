@@ -77,21 +77,17 @@
     description="Background jobs the panel runs on a schedule — status, last/next run, and manual controls."
   />
 
-  <div class="kt-panel">
+  <div class="data-table">
     {#if error}
-      <div class="kt-panel-body">
-        <div class="p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">{error}</div>
-      </div>
+      <div class="p-3 m-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">{error}</div>
     {:else if !loading && routines.length === 0}
-      <div class="kt-panel-body">
+      <div class="data-table-empty">
         <EmptyState icon="clock" title="No routines registered" description="Background routines appear here as they register with the supervisor." />
       </div>
     {:else}
-      <div class="kt-panel-body">
-        <div class="border border-border rounded-lg overflow-hidden">
-          <div class="overflow-x-auto">
-            <table class="data-table-table">
-              <thead>
+      <div class="data-table-content">
+        <table>
+          <thead>
                 <tr>
                   <th>Routine</th>
                   <th>Status</th>
@@ -105,7 +101,7 @@
               <tbody>
                 {#each routines as r (r.name)}
                   {@const b = statusBadge(r)}
-                  <tr class="even:bg-muted/50 align-top">
+                  <tr class="align-top">
                     <td>
                       <div class="flex items-center gap-1.5">
                         <span class="font-medium text-foreground font-mono text-xs">{r.name}</span>
@@ -179,12 +175,9 @@
                 {/each}
               </tbody>
             </table>
-          </div>
-        </div>
-
-        <p class="text-xs text-muted-foreground mt-3">
-          Hover a run count to see recent-run history. Daemons are always-on loops — status only.
-        </p>
+      </div>
+      <div class="data-table-footer">
+        <span class="data-table-footer-info">Hover a run count to see recent-run history. Daemons are always-on loops — status only.</span>
       </div>
     {/if}
   </div>
