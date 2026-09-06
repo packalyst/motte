@@ -37,28 +37,54 @@ func TestMarkActiveMembership(t *testing.T) {
 	}
 }
 
-// TestBuildActiveSessions: one row per (user, IP) with the live count and the NEWEST
-// matching login time — a stale (17d-old) record must not become the shown time.
+// TestBuildActiveSessions: the shown time comes from loginctl's session Timestamp
+// (authoritative), NOT the ledger — even when the ledger's newest record is stale.
 func TestBuildActiveSessions(t *testing.T) {
 	base := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	recent := []loginEvent{
-		{User: "alice", IP: "198.51.100.7", When: base.Add(-17 * 24 * time.Hour)}, // stale
-		{User: "alice", IP: "198.51.100.7", When: base},                           // newest
+		{User: "alice", IP: "198.51.100.7", When: base.Add(-17 * 24 * time.Hour), Country: "RO"}, // stale ledger
 	}
-	got := buildActiveSessions(recent, map[string]int{"alice\x00198.51.100.7": 3})
+	live := liveSessions{
+		counts: map[string]int{"alice\x00198.51.100.7": 3},
+		newest: map[string]time.Time{"alice\x00198.51.100.7": base}, // loginctl: session started "now"
+	}
+	got := buildActiveSessions(recent, live)
 	if len(got) != 1 {
 		t.Fatalf("want 1 active row, got %d", len(got))
 	}
-	if got[0].User != "alice" || got[0].IP != "198.51.100.7" || got[0].Count != 3 {
+	if got[0].Count != 3 || got[0].Country != "RO" {
 		t.Errorf("unexpected row: %+v", got[0])
 	}
 	if !got[0].When.Equal(base) {
-		t.Errorf("When should be the NEWEST matching login (%v), got %v", base, got[0].When)
+		t.Errorf("When must be loginctl's session time (%v), not the stale ledger, got %v", base, got[0].When)
+	}
+}
+
+// TestBuildActiveSessionsFallbackTime: with no loginctl time (who fallback), fall back to
+// the newest matching ledger record.
+func TestBuildActiveSessionsFallbackTime(t *testing.T) {
+	base := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	recent := []loginEvent{{User: "alice", IP: "1.2.3.4", When: base}}
+	live := liveSessions{counts: map[string]int{"alice\x001.2.3.4": 1}, newest: map[string]time.Time{}}
+	got := buildActiveSessions(recent, live)
+	if len(got) != 1 || !got[0].When.Equal(base) {
+		t.Errorf("fallback time should be the ledger's: %+v", got)
 	}
 }
 
 func TestBuildActiveSessionsNone(t *testing.T) {
-	if got := buildActiveSessions(nil, map[string]int{}); len(got) != 0 {
+	empty := liveSessions{counts: map[string]int{}, newest: map[string]time.Time{}}
+	if got := buildActiveSessions(nil, empty); len(got) != 0 {
 		t.Errorf("no sessions => empty, got %d", len(got))
+	}
+}
+
+// TestParseLoginctlTime: the exact loginctl format, in a known offset.
+func TestParseLoginctlTime(t *testing.T) {
+	loc := time.FixedZone("host", 3*3600) // +0300 (EEST)
+	got := parseLoginctlTime("Sun 2026-09-06 15:10:50 EEST", loc)
+	want := time.Date(2026, 9, 6, 15, 10, 50, 0, loc)
+	if !got.Equal(want) {
+		t.Errorf("parseLoginctlTime = %v, want %v", got, want)
 	}
 }

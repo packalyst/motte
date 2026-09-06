@@ -189,9 +189,9 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 	// belong to a still-connected (user, IP) so the alarms can exclude them, and build the
 	// one-row-per-(user,IP) active list the card shows — from live sessions, not the ledger,
 	// so it never surfaces a stale login.
-	counts := activeSessionCounts()
-	markActiveMembership(rep.Logins.Recent, counts)
-	rep.Logins.Active = buildActiveSessions(rep.Logins.Recent, counts)
+	live := activeSessions()
+	markActiveMembership(rep.Logins.Recent, live.counts)
+	rep.Logins.Active = buildActiveSessions(rep.Logins.Recent, live)
 
 	rep.Packages = s.recentPackages(now)
 	rep.Sudo.Failed = s.recentSudoFailures(now) // persisted failures with session IP

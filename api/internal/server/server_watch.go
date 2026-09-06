@@ -163,33 +163,34 @@ func whoSessions() map[string]string {
 	return m
 }
 
-// activeSessionCounts counts the sessions currently open, keyed by user+IP, so a
-// historical login can be flagged "active" when a live session matches it. Using a
-// count (not a bool) means N live sessions from the same user+IP mark the N most
-// recent matching logins — not all of them.
-//
-// Source: systemd-logind (loginctl) — the authoritative, per-connection view. `who` lists
-// one row per pty, so a multiplexed/tmux connection over-counts (6 ptys for 3 real SSH
-// connections); loginctl is one session per connection with the remote IP. Falls back to
-// `who` on non-systemd hosts or when loginctl isn't reachable.
-func activeSessionCounts() map[string]int {
-	if counts := loginctlSessionCounts(); counts != nil {
-		return counts
+// liveSessions is the set of currently-open sessions: a per-(user\x00IP) connection count,
+// plus the most recent session start time per key. The times come from loginctl's own
+// session Timestamp (authoritative — no dependence on the login ledger); newest is empty for
+// the `who` fallback.
+type liveSessions struct {
+	counts map[string]int
+	newest map[string]time.Time
+}
+
+// activeSessions returns the currently-open sessions from systemd-logind (loginctl) — the
+// authoritative per-connection view, with each session's real start time. Falls back to
+// `who` (counts only, no times) on non-systemd hosts or when loginctl isn't reachable.
+func activeSessions() liveSessions {
+	if ls, ok := loginctlSessions(); ok {
+		return ls
 	}
-	// Fallback: `who` (one row per pty — may over-count multiplexed connections).
+	// Fallback: `who` (one row per pty — may over-count multiplexed connections; no time).
 	counts := map[string]int{}
 	for _, line := range runWho() {
 		f := strings.Fields(line)
 		if len(f) < 2 {
 			continue
 		}
-		host := whoHost(line)
-		if host == "" {
-			continue
+		if host := whoHost(line); host != "" {
+			counts[f[0]+"\x00"+host]++
 		}
-		counts[f[0]+"\x00"+host]++
 	}
-	return counts
+	return liveSessions{counts: counts, newest: map[string]time.Time{}}
 }
 
 // sessionIDRe bounds a loginctl session id to a safe token before it's ever passed to
@@ -204,16 +205,51 @@ func runNsenter(args ...string) (string, error) {
 	return string(out), err
 }
 
-// loginctlSessionCounts returns currently-open sessions keyed by user+remote-IP via
-// systemd-logind. Returns nil (not an empty map) when loginctl can't be reached, so the
-// caller falls back to `who`; an empty map means "reachable, no remote sessions". Only
-// sessions with a parseable remote IP are counted (local console sessions have none and
-// aren't relevant to the remote-login card), and each remote host is validated as an IP so
-// a crafted RemoteHost can't be matched against IP-based login records.
-func loginctlSessionCounts() map[string]int {
+// hostTZOffset returns the host's current UTC offset as a fixed zone. loginctl prints session
+// times in local wall-clock with only a zone abbreviation ("EEST") that Go can't parse, so we
+// read the numeric offset from the host via `date +%z` and apply it. UTC if unreadable.
+func hostTZOffset() *time.Location {
+	out, err := runNsenter("date", "+%z")
+	s := strings.TrimSpace(out)
+	if err != nil || len(s) != 5 || (s[0] != '+' && s[0] != '-') {
+		return time.UTC
+	}
+	hh, e1 := strconv.Atoi(s[1:3])
+	mm, e2 := strconv.Atoi(s[3:5])
+	if e1 != nil || e2 != nil {
+		return time.UTC
+	}
+	secs := hh*3600 + mm*60
+	if s[0] == '-' {
+		secs = -secs
+	}
+	return time.FixedZone("host", secs)
+}
+
+// parseLoginctlTime parses loginctl's "Sun 2026-09-06 15:10:50 EEST": drop the leading weekday
+// and trailing zone abbreviation, interpret the wall clock in the host's offset.
+func parseLoginctlTime(s string, loc *time.Location) time.Time {
+	f := strings.Fields(s) // [Sun, 2026-09-06, 15:10:50, EEST]
+	if len(f) < 3 {
+		return time.Time{}
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", f[1]+" "+f[2], loc)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// loginctlSessions returns currently-open sessions keyed by user+remote-IP via systemd-logind,
+// with each key's most recent session start time (loginctl's own Timestamp). Returns ok=false
+// when loginctl can't be reached (caller falls back to `who`); ok=true with empty maps means
+// "reachable, no remote sessions". Only sessions with a parseable remote IP are counted (local
+// console sessions have none), and each RemoteHost is validated as an IP so a crafted value
+// can't be matched against IP-based login records.
+func loginctlSessions() (liveSessions, bool) {
 	listOut, err := runNsenter("loginctl", "list-sessions", "--no-legend")
 	if err != nil {
-		return nil // loginctl not reachable — signal fallback to who
+		return liveSessions{}, false // loginctl not reachable — signal fallback to who
 	}
 	var ids []string
 	for _, line := range strings.Split(listOut, "\n") {
@@ -222,24 +258,30 @@ func loginctlSessionCounts() map[string]int {
 			ids = append(ids, f[0])
 		}
 	}
+	ls := liveSessions{counts: map[string]int{}, newest: map[string]time.Time{}}
 	if len(ids) == 0 {
-		return map[string]int{} // reachable, no sessions
+		return ls, true // reachable, no sessions
 	}
 
-	// One show-session call for all ids; properties print per session, blocks separated by
-	// a blank line.
-	args := append([]string{"loginctl", "show-session", "--property=Name", "--property=RemoteHost"}, ids...)
+	// One show-session call for all ids; properties print per session, blocks separated by a
+	// blank line.
+	args := append([]string{"loginctl", "show-session", "--property=Name", "--property=RemoteHost", "--property=Timestamp"}, ids...)
 	showOut, err := runNsenter(args...)
 	if err != nil {
-		return nil
+		return liveSessions{}, false
 	}
-	counts := map[string]int{}
+	loc := hostTZOffset()
 	var user, host string
+	var when time.Time
 	flush := func() {
 		if user != "" && host != "" && net.ParseIP(host) != nil {
-			counts[user+"\x00"+host]++
+			key := user + "\x00" + host
+			ls.counts[key]++
+			if when.After(ls.newest[key]) {
+				ls.newest[key] = when
+			}
 		}
-		user, host = "", ""
+		user, host, when = "", "", time.Time{}
 	}
 	for _, line := range strings.Split(showOut, "\n") {
 		line = strings.TrimSpace(line)
@@ -250,10 +292,12 @@ func loginctlSessionCounts() map[string]int {
 			user = strings.TrimPrefix(line, "Name=")
 		case strings.HasPrefix(line, "RemoteHost="):
 			host = strings.TrimPrefix(line, "RemoteHost=")
+		case strings.HasPrefix(line, "Timestamp="):
+			when = parseLoginctlTime(strings.TrimPrefix(line, "Timestamp="), loc)
 		}
 	}
 	flush() // final block has no trailing blank line
-	return counts
+	return ls, true
 }
 
 // markActiveMembership flags each ledger record whose (user, IP) currently has at least one
@@ -271,13 +315,13 @@ func markActiveMembership(recent []loginEvent, counts map[string]int) {
 	}
 }
 
-// buildActiveSessions turns the live session counts (from loginctl) into one row per
-// (user, IP): how many live connections, plus the most recent matching login from the
-// ledger for its time/geo. This replaces the old "flag the k newest ledger records"
-// heuristic, which could surface a stale (long-closed) login as if it were current.
-func buildActiveSessions(recent []loginEvent, counts map[string]int) []activeSession {
+// buildActiveSessions turns the live sessions into one row per (user, IP): the live connection
+// count and the newest session start time — taken from loginctl's own Timestamp (authoritative,
+// so it can't surface a stale login). The login ledger only supplies country/owner (loginctl has
+// none) and a fallback time when loginctl gave none (the `who` path).
+func buildActiveSessions(recent []loginEvent, live liveSessions) []activeSession {
 	out := []activeSession{}
-	for key, n := range counts {
+	for key, n := range live.counts {
 		if n <= 0 {
 			continue
 		}
@@ -285,12 +329,18 @@ func buildActiveSessions(recent []loginEvent, counts map[string]int) []activeSes
 		if !ok || ip == "" {
 			continue
 		}
-		s := activeSession{User: user, IP: ip, Count: n, Root: user == "root"}
-		for _, l := range recent { // newest matching ledger record → time + geo
-			if l.User == user && l.IP == ip && l.When.After(s.When) {
-				s.When = l.When
+		s := activeSession{User: user, IP: ip, Count: n, Root: user == "root", When: live.newest[key]}
+		// loginctl has no geo — pull country/owner (and a fallback time) from the newest
+		// matching ledger record.
+		var ledgerWhen time.Time
+		for _, l := range recent {
+			if l.User == user && l.IP == ip && l.When.After(ledgerWhen) {
+				ledgerWhen = l.When
 				s.Country, s.Owner = l.Country, l.Owner
 			}
+		}
+		if s.When.IsZero() {
+			s.When = ledgerWhen
 		}
 		out = append(out, s)
 	}
