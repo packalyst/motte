@@ -275,7 +275,8 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"ChangeSSHPort": s.handleChangeSSHPort,
 
 		// Jails (fail2ban)
-		"GetJails":   s.handleGetJails,
+		"GetLogFiles": s.handleGetLogFiles,
+		"GetJails":    s.handleGetJails,
 		"CreateJail": s.handleCreateJail,
 		"GetJail":    s.handleGetJail,
 		"UpdateJail": s.handleUpdateJail,

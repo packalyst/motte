@@ -366,6 +366,14 @@
           "description": "Remove allowed port"
         },
         {
+          "path": "/log-files",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetLogFiles",
+          "description": "List candidate log files for the jail picker"
+        },
+        {
           "path": "/jails",
           "methods": [
             "GET"

@@ -157,6 +157,8 @@
   let showSSHModal = $state(false)
   let newSSHPort = $state('')
   let changingSSH = $state(false)
+  let logFileOptions = $state([]) // candidate log files for the jail picker (from /api/fw/log-files)
+  let logFileCustom = $state(false) // jail form: user is typing a custom log path
   let jailForm = $state({
     id: null,
     name: '',
@@ -284,17 +286,19 @@
       itemsPerPage = localStorage.getItem('settings_items_per_page') || '25'
 
       // Load independent resources in parallel - each can fail without blocking others
-      const [watcherRes, jailsRes, fwStatusRes, portsRes] = await Promise.allSettled([
+      const [watcherRes, jailsRes, fwStatusRes, portsRes, logFilesRes] = await Promise.allSettled([
         apiGet('/api/logs/status'),
         apiGet('/api/fw/jails'),
         apiGet('/api/fw/status'),
-        apiGet('/api/fw/ports')
+        apiGet('/api/fw/ports'),
+        apiGet('/api/fw/log-files')
       ])
 
       if (watcherRes.status === 'fulfilled') watcherStatuses = watcherRes.value
       if (jailsRes.status === 'fulfilled') jails = jailsRes.value.jails || jailsRes.value || []
       if (fwStatusRes.status === 'fulfilled' && fwStatusRes.value?.sshPort) sshPort = fwStatusRes.value.sshPort
       if (portsRes.status === 'fulfilled') ports = portsRes.value.ports || portsRes.value || []
+      if (logFilesRes.status === 'fulfilled') logFileOptions = logFilesRes.value.files || []
     } catch (e) {
       toast('Failed to load settings: ' + e.message, 'error')
     } finally {
@@ -719,6 +723,7 @@
       escalateAsnThreshold: 15,
       escalateAsnWindow: 3600
     }
+    logFileCustom = false // default /var/log/auth.log is a listed option
     showJailModal = true
   }
 
@@ -741,6 +746,8 @@
       escalateAsnThreshold: jail.escalateAsnThreshold || 15,
       escalateAsnWindow: jail.escalateAsnWindow || 3600
     }
+    // Custom-input mode when the jail's log path isn't one of the discovered files.
+    logFileCustom = !logFileOptions.some(f => f.path === jail.logFile)
     showJailModal = true
   }
 
@@ -2041,11 +2048,29 @@
       </Select>
     </div>
 
-    <Input
-      label="Log File"
-      bind:value={jailForm.logFile}
-      placeholder="/var/log/auth.log"
-    />
+    <div>
+      <Select
+        label="Log File"
+        value={logFileCustom ? '__custom__' : jailForm.logFile}
+        onchange={(e) => {
+          if (e.target.value === '__custom__') { logFileCustom = true }
+          else { logFileCustom = false; jailForm.logFile = e.target.value }
+        }}
+      >
+        {#each logFileOptions as f}
+          <option value={f.path}>{f.path}</option>
+        {/each}
+        <option value="__custom__">Custom path…</option>
+      </Select>
+      {#if logFileCustom}
+        <Input
+          bind:value={jailForm.logFile}
+          placeholder="/var/log/auth.log"
+          class="mt-2 font-mono"
+          helperText="Must be under /var/log, /home, /var/lib/docker, or the data dir"
+        />
+      {/if}
+    </div>
 
     <Input
       label="Filter Regex"
