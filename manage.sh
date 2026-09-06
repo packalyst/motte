@@ -1345,11 +1345,12 @@ if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
     echo "    6) Backup         Back up SSL certificates"
     echo "    7) Logs           Follow container logs"
     echo "    8) Clean          Remove containers, volumes, images"
+    echo "    9) Rotate key     Re-encrypt all secrets under a new key"
     echo ""
-    echo "    9) Exit"
+    echo "   10) Exit"
     echo ""
 
-    read -p "Enter your choice [1-9]: " choice
+    read -p "Enter your choice [1-10]: " choice
 
     case "$choice" in
         1)
@@ -1433,6 +1434,10 @@ if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
             exit 0
             ;;
         9)
+            rotate_key
+            exit 0
+            ;;
+        10)
             echo -e "${BLUE}Exiting...${NC}"
             exit 0
             ;;
