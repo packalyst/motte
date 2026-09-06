@@ -37,7 +37,7 @@ func (s *Service) HandleInstallScript(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	panelHost, live := s.lookupToken(token)
 	if !live {
-		writeErrorScript(w, "enrollment token is invalid, already used, or expired.\nGenerate a fresh one in the panel (Machines -> Add a machine).")
+		writeErrorScript(w, "enrollment token is invalid or expired.")
 		return
 	}
 	arch, ok := archAlias[strings.ToLower(strings.TrimSpace(r.URL.Query().Get("arch")))]

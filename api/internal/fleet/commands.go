@@ -26,6 +26,7 @@ var allowedCommands = map[string]bool{
 	"set-dry-run":   true, // flip enforcement on/off (dry-run) live
 	"update-agent":  true, // self-update the wgscout binary to the latest verified release
 	"set-log-level": true, // flip agent+sub-agent verbosity live (quiet|debug)
+	"set-panel-port": true, // tell the agent the panel's mTLS port changed (reconnect)
 }
 
 // Command is one queued instruction for a machine.

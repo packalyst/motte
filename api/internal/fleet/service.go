@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log"
 	"net"
@@ -49,6 +50,15 @@ type Service struct {
 	enabled bool
 	port    int
 	srv     *http.Server
+
+	// Live port migration (dual-listen grace window). When the port changes with agents
+	// enrolled, the new listener starts while the old one (oldSrv/oldPort) stays up until
+	// every agent acks set-panel-port or migrateEndsAt passes — so none are stranded.
+	oldSrv        *http.Server
+	oldPort       int
+	migrating     bool
+	migrateEndsAt time.Time
+	migrateIDs    []string
 
 	clientCertTTL time.Duration
 }
@@ -134,8 +144,15 @@ func (s *Service) applyConfig(enabled bool, port int) {
 		return
 	}
 	if s.srv != nil {
-		s.stopLocked()
+		s.closeListenerLocked(s.srv, s.port)
+		s.srv = nil
 	}
+	s.startListenerLocked(port)
+}
+
+// startListenerLocked opens the firewall port and starts a new mTLS server on it,
+// recording it as the current listener. Caller holds s.mu.
+func (s *Service) startListenerLocked(port int) {
 	if s.openPort != nil {
 		if err := s.openPort(port); err != nil {
 			log.Printf("fleet: could not open firewall port %d: %v", port, err)
@@ -163,19 +180,144 @@ func (s *Service) applyConfig(enabled bool, port int) {
 	}()
 }
 
-// stopLocked shuts the listener and closes the firewall port. Caller holds s.mu.
-func (s *Service) stopLocked() {
-	if s.srv != nil {
-		_ = s.srv.Close()
-		s.srv = nil
-		log.Printf("fleet: mTLS listener on :%d stopped", s.port)
+// closeListenerLocked shuts a specific server and closes its firewall port. Caller
+// holds s.mu.
+func (s *Service) closeListenerLocked(srv *http.Server, port int) {
+	if srv != nil {
+		_ = srv.Close()
+		log.Printf("fleet: mTLS listener on :%d stopped", port)
 	}
-	if s.closePort != nil && s.port != 0 {
-		if err := s.closePort(s.port); err != nil {
-			log.Printf("fleet: could not close firewall port %d: %v", s.port, err)
+	if s.closePort != nil && port != 0 {
+		if err := s.closePort(port); err != nil {
+			log.Printf("fleet: could not close firewall port %d: %v", port, err)
 		}
 	}
+}
+
+// stopLocked shuts the current listener (and any lingering migration listener) and
+// closes their firewall ports. Caller holds s.mu.
+func (s *Service) stopLocked() {
+	s.closeListenerLocked(s.srv, s.port)
+	s.srv = nil
+	if s.oldSrv != nil {
+		s.closeListenerLocked(s.oldSrv, s.oldPort)
+		s.oldSrv, s.oldPort = nil, 0
+	}
+	s.migrating = false
+	s.migrateIDs = nil
 	s.enabled = false
+}
+
+// portMigrationGrace bounds how long the OLD port stays open after a change: agents
+// online at the time migrate within ~10s (their poll interval); this cap only affects
+// machines powered off during the window (they strand and need reinstall).
+const portMigrationGrace = 5 * time.Minute
+
+// beginPortMigration switches the listener to newPort WITHOUT stranding agents: it opens
+// the new port while keeping the old one live, queues set-panel-port for every enrolled
+// machine, and closes the old port once all have acked or after portMigrationGrace.
+// Caller must have verified a real port change with machines present and no migration
+// already in flight.
+func (s *Service) beginPortMigration(oldPort, newPort int, machines []Machine) {
+	payload, _ := json.Marshal(map[string]int{"port": newPort})
+	ids := make([]string, 0, len(machines))
+	for _, m := range machines {
+		id, err := s.Enqueue(m.ID, "set-panel-port", payload)
+		if err != nil {
+			log.Printf("fleet: queue set-panel-port for %s: %v", m.ID, err)
+			continue
+		}
+		ids = append(ids, id)
+		s.broadcastCommands(m.ID)
+	}
+
+	s.mu.Lock()
+	s.oldSrv, s.oldPort = s.srv, s.port
+	s.srv = nil
+	s.startListenerLocked(newPort) // sets s.srv + s.port to the new listener
+	s.migrating = true
+	s.migrateEndsAt = time.Now().Add(portMigrationGrace)
+	s.migrateIDs = ids
+	s.mu.Unlock()
+
+	log.Printf("fleet: port migration %d -> %d, notified %d machine(s); old port open up to %s",
+		oldPort, newPort, len(ids), portMigrationGrace)
+	go s.watchMigration()
+}
+
+// watchMigration closes the old listener once every migrated machine has acked
+// set-panel-port, or when the grace window expires — whichever comes first.
+func (s *Service) watchMigration() {
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for range tick.C {
+		s.mu.Lock()
+		if !s.migrating {
+			s.mu.Unlock()
+			return
+		}
+		expired := time.Now().After(s.migrateEndsAt)
+		if !expired && !s.allAckedLocked() {
+			s.mu.Unlock()
+			continue
+		}
+		s.closeListenerLocked(s.oldSrv, s.oldPort)
+		reason := "all agents acked"
+		if expired {
+			reason = "grace window elapsed"
+		}
+		log.Printf("fleet: port migration complete (%s) — old port %d closed", reason, s.oldPort)
+		s.oldSrv, s.oldPort = nil, 0
+		s.migrating = false
+		s.migrateIDs = nil
+		s.mu.Unlock()
+		return
+	}
+}
+
+// allAckedLocked reports whether every set-panel-port command from the current migration
+// has been acked (status left pending/delivered) — i.e. the agent received it. Caller
+// holds s.mu.
+func (s *Service) allAckedLocked() bool {
+	if len(s.migrateIDs) == 0 {
+		return true
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(s.migrateIDs)), ",")
+	args := make([]any, len(s.migrateIDs))
+	for i, id := range s.migrateIDs {
+		args[i] = id
+	}
+	var pending int
+	q := `SELECT COUNT(*) FROM fleet_commands WHERE id IN (` + placeholders + `) AND status IN ('pending','delivered')`
+	if err := s.db.QueryRow(q, args...).Scan(&pending); err != nil {
+		return false
+	}
+	return pending == 0
+}
+
+// migrationState reports whether a live port migration is in progress and when its
+// grace window (both ports open) ends.
+func (s *Service) migrationState() (active bool, endsAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.migrating, s.migrateEndsAt
+}
+
+// enrolledMachines returns the machines a port change must reach: enrolled, not revoked,
+// not already uninstalled.
+func (s *Service) enrolledMachines() []Machine {
+	all, err := s.ListMachines()
+	if err != nil {
+		return nil
+	}
+	out := make([]Machine, 0, len(all))
+	for _, m := range all {
+		if m.Revoked || m.Status == "uninstalled" {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // Status reports the current listener state (for the admin UI).

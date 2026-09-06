@@ -36,6 +36,34 @@
   let cfgPort = $state(9443)
   let savingCfg = $state(false)
 
+  // port migration: while both ports are open, the config is locked (a second change
+  // would strand agents). Driven by ep.migrating + ep.migrate_ends_at; we tick a clock
+  // and re-poll endpoints so it unlocks the moment the panel finishes.
+  let now = $state(Date.now())
+  const migrating = $derived(!!ep?.migrating)
+  const migrateLeft = $derived(
+    migrating && ep?.migrate_ends_at
+      ? Math.max(0, Math.ceil((new Date(ep.migrate_ends_at).getTime() - now) / 1000))
+      : 0
+  )
+  $effect(() => {
+    if (!migrating) return
+    let n = 0
+    const t = setInterval(async () => {
+      now = Date.now()
+      if (++n % 5 === 0) {
+        try {
+          const fresh = await apiGet('/api/fleet/endpoints')
+          if (!savingCfg) {
+            ep = { ...ep, ...fresh }
+            if (!fresh.migrating) { cfgPort = fresh.port; cfgEnabled = fresh.enabled }
+          }
+        } catch { /* keep last state */ }
+      }
+    }, 1000)
+    return () => clearInterval(t)
+  })
+
   // add-machine
   let selectedHost = $state('') // direct origin IP the agent dials for mTLS
   let creating = $state(false)
@@ -184,8 +212,13 @@
   async function saveConfig() {
     savingCfg = true
     try {
-      ep = { ...ep, ...(await apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort) })) }
-      toast(cfgEnabled ? `Fleet listener on :${ep.port}` : 'Fleet listener off', 'success')
+      const res = await apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort) })
+      ep = { ...ep, ...res }
+      if (res.migrating) {
+        toast('New port published to agents — old port stays open ~5 min while they reconnect', 'success')
+      } else {
+        toast(cfgEnabled ? `Fleet listener on :${ep.port}` : 'Fleet listener off', 'success')
+      }
       await load()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
@@ -293,20 +326,27 @@
           <span class="w-9 h-9 rounded-lg grid place-items-center border {ep?.listening ? 'bg-success/10 border-success/30 text-success' : 'bg-muted border-border text-muted-foreground'}">
             <Icon name={ep?.listening ? 'lock-open' : 'lock'} size={17} />
           </span>
-          <Checkbox variant="switch" bind:checked={cfgEnabled} onchange={saveConfig}
+          <Checkbox variant="switch" bind:checked={cfgEnabled} onchange={saveConfig} disabled={migrating}
             label="Agent listener"
             helperText={ep?.listening ? `Door open · accepting agents on :${ep.port}` : 'Closed · no agents can connect'} />
         </div>
         <div class="ml-auto w-full sm:w-auto">
           <Input type="number" bind:value={cfgPort} min="1" max="65535" prefixIcon="plug-connected"
-            class="w-40" label="Port"
-            suffixAddonBtn={{ icon: 'device-floppy', label: 'Save', variant: 'primary', onclick: saveConfig, disabled: savingCfg }} />
+            class="w-40" label="Port" disabled={migrating}
+            suffixAddonBtn={{ icon: 'device-floppy', label: 'Save', variant: 'primary', onclick: saveConfig, disabled: savingCfg || migrating }} />
         </div>
       </div>
-      <p class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border flex items-start gap-1.5">
-        <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />
-        Turning this on opens the port through the firewall automatically and starts the mutual-TLS listener — nothing to edit in env or compose.
-      </p>
+      {#if migrating}
+        <p class="text-[11px] text-warning mt-3 pt-3 border-t border-dashed border-border flex items-start gap-1.5">
+          <Icon name="refresh" size={13} class="mt-0.5 shrink-0 animate-spin" />
+          Changing port — agents are being notified of the new port ({ep.port}). The old port stays open ~{migrateLeft}s more so they reconnect; config is locked until then.
+        </p>
+      {:else}
+        <p class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border flex items-start gap-1.5">
+          <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />
+          Turning this on opens the port through the firewall automatically and starts the mutual-TLS listener — nothing to edit in env or compose.
+        </p>
+      {/if}
     </div>
 
     <!-- Add machine — only once the listener is on (nothing can enroll otherwise) -->

@@ -3,6 +3,7 @@ package fleet
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -106,6 +107,16 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "port out of range", http.StatusBadRequest)
 		return
 	}
+	// A port migration keeps both ports open for a grace window; a second change mid-flight
+	// would strand agents between three ports. Reject any config change until it finishes.
+	if active, endsAt := s.migrationState(); active {
+		secs := int(time.Until(endsAt).Seconds()) + 1
+		router.JSONError(w, fmt.Sprintf("port migration in progress — try again in ~%ds", secs), http.StatusConflict)
+		return
+	}
+
+	oldEnabled, oldPort := s.Status()
+
 	if err := s.setSetting(settingEnabled, boolStr(req.Enabled)); err != nil {
 		router.JSONError(w, "save failed", http.StatusInternalServerError)
 		return
@@ -114,10 +125,41 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "save failed", http.StatusInternalServerError)
 		return
 	}
-	s.ReloadFromSettings()
-	enabled, port := s.Status()
-	router.JSON(w, map[string]any{"enabled": enabled, "port": s.effectivePort(), "listening": enabled})
-	_ = port
+
+	// A live port change with agents enrolled migrates gracefully (dual-listen + notify),
+	// instead of the hard switch ReloadFromSettings would do (which strands them).
+	migrating := false
+	if oldEnabled && req.Enabled && req.Port != oldPort {
+		if machines := s.enrolledMachines(); len(machines) > 0 {
+			s.beginPortMigration(oldPort, req.Port, machines)
+			if err := s.ApplyInstallRoute(); err != nil {
+				log.Printf("fleet: install route apply: %v", err)
+			}
+			migrating = true
+		}
+	}
+	if !migrating {
+		s.ReloadFromSettings()
+	}
+
+	enabled, _ := s.Status()
+	active, endsAt := s.migrationState()
+	router.JSON(w, map[string]any{
+		"enabled":         enabled,
+		"port":            s.effectivePort(),
+		"listening":       enabled,
+		"migrating":       active,
+		"migrate_ends_at": rfc3339OrEmpty(endsAt),
+	})
+}
+
+// rfc3339OrEmpty formats a time as RFC3339, or "" for the zero value (so the UI can
+// treat an absent migration deadline as "not migrating").
+func rfc3339OrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func boolStr(b bool) string {
@@ -137,14 +179,17 @@ type createTokenRequest struct {
 // panel on, so the Add-Machine dialog can offer WG vs public without env vars.
 func (s *Service) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 	enabled, _ := s.Status()
+	active, endsAt := s.migrationState()
 	router.JSON(w, map[string]any{
-		"enabled":       enabled,
-		"port":          s.effectivePort(),
-		"listening":     enabled,
-		"domain":        s.sslDomain,        // download domain the install command uses (empty ⇒ none)
-		"hosts":         s.HostCandidates(), // addresses the agent could dial for mTLS (operator picks)
-		"fingerprint":   s.ca.Fingerprint(),
-		"agent_version": s.agentCache.LatestVersion(r.Context()), // latest published, for "update available"
+		"enabled":         enabled,
+		"port":            s.effectivePort(),
+		"listening":       enabled,
+		"domain":          s.sslDomain,        // download domain the install command uses (empty ⇒ none)
+		"hosts":           s.HostCandidates(), // addresses the agent could dial for mTLS (operator picks)
+		"fingerprint":     s.ca.Fingerprint(),
+		"agent_version":   s.agentCache.LatestVersion(r.Context()), // latest published, for "update available"
+		"migrating":       active,                                  // a port migration is in flight — lock the port field
+		"migrate_ends_at": rfc3339OrEmpty(endsAt),                  // when both ports close down to the new one
 	})
 }
 
