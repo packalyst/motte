@@ -291,7 +291,8 @@ The panel runs many periodic background jobs (Cloudflare-IP refresh, cleanups, s
 - **Control:** `RunNow` / `Pause` / `Resume` (run-now overrides pause). Exposed at `/api/routines` (see [api-surface.md](api-surface.md)) and surfaced on the **Routines** page.
 - **Live updates:** `SetBroadcaster(fn)` (wired in `main` to `ws.Broadcast`) pushes the full list on every state change over the `routines` WebSocket channel — the page loads once via REST then updates live, no polling.
 - **Lifecycle:** `main` calls `routines.Init(ctx)` early (§2 step 7); `Register` before `Init` queues, after `Init` starts the loop immediately.
-- **Migration status:** Phase 1 migrated `cloudflare-ips` (`helper/ip.go`) and `session-cleanup` (`auth/cleanup.go`). Other periodic jobs still run as private goroutines and move over incrementally. Jobs whose schedule is hour-of-day (e.g. the daily geolocation update) await interval-vs-cron support and are not yet migrated.
+- **Schedule modes:** `Interval` (fixed), `DailyAt` ("HH:MM" local), or `NextRun func(now) time.Time` (full control — e.g. the geo update reads its configured hour live). Daemons register read-only via `RegisterDaemon(name, description)`.
+- **Migration status:** migrated interval jobs — `cloudflare-ips`, `session-cleanup`, `ratelimit-cleanup`, `firewall-cleanup`, `firewall-l3-sampler`, `logs-country`, `logs-cleanup`, `vpn-traffic-sync`, `turbotunnels-guard-cleanup`; the daily `geo-update`; read-only daemons `ws-hub`, `server-stats-collector`. Remaining private goroutines (jail engine, per-source log/conntrack watchers, traefik watchers, the sudo watcher) move over incrementally following the recipe.
 
 ### Adding / migrating a routine
 
@@ -315,7 +316,7 @@ Rules of the road:
 - **Return an error** from `Run` on failure (the supervisor records and displays it) instead of only `log.Printf`. Make `Run` idempotent and honor `ctx`.
 - **`Name` is the stable identity** (API path segment + WS). Unique, kebab-case; a duplicate name is ignored (first wins) so a re-register can't spawn two loops.
 - **Register any time** — before `Init` it queues, after `Init` the loop starts immediately.
-- **Fixed interval only (Phase 1).** Hour-of-day schedules ("daily at 03:00") aren't supported yet — leave those as private goroutines until interval-vs-cron scheduling lands (Phase 2).
+- **Pick the schedule mode:** `Interval` for fixed periods; `DailyAt: "03:00"` for a fixed time of day; or `NextRun: func(now) time.Time` (+ a `Schedule` label) when the next fire is computed (e.g. reading a configured hour live). For a continuous loop you own (a hub/watcher), call `RegisterDaemon(name, description)` instead — it shows a read-only status row with no controls.
 - Delete the old ticker/goroutine you replaced (no dead code); adapt the work function to return `error`.
 
 ---

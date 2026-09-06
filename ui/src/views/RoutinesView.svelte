@@ -61,20 +61,13 @@
   const pause = (n) => act(n, 'pause', 'Routine paused')
   const resume = (n) => act(n, 'resume', 'Routine resumed')
 
-  function intervalLabel(sec) {
-    if (!sec || sec <= 0) return '—'
-    if (sec % 86400 === 0) return `${sec / 86400}d`
-    if (sec % 3600 === 0) return `${sec / 3600}h`
-    if (sec % 60 === 0) return `${sec / 60}m`
-    return `${sec}s`
-  }
-
   const when = (ts) => (ts ? formatRelativeDate(new Date(ts * 1000)) : '—')
 
   function statusBadge(r) {
     if (r.status === 'running') return { variant: 'info', label: 'Running' }
     if (r.status === 'error') return { variant: 'destructive', label: 'Error' }
     if (r.status === 'paused' || r.paused) return { variant: 'warning', label: 'Paused' }
+    if (r.kind === 'daemon') return { variant: 'success', label: 'Running' }
     return { variant: 'muted', label: 'Idle' }
   }
 </script>
@@ -99,7 +92,7 @@
           <tr>
             <th class="text-left font-medium px-3 py-2">Routine</th>
             <th class="text-left font-medium px-3 py-2">Status</th>
-            <th class="text-left font-medium px-3 py-2">Every</th>
+            <th class="text-left font-medium px-3 py-2">Schedule</th>
             <th class="text-left font-medium px-3 py-2">Last run</th>
             <th class="text-left font-medium px-3 py-2">Next run</th>
             <th class="text-right font-medium px-3 py-2">Runs</th>
@@ -122,9 +115,18 @@
                   <Badge variant={b.variant} size="sm">{b.label}</Badge>
                 </div>
               </td>
-              <td class="px-3 py-2.5 font-mono text-muted-foreground">{intervalLabel(r.interval_sec)}</td>
+              <td class="px-3 py-2.5 text-muted-foreground">{r.schedule}</td>
               <td class="px-3 py-2.5">
-                <div>{when(r.last_run)}</div>
+                <div class="flex items-center gap-2">
+                  <span>{when(r.last_run)}</span>
+                  {#if r.history?.length}
+                    <span class="flex items-center gap-0.5" title="recent runs">
+                      {#each r.history.slice(-10) as h}
+                        <span class="w-1.5 h-1.5 rounded-sm {h.error ? 'bg-destructive' : 'bg-success'}"></span>
+                      {/each}
+                    </span>
+                  {/if}
+                </div>
                 {#if r.last_error}
                   <div class="text-xs text-destructive" title={r.last_error}>failed: {r.last_error}</div>
                 {:else if r.last_duration_ms != null}
@@ -134,14 +136,18 @@
               <td class="px-3 py-2.5 text-muted-foreground">{r.paused ? '—' : when(r.next_run)}</td>
               <td class="px-3 py-2.5 text-right font-mono text-muted-foreground">{r.runs}</td>
               <td class="px-3 py-2.5">
-                <div class="flex items-center justify-end gap-1">
-                  <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
-                  {#if r.paused}
-                    <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
-                  {:else}
-                    <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
-                  {/if}
-                </div>
+                {#if r.kind === 'daemon'}
+                  <div class="text-right text-xs text-muted-foreground">read-only</div>
+                {:else}
+                  <div class="flex items-center justify-end gap-1">
+                    <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
+                    {#if r.paused}
+                      <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
+                    {:else}
+                      <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
+                    {/if}
+                  </div>
+                {/if}
               </td>
             </tr>
           {/each}

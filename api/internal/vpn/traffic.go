@@ -3,7 +3,6 @@ package vpn
 import (
 	"bufio"
 	"context"
-	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 
 	"api/internal/database"
 	"api/internal/helper"
+	"api/internal/routines"
 )
 
 // PeerTransfer represents WireGuard transfer stats for a peer
@@ -129,28 +129,26 @@ type PeerTrafficInfo struct {
 }
 
 var (
-	trafficCtx    context.Context
-	trafficCancel context.CancelFunc
-	trafficOnce   sync.Once
-	trafficMu     sync.Mutex
-	lastRateTx    int64
-	lastRateRx    int64
+	trafficMu  sync.Mutex
+	lastRateTx int64
+	lastRateRx int64
 )
 
-// StartTrafficSync starts the background traffic sync goroutine
+// StartTrafficSync registers the 30s WireGuard traffic sampler with the routine
+// supervisor (visible/controllable on the Routines page). The rate-calculation
+// totals live in a closure; the routine runs single-threaded so no lock is needed.
 func StartTrafficSync() {
-	trafficOnce.Do(func() {
-		trafficCtx, trafficCancel = context.WithCancel(context.Background())
-		go runTrafficSync(trafficCtx)
-		log.Println("VPN traffic sync started")
+	var prevTotalTx, prevTotalRx int64
+	prevTime := time.Now()
+	routines.Register(routines.Spec{
+		Name:        "vpn-traffic-sync",
+		Description: "Sample WireGuard peer traffic into the database",
+		Interval:    30 * time.Second,
+		Run: func(context.Context) error {
+			syncTrafficStats(&prevTotalTx, &prevTotalRx, &prevTime)
+			return nil
+		},
 	})
-}
-
-// StopTrafficSync stops the background traffic sync
-func StopTrafficSync() {
-	if trafficCancel != nil {
-		trafficCancel()
-	}
 }
 
 // GetTrafficRates returns the current tx/rx rates in bytes/sec
@@ -158,25 +156,6 @@ func GetTrafficRates() (rateTx, rateRx int64) {
 	trafficMu.Lock()
 	defer trafficMu.Unlock()
 	return lastRateTx, lastRateRx
-}
-
-// runTrafficSync runs the traffic sync loop
-func runTrafficSync(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	// Track totals for rate calculation
-	var prevTotalTx, prevTotalRx int64
-	prevTime := time.Now()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			syncTrafficStats(&prevTotalTx, &prevTotalRx, &prevTime)
-		}
-	}
 }
 
 // syncTrafficStats syncs WireGuard traffic to database

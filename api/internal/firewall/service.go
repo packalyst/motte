@@ -13,6 +13,7 @@ import (
 	"api/internal/helper"
 	"api/internal/nftables"
 	"api/internal/router"
+	"api/internal/routines"
 	"api/internal/ws"
 )
 
@@ -116,10 +117,24 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 		log.Printf("Warning: Failed to apply initial firewall rules: %v", err)
 	}
 
-	// Start background tasks
+	// Start background tasks. Jail monitors spawn one goroutine per jail (not a
+	// single periodic loop), so they stay as-is; the two periodic jobs register
+	// with the supervisor so they're visible/controllable on the Routines page.
 	go svc.runJailMonitors()
-	go svc.runExpirationCleanup()
-	go svc.runL3CounterSampler()
+	routines.Register(routines.Spec{
+		Name:        "firewall-cleanup",
+		Description: "Remove expired firewall bans/entries",
+		Interval:    time.Duration(svc.config.CleanupInterval) * time.Minute,
+		Run:         func(context.Context) error { svc.cleanupExpiredData(); return nil },
+	})
+	svc.ensureL3Table()
+	var l3Last int64 = -1
+	routines.Register(routines.Spec{
+		Name:        "firewall-l3-sampler",
+		Description: "Sample nftables drop counters into fw_drop_samples",
+		Interval:    L3SampleInterval,
+		Run:         func(context.Context) error { svc.sampleL3Drop(&l3Last); return nil },
+	})
 
 	serviceInstance = svc
 	log.Printf("Firewall service initialized")

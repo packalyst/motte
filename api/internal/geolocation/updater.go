@@ -1,47 +1,46 @@
 package geolocation
 
 import (
+	"context"
 	"log"
 	"time"
 
+	"api/internal/routines"
 	"api/internal/settings"
 )
 
-// runUpdateScheduler runs the unified geo data update scheduler
-func (s *Service) runUpdateScheduler() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-
-	lastRunDate := ""
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			log.Printf("Geolocation update scheduler stopping")
-			return
-		case <-ticker.C:
+// registerUpdateRoutine registers the daily geo-data update with the supervisor.
+// The next fire is the configured hour-of-day (read live, so a changed hour is
+// picked up on the next reschedule); the run itself no-ops when auto-update is
+// off, so toggling it needs no restart.
+func (s *Service) registerUpdateRoutine() {
+	routines.Register(routines.Spec{
+		Name:        "geo-update",
+		Description: "Update geolocation databases (lookup / ASN / proxy / blocking)",
+		Schedule:    "daily at configured hour",
+		NextRun: func(now time.Time) time.Time {
+			s.mu.RLock()
+			hour := s.config.UpdateHour
+			s.mu.RUnlock()
+			n := time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location())
+			if !n.After(now) {
+				n = n.Add(24 * time.Hour)
+			}
+			return n
+		},
+		Run: func(context.Context) error {
 			s.mu.RLock()
 			enabled := s.config.AutoUpdate
-			targetHour := s.config.UpdateHour
 			updateServices := s.config.UpdateServices
 			s.mu.RUnlock()
-
 			if !enabled {
-				continue
+				return nil // scheduled fire, but auto-update is off
 			}
-
-			now := time.Now()
-			currentDate := now.Format("2006-01-02")
-			currentHour := now.Hour()
-
-			// Only run once per day at the target hour
-			if currentHour == targetHour && currentDate != lastRunDate {
-				log.Printf("Running scheduled geolocation update at %s", now.Format(time.RFC3339))
-				s.runScheduledUpdate(updateServices)
-				lastRunDate = currentDate
-			}
-		}
-	}
+			log.Printf("Running scheduled geolocation update at %s", time.Now().Format(time.RFC3339))
+			s.runScheduledUpdate(updateServices)
+			return nil
+		},
+	})
 }
 
 // runScheduledUpdate performs the scheduled update based on settings

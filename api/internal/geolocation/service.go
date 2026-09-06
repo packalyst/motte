@@ -111,7 +111,7 @@ func New(dataDir string) (*Service, error) {
 	s.migrateOldSettings()
 
 	// Start background update scheduler
-	go s.runUpdateScheduler()
+	s.registerUpdateRoutine()
 
 	log.Printf("Geolocation service initialized (lookup: %s, blocking: %v)",
 		s.config.LookupProvider, s.config.BlockingEnabled)

@@ -11,6 +11,7 @@ import (
 	"api/internal/auth"
 	"api/internal/config"
 	"api/internal/helper"
+	"api/internal/routines"
 
 	"github.com/gorilla/websocket"
 )
@@ -44,6 +45,7 @@ func New() *Service {
 
 	// Start hub in background
 	go hub.Run()
+	routines.RegisterDaemon("ws-hub", "WebSocket hub: fan-out of live updates to connected clients")
 
 	s := &Service{
 		hub: hub,

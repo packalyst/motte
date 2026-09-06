@@ -10,6 +10,7 @@ import (
 	"api/internal/database"
 	"api/internal/helper"
 	"api/internal/router"
+	"api/internal/routines"
 	"api/internal/settings"
 )
 
@@ -117,19 +118,21 @@ func (s *Service) Start() {
 		}
 	}
 
-	// Start country updater
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.runCountryUpdater()
-	}()
-
-	// Start cleanup job
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.runCleanup()
-	}()
+	// Country updater + cleanup run under the routine supervisor (visible/
+	// controllable on the Routines page); watchers stay on the WaitGroup.
+	routines.Register(routines.Spec{
+		Name:        "logs-country",
+		Description: "Fill NULL country fields on log rows via geolocation",
+		Interval:    time.Duration(s.config.CountryInterval) * time.Minute,
+		RunAtStart:  true,
+		Run:         func(context.Context) error { s.updateCountries(); return nil },
+	})
+	routines.Register(routines.Spec{
+		Name:        "logs-cleanup",
+		Description: "Trim each log type to its max-entries limit",
+		Interval:    time.Duration(s.config.CleanupInterval) * time.Minute,
+		Run:         func(context.Context) error { s.cleanup(); return nil },
+	})
 
 	log.Printf("Logs service started")
 }

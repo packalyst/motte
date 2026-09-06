@@ -12,6 +12,7 @@ import (
 
 	"api/internal/helper"
 	"api/internal/router"
+	"api/internal/routines"
 )
 
 // Rotation abuse guards (in-memory). A per-key minimum interval throttles
@@ -174,40 +175,39 @@ func rotateClearFails(ip string) {
 	rotMu.Unlock()
 }
 
-// StartRotateGuardCleanup periodically evicts expired abuse-guard entries so the
-// in-memory maps can't grow without bound (e.g. from many distinct — possibly
-// spoofed — source IPs sending invalid keys).
-func StartRotateGuardCleanup(ctx context.Context) {
-	go func() {
-		t := time.NewTicker(5 * time.Minute)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				now := time.Now()
-				rotMu.Lock()
-				for ip, fw := range ipFails {
-					// Drop once any block has lapsed AND the fail window is stale.
-					if now.After(fw.blockedUntil) && now.Sub(fw.windowStart) > rotateFailWindow() {
-						delete(ipFails, ip)
-					}
-				}
-				for k, ts := range lastRotate {
-					// Absent == "allowed", same as an expired entry.
-					if now.Sub(ts) > rotateMinInterval() {
-						delete(lastRotate, k)
-					}
-				}
-				for id, until := range webhookNextAllowed {
-					// Once the throttle window has passed, the entry is redundant.
-					if now.After(until) {
-						delete(webhookNextAllowed, id)
-					}
-				}
-				rotMu.Unlock()
-			}
+// StartRotateGuardCleanup registers the abuse-guard eviction as a supervised
+// routine so the in-memory maps can't grow without bound (e.g. from many
+// distinct — possibly spoofed — source IPs sending invalid keys).
+func StartRotateGuardCleanup() {
+	routines.Register(routines.Spec{
+		Name:        "turbotunnels-guard-cleanup",
+		Description: "Evict expired turbotunnels rotate/abuse-guard entries",
+		Interval:    5 * time.Minute,
+		Run:         func(context.Context) error { rotateGuardCleanup(); return nil },
+	})
+}
+
+// rotateGuardCleanup drops expired rate/abuse-guard entries in one pass.
+func rotateGuardCleanup() {
+	now := time.Now()
+	rotMu.Lock()
+	defer rotMu.Unlock()
+	for ip, fw := range ipFails {
+		// Drop once any block has lapsed AND the fail window is stale.
+		if now.After(fw.blockedUntil) && now.Sub(fw.windowStart) > rotateFailWindow() {
+			delete(ipFails, ip)
 		}
-	}()
+	}
+	for k, ts := range lastRotate {
+		// Absent == "allowed", same as an expired entry.
+		if now.Sub(ts) > rotateMinInterval() {
+			delete(lastRotate, k)
+		}
+	}
+	for id, until := range webhookNextAllowed {
+		// Once the throttle window has passed, the entry is redundant.
+		if now.After(until) {
+			delete(webhookNextAllowed, id)
+		}
+	}
 }

@@ -21,6 +21,12 @@ func (s *Service) Start() {
 		RunAtStart:  true,
 		Run:         func(context.Context) error { return s.cleanupExpiredSessions() },
 	})
+	routines.Register(routines.Spec{
+		Name:        "ratelimit-cleanup",
+		Description: "Evict stale login/TOTP rate-limit entries",
+		Interval:    time.Minute,
+		Run:         func(context.Context) error { return cleanupRateLimitMaps() },
+	})
 }
 
 // cleanupExpiredSessions removes sessions past their expiry time.

@@ -2,32 +2,12 @@ package logs
 
 import (
 	"log"
-	"time"
 
 	"api/internal/geolocation"
 )
 
-// runCountryUpdater periodically updates NULL country fields
-func (s *Service) runCountryUpdater() {
-	ticker := time.NewTicker(time.Duration(s.config.CountryInterval) * time.Minute)
-	defer ticker.Stop()
-
-	// Run once at startup after a short delay
-	time.Sleep(30 * time.Second)
-	s.updateCountries()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			log.Printf("Country updater stopping")
-			return
-		case <-ticker.C:
-			s.updateCountries()
-		}
-	}
-}
-
-// updateCountries bulk updates NULL country fields
+// updateCountries bulk updates NULL country fields. Registered as the
+// "logs-country" routine.
 func (s *Service) updateCountries() {
 	geoSvc := geolocation.GetService()
 	if geoSvc == nil || !geoSvc.IsLookupAvailable() {

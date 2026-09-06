@@ -2,26 +2,9 @@ package logs
 
 import (
 	"log"
-	"time"
 )
 
-// runCleanup periodically enforces max entries limit
-func (s *Service) runCleanup() {
-	ticker := time.NewTicker(time.Duration(s.config.CleanupInterval) * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			log.Printf("Cleanup job stopping")
-			return
-		case <-ticker.C:
-			s.cleanup()
-		}
-	}
-}
-
-// cleanup enforces max entries per type
+// cleanup enforces max entries per type. Registered as the "logs-cleanup" routine.
 func (s *Service) cleanup() {
 	maxPerType := s.config.MaxEntries / len(AllLogTypes)
 	if maxPerType < 1 {

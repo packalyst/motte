@@ -344,7 +344,7 @@ func main() {
 		// (shown on the Logs page).
 		turbotunnels.StartLogStreamer(context.Background())
 		// Evict expired rotation abuse-guard entries so the in-memory maps stay bounded.
-		turbotunnels.StartRotateGuardCleanup(context.Background())
+		turbotunnels.StartRotateGuardCleanup()
 		log.Println("Turbotunnels service registered")
 	}
 
@@ -503,6 +503,7 @@ func main() {
 	// Live host resource stats: one /proc collector, broadcast to all
 	// subscribers, gated on the subscriber count so it idles when unwatched.
 	go serverstats.New(ws.Broadcast, ws.ChannelSubscriberCount).Run()
+	routines.RegisterDaemon("server-stats-collector", "Sample host /proc stats for the live dashboard (idles when no page is watching)")
 
 	// Set up node status checker for real-time updates
 	if vpnSvc != nil {
@@ -703,8 +704,7 @@ func main() {
 		// Stop WebSocket status checker
 		ws.StopStatusChecker()
 
-		// Stop VPN traffic sync
-		vpn.StopTrafficSync()
+		// VPN traffic sync is a supervised routine; it stops with the process.
 
 		// Close database
 		if err := database.Close(); err != nil {

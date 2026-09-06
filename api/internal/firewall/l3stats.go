@@ -53,38 +53,31 @@ func (s *Service) readDropPackets() (int64, bool) {
 // rebuild happened), the current value is the delta since the rebuild. A few drops
 // between a rebuild and the next sample can be missed — this is an approximate
 // "packets blocked", not an exact kernel counter.
-func (s *Service) runL3CounterSampler() {
-	s.ensureL3Table()
-	const interval = 20 * time.Second
-	var last int64 = -1
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			cur, ok := s.readDropPackets()
-			if !ok {
-				last = -1 // table missing/unreadable — re-baseline on next good read
-				continue
-			}
-			var delta int64
-			switch {
-			case last < 0:
-				delta = 0 // first read establishes the baseline
-			case cur >= last:
-				delta = cur - last
-			default:
-				delta = cur // counters were reset by a table rebuild
-			}
-			last = cur
-			if delta > 0 {
-				s.db.Exec(`INSERT INTO fw_drop_samples (packets) VALUES (?)`, delta)
-			}
-			// Retention handled centrally by the retention sweep (package retention).
-		}
+// L3SampleInterval is how often the drop-counter sampler runs.
+const L3SampleInterval = 20 * time.Second
+
+// sampleL3Drop records one delta of dropped packets. last carries the previous
+// counter value across calls (the routine runs single-threaded, so no lock).
+func (s *Service) sampleL3Drop(last *int64) {
+	cur, ok := s.readDropPackets()
+	if !ok {
+		*last = -1 // table missing/unreadable — re-baseline on next good read
+		return
 	}
+	var delta int64
+	switch {
+	case *last < 0:
+		delta = 0 // first read establishes the baseline
+	case cur >= *last:
+		delta = cur - *last
+	default:
+		delta = cur // counters were reset by a table rebuild
+	}
+	*last = cur
+	if delta > 0 {
+		s.db.Exec(`INSERT INTO fw_drop_samples (packets) VALUES (?)`, delta)
+	}
+	// Retention handled centrally by the retention sweep (package retention).
 }
 
 // L3BlockedWindow returns total packets dropped by the firewall block sets within a

@@ -69,51 +69,46 @@ func markTOTPUsed(userID int64, code string) {
 func init() {
 	// Initialize trusted proxies from environment
 	helper.InitTrustedProxies(helper.GetEnvOptional("TRUSTED_PROXIES", ""))
+}
 
-	// Cleanup stale login attempts to prevent unbounded memory growth
-	go func() {
-		for {
-			time.Sleep(1 * time.Minute)
-			now := time.Now()
+// cleanupRateLimitMaps removes stale login/TOTP attempt entries and expired TOTP
+// replay guards so those maps can't grow unbounded. Registered as a routine (see
+// Service.Start); the supervisor calls it on its interval.
+func cleanupRateLimitMaps() error {
+	now := time.Now()
 
-			// Cleanup login attempts
-			loginAttemptsMutex.Lock()
-			for ip, attempt := range loginAttempts {
-				// Remove if lockout expired
-				if !attempt.lockedAt.IsZero() && now.Sub(attempt.lockedAt) > loginLockoutTime {
-					delete(loginAttempts, ip)
-					continue
-				}
-				// Remove if window expired and not locked
-				if attempt.lockedAt.IsZero() && now.Sub(attempt.firstTry) > loginLockoutWindow {
-					delete(loginAttempts, ip)
-				}
-			}
-			loginAttemptsMutex.Unlock()
-
-			// Cleanup TOTP attempts
-			totpAttemptsMutex.Lock()
-			for userID, attempt := range totpAttempts {
-				if !attempt.lockedAt.IsZero() && now.Sub(attempt.lockedAt) > loginLockoutTime {
-					delete(totpAttempts, userID)
-					continue
-				}
-				if attempt.lockedAt.IsZero() && now.Sub(attempt.firstTry) > loginLockoutWindow {
-					delete(totpAttempts, userID)
-				}
-			}
-			totpAttemptsMutex.Unlock()
-
-			// Cleanup expired TOTP replay-guard entries
-			usedTOTPMutex.Lock()
-			for userID, u := range usedTOTP {
-				if now.After(u.expires) {
-					delete(usedTOTP, userID)
-				}
-			}
-			usedTOTPMutex.Unlock()
+	loginAttemptsMutex.Lock()
+	for ip, attempt := range loginAttempts {
+		if !attempt.lockedAt.IsZero() && now.Sub(attempt.lockedAt) > loginLockoutTime {
+			delete(loginAttempts, ip)
+			continue
 		}
-	}()
+		if attempt.lockedAt.IsZero() && now.Sub(attempt.firstTry) > loginLockoutWindow {
+			delete(loginAttempts, ip)
+		}
+	}
+	loginAttemptsMutex.Unlock()
+
+	totpAttemptsMutex.Lock()
+	for userID, attempt := range totpAttempts {
+		if !attempt.lockedAt.IsZero() && now.Sub(attempt.lockedAt) > loginLockoutTime {
+			delete(totpAttempts, userID)
+			continue
+		}
+		if attempt.lockedAt.IsZero() && now.Sub(attempt.firstTry) > loginLockoutWindow {
+			delete(totpAttempts, userID)
+		}
+	}
+	totpAttemptsMutex.Unlock()
+
+	usedTOTPMutex.Lock()
+	for userID, u := range usedTOTP {
+		if now.After(u.expires) {
+			delete(usedTOTP, userID)
+		}
+	}
+	usedTOTPMutex.Unlock()
+	return nil
 }
 
 // registerLoginAttempt ATOMICALLY checks the lockout and reserves an attempt slot in a
