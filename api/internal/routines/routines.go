@@ -145,6 +145,7 @@ func (r *routine) execute(ctx context.Context) {
 	r.mu.Lock()
 	r.status = StatusRunning
 	r.mu.Unlock()
+	notify()
 
 	start := time.Now()
 	err := safeRun(ctx, r.spec.Run)
@@ -163,6 +164,7 @@ func (r *routine) execute(ctx context.Context) {
 		r.status = StatusIdle
 	}
 	r.mu.Unlock()
+	notify()
 }
 
 // safeRun recovers a panic in a job so one bad routine can't crash the process.
@@ -262,6 +264,7 @@ func Pause(name string) bool {
 		r.status = StatusPaused
 	}
 	r.mu.Unlock()
+	notify()
 	return true
 }
 
@@ -277,5 +280,20 @@ func Resume(name string) bool {
 		r.status = StatusIdle
 	}
 	r.mu.Unlock()
+	notify()
 	return true
+}
+
+// broadcaster, if set, is called with the full routine list whenever a routine's
+// state changes, so the UI can update live over WebSocket instead of polling.
+var broadcaster func([]Info)
+
+// SetBroadcaster registers the live-update callback. Set once at startup. Called
+// outside all locks, so it is safe to call List()/anything from within it.
+func SetBroadcaster(fn func([]Info)) { broadcaster = fn }
+
+func notify() {
+	if broadcaster != nil {
+		broadcaster(List())
+	}
 }

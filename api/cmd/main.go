@@ -90,8 +90,12 @@ func main() {
 	}
 
 	// Start the background-routine supervisor before anything registers a routine,
-	// so those jobs are visible/controllable on the Routines page.
+	// so those jobs are visible/controllable on the Routines page. Push state
+	// changes to the UI over WebSocket (no polling).
 	routines.Init(context.Background())
+	routines.SetBroadcaster(func(list []routines.Info) {
+		ws.Broadcast("routines", map[string]interface{}{"routines": list})
+	})
 
 	// Keep the Cloudflare edge-range list current so CF-Connecting-IP is trusted
 	// only for requests that genuinely transit Cloudflare (falls back to the

@@ -5,6 +5,7 @@
   import Icon from '../components/Icon.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import { apiGet, apiPost, toast } from '../stores/app.js'
+  import { subscribe, unsubscribe, routinesStore } from '../stores/websocket.js'
   import { formatRelativeDate } from '../lib/utils/format.js'
 
   let { loading = $bindable(true) } = $props()
@@ -12,7 +13,6 @@
   let routines = $state([])
   let error = $state('')
   let busy = $state('') // name currently being acted on
-  let timer = null
 
   async function load() {
     try {
@@ -26,11 +26,21 @@
     }
   }
 
-  // Poll every 5s so a "running" state and last/next-run stay fresh.
+  // Initial fetch for immediate data, then live updates over WebSocket — the
+  // supervisor broadcasts the full list on every state change, so no polling.
   $effect(() => {
     load()
-    timer = setInterval(load, 5000)
-    return () => clearInterval(timer)
+    subscribe(['routines'])
+    return () => unsubscribe(['routines'])
+  })
+
+  // Apply pushed updates.
+  $effect(() => {
+    const s = $routinesStore
+    if (s?.routines) {
+      routines = s.routines
+      loading = false
+    }
   })
 
   async function act(name, action, label) {
@@ -38,6 +48,7 @@
     try {
       await apiPost(`/api/routines/${name}/${action}`)
       toast(label, 'success')
+      // The supervisor broadcasts the change over WS; also refresh for instant feedback.
       await load()
     } catch (e) {
       toast(e.message || `Failed to ${action} ${name}`, 'error')

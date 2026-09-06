@@ -289,6 +289,7 @@ The panel runs many periodic background jobs (Cloudflare-IP refresh, cleanups, s
 - **Register instead of `go func`:** a job calls `routines.Register(routines.Spec{Name, Description, Interval, RunAtStart, Run})`. The supervisor owns the timer loop, recovers panics, and records `LastRun`/`LastDuration`/`LastError`/`NextRun`/`Runs`/`Status`.
 - **Leaf package:** `routines` imports only the standard library, so *any* package (even `helper`) can register without an import cycle. The HTTP layer lives in the separate `routinesapi` package (imports `routines` + `router`).
 - **Control:** `RunNow` / `Pause` / `Resume` (run-now overrides pause). Exposed at `/api/routines` (see [api-surface.md](api-surface.md)) and surfaced on the **Routines** page.
+- **Live updates:** `SetBroadcaster(fn)` (wired in `main` to `ws.Broadcast`) pushes the full list on every state change over the `routines` WebSocket channel — the page loads once via REST then updates live, no polling.
 - **Lifecycle:** `main` calls `routines.Init(ctx)` early (§2 step 7); `Register` before `Init` queues, after `Init` starts the loop immediately.
 - **Migration status:** Phase 1 migrated `cloudflare-ips` (`helper/ip.go`) and `session-cleanup` (`auth/cleanup.go`). Other periodic jobs still run as private goroutines and move over incrementally. Jobs whose schedule is hour-of-day (e.g. the daily geolocation update) await interval-vs-cron support and are not yet migrated.
 

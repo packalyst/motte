@@ -27,7 +27,8 @@
         "stats",
         "fleet",
         "server_stats",
-        "container_stats"
+        "container_stats",
+        "routines"
       ]
     }
   },
