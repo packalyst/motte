@@ -51,6 +51,10 @@ type Service struct {
 	port    int
 	srv     *http.Server
 
+	// cfgMu serializes handleSetConfig so the migrating-check and the migration start are
+	// one atomic step — two concurrent config POSTs must not both pass the check.
+	cfgMu sync.Mutex
+
 	// Live port migration (dual-listen grace window). When the port changes with agents
 	// enrolled, the new listener starts while the old one (oldSrv/oldPort) stays up until
 	// every agent acks set-panel-port or migrateEndsAt passes — so none are stranded.
@@ -304,11 +308,12 @@ func (s *Service) migrationState() (active bool, endsAt time.Time) {
 }
 
 // enrolledMachines returns the machines a port change must reach: enrolled, not revoked,
-// not already uninstalled.
-func (s *Service) enrolledMachines() []Machine {
+// not already uninstalled. The DB error is propagated so a change-time hiccup aborts the
+// port change rather than silently downgrading to the stranding hard-switch path.
+func (s *Service) enrolledMachines() ([]Machine, error) {
 	all, err := s.ListMachines()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]Machine, 0, len(all))
 	for _, m := range all {
@@ -317,7 +322,7 @@ func (s *Service) enrolledMachines() []Machine {
 		}
 		out = append(out, m)
 	}
-	return out
+	return out, nil
 }
 
 // Status reports the current listener state (for the admin UI).

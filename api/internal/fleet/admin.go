@@ -107,6 +107,12 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "port out of range", http.StatusBadRequest)
 		return
 	}
+	// Serialize config changes: the migrating-check and the migration start must be one
+	// atomic step, or two concurrent POSTs could both pass the check and the second would
+	// clobber s.oldSrv, leaking the first listener + its firewall port.
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
 	// A port migration keeps both ports open for a grace window; a second change mid-flight
 	// would strand agents between three ports. Reject any config change until it finishes.
 	if active, endsAt := s.migrationState(); active {
@@ -117,6 +123,21 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 
 	oldEnabled, oldPort := s.Status()
 
+	// A live port change with agents enrolled migrates gracefully (dual-listen + notify)
+	// instead of the hard switch ReloadFromSettings would do (which strands them). Resolve
+	// the machine list BEFORE persisting, so a DB error aborts the change cleanly rather
+	// than silently downgrading to the stranding path.
+	livePortChange := oldEnabled && req.Enabled && req.Port != oldPort
+	var toMigrate []Machine
+	if livePortChange {
+		machines, err := s.enrolledMachines()
+		if err != nil {
+			router.JSONError(w, "could not list machines to migrate — port change aborted", http.StatusInternalServerError)
+			return
+		}
+		toMigrate = machines
+	}
+
 	if err := s.setSetting(settingEnabled, boolStr(req.Enabled)); err != nil {
 		router.JSONError(w, "save failed", http.StatusInternalServerError)
 		return
@@ -126,17 +147,13 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A live port change with agents enrolled migrates gracefully (dual-listen + notify),
-	// instead of the hard switch ReloadFromSettings would do (which strands them).
 	migrating := false
-	if oldEnabled && req.Enabled && req.Port != oldPort {
-		if machines := s.enrolledMachines(); len(machines) > 0 {
-			s.beginPortMigration(oldPort, req.Port, machines)
-			if err := s.ApplyInstallRoute(); err != nil {
-				log.Printf("fleet: install route apply: %v", err)
-			}
-			migrating = true
+	if livePortChange && len(toMigrate) > 0 {
+		s.beginPortMigration(oldPort, req.Port, toMigrate)
+		if err := s.ApplyInstallRoute(); err != nil {
+			log.Printf("fleet: install route apply: %v", err)
 		}
+		migrating = true
 	}
 	if !migrating {
 		s.ReloadFromSettings()
