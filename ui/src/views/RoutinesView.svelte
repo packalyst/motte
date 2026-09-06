@@ -2,6 +2,7 @@
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import Badge from '../components/Badge.svelte'
+  import Icon from '../components/Icon.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import { apiGet, apiPost, toast } from '../stores/app.js'
   import { subscribe, unsubscribe, routinesStore } from '../stores/websocket.js'
@@ -100,8 +101,15 @@
               {@const b = statusBadge(r)}
               <tr class="even:bg-muted/50 align-top">
                 <td>
-                  <div class="font-medium text-foreground font-mono text-xs">{r.name}</div>
-                  <div class="text-xs text-muted-foreground">{r.description}</div>
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-medium text-foreground font-mono text-xs">{r.name}</span>
+                    <!-- Mobile: description behind an info tooltip to save space -->
+                    <span class="sm:hidden inline-flex" data-kt-tooltip>
+                      <Icon name="info-circle" size={13} class="text-muted-foreground" />
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">{r.description}</span>
+                    </span>
+                  </div>
+                  <div class="hidden sm:block text-xs text-muted-foreground">{r.description}</div>
                   <!-- Mobile: fold the hidden columns (schedule/last/next) into one line -->
                   <div class="sm:hidden text-[11px] text-muted-foreground mt-0.5">
                     {r.schedule}{#if r.kind !== 'daemon'} · last {when(r.last_run)} · next {when(r.next_run)}{/if}
@@ -121,16 +129,7 @@
                   {#if r.kind === 'daemon'}
                     <span class="text-muted-foreground">—</span>
                   {:else}
-                    <div class="flex items-center gap-2">
-                      <span>{when(r.last_run)}</span>
-                      {#if r.history?.length}
-                        <span class="hidden sm:flex items-center gap-0.5" title="Recent runs (green = ok, red = failed)">
-                          {#each r.history.slice(-10) as h}
-                            <span class="w-1.5 h-1.5 rounded-sm {h.error ? 'bg-destructive' : 'bg-success'}"></span>
-                          {/each}
-                        </span>
-                      {/if}
-                    </div>
+                    <div>{when(r.last_run)}</div>
                     {#if r.last_error}
                       <div class="text-xs text-destructive truncate max-w-[16rem]" title={r.last_error}>failed: {r.last_error}</div>
                     {:else if r.last_duration_ms != null}
@@ -139,18 +138,34 @@
                   {/if}
                 </td>
                 <td class="hidden lg:table-cell text-muted-foreground">{r.kind === 'daemon' ? '—' : when(r.next_run)}</td>
-                <td class="hidden lg:table-cell text-right font-mono text-muted-foreground">{r.runs}</td>
+                <td class="hidden lg:table-cell text-right">
+                  {#if r.kind === 'daemon' || !r.history?.length}
+                    <span class="font-mono text-muted-foreground">{r.kind === 'daemon' ? '—' : r.runs}</span>
+                  {:else}
+                    <!-- Run count; hover shows the recent-run history (replaces the dots) -->
+                    <span class="font-mono text-muted-foreground cursor-help underline decoration-dotted" data-kt-tooltip>
+                      {r.runs}
+                      <span data-kt-tooltip-content class="kt-tooltip hidden text-left">
+                        {#each [...r.history].reverse() as h}
+                          <div class={h.error ? 'text-destructive' : ''}>{when(h.at)} · {h.error ? 'failed' : 'ok'}{h.duration_ms != null ? ` · ${h.duration_ms < 1 ? '<1' : Math.round(h.duration_ms)}ms` : ''}</div>
+                        {/each}
+                      </span>
+                    </span>
+                  {/if}
+                </td>
                 <td class="text-right">
                   {#if r.kind === 'daemon'}
                     <span class="text-xs text-muted-foreground">read-only</span>
                   {:else}
-                    <div class="flex items-center justify-end gap-1">
-                      <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
-                      {#if r.paused}
-                        <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
-                      {:else}
-                        <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
-                      {/if}
+                    <div class="flex justify-end">
+                      <div class="kt-btn-group">
+                        <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
+                        {#if r.paused}
+                          <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
+                        {:else}
+                          <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
+                        {/if}
+                      </div>
                     </div>
                   {/if}
                 </td>
@@ -162,10 +177,7 @@
     </div>
 
     <p class="text-xs text-muted-foreground px-1">
-      <span class="inline-block w-1.5 h-1.5 rounded-sm bg-success align-middle"></span>
-      /
-      <span class="inline-block w-1.5 h-1.5 rounded-sm bg-destructive align-middle"></span>
-      show the last 10 runs (ok / failed). Daemons are always-on loops — status only.
+      Hover a run count to see recent-run history. Daemons are always-on loops — status only.
     </p>
   {/if}
 </div>

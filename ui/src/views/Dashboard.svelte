@@ -53,7 +53,7 @@
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
     'grp-clients': ['nodes', 'fleet'],
-    'grp-monitoring': ['analytics', 'logs', 'activity'],
+    'grp-monitoring': ['analytics', 'logs', 'activity', 'routines'],
     'grp-web': ['traefik', 'domains', 'tunnels'],
     'grp-services': ['adguard', 'docker'],
     'grp-headscale': ['routes', 'users', 'authkeys', 'apikeys'],
@@ -62,6 +62,15 @@
   let expandedMenus = $state(
     Object.fromEntries(Object.entries(menuGroups).map(([g, kids]) => [g, kids.includes($currentView)]))
   )
+
+  // Keep the group containing the active view expanded whenever navigation
+  // happens — including programmatically (dashboard cards, topbar quick-links),
+  // not just on load — so the sidebar always reflects where you are.
+  $effect(() => {
+    const v = $currentView
+    const g = Object.entries(menuGroups).find(([, kids]) => kids.includes(v))?.[0]
+    if (g) expandedMenus[g] = true
+  })
 
   // Stats from WebSocket
   let stats = $state({ online: 0, offline: 0, hsNodes: 0, wgPeers: 0 })
