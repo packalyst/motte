@@ -321,14 +321,16 @@ func (s *Service) scanLogins(now time.Time) authScan {
 	// content phrasing is stable, and an unparseable timestamp never drops an event.
 	for _, path := range s.authLogCandidates() {
 		acc := newAuthAccum(now)
-		lines := 0
 		forEachTailLine(path, func(line string) {
-			lines++
 			ts, ok := parseAnyTime(line, now)
 			acc.line(line, ts, ok)
 		})
-		if lines > 0 {
-			return acc.finish()
+		sc := acc.finish()
+		// Use the file only if it actually yielded auth events. A file that exists but
+		// holds no logins/sudo (Ubuntu 24.04 keeps /var/log/auth.log for sudo/cron while
+		// sshd logs logins only to the journal) must NOT shadow the journal below.
+		if authScanHasSignal(sc) {
+			return sc
 		}
 	}
 	// No usable log file (systemd-only hosts like Ubuntu 24.04) — read the journal.
@@ -336,6 +338,14 @@ func (s *Service) scanLogins(now time.Time) authScan {
 		return sc
 	}
 	return newAuthAccum(now).finish()
+}
+
+// authScanHasSignal reports whether a scan parsed any real auth activity, so a file
+// with lines but no auth events doesn't shadow the journal as the login source.
+func authScanHasSignal(sc authScan) bool {
+	return len(sc.logins.Recent) > 0 || sc.logins.Failed1h > 0 || sc.logins.FailedPrev1h > 0 ||
+		len(sc.sudo.Recent) > 0 || sc.sudo.Failures24h > 0 ||
+		len(sc.accounts.NewUsers) > 0 || len(sc.accounts.NewGroups) > 0
 }
 
 func (s *Service) authLogCandidates() []string {
