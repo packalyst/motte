@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"api/internal/routines"
 )
 
 var (
@@ -206,35 +208,30 @@ func isCloudflareIP(ipStr string) bool {
 	return false
 }
 
-// StartCloudflareIPUpdater refreshes the Cloudflare edge-range list from
-// Cloudflare's published endpoints on startup and every 24h. Any failure keeps
-// the current list (bundled defaults at minimum) — it never fails closed.
-func StartCloudflareIPUpdater(ctx context.Context) {
-	go func() {
-		refresh := func() {
+// StartCloudflareIPUpdater registers the Cloudflare edge-range refresh as a
+// supervised routine: it runs on startup and every 24h (and can be run-now /
+// paused from the Routines page). Any failure keeps the current list (bundled
+// defaults at minimum) — it never fails closed.
+func StartCloudflareIPUpdater() {
+	routines.Register(routines.Spec{
+		Name:        "cloudflare-ips",
+		Description: "Refresh Cloudflare edge IP ranges (firewall Cloudflare-only set + header trust)",
+		Interval:    24 * time.Hour,
+		RunAtStart:  true,
+		Run: func(ctx context.Context) error {
 			nets, err := fetchCloudflareCIDRs(ctx)
 			if err != nil {
-				log.Printf("Cloudflare IP refresh failed, keeping current list: %v", err)
-				return
+				// Returned error is recorded by the supervisor; the current list is kept.
+				return fmt.Errorf("keeping current list: %w", err)
 			}
 			cloudflareCIDRsStore.Store(nets)
 			log.Printf("Cloudflare IP list refreshed: %d ranges", len(nets))
 			if cfUpdateHook != nil {
 				cfUpdateHook() // let the firewall rebuild its Cloudflare set
 			}
-		}
-		refresh()
-		t := time.NewTicker(24 * time.Hour)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				refresh()
-			}
-		}
-	}()
+			return nil
+		},
+	})
 }
 
 // fetchCloudflareCIDRs pulls the current v4+v6 edge ranges from Cloudflare's

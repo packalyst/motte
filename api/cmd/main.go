@@ -30,6 +30,8 @@ import (
 	"api/internal/nftables"
 	"api/internal/retention"
 	"api/internal/router"
+	"api/internal/routines"
+	"api/internal/routinesapi"
 	"api/internal/server"
 	"api/internal/serverstats"
 	"api/internal/settings"
@@ -87,10 +89,14 @@ func main() {
 			"ENCRYPTION_SECRET is not a 32-byte hex key; secrets at rest use a weaker derived key. Rotate to `openssl rand -hex 32` (note: rotating invalidates existing encrypted secrets).")
 	}
 
+	// Start the background-routine supervisor before anything registers a routine,
+	// so those jobs are visible/controllable on the Routines page.
+	routines.Init(context.Background())
+
 	// Keep the Cloudflare edge-range list current so CF-Connecting-IP is trusted
 	// only for requests that genuinely transit Cloudflare (falls back to the
-	// bundled list if the refresh fails).
-	helper.StartCloudflareIPUpdater(context.Background())
+	// bundled list if the refresh fails). Registers as a supervised routine.
+	helper.StartCloudflareIPUpdater()
 
 	// Initialize and register services
 	// Auth must be first (other services depend on it)
@@ -134,6 +140,7 @@ func main() {
 
 	// Events service: cross-subsystem activity feed (always on — cheap, no deps)
 	r.RegisterService("events", events.New().Handlers())
+	r.RegisterService("routines", routinesapi.New().Handlers())
 	log.Println("Events service registered")
 
 	// Settings service (depends on auth for encryption)

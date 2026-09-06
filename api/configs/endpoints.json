@@ -1511,6 +1511,44 @@
         }
       ]
     },
+    "routines": {
+      "prefix": "/api/routines",
+      "enabled": true,
+      "endpoints": [
+        {
+          "path": "",
+          "methods": [
+            "GET"
+          ],
+          "handler": "List",
+          "description": "List background routines and their status"
+        },
+        {
+          "path": "/{name}/run",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Run",
+          "description": "Run a routine now"
+        },
+        {
+          "path": "/{name}/pause",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Pause",
+          "description": "Pause a routine's scheduled runs"
+        },
+        {
+          "path": "/{name}/resume",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Resume",
+          "description": "Resume a routine's scheduled runs"
+        }
+      ]
+    },
     "server": {
       "prefix": "/api/server",
       "enabled": true,

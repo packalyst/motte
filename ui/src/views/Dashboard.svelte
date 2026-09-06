@@ -28,6 +28,7 @@
     logs: () => import('./LogsView.svelte'),
     analytics: () => import('./AnalyticsView.svelte'),
     activity: () => import('./ActivityView.svelte'),
+    routines: () => import('./RoutinesView.svelte'),
     settings: () => import('./SettingsView.svelte'),
     profile: () => import('./ProfileView.svelte'),
     about: () => import('./AboutView.svelte')
@@ -160,6 +161,7 @@
         { id: 'analytics', label: 'Analytics', icon: 'chart-bar' },
         { id: 'logs', label: 'Logs', icon: 'file-text' },
         { id: 'activity', label: 'Activity', icon: 'activity' },
+        { id: 'routines', label: 'Routines', icon: 'clock' },
       ]
     },
   ]

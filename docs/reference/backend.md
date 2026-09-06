@@ -31,11 +31,13 @@ one-shots. Enumerated:
 | `settings` | Key-value settings store (`settings` table), plaintext + encrypted variants. Holds many cross-subsystem toggles; uses function-pointer callbacks set by `main` to avoid import cycles. |
 | `setup` | First-run setup wizard: status, Headscale detection/test, API-key generation, completion. |
 | `events` | Cross-subsystem activity feed (`events` table). Package-level best-effort `Log(subsystem, type, severity, message)`; self-trimming. |
+| `routines` | Supervisor for periodic background jobs — a **leaf package** (stdlib only) so any package can `Register` a `Spec` without an import cycle. Owns the timer loop, records last/next-run + result, and exposes `RunNow`/`Pause`/`Resume`. |
+| `routinesapi` | Thin HTTP layer over `routines` (`/api/routines` list + run/pause/resume). Separate from the core so the core stays router-free. |
 | `wireguard` | WireGuard peer CRUD, client config + QR generation, live sessions, per-peer virtual IPs. Uses a `PeerStore` (DB-backed cache). |
 | `headscale` | Thin admin wrapper over the Headscale REST API (users, nodes, routes, pre-auth keys, API keys) via `helper.HeadscaleGet/...`. |
 | `vpn` | Unified VPN-client view (WireGuard + Headscale) + ACL engine, DNS toggles, port scanning, traffic sync, subnet-router (Headscale) management. Generates the Headscale ACL and the nftables VPN-ACL table. |
 | `firewall` | The gate: unified `firewall_entries` (IP/range/country/ASN/port), fail2ban-style jails, blocklists, L3/L7 stats, dashboard security summary, internal blocklist feed for the Traefik sentinel. Drives `nftables`. |
-| `nftables` | Low-level nftables ruleset builder + applier. Owns registered "tables" (VPN-ACL, panel-access, Cloudflare-only). Validates with `nft -c` before applying. |
+| `nftables` | Low-level nftables ruleset builder + applier. Owns registered "tables" (VPN-ACL, panel-access, Cloudflare-only). Safety is per-boundary input validation + an atomic single-transaction `nft -f` apply (not a separate `nft -c` pass); see [networking-firewall.md](networking-firewall.md). |
 | `geolocation` | IP → country/ASN lookup (MaxMind / IP2Location / ipdeny), ASN range expansion, reputation, enrichment DB downloads. Firewall depends on it for country/ASN blocking. |
 | `domains` | Domain routes for Traefik reverse proxy (`domain_routes` table); regenerates dynamic Traefik config. |
 | `traefik` | Reads/writes Traefik config (core + dynamic), VPN-only mode, L7 firewall-block toggle, cert/resolver info. |
@@ -81,8 +83,9 @@ The typical **naming convention** inside a package:
 6. **`helper.InitEncryption()`** — derive the at-rest key from
    `ENCRYPTION_SECRET`. If the secret isn't 32-byte hex, `WeakEncryptionKey` is
    set and a warning is written to the Activity feed (the DB is already up).
-7. **`helper.StartCloudflareIPUpdater`** — keep the Cloudflare edge-range list
-   current (so `CF-Connecting-IP` is only trusted for real Cloudflare traffic).
+7. **`routines.Init(ctx)`** then **`helper.StartCloudflareIPUpdater()`** — start
+   the background-routine supervisor, then register the Cloudflare edge-range
+   refresh (runs on start + every 24h) as a supervised, page-controllable job.
 8. **Service registration** (see §3). Order matters and is intentional:
    - `auth` **first** (others depend on it). On success it registers the
      `router.SetAuthValidator` used by the auth middleware.
@@ -276,6 +279,18 @@ the same contract: a `Service` with `New` + `Handlers()`, handler methods named
 - **Consumer API**: `List(limit, typeFilter, subsystemFilter)` (limit clamped
   ≤ 500) emits `created_at` as ISO-8601 UTC. Exposed at `GET /api/events`
   (see [api-surface.md](api-surface.md)).
+
+---
+
+## 7b. Background routines (`api/internal/routines`)
+
+The panel runs many periodic background jobs (Cloudflare-IP refresh, cleanups, samplers…). Historically each was a private `go func(){ for range ticker.C { … } }` — invisible and only changeable by an api restart. The `routines` **supervisor** makes them visible and controllable.
+
+- **Register instead of `go func`:** a job calls `routines.Register(routines.Spec{Name, Description, Interval, RunAtStart, Run})`. The supervisor owns the timer loop, recovers panics, and records `LastRun`/`LastDuration`/`LastError`/`NextRun`/`Runs`/`Status`.
+- **Leaf package:** `routines` imports only the standard library, so *any* package (even `helper`) can register without an import cycle. The HTTP layer lives in the separate `routinesapi` package (imports `routines` + `router`).
+- **Control:** `RunNow` / `Pause` / `Resume` (run-now overrides pause). Exposed at `/api/routines` (see [api-surface.md](api-surface.md)) and surfaced on the **Routines** page.
+- **Lifecycle:** `main` calls `routines.Init(ctx)` early (§2 step 7); `Register` before `Init` queues, after `Init` starts the loop immediately.
+- **Migration status:** Phase 1 migrated `cloudflare-ips` (`helper/ip.go`) and `session-cleanup` (`auth/cleanup.go`). Other periodic jobs still run as private goroutines and move over incrementally. Jobs whose schedule is hour-of-day (e.g. the daily geolocation update) await interval-vs-cron support and are not yet migrated.
 
 ---
 

@@ -1,39 +1,36 @@
 package auth
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"time"
+
+	"api/internal/routines"
 )
 
 const sessionCleanupInterval = 1 * time.Hour
 
-// Start begins background tasks like session cleanup
+// Start registers this service's background routines with the supervisor so they
+// are visible/controllable on the Routines page.
 func (s *Service) Start() {
-	go s.runSessionCleanup()
+	routines.Register(routines.Spec{
+		Name:        "session-cleanup",
+		Description: "Delete expired user sessions",
+		Interval:    sessionCleanupInterval,
+		RunAtStart:  true,
+		Run:         func(context.Context) error { return s.cleanupExpiredSessions() },
+	})
 }
 
-// runSessionCleanup periodically removes expired sessions
-func (s *Service) runSessionCleanup() {
-	ticker := time.NewTicker(sessionCleanupInterval)
-	defer ticker.Stop()
-
-	// Run once at startup
-	s.cleanupExpiredSessions()
-
-	for range ticker.C {
-		s.cleanupExpiredSessions()
-	}
-}
-
-// cleanupExpiredSessions removes sessions past their expiry time
-func (s *Service) cleanupExpiredSessions() {
+// cleanupExpiredSessions removes sessions past their expiry time.
+func (s *Service) cleanupExpiredSessions() error {
 	result, err := s.db.Exec("DELETE FROM sessions WHERE expires_at < datetime('now')")
 	if err != nil {
-		log.Printf("Session cleanup error: %v", err)
-		return
+		return fmt.Errorf("session cleanup: %w", err)
 	}
-
 	if count, _ := result.RowsAffected(); count > 0 {
 		log.Printf("Cleaned up %d expired sessions", count)
 	}
+	return nil
 }

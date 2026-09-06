@@ -172,6 +172,10 @@ Read-only host telemetry for the "Server" page: `GET /security`,
 ### events — `/api/events`
 `GET /events?limit=&type=&subsystem=` — the cross-subsystem activity feed.
 
+### routines — `/api/routines`
+`GET /routines` — list background routines with status/last-run/next-run;
+`POST /routines/{name}/run|pause|resume` — control one (served by `routinesapi`, backed by the `routines` supervisor).
+
 ### docker — `/api/docker`
 `GET /containers`, `GET /containers/{name}`,
 `POST /containers/{name}/restart|stop|start`, `GET /images/{name}/analyze`.
