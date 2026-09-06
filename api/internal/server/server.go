@@ -145,6 +145,10 @@ type hostBlock struct {
 	UptimeSeconds int64     `json:"uptime_seconds"`
 	BootTime      time.Time `json:"boot_time"`
 	RebootRecent  bool      `json:"reboot_recent"` // booted < 24h ago
+	Hostname      string    `json:"hostname,omitempty"`
+	Distro        string    `json:"distro,omitempty"`   // /etc/os-release PRETTY_NAME
+	Kernel        string    `json:"kernel,omitempty"`   // uname -r
+	Timezone      string    `json:"timezone,omitempty"` // IANA name, or zone abbrev
 }
 type securityReport struct {
 	Status      string        `json:"status"` // calm | elevated | under_attack
@@ -397,7 +401,11 @@ func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 	sshComms := []string{"sshd", "sshd-session"}
 	logins, ok1 := journalGrep(append(sshComms, "useradd", "groupadd"), "", `Accepted |new user:|new group:`, 200)
 	sudo, ok2 := journalGrep([]string{"sudo"}, "", "", 300) // _COMM=sudo alone; the parser keeps COMMAND=/failures
-	failed, ok3 := journalGrep(sshComms, "", `Failed password`, 3000)
+	// Failed-SSH is a bounded time-window count (Failed1h/FailedPrev1h), NOT a newest-N list —
+	// so it KEEPS --since. Without it, a sparse-but-large sshd journal would be walked in full
+	// and blow the 6s timeout, silently pinning the brute-force counts at 0 (no fallback fires
+	// because the login/sudo sub-queries succeed).
+	failed, ok3 := journalGrep(sshComms, "3 hours ago", `Failed password`, 3000)
 	if !ok1 && !ok2 && !ok3 {
 		return authScan{}, false // journal not reachable — fall back to the log file
 	}
@@ -528,7 +536,43 @@ func hostUptime(now time.Time) hostBlock {
 			}
 		}
 	}
+	hostMeta(&h)
 	return h
+}
+
+// hostMeta fills the descriptive host fields (distro, kernel, hostname, timezone) from the
+// host via nsenter. Best-effort — a field that can't be read is left blank.
+func hostMeta(h *hostBlock) {
+	if out, err := runNsenter("uname", "-r"); err == nil {
+		h.Kernel = strings.TrimSpace(out)
+	}
+	if out, err := runNsenter("uname", "-n"); err == nil {
+		h.Hostname = strings.TrimSpace(out)
+	}
+	if out, err := runNsenter("cat", "/etc/os-release"); err == nil {
+		h.Distro = osReleasePretty(out)
+	}
+	if out, err := runNsenter("timedatectl", "show", "--property=Timezone", "--value"); err == nil && strings.TrimSpace(out) != "" {
+		h.Timezone = strings.TrimSpace(out)
+	} else if out, err := runNsenter("date", "+%Z"); err == nil {
+		h.Timezone = strings.TrimSpace(out)
+	}
+}
+
+// osReleasePretty extracts a human distro name from /etc/os-release content.
+func osReleasePretty(s string) string {
+	var name, version string
+	for _, line := range strings.Split(s, "\n") {
+		switch {
+		case strings.HasPrefix(line, "PRETTY_NAME="):
+			return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), `"`)
+		case strings.HasPrefix(line, "NAME="):
+			name = strings.Trim(strings.TrimPrefix(line, "NAME="), `"`)
+		case strings.HasPrefix(line, "VERSION="):
+			version = strings.Trim(strings.TrimPrefix(line, "VERSION="), `"`)
+		}
+	}
+	return strings.TrimSpace(name + " " + version)
 }
 
 // ---------- status ----------

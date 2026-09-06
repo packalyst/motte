@@ -195,7 +195,7 @@ func activeSessions() liveSessions {
 
 // sessionIDRe bounds a loginctl session id to a safe token before it's ever passed to
 // `loginctl show-session` — defense in depth even though the ids come from loginctl itself.
-var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`)
 
 // runNsenter runs a command inside the host namespaces (via nsenter, argv — never a shell)
 // and returns stdout. Mirrors runWho's host-visibility approach.

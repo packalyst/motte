@@ -9,6 +9,7 @@
   import BarChart from '../components/BarChart.svelte'
   import ChartLegend from '../components/ChartLegend.svelte'
   import Gauge from '../components/Gauge.svelte'
+  import Modal from '../components/Modal.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
 
   let { loading = $bindable(true), onLogout } = $props()
@@ -70,6 +71,7 @@
   let netHidden = $state({})
   let diskHidden = $state({})
   let cmHidden = $state({})
+  let showPackages = $state(false) // Package-changes modal
   const live = $derived($wsConnected && !!latest)
   // Load average is a run-queue length, not a %. Health = load ÷ cores.
   const loadColor = (l, cores) => {
@@ -170,36 +172,8 @@
       <span class="{badge} {live ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'} flex items-center gap-1">
         {#if live}<span class="w-1.5 h-1.5 rounded-full bg-success"></span>streaming{:else}connecting…{/if}</span></h2>
 
-    <!-- Headline tiles -->
-    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
-      <div class="{card}">
-        <div class="{tileK}"><Icon name="cpu" size={13} />CPU</div>
-        <div class="text-2xl font-bold tabular-nums" style={latest ? `color:${coreColor(latest.cpu)}` : ''}>{latest ? Math.round(latest.cpu) : '—'}<span class="text-base text-muted-foreground">%</span></div>
-        <div class="{tileM}">{latest?.cores_n ?? '—'} cores</div>
-      </div>
-      <div class="{card}">
-        <div class="{tileK}"><Icon name="database" size={13} />Memory</div>
-        <div class="text-2xl font-bold tabular-nums">{latest ? Math.round(latest.mem_pct) : '—'}<span class="text-base text-muted-foreground">%</span></div>
-        <div class="{tileM}">{latest ? formatBytes(latest.mem_used) + ' / ' + formatBytes(latest.mem_total) : '—'}</div>
-      </div>
-      <div class="{card}">
-        <div class="{tileK}"><Icon name="network" size={13} />Network</div>
-        <div class="text-lg font-bold tabular-nums leading-tight" style="color:var(--rx)">↓ {latest ? fmtRate(latest.net.rx) : '—'}</div>
-        <div class="{tileM} tabular-nums font-medium" style="color:var(--tx)">↑ {latest ? fmtRate(latest.net.tx) : '—'}</div>
-      </div>
-      <div class="{card}">
-        <div class="{tileK}"><Icon name="server" size={13} />Disk</div>
-        <div class="text-2xl font-bold tabular-nums">{latest?.disk ? Math.round(latest.disk.used_pct) : '—'}<span class="text-base text-muted-foreground">%</span></div>
-        <div class="{tileM}">{latest?.disk ? formatBytes(latest.disk.used) + ' / ' + formatBytes(latest.disk.total) : '—'}</div>
-      </div>
-      <div class="{card}">
-        <div class="{tileK}"><Icon name="activity" size={13} />Load</div>
-        <div class="text-2xl font-bold tabular-nums">{latest?.load?.[0]?.toFixed(2) ?? '—'}</div>
-        <div class="{tileM}">1m avg · {latest?.cores_n ?? '—'} cores</div>
-      </div>
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <!-- Row A: current server load + the 4 stat tiles (2×2) -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4 items-start">
       <!-- Current server load -->
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="gauge" size={16} class="text-primary" />Current server load</h3>
@@ -221,8 +195,47 @@
             </div>
           </div>
         </div>
+        <!-- Host details + package changes -->
+        <div class="mt-4 pt-3 border-t border-border">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs">
+            {#if data.host.distro}<div class="flex items-center gap-1.5 min-w-0"><Icon name="box" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Distro</span><b class="font-medium text-foreground truncate">{data.host.distro}</b></div>{/if}
+            {#if data.host.kernel}<div class="flex items-center gap-1.5 min-w-0"><Icon name="code" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Kernel</span><b class="font-medium text-foreground truncate font-mono">{data.host.kernel}</b></div>{/if}
+            {#if data.host.hostname}<div class="flex items-center gap-1.5 min-w-0"><Icon name="device-desktop" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Host</span><b class="font-medium text-foreground truncate">{data.host.hostname}</b></div>{/if}
+            {#if data.host.timezone}<div class="flex items-center gap-1.5 min-w-0"><Icon name="map-pin" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Timezone</span><b class="font-medium text-foreground truncate">{data.host.timezone}</b></div>{/if}
+          </div>
+          <div class="mt-3">
+            <Button variant="outline" size="sm" icon="package" onclick={() => (showPackages = true)}>Package changes{data.packages.length ? ` (${data.packages.length})` : ''}</Button>
+          </div>
+        </div>
       </div>
 
+      <!-- Stat tiles: memory, disk, network, load (2×2) -->
+      <div class="grid grid-cols-2 gap-4">
+        <div class="{card}">
+          <div class="{tileK}"><Icon name="database" size={13} />Memory</div>
+          <div class="text-2xl font-bold tabular-nums">{latest ? Math.round(latest.mem_pct) : '—'}<span class="text-base text-muted-foreground">%</span></div>
+          <div class="{tileM}">{latest ? formatBytes(latest.mem_used) + ' / ' + formatBytes(latest.mem_total) : '—'}</div>
+        </div>
+        <div class="{card}">
+          <div class="{tileK}"><Icon name="server" size={13} />Disk</div>
+          <div class="text-2xl font-bold tabular-nums">{latest?.disk ? Math.round(latest.disk.used_pct) : '—'}<span class="text-base text-muted-foreground">%</span></div>
+          <div class="{tileM}">{latest?.disk ? formatBytes(latest.disk.used) + ' / ' + formatBytes(latest.disk.total) : '—'}</div>
+        </div>
+        <div class="{card}">
+          <div class="{tileK}"><Icon name="network" size={13} />Network</div>
+          <div class="text-lg font-bold tabular-nums leading-tight" style="color:var(--rx)">↓ {latest ? fmtRate(latest.net.rx) : '—'}</div>
+          <div class="{tileM} tabular-nums font-medium" style="color:var(--tx)">↑ {latest ? fmtRate(latest.net.tx) : '—'}</div>
+        </div>
+        <div class="{card}">
+          <div class="{tileK}"><Icon name="activity" size={13} />Load</div>
+          <div class="text-2xl font-bold tabular-nums">{latest?.load?.[0]?.toFixed(2) ?? '—'}</div>
+          <div class="{tileM}">1m avg · {latest?.cores_n ?? '—'} cores</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row B: CPU cores + CPU/memory -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
       <!-- CPU cores -->
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="cpu" size={16} class="text-primary" />CPU cores<span class="text-muted-foreground font-normal text-xs ml-auto">per-core %</span></h3>
@@ -241,6 +254,16 @@
         {/if}
       </div>
 
+      <!-- CPU / memory -->
+      <div class="{card}">
+        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory<ChartLegend series={cmSeries} hidden={cmHidden} {latest} ontoggle={(i) => (cmHidden = { ...cmHidden, [i]: !cmHidden[i] })} /></h3>
+        <UPlotChart bind:hidden={cmHidden} legend={false} data={cmData} series={cmSeries} height={150} yRange={[0, 100]} yUnit="%" />
+        {#if latest}<div class="text-[11px] text-muted-foreground mt-1">{formatBytes(latest.mem_used)} / {formatBytes(latest.mem_total)} used</div>{/if}
+      </div>
+    </div>
+
+    <!-- Row C: Network I/O + Disk I/O -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- Network I/O -->
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="network" size={16} class="text-primary" />Network I/O<ChartLegend series={netSeries} hidden={netHidden} {latest} ontoggle={(i) => (netHidden = { ...netHidden, [i]: !netHidden[i] })} /></h3>
@@ -251,13 +274,6 @@
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="server" size={16} class="text-primary" />Disk I/O<ChartLegend series={diskSeries} hidden={diskHidden} {latest} ontoggle={(i) => (diskHidden = { ...diskHidden, [i]: !diskHidden[i] })} /></h3>
         <UPlotChart bind:hidden={diskHidden} legend={false} data={diskData} series={diskSeries} height={150} yFormat={fmtRate} />
-      </div>
-
-      <!-- CPU / memory -->
-      <div class="{card}">
-        <h3 class="text-sm font-semibold mb-2 flex items-center gap-2"><Icon name="chart-line" size={16} class="text-primary" />CPU / memory<ChartLegend series={cmSeries} hidden={cmHidden} {latest} ontoggle={(i) => (cmHidden = { ...cmHidden, [i]: !cmHidden[i] })} /></h3>
-        <UPlotChart bind:hidden={cmHidden} legend={false} data={cmData} series={cmSeries} height={150} yRange={[0, 100]} yUnit="%" />
-        {#if latest}<div class="text-[11px] text-muted-foreground mt-1">{formatBytes(latest.mem_used)} / {formatBytes(latest.mem_total)} used</div>{/if}
       </div>
     </div>
 
@@ -386,9 +402,8 @@
       </div>
     </div>
 
-    <!-- Package changes -->
-    <h2 class="{sectionH} mt-2 mb-2">Package changes</h2>
-    <div class="{card}">
+    <!-- Package changes — opened from the Current server load card -->
+    <Modal bind:open={showPackages} title="Package changes" size="lg">
       {#if data.packages.length}
         <div class="divide-y divide-border">
           {#each data.packages.slice().reverse() as p}
@@ -410,7 +425,7 @@
           <div class="text-[11px] mt-1">Rows appear here (from <span class="font-mono">dpkg.log</span>) when apt installs or updates something — a tripwire for an intruder installing tools.</div>
         </div>
       {/if}
-    </div>
+    </Modal>
 
     <!-- Exposure: listening ports, grouped by the process that owns them -->
     <h2 class="{sectionH} mt-2 mb-2 flex items-center gap-2">Exposure — listening ports
