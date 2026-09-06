@@ -300,6 +300,12 @@ unspecified, **plus CGNAT `100.64.0.0/10` and `0.0.0.0/8`** at dial time
   containers were defaulting to unbounded logs.
 - The rekey `columns` inventory (`rekey.go:34-42`) is the single source of truth for "what is
   encrypted," deliberately noting where it differs from the backup package's list.
+- **Periodic background work registers with the routines supervisor**
+  (`routines.Register`, `routines.go`), never a bare `go func(){ for range ticker.C { … } }`.
+  One supervisor owns the timer loop, panic-recovery, and last/next-run tracking for every job,
+  and each becomes visible/controllable on the Routines page for free. `Run` returns an `error`
+  (recorded + shown) rather than only logging. When migrating, delete the old ticker goroutine
+  — no dead code. See [backend.md](backend.md) §7b for the recipe.
 - `allowAndSaddrDropRules()` ([§2](#2-nftables--firewall-code-its-own-sub-discipline)) keeps
   the input/forward chains identical.
 - `ParseKey` ([§3.3](#33-secrets-encrypted-at-rest-one-derivation-atomic-rotation)) — one key

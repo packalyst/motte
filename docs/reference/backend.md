@@ -293,6 +293,31 @@ The panel runs many periodic background jobs (Cloudflare-IP refresh, cleanups, s
 - **Lifecycle:** `main` calls `routines.Init(ctx)` early (§2 step 7); `Register` before `Init` queues, after `Init` starts the loop immediately.
 - **Migration status:** Phase 1 migrated `cloudflare-ips` (`helper/ip.go`) and `session-cleanup` (`auth/cleanup.go`). Other periodic jobs still run as private goroutines and move over incrementally. Jobs whose schedule is hour-of-day (e.g. the daily geolocation update) await interval-vs-cron support and are not yet migrated.
 
+### Adding / migrating a routine
+
+In the owning package (don't make a new one), replace the private `go func(){ for range ticker.C { … } }` with a `Register` call — usually from the service's constructor or `Start()`:
+
+```go
+routines.Register(routines.Spec{
+    Name:        "session-cleanup",            // unique kebab-case id (also the API path segment + WS identity)
+    Description: "Delete expired user sessions",
+    Interval:    time.Hour,
+    RunAtStart:  true,                          // also run once immediately when the loop starts
+    Run: func(ctx context.Context) error {      // return an error to record a failure (don't only log)
+        return s.cleanupExpiredSessions()
+    },
+})
+```
+
+That is the whole change — the job then appears on the Routines page automatically (list + run/pause/resume + live WS status). **No `endpoints.json`, router, or UI edit is needed** — the page is generic over whatever is registered.
+
+Rules of the road:
+- **Return an error** from `Run` on failure (the supervisor records and displays it) instead of only `log.Printf`. Make `Run` idempotent and honor `ctx`.
+- **`Name` is the stable identity** (API path segment + WS). Unique, kebab-case; a duplicate name is ignored (first wins) so a re-register can't spawn two loops.
+- **Register any time** — before `Init` it queues, after `Init` the loop starts immediately.
+- **Fixed interval only (Phase 1).** Hour-of-day schedules ("daily at 03:00") aren't supported yet — leave those as private goroutines until interval-vs-cron scheduling lands (Phase 2).
+- Delete the old ticker/goroutine you replaced (no dead code); adapt the work function to return `error`.
+
 ---
 
 ## 8. Config (`api/internal/config`, `api/configs/`)
