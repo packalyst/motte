@@ -138,11 +138,10 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		toMigrate = machines
 	}
 
-	if err := s.setSetting(settingEnabled, boolStr(req.Enabled)); err != nil {
-		router.JSONError(w, "save failed", http.StatusInternalServerError)
-		return
-	}
-	if err := s.setSetting(settingPort, fmt.Sprintf("%d", req.Port)); err != nil {
+	if err := s.setSettingsTx(map[string]string{
+		settingEnabled: boolStr(req.Enabled),
+		settingPort:    fmt.Sprintf("%d", req.Port),
+	}); err != nil {
 		router.JSONError(w, "save failed", http.StatusInternalServerError)
 		return
 	}
@@ -156,7 +155,7 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		migrating = true
 	}
 	if !migrating {
-		s.ReloadFromSettings()
+		s.reloadFromSettingsLocked() // we already hold cfgMu
 	}
 
 	enabled, _ := s.Status()

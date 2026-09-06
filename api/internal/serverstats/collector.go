@@ -141,8 +141,12 @@ func (c *Collector) sample() (Stats, bool) {
 				RX: int64(float64(rx-c.prevRX) / dt),
 				TX: int64(float64(tx-c.prevTX) / dt),
 			}
-			s.Disk.ReadBps = int64(float64((diskR-c.prevDiskR)*sectorSize) / dt)
-			s.Disk.WriteBps = int64(float64((diskW-c.prevDiskW)*sectorSize) / dt)
+			// Skip the delta if a matched disk vanished between ticks (hot-remove/detach) —
+			// the aggregate can drop and wrap uint64 into a bogus spike; leave 0 this tick.
+			if diskR >= c.prevDiskR && diskW >= c.prevDiskW {
+				s.Disk.ReadBps = int64(float64((diskR-c.prevDiskR)*sectorSize) / dt)
+				s.Disk.WriteBps = int64(float64((diskW-c.prevDiskW)*sectorSize) / dt)
+			}
 		}
 	}
 

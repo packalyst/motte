@@ -118,6 +118,17 @@ const (
 // (re)applies the listener + firewall port. Called at startup and whenever the
 // Settings page saves fleet config.
 func (s *Service) ReloadFromSettings() {
+	// Serialize on cfgMu so a settings reload (startup, or a backup/config restore via
+	// Reconcile) can't race handleSetConfig and do the stranding hard-switch the migration
+	// path avoids. handleSetConfig already holds cfgMu, so it calls the *Locked variant.
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	s.reloadFromSettingsLocked()
+}
+
+// reloadFromSettingsLocked (re)applies fleet config from the settings table. Caller holds
+// s.cfgMu.
+func (s *Service) reloadFromSettingsLocked() {
 	enabled := s.getSetting(settingEnabled) == "true"
 	port := defaultPort
 	if v := s.getSetting(settingPort); v != "" {
@@ -430,6 +441,26 @@ func (s *Service) setSetting(key, value string) error {
 		ON CONFLICT(key) DO UPDATE SET value = ?, encrypted = 0, updated_at = CURRENT_TIMESTAMP`,
 		key, value, value)
 	return err
+}
+
+// setSettingsTx writes several settings in one transaction, so a mid-write failure can't
+// leave a half-applied pair (e.g. the new enabled flag with the old port).
+func (s *Service) setSettingsTx(kv map[string]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for k, v := range kv {
+		if _, err := tx.Exec(`
+			INSERT INTO settings (key, value, encrypted, updated_at)
+			VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+			ON CONFLICT(key) DO UPDATE SET value = ?, encrypted = 0, updated_at = CURRENT_TIMESTAMP`,
+			k, v, v); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func parsePort(v string) (int, error) {

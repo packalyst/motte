@@ -12,6 +12,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"net"
 	"net/http"
@@ -393,10 +394,19 @@ func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 // nsenter. ok=false only when journalctl couldn't run at all (so the caller falls back
 // to the log file); a non-zero exit with no matches is treated as "ran, empty".
 func journalGrep(since, grep string) ([]string, bool) {
-	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
+	// Bounded so a huge or stalled journal can't blow up or hang the request: a context
+	// timeout kills a wedged journalctl (then we fall back to the log file), and --lines
+	// caps the returned lines far above the ~12 we keep — the file path is likewise capped
+	// (maxTailBytes), so the journal path honours the same "one request can't OOM" invariant.
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
 		"journalctl", "-o", "short-iso", "--no-pager", "--facility=authpriv",
-		"--since", since, "--grep", grep)
+		"--lines", "5000", "--since", since, "--grep", grep)
 	out, err := cmd.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, false // stalled journalctl — fall back to the log file
+	}
 	if err != nil {
 		if _, isExit := err.(*exec.ExitError); !isExit {
 			return nil, false // nsenter/journalctl missing or blocked
