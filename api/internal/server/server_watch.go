@@ -167,7 +167,16 @@ func whoSessions() map[string]string {
 // historical login can be flagged "active" when a live session matches it. Using a
 // count (not a bool) means N live sessions from the same user+IP mark the N most
 // recent matching logins — not all of them.
+//
+// Source: systemd-logind (loginctl) — the authoritative, per-connection view. `who` lists
+// one row per pty, so a multiplexed/tmux connection over-counts (6 ptys for 3 real SSH
+// connections); loginctl is one session per connection with the remote IP. Falls back to
+// `who` on non-systemd hosts or when loginctl isn't reachable.
 func activeSessionCounts() map[string]int {
+	if counts := loginctlSessionCounts(); counts != nil {
+		return counts
+	}
+	// Fallback: `who` (one row per pty — may over-count multiplexed connections).
 	counts := map[string]int{}
 	for _, line := range runWho() {
 		f := strings.Fields(line)
@@ -180,6 +189,70 @@ func activeSessionCounts() map[string]int {
 		}
 		counts[f[0]+"\x00"+host]++
 	}
+	return counts
+}
+
+// sessionIDRe bounds a loginctl session id to a safe token before it's ever passed to
+// `loginctl show-session` — defense in depth even though the ids come from loginctl itself.
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// runNsenter runs a command inside the host namespaces (via nsenter, argv — never a shell)
+// and returns stdout. Mirrors runWho's host-visibility approach.
+func runNsenter(args ...string) (string, error) {
+	base := []string{"-t", "1", "-m", "-u", "-i", "-n", "-p", "--"}
+	out, err := exec.Command("nsenter", append(base, args...)...).Output()
+	return string(out), err
+}
+
+// loginctlSessionCounts returns currently-open sessions keyed by user+remote-IP via
+// systemd-logind. Returns nil (not an empty map) when loginctl can't be reached, so the
+// caller falls back to `who`; an empty map means "reachable, no remote sessions". Only
+// sessions with a parseable remote IP are counted (local console sessions have none and
+// aren't relevant to the remote-login card), and each remote host is validated as an IP so
+// a crafted RemoteHost can't be matched against IP-based login records.
+func loginctlSessionCounts() map[string]int {
+	listOut, err := runNsenter("loginctl", "list-sessions", "--no-legend")
+	if err != nil {
+		return nil // loginctl not reachable — signal fallback to who
+	}
+	var ids []string
+	for _, line := range strings.Split(listOut, "\n") {
+		f := strings.Fields(line)
+		if len(f) > 0 && sessionIDRe.MatchString(f[0]) {
+			ids = append(ids, f[0])
+		}
+	}
+	if len(ids) == 0 {
+		return map[string]int{} // reachable, no sessions
+	}
+
+	// One show-session call for all ids; properties print per session, blocks separated by
+	// a blank line.
+	args := append([]string{"loginctl", "show-session", "--property=Name", "--property=RemoteHost"}, ids...)
+	showOut, err := runNsenter(args...)
+	if err != nil {
+		return nil
+	}
+	counts := map[string]int{}
+	var user, host string
+	flush := func() {
+		if user != "" && host != "" && net.ParseIP(host) != nil {
+			counts[user+"\x00"+host]++
+		}
+		user, host = "", ""
+	}
+	for _, line := range strings.Split(showOut, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "":
+			flush() // block separator
+		case strings.HasPrefix(line, "Name="):
+			user = strings.TrimPrefix(line, "Name=")
+		case strings.HasPrefix(line, "RemoteHost="):
+			host = strings.TrimPrefix(line, "RemoteHost=")
+		}
+	}
+	flush() // final block has no trailing blank line
 	return counts
 }
 
