@@ -11,6 +11,7 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
+  import Select from '../components/Select.svelte'
   import Tabs from '../components/Tabs.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
@@ -125,6 +126,17 @@
     else if (activeTab === 'rules') loadFilters()
     else if (activeTab === 'rewrites') loadRewrites()
   })
+
+  // Switch tabs and mirror the choice to the URL hash (?tab=), matching what the
+  // Tabs component's urlKey did, so deep links + refresh keep the tab.
+  function setTab(id) {
+    activeTab = id
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.hash.slice(1))
+      params.set('tab', id)
+      window.history.replaceState(null, '', '#' + params.toString())
+    }
+  }
 
   // Computed
   const blockedDomains = $derived(
@@ -433,11 +445,26 @@
       <StatCard icon="globe" color="warning" value={blockedServices.length} label="Blocked Services" />
     </div>
 
-    <!-- Tabs -->
-    <div class="bg-card border border-border rounded-lg overflow-hidden">
-      <Tabs {tabs} bind:activeTab urlKey="tab" />
+    <!-- Segmented tab bar — pills on desktop, a select on mobile (matches Analytics) -->
+    <div class="space-y-3">
+      <div class="hidden sm:flex gap-0.5 bg-muted p-1 rounded-lg w-fit">
+        {#each tabs as t}
+          <button
+            onclick={() => setTab(t.id)}
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer {activeTab === t.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}"
+          >
+            <Icon name={t.icon} size={14} />
+            {t.label}
+          </button>
+        {/each}
+      </div>
+      <div class="sm:hidden">
+        <Select value={activeTab} onchange={(e) => setTab(e.target.value)}>
+          {#each tabs as t}<option value={t.id}>{t.label}</option>{/each}
+        </Select>
+      </div>
 
-      <div class="p-5">
+      <div class="bg-card border border-border rounded-lg p-5">
         <!-- Overview Tab -->
         {#if activeTab === 'overview'}
           <div class="space-y-6">
