@@ -388,26 +388,24 @@ func (s *Service) authLogCandidates() []string {
 // the caller falls back to the log file.
 func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 	acc := newAuthAccum(now)
-	// The programs whose messages we parse. Filtering by _COMM (indexed) keeps journald from
-	// scanning the whole journal — the query drops from ~seconds to well under one.
+	// Filtering by _COMM (indexed) keeps journald from scanning the whole journal — fast.
+	// We pass NO --since: with a since, journalctl's --lines returns the FIRST N entries in
+	// the window (oldest), which drops recent logins; without it, --lines returns the most
+	// recent N, which is what we want (the 30-day cutoff is re-applied per event in code).
+	// The queries are SPLIT so a flood of sudo or brute-force failures can't push the rare
+	// login lines out of any one --lines window.
 	sshComms := []string{"sshd", "sshd-session"}
-	sparseComms := []string{"sshd", "sshd-session", "sudo", "useradd", "groupadd"}
-	// Sparse events (logins, sudo, account changes) over the display window; the 30-day
-	// cutoff is re-applied per event while parsing. "Failed password" is queried separately
-	// (sshd only, short window) so brute-force spam can't bury the rare login lines.
-	sparse, ok1 := journalGrep(sparseComms, "30 days ago", `Accepted |COMMAND=|new user:|new group:`, 2000)
-	// The failed-SSH trend only needs the last few hours.
-	failed, ok2 := journalGrep(sshComms, "3 hours ago", `Failed password`, 3000)
-	if !ok1 && !ok2 {
+	logins, ok1 := journalGrep(append(sshComms, "useradd", "groupadd"), "", `Accepted |new user:|new group:`, 200)
+	sudo, ok2 := journalGrep([]string{"sudo"}, "", "", 300) // _COMM=sudo alone; the parser keeps COMMAND=/failures
+	failed, ok3 := journalGrep(sshComms, "", `Failed password`, 3000)
+	if !ok1 && !ok2 && !ok3 {
 		return authScan{}, false // journal not reachable — fall back to the log file
 	}
-	for _, line := range sparse {
-		ts, ok := parseISOTime(line)
-		acc.line(line, ts, ok)
-	}
-	for _, line := range failed {
-		ts, ok := parseISOTime(line)
-		acc.line(line, ts, ok)
+	for _, batch := range [][]string{logins, sudo, failed} {
+		for _, line := range batch {
+			ts, ok := parseISOTime(line)
+			acc.line(line, ts, ok)
+		}
 	}
 	return acc.finish(), true
 }
