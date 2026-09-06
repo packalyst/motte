@@ -523,6 +523,43 @@ update_env_value() {
     fi
 }
 
+# detect_distro_paths sets the host log-file paths the panel tails (AUTH_LOG / KERN_LOG /
+# DPKG_LOG) to the right locations for the OS family, so the Server page and firewall jails
+# read the correct files on Debian/Ubuntu vs RHEL/Fedora. Logins read the systemd journal
+# first (distro-neutral), so these paths only affect the file-tailing features.
+#
+# It records the detected family in DISTRO and only (re)writes the paths when that family is
+# new or changed — so a manual override in .env survives ordinary rebuilds on the same OS.
+detect_distro_paths() {
+    local id="" like="" family="debian"
+    if [ -f /etc/os-release ]; then
+        id=$(. /etc/os-release 2>/dev/null; echo "$ID")
+        like=$(. /etc/os-release 2>/dev/null; echo "$ID_LIKE")
+    fi
+    case " $id $like " in
+        *" rhel "*|*" fedora "*|*" centos "*) family="rhel" ;;
+        *) family="debian" ;; # ubuntu, debian, and derivatives (ID_LIKE=debian)
+    esac
+
+    local current
+    current=$(grep -E "^DISTRO=" .env 2>/dev/null | cut -d= -f2)
+    if [ "$current" = "$family" ]; then
+        return  # same OS family as last time — leave the (possibly overridden) paths alone
+    fi
+
+    local auth kern dpkg
+    if [ "$family" = "rhel" ]; then
+        auth="/var/log/secure"; kern="/var/log/messages"; dpkg=""   # no dpkg.log on RHEL
+    else
+        auth="/var/log/auth.log"; kern="/var/log/kern.log"; dpkg="/var/log/dpkg.log"
+    fi
+    update_env_value DISTRO "$family"
+    update_env_value AUTH_LOG "$auth"
+    update_env_value KERN_LOG "$kern"
+    update_env_value DPKG_LOG "$dpkg"
+    echo -e "${GREEN}Detected distro:${NC} ${family} — set AUTH_LOG=${auth} KERN_LOG=${kern}"
+}
+
 # ===========================================
 # Managed Install (systemd service + /opt)
 # ===========================================
@@ -2846,6 +2883,9 @@ echo ""
 PANEL_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
 export PANEL_VERSION
 echo -e "${CYAN}Panel version:${NC} $PANEL_VERSION"
+
+# Set the distro-specific log paths (AUTH_LOG/KERN_LOG/DPKG_LOG) before the api starts.
+detect_distro_paths
 
 echo -e "${YELLOW}Starting docker compose...${NC}"
 

@@ -165,7 +165,10 @@ services:
       - ADGUARD_PORT=${ADGUARD_PORT}
       - ADGUARD_CONFIG=/adguard/AdGuardHome.yaml
       - ADGUARD_LOGS=${ADGUARD_LOGS}
-      - KERN_LOG=${KERN_LOG}
+      # Host log paths — distro-aware, set by manage.sh detect_distro_paths (Debian defaults here).
+      - KERN_LOG=${KERN_LOG:-/var/log/kern.log}
+      - AUTH_LOG=${AUTH_LOG:-/var/log/auth.log}
+      - DPKG_LOG=${DPKG_LOG:-/var/log/dpkg.log}
       - LOGS_MAX_ENTRIES=${LOGS_MAX_ENTRIES}
       - LOGS_CLEANUP_INTERVAL=${LOGS_CLEANUP_INTERVAL}
       - LOGS_COUNTRY_INTERVAL=${LOGS_COUNTRY_INTERVAL}
