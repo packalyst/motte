@@ -369,24 +369,21 @@
     {/if}
   </div>
 
-  <!-- Install-command modal: no outside-click close; Close enabled only after Copy -->
+  <!-- Install-command modal: no close until copied; the Copy button then turns into Close -->
   {#if showInstall && lastToken}
-    <Modal open={showInstall} dismissible={false} showClose={copied} onclose={closeInstall} title="Install command" size="lg">
+    <Modal open={showInstall} dismissible={false} showClose={false} onclose={closeInstall} title="Install command" size="lg">
       <div class="space-y-3">
         <p class="text-sm text-muted-foreground">Run this on the new machine. One-time — expires in {fmtCountdown(lastToken.expires_at) || 'under a minute'}.</p>
         {#if lastToken.install_command}
           <pre class="bg-muted rounded-lg p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all border border-border">{lastToken.install_command}</pre>
           <div class="flex items-center gap-2">
-            <Button icon={copied ? 'check' : 'copy'} variant="primary" onclick={copyInstall}>{copied ? 'Copied' : 'Copy command'}</Button>
+            <Button icon={copied ? 'check' : 'copy'} variant="primary" onclick={copied ? closeInstall : copyInstall}>{copied ? 'Close' : 'Copy command'}</Button>
             {#if !copied}<span class="text-[11px] text-muted-foreground">Copy the command to continue.</span>{/if}
           </div>
         {:else}
           <div class="text-sm text-warning">Pick an address in the Add-machine card so the install command can be built.</div>
         {/if}
       </div>
-      {#snippet footer()}
-        <Button variant="secondary" onclick={closeInstall} disabled={!copied}>Close</Button>
-      {/snippet}
     </Modal>
   {/if}
 
