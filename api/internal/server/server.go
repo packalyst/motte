@@ -370,12 +370,14 @@ func (s *Service) authLogCandidates() []string {
 // the caller falls back to the log file.
 func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 	acc := newAuthAccum(now)
-	// Sparse events over a long window (logins, sudo, account changes). Exclude the
-	// noisy "Failed password" brute-force spam so a heavily-attacked host's rare login
-	// lines aren't buried — we ask the journal for exactly the lines that matter.
-	sparse, ok1 := journalGrep("30 days ago", `Accepted |COMMAND=|new user:|new group:`)
-	// The failed-SSH trend only needs the last couple of hours.
-	failed, ok2 := journalGrep("3 hours ago", `Failed password`)
+	// Sparse events (logins, sudo, account changes): grab the most recent matching entries
+	// via a fast backward walk (empty since → journald reads back from now and stops after
+	// N matches, instead of scanning a 30-day window). The 30-day cutoff is applied per
+	// event while parsing. "Failed password" is queried separately so brute-force spam can't
+	// bury the rare login lines.
+	sparse, ok1 := journalGrep("", `Accepted |COMMAND=|new user:|new group:`, 800)
+	// The failed-SSH trend only needs the last few hours.
+	failed, ok2 := journalGrep("3 hours ago", `Failed password`, 3000)
 	if !ok1 && !ok2 {
 		return authScan{}, false // journal not reachable — fall back to the log file
 	}
@@ -393,16 +395,23 @@ func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 // journalGrep runs a filtered journalctl over the host journal (authpriv facility) via
 // nsenter. ok=false only when journalctl couldn't run at all (so the caller falls back
 // to the log file); a non-zero exit with no matches is treated as "ran, empty".
-func journalGrep(since, grep string) ([]string, bool) {
-	// Bounded so a huge or stalled journal can't blow up or hang the request: a context
-	// timeout kills a wedged journalctl (then we fall back to the log file), and --lines
-	// caps the returned lines far above the ~12 we keep — the file path is likewise capped
-	// (maxTailBytes), so the journal path honours the same "one request can't OOM" invariant.
+func journalGrep(since, grep string, lines int) ([]string, bool) {
+	// NO --facility filter: sshd logins ("Accepted …") are NOT reliably under authpriv (the
+	// facility varies by distro/OpenSSH build), and filtering by it drops them entirely —
+	// --grep plus the code-side regexes are the real filter. Bounded so a huge/stalled
+	// journal can't OOM or hang the request: a context timeout kills a wedged journalctl
+	// (then we fall back to the log file), and --lines caps output. An empty `since` means
+	// "the most recent <lines> matching entries" — a fast backward walk that avoids scanning
+	// a long time window (the caller applies its own age cutoff while parsing).
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
-		"journalctl", "-o", "short-iso", "--no-pager", "--facility=authpriv",
-		"--lines", "5000", "--since", since, "--grep", grep)
+	jargs := []string{"journalctl", "-o", "short-iso", "--no-pager",
+		"--lines", strconv.Itoa(lines), "--grep", grep}
+	if since != "" {
+		jargs = append(jargs, "--since", since)
+	}
+	args := append([]string{"-t", "1", "-m", "-u", "-i", "-n", "-p", "--"}, jargs...)
+	cmd := exec.CommandContext(ctx, "nsenter", args...)
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, false // stalled journalctl — fall back to the log file
