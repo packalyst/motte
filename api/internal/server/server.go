@@ -370,14 +370,16 @@ func (s *Service) authLogCandidates() []string {
 // the caller falls back to the log file.
 func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 	acc := newAuthAccum(now)
-	// Sparse events (logins, sudo, account changes): grab the most recent matching entries
-	// via a fast backward walk (empty since → journald reads back from now and stops after
-	// N matches, instead of scanning a 30-day window). The 30-day cutoff is applied per
-	// event while parsing. "Failed password" is queried separately so brute-force spam can't
-	// bury the rare login lines.
-	sparse, ok1 := journalGrep("", `Accepted |COMMAND=|new user:|new group:`, 800)
+	// The programs whose messages we parse. Filtering by _COMM (indexed) keeps journald from
+	// scanning the whole journal — the query drops from ~seconds to well under one.
+	sshComms := []string{"sshd", "sshd-session"}
+	sparseComms := []string{"sshd", "sshd-session", "sudo", "useradd", "groupadd"}
+	// Sparse events (logins, sudo, account changes) over the display window; the 30-day
+	// cutoff is re-applied per event while parsing. "Failed password" is queried separately
+	// (sshd only, short window) so brute-force spam can't bury the rare login lines.
+	sparse, ok1 := journalGrep(sparseComms, "30 days ago", `Accepted |COMMAND=|new user:|new group:`, 2000)
 	// The failed-SSH trend only needs the last few hours.
-	failed, ok2 := journalGrep("3 hours ago", `Failed password`, 3000)
+	failed, ok2 := journalGrep(sshComms, "3 hours ago", `Failed password`, 3000)
 	if !ok1 && !ok2 {
 		return authScan{}, false // journal not reachable — fall back to the log file
 	}
@@ -395,18 +397,24 @@ func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 // journalGrep runs a filtered journalctl over the host journal (authpriv facility) via
 // nsenter. ok=false only when journalctl couldn't run at all (so the caller falls back
 // to the log file); a non-zero exit with no matches is treated as "ran, empty".
-func journalGrep(since, grep string, lines int) ([]string, bool) {
-	// NO --facility filter: sshd logins ("Accepted …") are NOT reliably under authpriv (the
-	// facility varies by distro/OpenSSH build), and filtering by it drops them entirely —
-	// --grep plus the code-side regexes are the real filter. Bounded so a huge/stalled
-	// journal can't OOM or hang the request: a context timeout kills a wedged journalctl
-	// (then we fall back to the log file), and --lines caps output. An empty `since` means
-	// "the most recent <lines> matching entries" — a fast backward walk that avoids scanning
-	// a long time window (the caller applies its own age cutoff while parsing).
+func journalGrep(comms []string, since, grep string, lines int) ([]string, bool) {
+	// Speed comes from filtering by _COMM (the logging program) — an INDEXED journal field,
+	// so journald seeks straight to just these programs' entries instead of scanning the
+	// whole journal. --grep (unindexed message-text match) then runs only over that small
+	// slice, and the code-side regexes are the final filter. NOTE: no --facility filter —
+	// sshd logins are not reliably under authpriv (it varies by distro/OpenSSH build), which
+	// would drop them. Bounded so a huge/stalled journal can't OOM or hang the request:
+	// a context timeout kills a wedged journalctl (then we fall back to the log file), and
+	// --lines caps output.
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	jargs := []string{"journalctl", "-o", "short-iso", "--no-pager",
-		"--lines", strconv.Itoa(lines), "--grep", grep}
+	jargs := []string{"journalctl", "-o", "short-iso", "--no-pager", "--lines", strconv.Itoa(lines)}
+	for _, c := range comms {
+		jargs = append(jargs, "_COMM="+c)
+	}
+	if grep != "" {
+		jargs = append(jargs, "--grep", grep)
+	}
 	if since != "" {
 		jargs = append(jargs, "--since", since)
 	}
