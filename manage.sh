@@ -1003,10 +1003,19 @@ check_for_updates() {
     fi
 
     echo -e "${YELLOW}Fetching updates from remote...${NC}"
-    git fetch origin "$CURRENT_BRANCH" 2>/dev/null || {
-        echo -e "${RED}Failed to fetch from remote${NC}"
+    # Fail fast instead of hanging: BatchMode + no terminal prompt means a missing SSH key,
+    # an unverified host key, or a blocked outbound port errors out (visibly) rather than
+    # sitting on a prompt forever. Stderr is shown so the real cause is not hidden. For a
+    # locked-down host, an https remote (public repo, port 443) avoids SSH entirely.
+    if ! GIT_TERMINAL_PROMPT=0 \
+         GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new' \
+         git fetch origin "$CURRENT_BRANCH"; then
+        echo -e "${RED}Failed to fetch from remote (see the error above).${NC}"
+        echo -e "${YELLOW}If the origin is an ssh URL (git@github.com:...) on a firewalled host,${NC}"
+        echo -e "${YELLOW}switch it to https (public repo, no key needed):${NC}"
+        echo -e "  git remote set-url origin https://github.com/packalyst/wireguard-admin-panel.git"
         return 1
-    }
+    fi
 
     # Get current and remote commit
     LOCAL_COMMIT=$(git rev-parse HEAD)
