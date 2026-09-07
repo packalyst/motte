@@ -422,6 +422,30 @@
           {/if}
         </div>
         <div class="text-[11px] text-muted-foreground mt-2">footholds an intruder plants to survive a reboot · from dpkg.log + cron files</div>
+
+        {#if data.supply_chain}
+          <div class="mt-3 pt-3 border-t border-border">
+            <div class="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Panel supply chain</div>
+            <div class="flex items-center justify-between text-sm py-1.5 border-b border-border">
+              <span class="text-muted-foreground">Release signing</span>
+              {#if data.supply_chain.signing_enabled}
+                <span class="font-medium text-success inline-flex items-center gap-1"><Icon name="shield-check" size={13} />On</span>
+              {:else}
+                <span class="font-medium text-warning inline-flex items-center gap-1"><Icon name="shield" size={13} />Off · sha256/TLS</span>
+              {/if}
+            </div>
+            {#if data.supply_chain.forge}
+              <div class="flex items-center justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Agent source</span><span class="font-medium text-foreground capitalize">{data.supply_chain.forge}</span></div>
+            {/if}
+            {#if data.supply_chain.fleet_enabled}
+              <div class="flex items-center justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Fleet mTLS port</span><span class="tabular-nums font-medium text-foreground">{data.supply_chain.fleet_port}</span></div>
+            {/if}
+            {#if data.supply_chain.agent_latest}
+              <div class="flex items-center justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Latest agent</span><span class="tabular-nums font-medium text-foreground">{data.supply_chain.agent_latest}</span></div>
+            {/if}
+            <div class="flex items-center justify-between text-sm py-1.5"><span class="text-muted-foreground">Panel build</span><span class="font-mono text-xs font-medium text-foreground">{data.supply_chain.panel_version}{data.supply_chain.panel_branch ? ` · ${data.supply_chain.panel_branch}` : ''}</span></div>
+          </div>
+        {/if}
       </div>
     </div>
 

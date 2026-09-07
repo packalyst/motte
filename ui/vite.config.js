@@ -20,6 +20,9 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 80,
     allowedHosts: true,
+    // Allow importing the repo-root README.md (../README.md) so the About page can render
+    // its Architecture section as the single source of truth for the diagrams.
+    fs: { allow: ['..'] },
     proxy: {
       // Headscale API
       '/api/v1': {

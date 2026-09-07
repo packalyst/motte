@@ -381,6 +381,9 @@ func main() {
 
 	// Host-security ("Server" page): read-only host telemetry. Uses the same host
 	// access the container already has (network_mode:host, pid:host, /var/log:ro).
+	// Declared here so the server service's supply-chain hook can read fleet state lazily —
+	// fleet is initialized further down, and the hook only runs at request time.
+	var flSvc *fleet.Service
 	if config.IsServiceEnabled("server") {
 		if srvDB, dberr := database.GetDB(); dberr == nil {
 			srvSvc := server.New(srvDB.DB)
@@ -403,6 +406,23 @@ func main() {
 				}
 				return "", ""
 			}
+			// Live supply-chain posture for the Host page (read at request time so it
+			// reflects the running fleet + build state; no network calls).
+			srvSvc.PanelInfo = func() *server.SupplyChain {
+				sc := &server.SupplyChain{
+					SigningEnabled: fleet.SigningEnabled(),
+					Forge:          helper.GetEnvOptional("SOURCE_FORGE", ""),
+					SourceRepo:     helper.GetEnvOptional("SOURCE_REPO", ""),
+					PanelVersion:   version,
+					PanelBranch:    branch,
+				}
+				if flSvc != nil {
+					sc.FleetEnabled = true
+					sc.FleetPort = flSvc.Port()
+					sc.AgentLatest = flSvc.AgentVersionCached()
+				}
+				return sc
+			}
 			r.RegisterService("server", srvSvc.Handlers())
 			log.Println("Server security service registered")
 		}
@@ -412,7 +432,6 @@ func main() {
 	// managed mTLS listener. On/off + port come from Settings (fleet_enabled /
 	// fleet_port), NOT env. When enabled it auto-opens its port through the firewall
 	// (reusing the allowed-ports mechanism) and auto-detects its own IPs for the cert.
-	var flSvc *fleet.Service
 	if config.IsServiceEnabled("fleet") {
 		if flDB, dberr := database.GetDB(); dberr == nil {
 			db := flDB.DB

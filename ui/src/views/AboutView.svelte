@@ -6,6 +6,7 @@
   import InfoCard from '../components/InfoCard.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
   import Tabs from '../components/Tabs.svelte'
+  import readmeRaw from '../../../README.md?raw'
 
   let { loading = $bindable(true) } = $props()
 
@@ -14,6 +15,50 @@
   let expandedApi = $state(null)
   let apiSchema = $state(null)
   let updateCheck = $state(null) // { checked, up_to_date, latest, branch }
+  let archEl = $state(null)      // container for the README-sourced architecture diagrams
+  let archBusy = false
+
+  // The architecture diagrams are the single source of truth in README.md: we slice out its
+  // "## Architecture" section and render the prose (marked) + mermaid blocks (mermaid), both
+  // lazy-loaded so they only download when the About page is open.
+  function sliceArchitecture(readme) {
+    const start = readme.indexOf('\n## Architecture')
+    if (start < 0) return ''
+    const next = readme.indexOf('\n## ', start + 5)
+    const sec = readme.slice(start + 1, next < 0 ? undefined : next)
+    return sec.replace(/^##\s+Architecture[^\n]*\n/, '') // drop heading (the page has its own)
+  }
+  const escapeHtml = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+
+  async function renderArchitecture() {
+    if (!archEl || archEl.hasChildNodes() || archBusy) return
+    archBusy = true
+    try {
+      const md = sliceArchitecture(readmeRaw)
+      if (!md) return
+      const { marked } = await import('marked')
+      // Split on ```mermaid fences: odd segments are diagram source, the rest is prose.
+      const parts = md.split(/```mermaid\n([\s\S]*?)```/g)
+      let html = ''
+      for (let i = 0; i < parts.length; i++) {
+        if (i % 2 === 1) html += `<pre class="mermaid">${escapeHtml(parts[i].trim())}</pre>`
+        else if (parts[i].trim()) html += marked.parse(parts[i])
+      }
+      if (!archEl) return
+      archEl.innerHTML = html
+      const mermaid = (await import('mermaid')).default
+      const dark = (document.documentElement.getAttribute('data-theme') ||
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark'
+      mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict' })
+      try { await mermaid.run({ nodes: archEl.querySelectorAll('.mermaid') }) } catch (_) { /* leave source visible on failure */ }
+    } finally {
+      archBusy = false
+    }
+  }
+
+  // Render when the Overview tab is showing and the container is mounted+empty (covers first
+  // load and tab switches, which remount the container).
+  $effect(() => { if (activeTab === 'overview' && archEl) renderArchitecture() })
 
   // Service display config (icons, colors, order)
   const serviceConfig = {
@@ -224,31 +269,7 @@
 
           <div>
             <h3 class="text-lg font-semibold text-foreground mb-3">System Architecture</h3>
-            <div class="bg-secondary text-secondary-foreground p-4 rounded-lg font-mono text-[10px] overflow-x-auto">
-              <pre class="whitespace-pre">{`┌─────────────────────────────────────────────────────────────────────┐
-│                         Admin Panel (UI + API)                       │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │
-│  │ Traefik  │  │ AdGuard  │  │Headscale │  │WireGuard │            │
-│  │  Proxy   │  │   DNS    │  │   VPN    │  │   VPN    │            │
-│  │ :443/80  │  │   :53    │  │  :8080   │  │ :51820   │            │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘            │
-│       │             │             │             │                   │
-│       └─────────────┴──────┬──────┴─────────────┘                   │
-│                            │                                        │
-│                     ┌──────┴──────┐                                 │
-│                     │  VPN Router │ (Cross-Network)                 │
-│                     │ (Tailscale) │                                 │
-│                     └──────┬──────┘                                 │
-│                            │                                        │
-│         ┌──────────────────┴──────────────────┐                    │
-│         │                                     │                    │
-│   ┌─────┴─────┐                       ┌──────┴──────┐              │
-│   │ Headscale │                       │  WireGuard  │              │
-│   │  Network  │◄───── ACL Rules ─────►│   Network   │              │
-│   │${routerStatus?.headscaleIPRange?.padStart(12) || '100.64.0.0/16'}│                       │${routerStatus?.wgIPRange?.padStart(13) || ' 100.65.0.0/16'}│              │
-│   └───────────┘                       └─────────────┘              │
-└─────────────────────────────────────────────────────────────────────┘`}</pre>
-            </div>
+            <div bind:this={archEl} class="architecture-doc"></div>
           </div>
         </div>
 
@@ -402,3 +423,26 @@
     </div>
   </div>
 </div>
+
+<style>
+  /* README-sourced architecture section (content injected via innerHTML, so :global). Uses
+     currentColor + neutral grays so it reads on both light and dark themes without depending
+     on the app's CSS variable names. */
+  :global(.architecture-doc){ font-size:.9rem; line-height:1.6; }
+  :global(.architecture-doc h3){ font-size:1rem; font-weight:600; margin:1.6rem 0 .5rem; }
+  :global(.architecture-doc p){ margin:.5rem 0 1rem; opacity:.9; max-width:52rem; }
+  :global(.architecture-doc strong){ font-weight:600; opacity:1; }
+  :global(.architecture-doc code){ font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.82em; background:rgba(127,127,127,.16); padding:.08em .38em; border-radius:5px; }
+  :global(.architecture-doc .mermaid){ display:flex; justify-content:center; margin:1rem 0 1.6rem;
+    padding:1.1rem .75rem; background:rgba(127,127,127,.06); border:1px solid rgba(127,127,127,.16);
+    border-radius:12px; overflow-x:auto; }
+  :global(.architecture-doc .mermaid svg){ max-width:100%; height:auto; }
+  :global(.architecture-doc table){ border-collapse:collapse; width:100%; margin:.5rem 0 1rem;
+    font-size:.85rem; display:block; overflow-x:auto; }
+  :global(.architecture-doc th),:global(.architecture-doc td){ text-align:left; padding:.5rem .7rem;
+    border-bottom:1px solid rgba(127,127,127,.2); vertical-align:top; }
+  :global(.architecture-doc th){ font-weight:600; font-size:.72rem; letter-spacing:.04em;
+    text-transform:uppercase; opacity:.7; }
+  :global(.architecture-doc tr:last-child td){ border-bottom:none; }
+</style>

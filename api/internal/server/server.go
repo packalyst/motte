@@ -46,6 +46,22 @@ type Service struct {
 	// Optional hooks, wired by main.go to avoid import cycles.
 	Certs     func() []CertInfo                              // TLS certs (traefik)
 	GeoLookup func(ip string) (owner string, country string) // enrich login IPs
+	PanelInfo func() *SupplyChain                            // fleet supply-chain posture
+}
+
+// SupplyChain is the panel's live supply-chain posture, shown read-only on the Host page:
+// whether release signing is enforced, which forge/repo the agent comes from, the fleet
+// mTLS port, the latest agent version, and this panel's own build. All values are resolved
+// state (no blocking work) so it rides the security report cheaply.
+type SupplyChain struct {
+	FleetEnabled   bool   `json:"fleet_enabled"`
+	SigningEnabled bool   `json:"signing_enabled"`
+	Forge          string `json:"forge,omitempty"`
+	SourceRepo     string `json:"source_repo,omitempty"`
+	FleetPort      int    `json:"fleet_port,omitempty"`
+	AgentLatest    string `json:"agent_latest,omitempty"`
+	PanelVersion   string `json:"panel_version,omitempty"`
+	PanelBranch    string `json:"panel_branch,omitempty"`
 }
 
 func New(db *sql.DB) *Service {
@@ -164,6 +180,7 @@ type securityReport struct {
 	Ports       portsBlock    `json:"ports"`
 	Host        hostBlock     `json:"host"`
 	Certs       []CertInfo    `json:"certs"`
+	SupplyChain *SupplyChain  `json:"supply_chain,omitempty"`
 }
 
 func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +238,9 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 		if c := s.Certs(); c != nil {
 			rep.Certs = c
 		}
+	}
+	if s.PanelInfo != nil {
+		rep.SupplyChain = s.PanelInfo()
 	}
 	rep.Status = classify(rep, now)
 
