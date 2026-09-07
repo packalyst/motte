@@ -118,6 +118,7 @@
   // Active sessions come from loginctl (one row per user+IP, real live count). Alarms are
   // closed remote-root logins from the ledger (root that is NOT currently connected).
   const activeSessions = $derived(data?.logins?.active || [])
+  const activeConnCount = $derived(activeSessions.reduce((a, s) => a + (s.count || 0), 0))
   const alarmLogins = $derived((data?.logins?.recent || []).filter(l => !l.active && l.root && l.ip && !isLocal(l.ip)))
 
   // Exposure: group listening ports by the process that owns them.
@@ -196,31 +197,40 @@
           <div class="text-2xl font-bold tabular-nums">{latest?.load?.[0]?.toFixed(2) ?? '—'}</div>
           <div class="{tileM}">1m avg · {latest?.cores_n ?? '—'} cores</div>
         </div>
+        <div class="{card}">
+          <div class="{tileK}"><Icon name="chart-line" size={13} />Disk I/O</div>
+          <div class="text-lg font-bold tabular-nums leading-tight" style="color:var(--rx)">R {latest?.disk ? fmtRate(latest.disk.read_bps) : '—'}</div>
+          <div class="{tileM} tabular-nums font-medium" style="color:var(--tx)">W {latest?.disk ? fmtRate(latest.disk.write_bps) : '—'}</div>
+        </div>
+        <div class="{card}">
+          <div class="{tileK}"><Icon name="terminal-2" size={13} />Sessions</div>
+          <div class="text-2xl font-bold tabular-nums">{activeConnCount}</div>
+          <div class="{tileM}">active connection{activeConnCount === 1 ? '' : 's'}</div>
+        </div>
       </div>
 
       <!-- Current server load -->
       <div class="{card} lg:col-span-2">
         <h3 class="text-sm font-semibold mb-4 flex items-center gap-2"><Icon name="gauge" size={16} class="text-primary" />Current server load</h3>
         <div class="flex flex-col sm:flex-row gap-6">
-          <!-- Left: gauge + load average -->
-          <div class="flex flex-col items-center gap-4 shrink-0 sm:w-52">
-            <Gauge value={latest?.cpu ?? 0} size={150} label="CPU utilization" />
-            <div class="w-full">
-              <div class="{tileK} justify-center mb-1.5" title="Run-queue length — processes waiting to run, averaged over 1/5/15 min. It is not a percentage; below the core count ({latest?.cores_n ?? '?'}) means no CPU contention.">Load average <Icon name="help-circle" size={11} class="opacity-60" /></div>
-              <div class="flex gap-5 justify-center">
-                {#each [['1m', 0], ['5m', 1], ['15m', 2]] as pair}
-                  <div class="text-center"><div class="text-base font-semibold tabular-nums {loadColor(latest?.load?.[pair[1]], latest?.cores_n)}">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</div><div class="text-[10px] text-muted-foreground">{pair[0]}</div></div>
-                {/each}
-              </div>
-            </div>
+          <!-- Left: gauge (vertically centered) -->
+          <div class="flex items-center justify-center shrink-0 sm:w-48">
+            <Gauge value={latest?.cpu ?? 0} size={160} label="CPU utilization" />
           </div>
 
-          <!-- Right: host details (vertical divider on desktop) -->
+          <!-- Right: system + host details (vertical divider on desktop) -->
           <div class="flex-1 min-w-0 text-xs space-y-3 sm:border-l sm:border-border sm:pl-6">
             <div class="flex flex-wrap gap-x-5 gap-y-2">
               <div class="flex items-center gap-1.5" title="Logical CPU cores"><Icon name="cpu" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
               <div class="flex items-center gap-1.5" title="Time since boot"><Icon name="clock" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
               <div class="flex items-center gap-1.5" title="When the host last booted"><Icon name="refresh" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
+            </div>
+            <!-- Load average -->
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 pt-3 border-t border-border">
+              <span class="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground" title="Run-queue length — processes waiting to run, averaged over 1/5/15 min. It is not a percentage; below the core count ({latest?.cores_n ?? '?'}) means no CPU contention.">Load avg <Icon name="help-circle" size={11} class="opacity-60" /></span>
+              {#each [['1m', 0], ['5m', 1], ['15m', 2]] as pair}
+                <span class="flex items-baseline gap-1"><b class="text-sm font-semibold tabular-nums {loadColor(latest?.load?.[pair[1]], latest?.cores_n)}">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</b><span class="text-[10px] text-muted-foreground">{pair[0]}</span></span>
+              {/each}
             </div>
             <div class="pt-3 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
               {#if data.host.distro}<div class="flex items-center gap-1.5 min-w-0"><Icon name="box" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Distro</span><b class="font-medium text-foreground truncate">{data.host.distro}</b></div>{/if}
