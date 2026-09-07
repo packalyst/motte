@@ -496,14 +496,20 @@ func (s *Service) handleGetPackages(w http.ResponseWriter, r *http.Request) {
 }
 
 // isPublicRemote reports whether ip is a real remote address — not empty, loopback, or a
-// private/LAN/link-local range. Used to flag remote-root logins.
+// private/LAN/link-local range. A value that isn't an IP is a hostname (sshd UseDNS yes)
+// and is treated as remote unless it's an obvious loopback name (fail closed). Used to
+// flag remote-root logins.
 func isPublicRemote(ipStr string) bool {
 	if ipStr == "" {
 		return false
 	}
 	ip := net.ParseIP(strings.Trim(ipStr, "[]"))
 	if ip == nil {
-		return false
+		// Not an IP: sshd logged a hostname (UseDNS yes). Fail closed — treat any
+		// non-local name as remote so a public-IP root login is never silently dropped
+		// from the alarms. Only obvious loopback names are excluded.
+		host := strings.ToLower(strings.TrimSuffix(ipStr, "."))
+		return host != "localhost" && !strings.HasSuffix(host, ".localhost")
 	}
 	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast()
 }

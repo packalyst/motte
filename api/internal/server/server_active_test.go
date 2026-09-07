@@ -80,6 +80,30 @@ func TestBuildActiveSessionsNone(t *testing.T) {
 }
 
 // TestParseLoginctlTime: the exact loginctl format, in a known offset.
+// TestIsPublicRemote: IPs classify by range; a non-IP hostname fails closed (remote)
+// unless it's an obvious loopback name, so a UseDNS-logged public login is never dropped.
+func TestIsPublicRemote(t *testing.T) {
+	cases := map[string]bool{
+		"":                      false,
+		"127.0.0.1":             false,
+		"::1":                   false,
+		"10.0.0.5":              false,
+		"192.168.1.10":          false,
+		"169.254.1.1":           false,
+		"198.51.100.7":           true,
+		"[2001:db8::1]":         true,
+		"localhost":             false, // loopback name
+		"box.localhost":         false, // loopback name
+		"attacker.example.com.": true,  // hostname -> fail closed
+		"evil-host":             true,  // bare hostname -> fail closed
+	}
+	for in, want := range cases {
+		if got := isPublicRemote(in); got != want {
+			t.Errorf("isPublicRemote(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
 func TestParseLoginctlTime(t *testing.T) {
 	loc := time.FixedZone("host", 3*3600) // +0300 (EEST)
 	got := parseLoginctlTime("Sun 2026-09-06 15:10:50 EEST", loc)

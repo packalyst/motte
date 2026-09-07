@@ -2880,7 +2880,7 @@ echo ""
 # Stamp the running build with the current git version (tag if present, else short
 # commit; -dirty when the tree has uncommitted changes). Baked into the API binary via
 # the VERSION build-arg and shown on the About page.
-PANEL_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+PANEL_VERSION=$(git describe --tags --always --dirty --exclude 'agent-v*' 2>/dev/null || echo dev)
 export PANEL_VERSION
 echo -e "${CYAN}Panel version:${NC} $PANEL_VERSION"
 
