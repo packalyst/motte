@@ -35,6 +35,7 @@ type agentCache struct {
 	mu        sync.Mutex
 	tag       string    // release tag the cached assets belong to (resolved from the forge)
 	checksums string    // cached checksums.txt content (the version marker)
+	sig       string    // base64 ed25519 signature over checksums (empty if signing is off)
 	lastCheck time.Time // when we last re-validated against the release
 
 	// Latest agent version (release tag_name, e.g. "0.1.21"), resolved from the
@@ -119,6 +120,30 @@ func (c *agentCache) Get(ctx context.Context, arch string) (bin, manifest, insta
 	return bin, manifest, installSh, nil
 }
 
+// LatestSigned refreshes and returns the latest release's agent version (tag minus the
+// "agent-v"/"v" prefix), the raw checksums.txt content, and the base64 ed25519 signature
+// over it (empty when signing is disabled). The agent uses this to decide whether to update
+// and to verify the download itself before trusting it.
+func (c *agentCache) LatestSigned(ctx context.Context) (version, checksums, sig string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err = c.refreshLocked(ctx); err != nil {
+		return "", "", "", err
+	}
+	version = strings.TrimPrefix(strings.TrimPrefix(c.tag, "agent-v"), "v")
+	return version, c.checksums, c.sig, nil
+}
+
+// Binary refreshes and returns the checksum-verified agent binary for arch (e.g. "amd64").
+func (c *agentCache) Binary(ctx context.Context, arch string) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.refreshLocked(ctx); err != nil {
+		return nil, err
+	}
+	return c.ensureVerifiedLocked(ctx, "wgscout-linux-"+arch)
+}
+
 // refreshLocked re-validates the cache against the release at most once per ttl. It resolves
 // the latest release tag from the forge, then fetches that tag's checksums.txt; if the tag or
 // checksums changed (new version) it wipes the cache so assets re-download under the new tag.
@@ -135,6 +160,9 @@ func (c *agentCache) refreshLocked(ctx context.Context) error {
 			if t := strings.TrimSpace(string(b)); reTag.MatchString(t) {
 				c.tag = t
 			}
+		}
+		if b, e := os.ReadFile(filepath.Join(c.dir, "checksums.txt.sig")); e == nil {
+			c.sig = strings.TrimSpace(string(b))
 		}
 	} else if time.Since(c.lastCheck) < c.ttl {
 		return nil // still fresh
@@ -157,6 +185,7 @@ func (c *agentCache) refreshLocked(ctx context.Context) error {
 	// When the panel is built with a signing key, the release's checksums.txt MUST carry a
 	// valid ed25519 signature before we trust it. Fail-closed: a missing or bad signature is
 	// never served, and we keep any previously-verified cache rather than accepting it.
+	var sigStr string
 	if signingEnabled() {
 		sig, serr := c.fetchAsset(ctx, tag, "checksums.txt.sig")
 		if serr != nil {
@@ -168,21 +197,28 @@ func (c *agentCache) refreshLocked(ctx context.Context) error {
 		if verr := verifyChecksumsSig(latest, sig); verr != nil {
 			return fmt.Errorf("reject release %s: %w", tag, verr)
 		}
+		sigStr = strings.TrimSpace(string(sig))
 	}
 	c.lastCheck = time.Now()
 	if tag == c.tag && string(latest) == c.checksums {
-		return nil // unchanged
+		c.sig = sigStr // keep the signature fresh even when the release is unchanged
+		return nil
 	}
-	// New release (or first run): drop the whole cache and re-seed the marker + tag.
+	// New release (or first run): drop the whole cache and re-seed the marker + tag + sig.
 	if err := os.RemoveAll(c.dir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("purge cache: %w", err)
 	}
 	if err := os.MkdirAll(c.dir, 0o750); err != nil {
 		return err
 	}
-	c.checksums, c.tag = string(latest), tag
+	c.checksums, c.tag, c.sig = string(latest), tag, sigStr
 	if err := writeFileAtomic(filepath.Join(c.dir, ".tag"), []byte(tag)); err != nil {
 		return err
+	}
+	if sigStr != "" {
+		if err := writeFileAtomic(filepath.Join(c.dir, "checksums.txt.sig"), []byte(sigStr)); err != nil {
+			return err
+		}
 	}
 	return writeFileAtomic(filepath.Join(c.dir, "checksums.txt"), latest)
 }
