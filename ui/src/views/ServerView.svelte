@@ -10,6 +10,7 @@
   import ChartLegend from '../components/ChartLegend.svelte'
   import Gauge from '../components/Gauge.svelte'
   import Modal from '../components/Modal.svelte'
+  import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
 
   let { loading = $bindable(true), onLogout } = $props()
@@ -72,6 +73,24 @@
   let diskHidden = $state({})
   let cmHidden = $state({})
   let showPackages = $state(false) // Package-changes modal
+  let pkgList = $state(null)       // lazily loaded from /api/server/packages (null = not loaded)
+  let pkgTotal = $state(0)
+  let pkgLoading = $state(false)
+  async function openPackages() {
+    showPackages = true
+    if (pkgList !== null) return // cached after first open
+    pkgLoading = true
+    try {
+      const res = await apiGet('/api/server/packages')
+      pkgList = res.packages || []
+      pkgTotal = res.total ?? pkgList.length
+    } catch (e) {
+      toast('Failed to load package changes: ' + e.message, 'error')
+      pkgList = []
+    } finally {
+      pkgLoading = false
+    }
+  }
   const live = $derived($wsConnected && !!latest)
   // Load average is a run-queue length, not a %. Health = load ÷ cores.
   const loadColor = (l, cores) => {
@@ -118,7 +137,7 @@
   // Active sessions come from loginctl (one row per user+IP, real live count). Alarms are
   // closed remote-root logins from the ledger (root that is NOT currently connected).
   const activeSessions = $derived(data?.logins?.active || [])
-  const alarmLogins = $derived((data?.logins?.recent || []).filter(l => !l.active && l.root && l.ip && !isLocal(l.ip)))
+  const alarmLogins = $derived(data?.logins?.alarms || [])
 
   // Exposure: group listening ports by the process that owns them.
   const portGroups = $derived.by(() => {
@@ -227,9 +246,6 @@
               {#if data.host.hostname}<div class="flex items-center gap-1.5 min-w-0"><Icon name="device-desktop" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Host</span><b class="font-medium text-foreground truncate">{data.host.hostname}</b></div>{/if}
               {#if data.host.timezone}<div class="flex items-center gap-1.5 min-w-0"><Icon name="map-pin" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Timezone</span><b class="font-medium text-foreground truncate">{data.host.timezone}</b></div>{/if}
             </div>
-            <div class="pt-1">
-              <Button variant="outline" size="sm" icon="package" onclick={() => (showPackages = true)}>Package changes{data.packages.length ? ` (${data.packages.length})` : ''}</Button>
-            </div>
           </div>
         </div>
       </div>
@@ -284,12 +300,12 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="{card} lg:col-span-2">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="terminal-2" size={16} class="text-primary" />Access &amp; escalation
-          <span class="{badge} bg-muted text-muted-foreground ml-auto">{data.logins.recent.length} login{data.logins.recent.length === 1 ? '' : 's'} recorded</span></h3>
+          <span class="{badge} bg-muted text-muted-foreground ml-auto">{data.logins.recent_count} login{data.logins.recent_count === 1 ? '' : 's'} recorded</span></h3>
         {#if !activeSessions.length && !alarmLogins.length && !data.sudo.failed?.length}
           <div class="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
             <Icon name="terminal-2" size={26} class="opacity-40 mb-2" />
             <div class="text-sm">No active sessions or sudo failures.</div>
-            {#if data.logins.recent.length}<div class="text-[11px] mt-1">{data.logins.recent.length} past login{data.logins.recent.length === 1 ? '' : 's'} in history — none connected now.</div>{/if}
+            {#if data.logins.recent_count}<div class="text-[11px] mt-1">{data.logins.recent_count} past login{data.logins.recent_count === 1 ? '' : 's'} in history — none connected now.</div>{/if}
           </div>
         {:else}
           <div class="divide-y divide-border">
@@ -398,16 +414,25 @@
       <div class="{card}">
         <h3 class="text-sm font-semibold mb-3 flex items-center gap-2"><Icon name="clock" size={16} class="text-primary" />Persistence watch</h3>
         <div class="flex items-center justify-between text-sm py-1.5 border-b border-border"><span class="text-muted-foreground">Cron files changed (7d)</span><span class="tabular-nums font-medium {data.persistence.cron_recent > 0 ? 'text-warning' : 'text-success'}">{data.persistence.cron_recent}</span></div>
-        <div class="flex items-center justify-between text-sm py-1.5"><span class="text-muted-foreground">Packages installed (7d)</span><span class="tabular-nums font-medium text-foreground">{data.persistence.packages_installed}</span></div>
+        <div class="flex items-center justify-between text-sm py-1.5"><span class="text-muted-foreground">Package changes (7d)</span>
+          {#if data.persistence.package_changes_7d > 0}
+            <button class="tabular-nums font-medium text-primary hover:underline cursor-pointer inline-flex items-center gap-1" onclick={openPackages} title="View recent package changes">{data.persistence.package_changes_7d}<Icon name="external-link" size={12} /></button>
+          {:else}
+            <span class="tabular-nums font-medium text-foreground">0</span>
+          {/if}
+        </div>
         <div class="text-[11px] text-muted-foreground mt-2">footholds an intruder plants to survive a reboot · from dpkg.log + cron files</div>
       </div>
     </div>
 
-    <!-- Package changes — opened from the Current server load card -->
-    <Modal bind:open={showPackages} title="Package changes" size="lg">
-      {#if data.packages.length}
+    <!-- Package changes — opened from the Privilege & persistence card, loaded on demand -->
+    <Modal bind:open={showPackages} title="Package changes (7d)" size="lg">
+      {#if pkgLoading}
+        <div class="flex items-center justify-center py-10"><LoadingSpinner size="lg" /></div>
+      {:else if pkgList && pkgList.length}
+        {#if pkgTotal > pkgList.length}<div class="text-[11px] text-muted-foreground mb-2">Showing the {pkgList.length} most recent of {pkgTotal} changes.</div>{/if}
         <div class="divide-y divide-border">
-          {#each data.packages.slice().reverse() as p}
+          {#each pkgList.slice().reverse() as p}
             {@const pa = pkgAction(p.action)}
             <div class="flex items-center gap-2.5 py-2">
               <span class="w-7 h-7 rounded-lg grid place-items-center shrink-0 {pa.cls}"><Icon name={pa.icon} size={14} /></span>

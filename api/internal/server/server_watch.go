@@ -485,8 +485,8 @@ func listeningPortSet() map[int]bool {
 // ---------- persistence watch ----------
 
 type persistBlock struct {
-	PackagesInstalled int `json:"packages_installed"`
-	CronRecent        int `json:"cron_recent"` // cron files changed in the last 7 days
+	PackageChanges7d int `json:"package_changes_7d"` // install/upgrade/remove events (7d), uncapped
+	CronRecent       int `json:"cron_recent"`        // cron files changed in the last 7 days
 }
 
 func cronRecentChanges() int {

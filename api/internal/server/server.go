@@ -61,6 +61,7 @@ func New(db *sql.DB) *Service {
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		"GetSecurity":        s.handleGetSecurity,
+		"GetPackages":        s.handleGetPackages,
 		"ForgetSudoFailure":  s.handleForgetSudoFailure,
 	}
 }
@@ -78,8 +79,10 @@ type loginEvent struct {
 	Active  bool      `json:"active,omitempty"` // session still open right now (per `who`)
 }
 type loginsBlock struct {
-	Recent       []loginEvent    `json:"recent"`
-	Active       []activeSession `json:"active"` // one row per currently-connected (user, IP)
+	Recent       []loginEvent    `json:"-"`            // internal only: source for Active/Alarms/RecentCount
+	RecentCount  int             `json:"recent_count"` // # of recent logins parsed (computed server-side)
+	Active       []activeSession `json:"active"`       // one row per currently-connected (user, IP)
+	Alarms       []loginEvent    `json:"alarms"`       // closed remote-root logins (not currently connected)
 	Failed1h     int             `json:"failed_1h"`
 	FailedPrev1h int             `json:"failed_prev_1h"`
 	FailedIPs1h  int             `json:"failed_ips_1h"`
@@ -155,7 +158,6 @@ type securityReport struct {
 	Logins      loginsBlock   `json:"logins"`
 	Sudo        sudoBlock     `json:"sudo"`
 	Accounts    accountsBlock `json:"accounts"`
-	Packages    []pkgEvent    `json:"packages"`
 	PhoneHome   phoneBlock    `json:"phone_home"`
 	Persistence persistBlock  `json:"persistence"`
 	Ports       portsBlock    `json:"ports"`
@@ -196,8 +198,10 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 	live := activeSessions()
 	markActiveMembership(rep.Logins.Recent, live.counts)
 	rep.Logins.Active = buildActiveSessions(rep.Logins.Recent, live)
+	// Compute the derived login views server-side; the raw ledger (Recent) is not serialized.
+	rep.Logins.Alarms = closedRootAlarms(rep.Logins.Recent)
+	rep.Logins.RecentCount = len(rep.Logins.Recent)
 
-	rep.Packages = s.recentPackages(now)
 	rep.Sudo.Failed = s.recentSudoFailures(now) // persisted failures with session IP
 
 	rep.PhoneHome = phoneHome()
@@ -209,7 +213,7 @@ func (s *Service) handleGetSecurity(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	rep.Persistence = persistBlock{PackagesInstalled: len(rep.Packages), CronRecent: cronRecentChanges()}
+	rep.Persistence = persistBlock{PackageChanges7d: len(s.scanPackages(now)), CronRecent: cronRecentChanges()}
 	rep.Ports = listeningPorts()
 	rep.Host = hostUptime(now)
 	if s.Certs != nil {
@@ -463,7 +467,10 @@ func journalGrep(comms []string, since, grep string, lines int) ([]string, bool)
 // "2026-08-15 10:00:00 status installed nginx:amd64 1.24.0-1".
 var reDpkg = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(install|upgrade|remove)\s+(\S+?):\S+\s+(\S+)`)
 
-func (s *Service) recentPackages(now time.Time) []pkgEvent {
+// scanPackages returns all package install/upgrade/remove events from dpkg.log in the last
+// 7 days, UNCAPPED — the /security count uses the full length; the /packages modal endpoint
+// caps the list for display.
+func (s *Service) scanPackages(now time.Time) []pkgEvent {
 	out := []pkgEvent{}
 	cutoff := now.Add(-7 * 24 * time.Hour)
 	forEachTailLine(s.dpkgLogPath, func(line string) {
@@ -477,7 +484,40 @@ func (s *Service) recentPackages(now time.Time) []pkgEvent {
 		}
 		out = append(out, pkgEvent{Action: m[2], Package: m[3], Version: m[4], When: ts})
 	})
-	return lastN(out, 15)
+	return out
+}
+
+// handleGetPackages (GET /api/server/packages) returns recent dpkg install/upgrade/remove
+// events for the package-changes modal — loaded on demand, not part of the security report.
+// The list is capped so the response stays bounded; the true total is reported separately.
+func (s *Service) handleGetPackages(w http.ResponseWriter, r *http.Request) {
+	all := s.scanPackages(time.Now())
+	router.JSON(w, map[string]any{"packages": lastN(all, 200), "total": len(all)})
+}
+
+// isPublicRemote reports whether ip is a real remote address — not empty, loopback, or a
+// private/LAN/link-local range. Used to flag remote-root logins.
+func isPublicRemote(ipStr string) bool {
+	if ipStr == "" {
+		return false
+	}
+	ip := net.ParseIP(strings.Trim(ipStr, "[]"))
+	if ip == nil {
+		return false
+	}
+	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast()
+}
+
+// closedRootAlarms returns remote root logins that are NOT currently connected — a root SSH
+// login from a public IP that came and went, worth flagging even after it closed.
+func closedRootAlarms(recent []loginEvent) []loginEvent {
+	out := []loginEvent{}
+	for _, l := range recent {
+		if !l.Active && l.Root && isPublicRemote(l.IP) {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // ---------- listening ports (ss) ----------

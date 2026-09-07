@@ -1571,6 +1571,14 @@
           "description": "Host security posture: logins, sudo, accounts, packages, ports, uptime, certs"
         },
         {
+          "path": "/packages",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetPackages",
+          "description": "Recent dpkg install/upgrade/remove events (package-changes modal)"
+        },
+        {
           "path": "/sudo-failure/{id}",
           "methods": [
             "DELETE"
