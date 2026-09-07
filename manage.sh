@@ -560,24 +560,44 @@ detect_distro_paths() {
     echo -e "${GREEN}Detected distro:${NC} ${family} — set AUTH_LOG=${auth} KERN_LOG=${kern}"
 }
 
-# detect_source_repo derives the GitHub owner/repo slug from this checkout's own git remote
-# and writes it to .env as SOURCE_REPO. The panel uses it to check GitHub for a newer version
-# and to serve agent releases — pointing it at the SAME remote we actually `git pull` from, so
-# the two can never drift. Nothing is hardcoded: a fork gets its own slug automatically. Only
-# (re)written when it changed, so a manual override in .env survives ordinary rebuilds.
+# detect_source_repo derives the project's repo from this checkout's own git remote and writes
+# it to .env as a full https URL (SOURCE_REPO) plus, for github.com, the forge type
+# (SOURCE_FORGE). The panel uses these to serve agent releases and to check for a newer
+# version — pointing at the SAME remote we actually `git pull` from, so the two can never
+# drift. Nothing is hardcoded: a fork/mirror gets its own URL automatically. Only (re)written
+# when changed, so a manual override in .env survives ordinary rebuilds. For self-hosted
+# Gitea/Forgejo or GitLab the forge can't be guessed from the host, so SOURCE_FORGE is left
+# for the operator to set (the panel fails closed until it is).
 detect_source_repo() {
-    local url slug current
+    local url host slug forge current
     url=$(git remote get-url origin 2>/dev/null) || return 0
-    # git@github.com:owner/repo.git  or  https://github.com/owner/repo.git  ->  owner/repo
-    slug=$(printf '%s' "$url" | sed -E 's#^git@[^:]+:##; s#^[a-z]+://[^/]+/##; s#\.git$##')
-    case "$slug" in
-        */*) ;;                # looks like owner/repo
-        *) return 0 ;;         # unrecognized remote shape — leave any existing value alone
+    case "$url" in
+        git@*:*)                       # git@host:owner/repo.git
+            host=${url#git@}; host=${host%%:*}
+            slug=${url#*:}
+            ;;
+        http://*|https://*)            # https://host/owner/repo.git
+            slug=${url#*://}; host=${slug%%/*}; slug=${slug#*/}
+            ;;
+        *) return 0 ;;                 # unrecognized remote shape — leave any value alone
     esac
+    slug=${slug%.git}
+    case "$slug" in */*) ;; *) return 0 ;; esac   # must be owner/repo(/...)
+    local full="https://${host}/${slug}"
+
     current=$(grep -E "^SOURCE_REPO=" .env 2>/dev/null | cut -d= -f2)
-    [ "$current" = "$slug" ] && return
-    update_env_value SOURCE_REPO "$slug"
-    echo -e "${GREEN}Source repo:${NC} ${slug}"
+    if [ "$current" != "$full" ]; then
+        update_env_value SOURCE_REPO "$full"
+        echo -e "${GREEN}Source repo:${NC} ${full}"
+    fi
+    # Only github.com is safe to auto-detect; never guess gitea vs gitlab.
+    case "$host" in
+        github.com)
+            forge=github
+            current=$(grep -E "^SOURCE_FORGE=" .env 2>/dev/null | cut -d= -f2)
+            [ "$current" = "$forge" ] || update_env_value SOURCE_FORGE "$forge"
+            ;;
+    esac
 }
 
 # ===========================================

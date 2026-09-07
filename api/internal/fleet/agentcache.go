@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -28,13 +27,13 @@ import (
 // out, so we purge the cache and lazily re-fetch. Binaries are verified against it before
 // they're ever served (fail-closed).
 type agentCache struct {
-	dir     string // on-disk cache dir
-	repo    string // <owner>/<repo> on GitHub
-	baseURL string // https://github.com/<repo>/releases/latest/download
-	http    *http.Client
-	ttl     time.Duration
+	dir   string // on-disk cache dir
+	forge Forge  // release-asset URL scheme for the configured host (nil = serving disabled)
+	http  *http.Client
+	ttl   time.Duration
 
 	mu        sync.Mutex
+	tag       string    // release tag the cached assets belong to (resolved from the forge)
 	checksums string    // cached checksums.txt content (the version marker)
 	lastCheck time.Time // when we last re-validated against the release
 
@@ -46,19 +45,24 @@ type agentCache struct {
 }
 
 func newAgentCache() *agentCache {
-	// Repo comes from the environment (SOURCE_REPO), derived from the git remote by
-	// manage.sh and defaulted in docker-compose — not baked into the binary. If it is
-	// somehow empty, agent asset serving and version checks fail gracefully (best-effort).
+	// The repo identity comes entirely from the environment (SOURCE_REPO full URL +
+	// SOURCE_FORGE), derived from the git remote by manage.sh and defaulted in
+	// docker-compose — nothing is baked into the binary. A missing or invalid config
+	// leaves forge nil, and asset serving / version checks fail gracefully (best-effort).
+	var forge Forge
 	repo := helper.GetEnvOptional("SOURCE_REPO", "")
 	if repo == "" {
 		log.Print("fleet: SOURCE_REPO is not set; agent asset serving and version checks are disabled")
+	} else if f, err := newForge(repo, helper.GetEnvOptional("SOURCE_FORGE", "")); err != nil {
+		log.Printf("fleet: invalid SOURCE_REPO/SOURCE_FORGE (%v); agent asset serving and version checks are disabled", err)
+	} else {
+		forge = f
 	}
 	return &agentCache{
-		dir:     helper.GetEnvOptional("FLEET_AGENT_CACHE", "/data/fleet-agent"),
-		repo:    repo,
-		baseURL: fmt.Sprintf("https://github.com/%s/releases/latest/download", repo),
-		http:    &http.Client{Timeout: 90 * time.Second},
-		ttl:     5 * time.Minute,
+		dir:   helper.GetEnvOptional("FLEET_AGENT_CACHE", "/data/fleet-agent"),
+		forge: forge,
+		http:  &http.Client{Timeout: 90 * time.Second},
+		ttl:   5 * time.Minute,
 	}
 }
 
@@ -68,38 +72,23 @@ func newAgentCache() *agentCache {
 // resolved), so the UI degrades to just showing the running version.
 func (c *agentCache) LatestVersion(ctx context.Context) string {
 	c.mu.Lock()
-	if c.version != "" && time.Since(c.versionAt) < 30*time.Minute {
-		v := c.version
+	last := c.version
+	if c.forge == nil || (c.version != "" && time.Since(c.versionAt) < 30*time.Minute) {
 		c.mu.Unlock()
-		return v
+		return last
 	}
+	forge := c.forge
 	c.mu.Unlock()
 
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", c.repo)
-	req, err := http.NewRequestWithContext(cctx, http.MethodGet, url, nil)
+	tag, err := forge.LatestTag(cctx, c.http)
 	if err != nil {
-		return c.version
+		return last // keep last known
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return c.version // keep last known
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return c.version
-	}
-	var body struct {
-		TagName string `json:"tag_name"`
-	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body) != nil {
-		return c.version
-	}
-	v := strings.TrimPrefix(strings.TrimPrefix(body.TagName, "agent-v"), "v")
+	v := strings.TrimPrefix(strings.TrimPrefix(tag, "agent-v"), "v")
 	if v == "" {
-		return c.version
+		return last
 	}
 	c.mu.Lock()
 	c.version, c.versionAt = v, time.Now()
@@ -130,37 +119,56 @@ func (c *agentCache) Get(ctx context.Context, arch string) (bin, manifest, insta
 	return bin, manifest, installSh, nil
 }
 
-// refreshLocked re-validates the cache against the release at most once per ttl. If the
-// release's checksums.txt changed (new version) it wipes the cache so assets re-download.
+// refreshLocked re-validates the cache against the release at most once per ttl. It resolves
+// the latest release tag from the forge, then fetches that tag's checksums.txt; if the tag or
+// checksums changed (new version) it wipes the cache so assets re-download under the new tag.
 func (c *agentCache) refreshLocked(ctx context.Context) error {
+	if c.forge == nil {
+		return fmt.Errorf("agent asset serving is disabled: SOURCE_REPO/SOURCE_FORGE not configured")
+	}
 	if c.checksums == "" {
-		// cold start — try to load a previously cached checksums.txt from disk.
+		// cold start — reload the cached checksums.txt and the tag it belongs to from disk.
 		if b, e := os.ReadFile(filepath.Join(c.dir, "checksums.txt")); e == nil {
 			c.checksums = string(b)
+		}
+		if b, e := os.ReadFile(filepath.Join(c.dir, ".tag")); e == nil {
+			if t := strings.TrimSpace(string(b)); reTag.MatchString(t) {
+				c.tag = t
+			}
 		}
 	} else if time.Since(c.lastCheck) < c.ttl {
 		return nil // still fresh
 	}
 
-	latest, err := c.fetch(ctx, "checksums.txt")
+	tag, err := c.forge.LatestTag(ctx, c.http)
 	if err != nil {
-		if c.checksums != "" {
+		if c.checksums != "" && c.tag != "" {
+			return nil // forge unreachable but we have a cached release — serve it
+		}
+		return fmt.Errorf("resolve latest release: %w", err)
+	}
+	latest, err := c.fetchAsset(ctx, tag, "checksums.txt")
+	if err != nil {
+		if c.checksums != "" && c.tag != "" {
 			return nil // release unreachable but we have a cached version — serve it
 		}
 		return fmt.Errorf("fetch checksums: %w", err)
 	}
 	c.lastCheck = time.Now()
-	if string(latest) == c.checksums {
+	if tag == c.tag && string(latest) == c.checksums {
 		return nil // unchanged
 	}
-	// New release (or first run): drop the whole cache and re-seed the marker.
+	// New release (or first run): drop the whole cache and re-seed the marker + tag.
 	if err := os.RemoveAll(c.dir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("purge cache: %w", err)
 	}
 	if err := os.MkdirAll(c.dir, 0o750); err != nil {
 		return err
 	}
-	c.checksums = string(latest)
+	c.checksums, c.tag = string(latest), tag
+	if err := writeFileAtomic(filepath.Join(c.dir, ".tag"), []byte(tag)); err != nil {
+		return err
+	}
 	return writeFileAtomic(filepath.Join(c.dir, "checksums.txt"), latest)
 }
 
@@ -200,8 +208,24 @@ func (c *agentCache) ensureVerifiedLocked(ctx context.Context, name string) ([]b
 	return b, writeFileAtomic(path, b)
 }
 
+// fetch downloads a named asset for the currently-resolved tag.
 func (c *agentCache) fetch(ctx context.Context, name string) ([]byte, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/"+name, nil)
+	return c.fetchAsset(ctx, c.tag, name)
+}
+
+// fetchAsset downloads a named release asset at tag from the forge over https, size-capped.
+// The asset name is allowlist-validated so it can never manipulate the URL path.
+func (c *agentCache) fetchAsset(ctx context.Context, tag, name string) ([]byte, error) {
+	if c.forge == nil {
+		return nil, fmt.Errorf("forge not configured")
+	}
+	if !reSegment.MatchString(name) {
+		return nil, fmt.Errorf("invalid asset name %q", name)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.forge.AssetURL(tag, name), nil)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err

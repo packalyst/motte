@@ -185,8 +185,9 @@ services:
       - HEADSCALE_ACL_PATH=${HEADSCALE_ACL_PATH:-/headscale/config/acl.json}
       - NFTABLES_ACL_PATH=${NFTABLES_ACL_PATH:-/etc/nftables.d/vpn-acl.nft}
       - HEADSCALE_BASE_DOMAIN=${HEADSCALE_BASE_DOMAIN}
-      # Project source repo (GitHub owner/repo) — agent releases + panel version check
-      - SOURCE_REPO=${SOURCE_REPO:-packalyst/wireguard-admin-panel}
+      # Project source repo (full https URL) + forge type — agent releases + version check
+      - SOURCE_REPO=${SOURCE_REPO:-https://github.com/packalyst/wireguard-admin-panel}
+      - SOURCE_FORGE=${SOURCE_FORGE:-github}
     volumes:
       - api_data:/data
       - /var/log:/var/log:ro
