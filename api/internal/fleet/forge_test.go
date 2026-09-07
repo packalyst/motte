@@ -10,8 +10,8 @@ import (
 // TestNewForgeValid: accepted configs resolve to the right driver + URL scheme.
 func TestNewForgeValid(t *testing.T) {
 	cases := []struct {
-		url, forge   string
-		wantAsset    string // AssetURL("agent-v1.2.3", "wgscout-linux-amd64")
+		url, forge string
+		wantAsset  string // AssetURL("agent-v1.2.3", "wgscout-linux-amd64")
 	}{
 		{"https://github.com/packalyst/wireguard-admin-panel", "",
 			"https://github.com/packalyst/wireguard-admin-panel/releases/download/agent-v1.2.3/wgscout-linux-amd64"},

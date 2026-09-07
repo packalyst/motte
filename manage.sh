@@ -2926,6 +2926,17 @@ PANEL_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
 export PANEL_VERSION
 echo -e "${CYAN}Panel version:${NC} $PANEL_VERSION"
 
+# Bake the release-signing public key into the panel so it verifies agent-release signatures
+# (ed25519). Read from the committed signing.pub; when absent, the key is empty and signature
+# enforcement stays off (unsigned/legacy releases keep working). The PRIVATE key is never here.
+if [ -f signing.pub ]; then
+    PANEL_SIGN_PUBKEY=$(tr -d ' \t\r\n' < signing.pub)
+    echo -e "${CYAN}Release signing:${NC} enforced (public key baked in)"
+else
+    PANEL_SIGN_PUBKEY=""
+fi
+export PANEL_SIGN_PUBKEY
+
 # Set the distro-specific log paths (AUTH_LOG/KERN_LOG/DPKG_LOG) and the source repo
 # (SOURCE_REPO, from the git remote) before the api starts.
 detect_distro_paths

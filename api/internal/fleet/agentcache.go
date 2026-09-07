@@ -154,6 +154,21 @@ func (c *agentCache) refreshLocked(ctx context.Context) error {
 		}
 		return fmt.Errorf("fetch checksums: %w", err)
 	}
+	// When the panel is built with a signing key, the release's checksums.txt MUST carry a
+	// valid ed25519 signature before we trust it. Fail-closed: a missing or bad signature is
+	// never served, and we keep any previously-verified cache rather than accepting it.
+	if signingEnabled() {
+		sig, serr := c.fetchAsset(ctx, tag, "checksums.txt.sig")
+		if serr != nil {
+			if c.checksums != "" && c.tag != "" {
+				return nil // signature unreachable — keep serving the last verified release
+			}
+			return fmt.Errorf("fetch release signature: %w", serr)
+		}
+		if verr := verifyChecksumsSig(latest, sig); verr != nil {
+			return fmt.Errorf("reject release %s: %w", tag, verr)
+		}
+	}
 	c.lastCheck = time.Now()
 	if tag == c.tag && string(latest) == c.checksums {
 		return nil // unchanged
