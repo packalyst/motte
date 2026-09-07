@@ -1,0 +1,4 @@
+# Only used by the ui build's "root" additional context (see docker-compose.yml),
+# which needs just README.md for the About page architecture section.
+*
+!README.md

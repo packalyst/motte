@@ -220,6 +220,11 @@ services:
     build:
       context: ./ui
       target: production  # Change to 'production' for smaller image (~80MB vs ~480MB)
+      # Expose the repo root as a named context so the build can copy README.md (the single
+      # source for the About page's architecture section) into the image. The root
+      # .dockerignore trims this context to just README.md.
+      additional_contexts:
+        root: .
     container_name: ui
     restart: unless-stopped
     logging: *default-logging

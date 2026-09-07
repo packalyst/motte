@@ -4,6 +4,10 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install
 COPY . .
+# README.md (single source for the About architecture section) lives at the repo root, which
+# is outside this build's ./ui context — pull it from the "root" named context to /README.md,
+# where the `../../../README.md` import in src/views resolves.
+COPY --from=root README.md /README.md
 RUN npm run build
 
 # Production runtime stage (default)
@@ -19,5 +23,6 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install
 COPY . .
+COPY --from=root README.md /README.md
 EXPOSE 3000
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
