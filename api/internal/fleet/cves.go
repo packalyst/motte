@@ -333,6 +333,16 @@ func (s *Service) ListCVEsByCVE(machineID string, f cveFilter) ([]CVERow, int, e
 		where = append(where, "(cve_id LIKE ? OR pkg LIKE ?)")
 		args = append(args, "%"+f.Q+"%", "%"+f.Q+"%")
 	}
+	// Scope filters apply at the row level (before grouping by cve_id) so a CVE is counted
+	// within the selected scope only.
+	if f.Project != "" {
+		where = append(where, "project = ?")
+		args = append(args, f.Project)
+	}
+	if f.Class != "" {
+		where = append(where, "class = ?")
+		args = append(args, f.Class)
+	}
 	var having []string
 	if r, ok := rankBySev[strings.ToUpper(f.Severity)]; ok {
 		having = append(having, "MAX("+sevRankExpr+") = "+strconv.Itoa(r))
@@ -449,8 +459,8 @@ func (s *Service) handleListCVEsByCVE(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
 	cves, total, err := s.ListCVEsByCVE(id, cveFilter{
-		Severity: q.Get("severity"),
-		Q:        q.Get("q"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
+		Severity: q.Get("severity"), Project: q.Get("project"), Class: q.Get("class"),
+		Q: q.Get("q"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
 		Limit: limit, Offset: offset,
 	})
 	if err != nil {

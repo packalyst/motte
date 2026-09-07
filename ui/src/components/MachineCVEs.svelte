@@ -12,6 +12,7 @@
   import Button from './Button.svelte'
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
+  import Select from './Select.svelte'
   import Checkbox from './Checkbox.svelte'
   import EmptyState from './EmptyState.svelte'
   import { sevVariant } from '$lib/fleet.js'
@@ -19,6 +20,7 @@
   let { machine, onback } = $props()
 
   let summary = $state(null) // { total, unique_cves, packages, critical, high, ..., fixable }
+  let groups = $state([])    // per-scope buckets: { project, total, critical, high, ... }
   let hasKernel = $state(false)
   let rows = $state([]) // unique CVEs: { cve_id, severity, packages, fixable, title }
   let total = $state(0)
@@ -27,6 +29,7 @@
 
   // filters — default to "has a fix" so the actionable set leads. Persisted per machine.
   let severity = $state('')
+  let project = $state('')   // scope: '' = all, else OS / Kernel / an app-project bucket
   let fixable = $state(true)
   let q = $state('')
   let page = $state(0)
@@ -44,28 +47,48 @@
 
   const FKEY = 'cveflt:' + machine.id
   function saveFilters() {
-    try { localStorage.setItem(FKEY, JSON.stringify({ severity, fixable, q, page })) } catch {}
+    try { localStorage.setItem(FKEY, JSON.stringify({ severity, project, fixable, q, page })) } catch {}
   }
   function restoreFilters() {
     try {
       const s = JSON.parse(localStorage.getItem(FKEY) || 'null')
-      if (s) { severity = s.severity || ''; fixable = s.fixable !== false; q = s.q || ''; page = s.page || 0 }
+      if (s) { severity = s.severity || ''; project = s.project || ''; fixable = s.fixable !== false; q = s.q || ''; page = s.page || 0 }
     } catch {}
   }
 
   function listParams() {
     const p = new URLSearchParams({ machine_id: machine.id })
     if (severity) p.set('severity', severity)
+    if (project) p.set('project', project)
     if (fixable) p.set('fixable', '1')
     if (q.trim()) p.set('q', q.trim())
     return p
   }
 
+  // Filter dropdown options. Scopes come from the server-side per-project buckets (OS,
+  // Kernel, and one per app-manifest directory), each labeled with its finding count.
+  const severityOptions = [
+    { value: '', label: 'All severities' },
+    { value: 'CRITICAL', label: 'Critical' },
+    { value: 'HIGH', label: 'High' },
+    { value: 'MEDIUM', label: 'Medium' },
+    { value: 'LOW', label: 'Low' },
+    { value: 'UNKNOWN', label: 'Unknown' },
+  ]
+  const scopeOptions = $derived([
+    { value: '', label: `All scopes${summary ? ` (${summary.unique_cves})` : ''}` },
+    ...groups.map((g) => ({
+      value: g.project,
+      label: `${g.project} · ${g.total}${g.critical ? ` (${g.critical} crit)` : g.high ? ` (${g.high} high)` : ''}`,
+    })),
+  ])
+
   async function loadSummary() {
     try {
       const res = await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id))
       summary = res?.summary || null
-      hasKernel = (res?.groups || []).some((g) => g.project === 'Kernel')
+      groups = res?.groups || []
+      hasKernel = groups.some((g) => g.project === 'Kernel')
     } catch { summary = null }
   }
   async function loadList() {
@@ -148,14 +171,6 @@
 
   const isCveId = (id) => /^CVE-/i.test(id)
   const sevDot = { CRITICAL: 'bg-destructive', HIGH: 'bg-warning', MEDIUM: 'bg-info', LOW: 'bg-muted-foreground/60', UNKNOWN: 'bg-muted-foreground/30' }
-  const sevChips = $derived(summary ? [
-    { key: '', label: 'All', count: summary.unique_cves, cls: 'bg-muted-foreground/50' },
-    { key: 'CRITICAL', label: 'Critical', count: summary.u_critical, cls: sevDot.CRITICAL },
-    { key: 'HIGH', label: 'High', count: summary.u_high, cls: sevDot.HIGH },
-    { key: 'MEDIUM', label: 'Medium', count: summary.u_medium, cls: sevDot.MEDIUM },
-    { key: 'LOW', label: 'Low', count: summary.u_low, cls: sevDot.LOW },
-    { key: 'UNKNOWN', label: 'Unknown', count: summary.u_unknown, cls: sevDot.UNKNOWN },
-  ] : [])
   const dist = $derived(summary && summary.unique_cves ? [
     { n: summary.u_critical, cls: sevDot.CRITICAL, label: 'Critical' },
     { n: summary.u_high, cls: sevDot.HIGH, label: 'High' },
@@ -163,7 +178,6 @@
     { n: summary.u_low, cls: sevDot.LOW, label: 'Low' },
     { n: summary.u_unknown, cls: sevDot.UNKNOWN, label: 'Unknown' },
   ].map((s) => ({ ...s, pct: Math.round((s.n / summary.unique_cves) * 1000) / 10 })) : [])
-  function pickSeverity(k) { severity = k; applyFilters() }
 </script>
 
 <div class="space-y-4">
@@ -234,17 +248,15 @@
     {/if}
   {/if}
 
-  <!-- filters: severity chips + fixable toggle + search -->
+  <!-- filters: severity + scope selects, fixable toggle, search -->
   <div class="bg-card border border-border rounded-xl p-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-    <div class="flex flex-wrap items-center gap-1.5">
-      {#each sevChips as c}
-        <button onclick={() => pickSeverity(c.key)}
-          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition cursor-pointer
-                 {severity === c.key ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-ring'}">
-          <span class="w-1.5 h-1.5 rounded-sm {c.cls}"></span>{c.label}
-          <span class="text-[11px] opacity-80 tabular-nums">{c.count.toLocaleString()}</span>
-        </button>
-      {/each}
+    <div class="flex items-center gap-1.5">
+      <span class="text-[11px] uppercase tracking-wide text-muted-foreground">Severity</span>
+      <Select bind:value={severity} options={severityOptions} class="w-36" onchange={applyFilters} />
+    </div>
+    <div class="flex items-center gap-1.5">
+      <span class="text-[11px] uppercase tracking-wide text-muted-foreground">Scope</span>
+      <Select bind:value={project} options={scopeOptions} class="w-52" onchange={applyFilters} />
     </div>
     <Checkbox variant="switch" bind:checked={fixable} label="Has a fix" onchange={applyFilters} />
     <div class="flex-1 min-w-[180px] ml-auto">
