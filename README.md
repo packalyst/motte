@@ -108,6 +108,130 @@ From **Settings → Backup**, export a passphrase-encrypted archive of your full
 
 A lightweight per-machine agent (distributed via GitHub Releases) enrolls with the panel over **mTLS** and reports metrics, CVE scans (Trivy), and inventory. Manage machines, drill into vulnerabilities, apply targeted OS-package fixes, and trigger agent self-updates from the **Machines** page. Install it with the panel-served installer; enrollment is one-time-token based.
 
+## Architecture
+
+The supply chain for the fleet agent (`wgscout`) is built so that **no single compromise — the panel included — can push a malicious binary**. The forge, host, and repo are all configurable; nothing about a specific repository is baked into the Go binary.
+
+### Overall stack
+
+The `api` runs in the host network namespace (privileged, `CAP_NET_ADMIN`) because it programs the host firewall — **nftables is the gate**. Being host-networked it has no Docker hostname, so Traefik reaches it at `host.docker.internal:8081`. It never touches the Docker socket directly, only a filtered `docker-socket-proxy`.
+
+```mermaid
+flowchart TB
+    browser["Browser"] -->|443| traefik["traefik v3.6"]
+    traefik -->|"PathPrefix /"| ui["ui (Svelte)"]
+    traefik -->|"host.docker.internal:8081"| api["api (Go) · privileged · host-networked"]
+    traefik -->|"/agent install route"| api
+    api -->|"tcp 127.0.0.1:2375"| proxy["docker-socket-proxy (filtered)"]
+    api -->|"writes rules"| nft["nftables — the gate"]
+    api -.->|manages| headscale["headscale"]
+    api -.->|manages| adguard["adguard DNS"]
+    api --> fleetl["fleet mTLS listener :9443"]
+    agents["fleet agents (wgscout)"] -->|"mTLS :9443"| fleetl
+```
+
+### Enrollment &amp; mTLS trust
+
+A one-time token becomes a long-lived mutual-TLS identity. The agent generates its **own** keypair locally, pins the panel's **CA fingerprint** (no trust-on-first-use), and enrolls; the panel redeems the single-use token and signs a 90-day client cert. Every later call is gated at the TLS handshake against an enrolled, non-revoked machine.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as Operator
+    participant Panel as Panel
+    participant CA as Fleet CA
+    participant Agent as wgscout
+    Op->>Panel: mint one-time token
+    Op->>Agent: run panel-served install script
+    Panel-->>Agent: script + panelURL + CA fingerprint + token
+    Agent->>Agent: generate EC P256 keypair (local)
+    Agent->>Panel: POST /enroll {token, CSR} — TLS pinned to CA fingerprint
+    Panel->>CA: SignClientCSR (90d, single-use token)
+    CA-->>Panel: client cert
+    Panel-->>Agent: {client_cert, ca_cert}
+    loop steady state
+        Agent->>Panel: /report, /commands (mutual TLS)
+        Panel-->>Agent: cert fp -> enrolled machine? ack
+    end
+```
+
+### Forge abstraction
+
+Identity comes from `SOURCE_REPO` (a full URL) + `SOURCE_FORGE`, derived by `manage.sh` from the git remote. `newForge` parses strictly (https only, exactly `owner/repo`, fail-closed on an unknown host) and returns a driver for GitHub, Gitea/Forgejo, or GitLab. Every URL segment is allowlist-validated and percent-escaped, and a forge-returned tag is re-validated before it can build a download URL.
+
+```mermaid
+flowchart LR
+    env["SOURCE_REPO (URL) · SOURCE_FORGE"] --> nf["newForge() — strict, fail-closed"]
+    nf --> gh["githubForge"]
+    nf --> gt["giteaForge"]
+    nf --> gl["gitlabForge"]
+    gh --> iface["Forge interface — LatestTag · AssetURL"]
+    gt --> iface
+    gl --> iface
+    iface --> cache["agentCache — tag-pinned GET"]
+    cache --> release["release assets — binary · checksums.txt · .sig"]
+```
+
+### Release signing &amp; verification (ed25519)
+
+The root of trust is an **offline ed25519 key**. On the release machine, `make release` signs `checksums.txt` with the **private** key (`signing.key` — never on the panel). The **public** key (`signing.pub`) is committed and compiled into **both** the panel and the agent. The panel verifies before serving; the agent verifies **again itself** — so even a compromised panel cannot feed a tampered binary. When no key is built in, signature enforcement is off and binaries fall back to SHA-256 over TLS/mTLS (the pre-signing baseline).
+
+```mermaid
+flowchart TB
+    priv["signing.key (PRIVATE) — offline, never shipped"] --> mk["make release · wgsign sign"]
+    mk --> art["binary + checksums.txt + .sig"]
+    art -->|publish| forge["Forge release"]
+    pub["signing.pub (PUBLIC) — committed"] -->|ldflags| panelbin["panel binary — verifies before serving"]
+    pub -->|ldflags| agentbin["agent binary — verifies before updating"]
+    forge -->|"fetch .sig"| panelbin
+    panelbin -->|"verify -> serve over mTLS"| agentbin
+    agentbin -->|"verify AGAIN (own key)"| ok["trust binary"]
+```
+
+### Agent self-update via the panel
+
+An agent updates by asking **its own panel** over the CA-pinned mTLS channel — it has **no forge coupling**. It verifies the signature with its own baked-in key, then the SHA-256, then stages beside the live binary, self-checks it runs, atomically swaps in a `.bak`, and restarts after the ack flushes.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Agent as wgscout
+    participant Panel as Panel
+    Note over Agent,Panel: mutual TLS (enrolled identity)
+    Agent->>Panel: GET /update
+    Panel-->>Agent: {version, checksums, sig}
+    Agent->>Agent: ed25519 verify (own key)
+    Agent->>Panel: GET /update/binary?arch=
+    Panel-->>Agent: binary bytes (checksum-verified)
+    Agent->>Agent: verify sha256 (fail-closed)
+    Agent->>Agent: stage -> self-check -> swap (.bak) -> restart
+```
+
+### Panel update-check
+
+The panel deploys by `git pull`, so its version is the commit it was built from. Its "is there an update?" answer uses the **git smart-HTTP protocol** — a plain HTTPS GET of `info/refs`, parsed in pure Go. No git binary, no subprocess, so there is no `ext::`/`file://` command-execution surface. The About page shows the resulting badge.
+
+```mermaid
+flowchart LR
+    about["About page"] --> h["handlePanelUpdateCheck"]
+    h -->|"HTTPS GET info/refs"| repo["SOURCE_REPO — git smart-HTTP"]
+    repo -->|"pkt-line refs"| parse["parseGitRefs (pure Go)"]
+    parse --> cmp{"branch tip vs built commit"}
+    cmp -->|match| uptodate["up to date"]
+    cmp -->|differs| avail["update available"]
+```
+
+### Trust model summary
+
+| Anchor | What it protects |
+|--------|------------------|
+| **Offline ed25519 signing key** (`signing.key`) | Authenticity of every agent release; private half never on the panel |
+| **Baked-in public key** (`signing.pub`) | Panel and agent independently verify signatures; compiled in, not runtime-configurable |
+| **Fleet CA** (ECDSA P256, encrypted at rest) | Issues agent client certs + the panel's mTLS server cert; only enrolled machines are obeyed |
+| **CA-fingerprint pinning** | Closes trust-on-first-use at enrollment |
+| **SHA-256 checksums** (verified twice) | Integrity of each downloaded binary, checked by panel *and* agent, fail-closed |
+| **TLS / mutual TLS** | Report/command/update endpoints reject certless or foreign-cert connections at the handshake |
+
 ## Development
 
 Enable hot reload during setup (`./manage.sh` → answer `y` to development mode) or set `DEV_MODE=true` in `.env`. Svelte changes then reflect instantly without a rebuild.
