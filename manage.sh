@@ -560,6 +560,26 @@ detect_distro_paths() {
     echo -e "${GREEN}Detected distro:${NC} ${family} — set AUTH_LOG=${auth} KERN_LOG=${kern}"
 }
 
+# detect_source_repo derives the GitHub owner/repo slug from this checkout's own git remote
+# and writes it to .env as SOURCE_REPO. The panel uses it to check GitHub for a newer version
+# and to serve agent releases — pointing it at the SAME remote we actually `git pull` from, so
+# the two can never drift. Nothing is hardcoded: a fork gets its own slug automatically. Only
+# (re)written when it changed, so a manual override in .env survives ordinary rebuilds.
+detect_source_repo() {
+    local url slug current
+    url=$(git remote get-url origin 2>/dev/null) || return 0
+    # git@github.com:owner/repo.git  or  https://github.com/owner/repo.git  ->  owner/repo
+    slug=$(printf '%s' "$url" | sed -E 's#^git@[^:]+:##; s#^[a-z]+://[^/]+/##; s#\.git$##')
+    case "$slug" in
+        */*) ;;                # looks like owner/repo
+        *) return 0 ;;         # unrecognized remote shape — leave any existing value alone
+    esac
+    current=$(grep -E "^SOURCE_REPO=" .env 2>/dev/null | cut -d= -f2)
+    [ "$current" = "$slug" ] && return
+    update_env_value SOURCE_REPO "$slug"
+    echo -e "${GREEN}Source repo:${NC} ${slug}"
+}
+
 # ===========================================
 # Managed Install (systemd service + /opt)
 # ===========================================
@@ -2877,15 +2897,19 @@ echo ""
 # Start Docker Compose
 # ===========================================
 
-# Stamp the running build with the current git version (tag if present, else short
-# commit; -dirty when the tree has uncommitted changes). Baked into the API binary via
-# the VERSION build-arg and shown on the About page.
-PANEL_VERSION=$(git describe --tags --always --dirty --exclude 'agent-v*' 2>/dev/null || echo dev)
+# Stamp the running build with the current commit (short hash, -dirty when the tree has
+# uncommitted changes). No tags — the panel deploys by `git pull`, so its "version" is the
+# commit it was built from, and the About page checks GitHub to see if it's the branch tip.
+# Baked into the API binary via the VERSION build-arg and shown on the About page.
+PANEL_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
+[ -n "$(git status --porcelain 2>/dev/null)" ] && PANEL_VERSION="${PANEL_VERSION}-dirty"
 export PANEL_VERSION
 echo -e "${CYAN}Panel version:${NC} $PANEL_VERSION"
 
-# Set the distro-specific log paths (AUTH_LOG/KERN_LOG/DPKG_LOG) before the api starts.
+# Set the distro-specific log paths (AUTH_LOG/KERN_LOG/DPKG_LOG) and the source repo
+# (SOURCE_REPO, from the git remote) before the api starts.
 detect_distro_paths
+detect_source_repo
 
 echo -e "${YELLOW}Starting docker compose...${NC}"
 

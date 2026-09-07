@@ -46,12 +46,12 @@ type agentCache struct {
 }
 
 func newAgentCache() *agentCache {
-	// Repo comes from the environment (FLEET_AGENT_REPO), defaulted in docker-compose
-	// and documented in .env.example — not baked into the binary. If it is somehow
-	// empty, agent asset serving and version checks fail gracefully (best-effort).
-	repo := helper.GetEnvOptional("FLEET_AGENT_REPO", "")
+	// Repo comes from the environment (SOURCE_REPO), derived from the git remote by
+	// manage.sh and defaulted in docker-compose — not baked into the binary. If it is
+	// somehow empty, agent asset serving and version checks fail gracefully (best-effort).
+	repo := helper.GetEnvOptional("SOURCE_REPO", "")
 	if repo == "" {
-		log.Print("fleet: FLEET_AGENT_REPO is not set; agent asset serving and version checks are disabled")
+		log.Print("fleet: SOURCE_REPO is not set; agent asset serving and version checks are disabled")
 	}
 	return &agentCache{
 		dir:     helper.GetEnvOptional("FLEET_AGENT_CACHE", "/data/fleet-agent"),
