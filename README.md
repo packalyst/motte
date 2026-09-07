@@ -145,13 +145,13 @@ sequenceDiagram
     Op->>Agent: run panel-served install script
     Panel-->>Agent: script + panelURL + CA fingerprint + token
     Agent->>Agent: generate EC P256 keypair (local)
-    Agent->>Panel: POST /enroll {token, CSR} — TLS pinned to CA fingerprint
+    Agent->>Panel: POST /enroll (token + CSR), TLS pinned to CA fingerprint
     Panel->>CA: SignClientCSR (90d, single-use token)
     CA-->>Panel: client cert
-    Panel-->>Agent: {client_cert, ca_cert}
+    Panel-->>Agent: client_cert + ca_cert
     loop steady state
         Agent->>Panel: /report, /commands (mutual TLS)
-        Panel-->>Agent: cert fp -> enrolled machine? ack
+        Panel-->>Agent: cert fp maps to enrolled machine? ack
     end
 ```
 
@@ -184,7 +184,7 @@ flowchart TB
     pub["signing.pub (PUBLIC) — committed"] -->|ldflags| panelbin["panel binary — verifies before serving"]
     pub -->|ldflags| agentbin["agent binary — verifies before updating"]
     forge -->|"fetch .sig"| panelbin
-    panelbin -->|"verify -> serve over mTLS"| agentbin
+    panelbin -->|"verify, then serve over mTLS"| agentbin
     agentbin -->|"verify AGAIN (own key)"| ok["trust binary"]
 ```
 
@@ -199,12 +199,12 @@ sequenceDiagram
     participant Panel as Panel
     Note over Agent,Panel: mutual TLS (enrolled identity)
     Agent->>Panel: GET /update
-    Panel-->>Agent: {version, checksums, sig}
+    Panel-->>Agent: version + checksums + sig
     Agent->>Agent: ed25519 verify (own key)
     Agent->>Panel: GET /update/binary?arch=
     Panel-->>Agent: binary bytes (checksum-verified)
     Agent->>Agent: verify sha256 (fail-closed)
-    Agent->>Agent: stage -> self-check -> swap (.bak) -> restart
+    Agent->>Agent: stage, self-check, swap (.bak), restart
 ```
 
 ### Panel update-check
