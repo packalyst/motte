@@ -190,6 +190,9 @@ services:
       # Project source repo (full https URL) + forge type — agent releases + version check
       - SOURCE_REPO=${SOURCE_REPO:-https://github.com/packalyst/wireguard-admin-panel}
       - SOURCE_FORGE=${SOURCE_FORGE:-github}
+      # So the panel can derive the locally-built turbotunnels image name
+      # (<project>-turbotunnels) instead of assuming a fixed project name.
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-wire-panel}
     volumes:
       - api_data:/data
       - /var/log:/var/log:ro

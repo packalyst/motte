@@ -49,11 +49,19 @@ type Status struct {
 	Drift       bool         `json:"drift"`   // saved config differs from what's running
 }
 
-// imageName returns the locally-built image name. docker-compose tags built
-// images as "<project>-<service>"; override with TURBOTUNNELS_IMAGE if the
-// compose project name differs.
+// imageName returns the locally-built image name. docker-compose tags built images as
+// "<project>-<service>", so we derive it from COMPOSE_PROJECT_NAME (passed into the api
+// container) to track whatever compose actually built — this is what keeps the name correct
+// after a migrate/rename that changes the project. An explicit TURBOTUNNELS_IMAGE overrides
+// everything; a hardcoded fallback covers a bare run with neither set.
 func imageName() string {
-	return helper.GetEnvOptional("TURBOTUNNELS_IMAGE", "wireguard-admin-panel-turbotunnels")
+	if v := helper.GetEnvOptional("TURBOTUNNELS_IMAGE", ""); v != "" {
+		return v
+	}
+	if p := helper.GetEnvOptional("COMPOSE_PROJECT_NAME", ""); p != "" {
+		return p + "-turbotunnels"
+	}
+	return "wire-panel-turbotunnels"
 }
 
 // configHash returns a stable short hash of the tunnel config as the container
