@@ -1,329 +1,311 @@
 # Architecture
 
-A self-hosted WireGuard / Headscale admin panel. Three code trees, orchestrated by
-`docker-compose.yml` and `manage.sh`:
+This document describes how the WireGuard/Headscale admin panel is put together, with
+emphasis on the **fleet-agent supply chain** — how a per-machine agent (`wgscout`) is
+enrolled, trusted, and kept up to date without ever hardcoding a repository or shipping a
+private key onto the panel.
 
-- **`api/`** — the Go backend (single binary, host-networked, privileged). Owns the
-  firewall, WireGuard, Headscale/AdGuard/Traefik config, and the **fleet** subsystem
-  (`api/internal/fleet/`) that manages per-machine agents.
-- **`ui/`** — the Svelte 5 single-page app, served by its own container behind Traefik.
-- **`agent/`** — `wgscout`, the per-machine fleet agent installed on managed hosts. It
-  reports metrics/CVEs and executes a fixed allowlist of commands over mutual TLS.
+Components:
 
-The rest of this document is diagram-first; the prose only frames each diagram. The
-emphasis is the fleet-agent **supply-chain path**: how an agent is enrolled, how its
-binary is sourced and pinned, how releases are signed, and how it updates itself — all
-without any repo or forge identity being hard-coded into the Go binaries.
+- **Go backend** — `api/` (single binary, built into the `api` container).
+- **Svelte 5 frontend** — `ui/`.
+- **Fleet agent** — `agent/` (the `wgscout` binary that runs on managed hosts).
+- **Orchestration** — `docker-compose.yml` + `manage.sh`.
 
 ---
 
 ## 1. Overall stack
 
-The panel runs as a Docker Compose stack. Two containers use **host networking**
-(`api`, `adguard`); the rest sit on the `vpn-network` bridge. Traefik terminates TLS on
-:443 and is the single public front door. Because `api` is host-networked (not on the
-bridge), Traefik cannot reach it by service name — it reaches it via
-`host.docker.internal:8081` (wired through `extra_hosts: host.docker.internal:host-gateway`
-in `docker-compose.yml`, routed by `traefik/dynamic/core.yml`). The UI container owns the
-catch-all `PathPrefix(`/`)` route; `/api/*` is routed to the host `api`. The **nftables
-firewall**, owned by the `api` process (`api/internal/firewall/`), is the security gate —
-nothing reaches WireGuard/Headscale/managed ports unless the firewall admits it, and every
-ruleset change is validated with `nft -c` before being applied.
+The stack is a set of containers orchestrated by `docker-compose.yml`. The `api` runs in the
+host network namespace (`network_mode: host`, `privileged`, `CAP_NET_ADMIN`) because it is the
+component that programs the host firewall — **nftables is the gate**; nothing reaches a
+protected service except through rules the panel writes. Because the `api` is host-networked
+it has no in-Docker hostname, so Traefik reaches it via `host.docker.internal:8081`
+(`traefik/dynamic/core.yml`, and the generated fleet route in
+`api/internal/traefik/traefik.go`). The `api` never touches the Docker socket directly: it
+talks to a filtered `docker-socket-proxy` on `127.0.0.1:2375` (`DOCKER_HOST` env).
+
+The browser UI is a separate `ui` container on the internal `vpn-network`, served by Traefik
+as the `PathPrefix(`/`)` catch-all (priority 1), so higher-priority routes like `/agent` win.
 
 ```mermaid
 flowchart TB
-    subgraph internet[Internet / WireGuard clients]
-        browser[Admin browser]
-        wgclient[WG / Tailscale clients]
-        agents[Fleet agents wgscout]
+    subgraph host["Host (nftables = the gate)"]
+        direction TB
+        nft["nftables\n(programmed by api)"]
+
+        subgraph dockernet["Docker: vpn-network"]
+            traefik["traefik v3.6\n:80 :443 :8080"]
+            ui["ui (Svelte)\nPathPrefix / catch-all"]
+            headscale["headscale 0.25\nVPN control server"]
+        end
+
+        subgraph hostns["Host network namespace"]
+            api["api (Go)\nprivileged, CAP_NET_ADMIN\nhost-networked"]
+            adguard["adguard\nDNS"]
+            fleetl["fleet mTLS listener\n:9443 (default)"]
+        end
+
+        proxy["docker-socket-proxy\n127.0.0.1:2375 (filtered)"]
+        dsock["/var/run/docker.sock (ro)"]
     end
 
-    nft["nftables firewall<br/>(the gate — owned by api,<br/>validated with nft -c)"]
+    browser["Browser"] -->|443| traefik
+    traefik -->|"PathPrefix /"| ui
+    traefik -->|"host.docker.internal:8081"| api
+    traefik -->|"/agent (install route)"| api
+    api -->|"DOCKER_HOST tcp://127.0.0.1:2375"| proxy
+    proxy --> dsock
+    api -->|"writes rules"| nft
+    api -.->|manages| headscale
+    api -.->|manages| adguard
+    api --> fleetl
 
-    subgraph host[Panel host]
-        subgraph bridge[vpn-network bridge]
-            traefik["traefik :80/:443/:8080"]
-            ui["ui container<br/>Svelte SPA · PathPrefix('/')"]
-            headscale["headscale :8080 (internal)"]
-        end
-        subgraph hostnet[host network namespace]
-            api["api (Go)<br/>host-networked · privileged · pid:host<br/>firewall · WG · fleet mTLS listener"]
-            adguard["adguard DNS"]
-        end
-        dsp["docker-socket-proxy<br/>127.0.0.1:2375 (filtered)"]
-        sock[("/var/run/docker.sock :ro")]
-    end
-
-    browser -->|HTTPS 443| nft --> traefik
-    wgclient --> nft
-    agents -->|mTLS direct IP| nft
-    traefik -->|"PathPrefix('/')"| ui
-    traefik -->|"/api/* via host.docker.internal:8081"| api
-    traefik -->|/agent/{token} install download| api
-    traefik --> headscale
-    api -->|DOCKER_HOST=tcp://127.0.0.1:2375| dsp --> sock
-    api --> adguard
+    agents["fleet agents (wgscout)\non remote machines"] -->|mTLS :9443| fleetl
 ```
 
-Notes worth carrying forward:
-
-- `docker-socket-proxy` exposes a filtered Docker API on loopback `:2375`; `api` talks to
-  it via `DOCKER_HOST` rather than mounting the raw socket. It currently runs with `EXEC=1`
-  (needed for the headscale CLI) — flagged in-compose as a tracked follow-up to remove.
-- The agent's mTLS channel (Section 2) does **not** go through Traefik/443 — only the
-  `/agent/{token}` **install download** does. The mTLS listener is a separate port.
+Notable: the install-script download (`/agent/<token>`) and the browser UI both ride
+Traefik/443 with the panel's real certificate, while the fleet **mTLS channel**
+(enroll/report/commands/update) is a *separate* TLS listener on `:9443`
+(`api/internal/fleet/service.go`, `defaultPort = 9443`) — one guarded download door, one mutual-
+TLS control channel.
 
 ---
 
-## 2. Fleet agent enrollment & mTLS trust
+## 2. Fleet agent enrollment and mTLS trust
 
-Enrollment turns a one-time token into a pinned, cert-authenticated identity, with **no
-trust-on-first-use**. The operator mints a token; the new host runs the panel-served
-self-extracting installer; the agent generates its own keypair, gets a CA-signed client
-cert, and pins the panel CA fingerprint out-of-band. Two distinct doors:
+Enrollment turns a one-time token into a long-lived mutual-TLS identity. The operator mints a
+token; the agent host runs a **panel-served, self-extracting install script**
+(`GET /agent/{token}`, mounted in `api/cmd/main.go` and published over Traefik/443 —
+`api/internal/fleet/install.go`). That script carries the agent binary, manifest, and real
+installer base64-embedded, plus three spliced values: the panel's mTLS URL (a direct
+`https://<ip>:9443`), the **CA fingerprint** (`sha256:...`), and the token.
 
-- **Install download** — `GET /agent/{token}?arch=` on the **main api router**, published
-  over Traefik/443 (`api/internal/fleet/install.go::HandleInstallScript`). The response is
-  a self-extracting `#!/bin/sh` script with the agent binary, manifest, and the real
-  `install.sh` base64-embedded, plus `--panel`, `--ca-fp`, and `--token` spliced in.
-- **mTLS listener** — a separate managed TLS server (default **:9443**, Settings-controlled,
-  `service.go`) carrying `/enroll` and all report/command endpoints (`listener.go`).
-
-The listener uses `tls.VerifyClientCertIfGiven`: `/enroll` needs no client cert (the token
-is the credential), but any presented cert must be CA-signed, and the report/command
-endpoints additionally require the cert's fingerprint to map to an enrolled, non-revoked
-machine (`mtls.go::requireClientCert`).
+The agent then generates its **own** EC P256 keypair locally (the private key never leaves the
+host), builds a CSR, and POSTs it to `/enroll` — verifying the panel's server certificate
+against the **pinned CA fingerprint** (`agent/register.go`, `pinnedTLS`), so there is no
+trust-on-first-use. The panel redeems the token (atomic, single-use), signs a short-lived
+client certificate with its CA (`SignClientCSR`, 90-day TTL), records the machine, and returns
+the client cert plus the CA cert. From then on every report/command call is gated at the TLS
+handshake (`VerifyClientCertIfGiven` + `requireClientCert`, which also checks the cert
+fingerprint maps to an enrolled, non-revoked machine).
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Op as Operator (panel UI)
-    participant Api as Panel api router (Traefik/443)
+    participant Op as Operator
+    participant Panel as Panel (api)
+    participant CA as Fleet CA
     participant Host as New host
     participant Agent as wgscout
-    participant Mtls as Panel mTLS listener (:9443)
-    participant CA as Fleet CA
 
-    Op->>Api: mint one-time token (records panel host IP)
-    Op-->>Host: curl https://panel/agent/{token}?arch=... | sudo sh
-    Host->>Api: GET /agent/{token}?arch=x86_64
-    Api-->>Host: self-extracting script (binary + install.sh<br/>+ panel URL + CA fingerprint + token)
-    Host->>Agent: install.sh runs; systemd unit installed
-    Agent->>Agent: generate EC P-256 key (never leaves host)<br/>build CSR
-    Note over Agent: refuses to enroll if no CA fingerprint pinned<br/>(no TOFU) — enroll.go / register.go
-    Agent->>Mtls: POST /enroll {token, CSR, machine_id, hostname}<br/>server cert verified against PINNED CA fp
-    Mtls->>Mtls: redeem token (atomic, single-use)
-    Mtls->>CA: SignClientCSR(CN=machine id, 90-day TTL)
-    CA-->>Mtls: client cert (PEM)
-    Mtls-->>Agent: {machine_id, client_cert, ca_cert}
-    Agent->>Agent: store cert+key+CA in encrypted store;<br/>scrub token from config
-    loop steady state (mutual TLS)
-        Agent->>Mtls: POST /report · /cve-report (client cert)
-        Mtls->>Mtls: requireClientCert: fp -> enrolled, non-revoked
-        Agent->>Mtls: GET /commands -> exec allowlist -> POST /commands/ack
+    Op->>Panel: mint one-time enrollment token
+    Op->>Host: curl https://<domain>/agent/<token> | sudo sh
+    Panel-->>Host: self-extracting script<br/>(binary + manifest + installer)<br/>+ panelURL + CA fingerprint + token
+    Note over Host: install.sh unpacks, writes<br/>panel_url / ca_fingerprint / enroll_token
+    Agent->>Agent: generate EC P256 keypair locally
+    Agent->>Panel: POST /enroll {token, CSR, machine_id, hostname}<br/>TLS pinned to CA fingerprint
+    Panel->>Panel: redeem token (single-use)
+    Panel->>CA: SignClientCSR(CN=machine-id, 90d)
+    CA-->>Panel: client cert (CA-signed)
+    Panel-->>Agent: {client_cert, ca_cert}
+    Agent->>Agent: store cert+key+CA (encrypted), scrub token
+    loop steady state
+        Agent->>Panel: POST /report, GET /commands (mutual TLS)
+        Panel->>Panel: requireClientCert: cert fp -> enrolled machine?
+        Panel-->>Agent: metrics ack / pending commands
     end
 ```
 
-**Trust anchors established here:** the agent pins the panel **CA SHA-256 fingerprint**
-(delivered in the install command, verified in `register.go::pinnedTLS`), so a rogue panel
-with a different CA fails the handshake. The panel trusts the agent only via a cert its own
-CA signed *and* that still maps to a live machine.
+**Trust anchors in this flow** — the CA private key is generated on the panel and stored
+**encrypted** at rest (AES-256-GCM via `ENCRYPTION_SECRET`, `api/internal/fleet/ca.go`); the
+agent's private key never transits (panel only ever sees a CSR); the token is single-use; and
+the CA fingerprint is pinned out-of-band via the install script.
 
 ---
 
-## 3. Forge abstraction — repo identity lives in the environment
+## 3. Forge abstraction
 
-The panel serves agent binaries by pulling them **live** from the project's git-forge
-release, so the repo ships no binaries and a new agent version ships with a plain
-`gh release` (no panel rebuild). Crucially, **nothing about a specific repo is baked into
-the Go binary**: identity comes entirely from `SOURCE_REPO` (a full https URL) plus
-`SOURCE_FORGE` (`github` | `gitea` | `gitlab`). `manage.sh::detect_source_repo` derives
-these from the checkout's `git remote origin` and writes them to `.env`;
-`docker-compose.yml` defaults them. `newForge` (`forge.go`) parses them fail-closed
-(https only, exactly `owner/repo`, host auto-detect only for `github.com`) and returns a
-driver that knows that forge's asset-URL and latest-release schemes.
+Nothing about a specific repository is baked into the Go binary. The repo identity comes
+entirely from the environment: `SOURCE_REPO` (a full `https://host/owner/repo` URL) plus
+`SOURCE_FORGE` (`github` | `gitea` | `gitlab`). `manage.sh` (`detect_source_repo`) derives
+these from the checkout's own `git remote` — pointing the panel at the *same* remote it
+`git pull`s from, so a fork or mirror is picked up automatically.
+
+`newForge` (`api/internal/fleet/forge.go`) parses `SOURCE_REPO` strictly (https only, exactly
+`owner/repo`, fail-closed on an unknown host unless `SOURCE_FORGE` is set) and returns a driver.
+Each driver knows two things: the **release-asset URL scheme** and the **latest-release**
+API endpoint for its forge. Every value that flows into a URL is allowlist-validated and
+percent-escaped, and a tag returned by the (untrusted) forge is re-validated before it can be
+used to build a download URL.
 
 ```mermaid
 flowchart LR
-    env["SOURCE_REPO (full https URL)<br/>+ SOURCE_FORGE<br/>(from git remote via manage.sh)"]
-    env --> newForge["newForge()<br/>strict validation, fail-closed"]
-    newForge -->|github| gh["githubForge"]
-    newForge -->|gitea| gt["giteaForge"]
-    newForge -->|gitlab| gl["gitlabForge"]
+    env["SOURCE_REPO (full URL)\nSOURCE_FORGE"] --> nf["newForge()\nstrict parse, fail-closed"]
+    nf --> gh["githubForge"]
+    nf --> gt["giteaForge"]
+    nf --> gl["gitlabForge"]
 
     subgraph iface["Forge interface"]
-        lt["LatestTag(ctx) — re-validates tag vs reTag"]
-        au["AssetURL(tag, asset)"]
+        m1["LatestTag(ctx) -> validated tag"]
+        m2["AssetURL(tag, asset)"]
     end
-    gh --> iface
-    gt --> iface
-    gl --> iface
+    gh --- iface
+    gt --- iface
+    gl --- iface
 
-    cache["agentCache (agentcache.go)"]
-    cache -->|"1. LatestTag()"| lt
-    cache -->|"2. AssetURL(tag, checksums.txt / binary)"| au
-    au -->|"github/gitea: /releases/download/{tag}/{asset}"| assets[("release assets<br/>on the forge")]
-    au -->|"gitlab: /-/releases/{tag}/downloads/{asset}"| assets
+    iface --> cache["agentCache\n(agentcache.go)"]
+    cache -->|"tag-pinned https GET"| release["release assets\n(binary, checksums.txt, .sig,\nmanifest.json, install.sh)"]
+
+    gh -. "api.github.com/.../releases/latest\n/releases/download/<tag>/<asset>" .-> release
+    gt -. "/api/v1/.../releases/latest\n/releases/download/<tag>/<asset>" .-> release
+    gl -. "/api/v4/.../releases/permalink/latest\n/-/releases/<tag>/downloads/<asset>" .-> release
 ```
 
-`agentCache` resolves the latest tag once, then **tag-pins** every subsequent download to
-that exact tag. Every value flowing into a URL (host, owner, repo, tag, asset) is allowlist-
-validated and percent-escaped, and the tag returned by the (untrusted) forge is re-validated
-against `reTag` — a hostile forge cannot return `../..` or an absolute URL to redirect a
-download. Freshness is cheap: the tiny `checksums.txt` is the version marker; at most every
-5 minutes the cache re-fetches it, and only a change triggers a full cache purge + re-fetch.
+`agentCache` resolves the latest tag via `LatestTag`, then **tag-pins** all asset downloads to
+that resolved tag. `checksums.txt` doubles as the version marker: at most every 5 minutes the
+cache re-fetches it, and if the tag or content changed it purges and re-seeds the on-disk cache
+under the new tag. A missing/invalid `SOURCE_REPO` leaves the forge `nil` and asset serving /
+version checks degrade gracefully.
 
 ---
 
-## 4. Release signing & verification (ed25519)
+## 4. Release signing and verification (ed25519)
 
-The supply-chain trust root is an **offline ed25519 key** that never exists on the panel or
-any agent. On the release machine, `make release` (`agent/Makefile`) builds both arch
-binaries, writes `checksums.txt`, and signs it with the **private** key (`signing.key`,
-chmod 600, gitignored) via the stdlib-only signer `agent/tools/wgsign`. The detached
-`checksums.txt.sig` is uploaded alongside the release. The matching **public** key
-(`signing.pub`) is committed and **baked into both the panel and the agent at build time**
-via `-ldflags -X` (panel: `api/internal/fleet.signPubKey` from `PANEL_SIGN_PUBKEY`; agent:
-`main.signPubKey`). The panel verifies the signature before serving a release
-(`agentcache.go::refreshLocked` → `signing.go::verifyChecksumsSig`, fail-closed), and the
-agent verifies it **again** itself before updating (Section 5) — so even a compromised panel
-cannot feed an agent a tampered binary.
+The supply-chain root of trust is an **offline ed25519 key**. On the release machine,
+`make release` (`agent/Makefile`) builds the binaries, writes `checksums.txt`, and signs it
+with the **private** key (`signing.key`, base64, chmod 600, gitignored, never on the panel) via
+`agent/tools/wgsign` — producing `checksums.txt.sig`. All artifacts, including the signature,
+are published as a forge release.
+
+The matching **public** key (`signing.pub`) is committed to the repo and baked into **both** the
+panel and the agent at build time via `ldflags`:
+
+- Panel: `PANEL_SIGN_PUBKEY` build arg → `-X api/internal/fleet.signPubKey` (`api/Dockerfile`,
+  set by `manage.sh` from `signing.pub`).
+- Agent: `-X main.signPubKey` (`agent/Makefile`, read from `../signing.pub`).
+
+When a key is baked in (`signingEnabled()`), verification is **fail-closed**: the panel refuses
+to serve a release whose `checksums.txt` lacks a valid signature, and the agent verifies the
+signature *again itself* before updating — so even a compromised panel cannot feed a tampered
+binary. The private key exists only on the release machine.
 
 ```mermaid
 flowchart TB
     subgraph rel["Release machine (offline key)"]
-        priv[("signing.key<br/>ed25519 PRIVATE<br/>never shipped/deployed/backed up")]
-        mk["make release"]
-        mk --> bins["wgscout-linux-amd64 / -arm64"]
-        mk --> sums["checksums.txt (sha256 of binaries)"]
-        priv -->|wgsign sign| sig["checksums.txt.sig"]
-        sums --> sig
-    end
-    pub[("signing.pub<br/>ed25519 PUBLIC — committed")]
-    priv -. keygen once .-> pub
-
-    bins & sums & sig -->|gh release| forge[("Forge release")]
-
-    subgraph build["Build time (ldflags -X)"]
-        pub --> panelbin["panel: fleet.signPubKey<br/>(PANEL_SIGN_PUBKEY)"]
-        pub --> agentbin["agent: main.signPubKey"]
+        priv["signing.key (PRIVATE)\nnever shipped/backed up"]
+        mk["make release\nwgsign sign"]
+        priv --> mk
+        mk --> art["binary + checksums.txt\n+ checksums.txt.sig"]
     end
 
-    forge -->|"fetch checksums + .sig"| panelbin
-    panelbin -->|verifyChecksumsSig · fail-closed| ok1{"valid?"}
-    ok1 -->|no| drop["reject — never serve"]
-    ok1 -->|yes| serve["serve to agents (Section 5)"]
-    serve --> agentbin
-    agentbin -->|verifyChecksumsSig again| ok2{"valid?"}
-    ok2 -->|no| abort["abort self-update"]
-    ok2 -->|yes| swap["update"]
+    art -->|gh release| forge["Forge release"]
+
+    pub["signing.pub (PUBLIC)\ncommitted to repo"]
+    pub -->|"ldflags -X ...signPubKey"| panelbin["panel binary\n(verifies before serving)"]
+    pub -->|"ldflags -X main.signPubKey"| agentbin["agent binary\n(verifies before updating)"]
+
+    forge -->|"fetch checksums.txt(.sig)"| panelbin
+    panelbin -->|"ed25519 verify (fail-closed)\nthen serve over mTLS"| agentbin
+    agentbin -->|"ed25519 verify AGAIN\nwith own baked key"| ok["trust binary"]
 ```
 
-When no public key is baked in (empty `signPubKey`), signature enforcement is **disabled**
-and the system falls back to sha256-over-the-mTLS-channel trust — so unsigned/legacy
-releases still work. Once a key is present, **every** release the panel serves MUST carry a
-valid `checksums.txt.sig`.
+**Trust root = the offline signing key.** The committed `signing.pub` lets anyone rebuild a
+panel/agent that enforce the same signature; the panel is only a *cache and relay*, never a
+trust authority for release contents.
 
 ---
 
 ## 5. Agent self-update through the panel
 
-An agent never talks to the forge. When it receives the `update-agent` command over mTLS,
-it pulls its own new binary **from its panel** over the already-trusted CA-pinned channel
-(`agent/selfupdate.go`), so it needs zero forge access or configuration. It still performs
-the full verification chain itself: ed25519 signature (with its baked-in key) → per-binary
-sha256 → run the staged binary once to confirm it executes → atomic swap → restart.
+An agent updates itself by asking **its own panel** over the already-trusted, CA-pinned mTLS
+channel — it has **no forge coupling** whatsoever (only the panel talks to the forge). The
+`update-agent` command triggers `selfUpdate` (`agent/selfupdate.go`):
+
+1. `GET /update` (mTLS) → latest `version`, raw `checksums`, and `sig`
+   (`api/internal/fleet/agentupdate.go`, backed by `agentCache.LatestSigned`).
+2. If a signing key is baked in, **verify the ed25519 signature** over `checksums` with the
+   agent's own key — before trusting the checksums list.
+3. Look up the expected SHA-256 for `wgscout-linux-<arch>` from the now-authenticated checksums.
+4. `GET /update/binary?arch=` → download and verify the **SHA-256** (fail-closed).
+5. **Stage** beside the live binary (`.wgscout.new`, exec bit set — never in a possibly-noexec
+   `/tmp`).
+6. **Self-check**: run the staged binary's `version` — catches a wrong-arch or corrupt-but-
+   hash-matched download before touching the live binary.
+7. **Swap**: back up the live binary to `.bak`, then atomically `rename` the staged one in.
+8. **Restart** (via `systemctl`) *after* the command ack flushes, so the panel records success
+   before the process is replaced.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Panel as Panel mTLS listener
     participant Agent as wgscout
-    Note over Agent: command "update-agent" received on /commands
-    Agent->>Panel: GET /update  (mTLS)
-    Panel-->>Agent: {version, checksums, sig}  (from agentCache.LatestSigned)
-    alt version == running
-        Agent-->>Panel: ack "already on latest"
-    else newer
-        Agent->>Agent: verifyChecksumsSig(checksums, sig)  ← baked-in key
-        Agent->>Agent: want = checksumFor(checksums, wgscout-linux-<arch>)
-        Agent->>Panel: GET /update/binary?arch=<GOARCH>  (mTLS)
-        Panel-->>Agent: binary bytes (panel re-verified sha256 before serving)
-        Agent->>Agent: sha256(bin) == want ?  (fail-closed)
-        Agent->>Agent: stage ".wgscout.new" beside live binary (0755)
-        Agent->>Agent: run "<staged> version" — self-check it executes
-        Agent->>Agent: swapBinary: back up live -> .bak, atomic rename staged in
-        Agent-->>Panel: POST /commands/ack "updated X -> Y"
-        Agent->>Agent: systemctl restart wgscout (after ack flushes)
-    end
+    participant Panel as Panel (api)
+    participant Cache as agentCache
+    participant Forge as Forge
+
+    Note over Agent,Panel: mutual TLS (enrolled identity)
+    Agent->>Panel: GET /update
+    Panel->>Cache: LatestSigned()
+    Cache->>Forge: (tag-pinned) checksums.txt (+ .sig)
+    Cache-->>Panel: version, checksums, sig
+    Panel-->>Agent: {version, checksums, sig}
+    Agent->>Agent: ed25519 verify sig (own baked key)
+    Agent->>Agent: expected sha256 = checksumFor(asset)
+    Agent->>Panel: GET /update/binary?arch=
+    Panel->>Cache: Binary(arch) (checksum-verified)
+    Panel-->>Agent: binary bytes
+    Agent->>Agent: verify sha256 (fail-closed)
+    Agent->>Agent: stage -> self-check version -> swap (.bak) 
+    Agent->>Agent: restart after ack flush
 ```
 
-Two panel endpoints back this, both mTLS-gated (`api/internal/fleet/agentupdate.go`):
-`GET /update` returns version + signed checksums; `GET /update/binary?arch=` streams the
-checksum-verified binary. The agent stages next to the live binary (never `/tmp`, which may
-be `noexec`) and keeps a `.bak`. The `update-agent` command ignores the agent's dry-run
-flag — it is an explicit panel action on the agent's own binary, not host enforcement.
+The panel's `/update` and `/update/binary` are on the mTLS listener behind
+`requireClientCert`, so only enrolled machines can pull.
 
 ---
 
 ## 6. Panel update-check
 
 The panel itself deploys by `git pull`, so its "version" is the commit it was built from
-(`PanelVersion`, a short sha stamped in by `manage.sh` via `-ldflags`). To answer "is there
-a newer panel?", `api/internal/server/panelupdate.go` performs a plain **git smart-HTTP**
-`GET .../info/refs?service=git-upload-pack` against `SOURCE_REPO`, parses the pkt-line ref
-advertisement, and compares the deploy branch's tip (`PanelBranch`) to the built commit.
-No `git` subprocess is spawned (so there is no `ext::`/`file://` remote-helper execution
-surface); only https is contacted, and the tip is cached for 10 minutes. The About page
-shows an "up to date / update available" badge; any failure degrades to `checked:false`
-(just the build, no badge).
+(`PANEL_VERSION` = `git rev-parse --short HEAD`, baked in via `ldflags`; `PANEL_BRANCH` too).
+Its "is there an update?" answer is: **does the branch tip on `SOURCE_REPO` differ from the
+built commit?**
+
+`handlePanelUpdateCheck` (`api/internal/server/panelupdate.go`) answers this using the **git
+smart-HTTP protocol** — a plain HTTPS `GET .../info/refs?service=git-upload-pack`, which every
+forge speaks identically. It parses the pkt-line ref advertisement in Go
+(`parseGitRefs`), reads the deploy branch's tip SHA, and compares. There is **no git binary and
+no subprocess**, so there is no `ext::`/`file://` git-remote-helper command-execution surface;
+only https is contacted, and the result is cached for 10 minutes. The About page shows an
+"up to date / update available" badge from the result (`up_to_date`, `checked`).
 
 ```mermaid
 flowchart LR
-    about["About page"] -->|GET| check["handlePanelUpdateCheck"]
-    check -->|"https GET info/refs?service=git-upload-pack"| repo[("SOURCE_REPO")]
-    repo --> parse["parseGitRefs (pkt-line)"]
-    parse --> tip["branch tip sha (refs/heads/BRANCH)"]
-    built["PanelVersion (built commit)"] --> cmp{"tip starts with<br/>built commit?"}
-    tip --> cmp
-    cmp -->|yes| utd["up to date"]
-    cmp -->|no| avail["update available"]
-    check -. any error .-> unknown["checked:false — show build only"]
+    about["About page"] -->|GET| h["handlePanelUpdateCheck"]
+    h -->|"HTTPS GET info/refs\n?service=git-upload-pack"| repo["SOURCE_REPO\n(git smart-HTTP)"]
+    repo -->|"pkt-line ref advertisement"| parse["parseGitRefs (pure Go)"]
+    parse --> cmp{"branch tip sha\nvs built commit\n(PANEL_VERSION)"}
+    cmp -->|"HasPrefix(tip, current)"| uptodate["up to date"]
+    cmp -->|differs| avail["update available"]
 ```
 
 ---
 
 ## Trust model summary
 
+The system's security rests on a small set of explicit anchors — no single compromise
+(including of the panel itself) is enough to push a malicious agent binary:
+
 | Anchor | What it protects | Where |
-|---|---|---|
-| **Offline ed25519 signing key** | Release authenticity — the private key never touches the panel or any agent; only `wgsign` on the release machine uses it. | `agent/tools/wgsign`, `signing.key` (off-panel) |
-| **Baked-in public key** (`signing.pub`) | Both panel and agent verify release signatures with a key fixed at build (ldflags), not runtime-configurable. | `api/internal/fleet/signing.go`, `agent/signing.go` |
-| **Fleet CA** | Signs the panel's server cert *and* each agent's client cert; both sides of the mTLS channel chain to it. | `api/internal/fleet/ca.go` |
-| **CA-fingerprint pinning (SHA-256)** | Closes trust-on-first-use — the agent verifies the panel's cert against a fingerprint delivered out-of-band in the install command. | `agent/register.go::pinnedTLS` |
-| **Client-cert → live-machine mapping** | A CA-signed cert alone isn't enough; it must map to an enrolled, non-revoked machine. | `api/internal/fleet/mtls.go` |
-| **SHA-256 checksums** | Per-binary integrity, verified by the panel before serving and again by the agent before swapping. | `agentcache.go`, `agent/selfupdate.go` |
-| **TLS / mutual TLS** | Confidentiality + authentication of the enroll/report/command/update channel; https-only for all forge and update-check traffic. | `listener.go`, `panel.go` |
+| --- | --- | --- |
+| **Offline ed25519 signing key** (`signing.key`) | Authenticity of every agent release; root of the supply chain. Private half never on the panel. | `agent/tools/wgsign`, `agent/Makefile` |
+| **Baked-in public key** (`signing.pub`) | Both panel *and* agent independently verify release signatures; verification is compiled in, not runtime-configurable. | `-X ...signPubKey` (`api/Dockerfile`, `agent/Makefile`) |
+| **Fleet CA** (ECDSA P256, key encrypted at rest) | Issues agent client certs + the panel's mTLS server cert; only CA-signed, enrolled machines are obeyed. | `api/internal/fleet/ca.go` |
+| **CA-fingerprint pinning** | Closes trust-on-first-use at enrollment — agent refuses a panel whose CA doesn't match the pinned `sha256:...`. | `agent/register.go` (`pinnedTLS`) |
+| **SHA-256 checksums** | Integrity of each downloaded binary, verified by panel *and* agent (fail-closed). | `agentcache.go`, `agent/selfupdate.go` |
+| **TLS / mutual TLS** | Confidential, authenticated transport; report/command/update endpoints reject certless or foreign-cert connections at the handshake. | `api/internal/fleet/listener.go`, `mtls.go` |
 
-### Facts to double-check
-
-1. **Signing is currently disabled by default in this checkout.** There is no `signing.pub`
-   / `signing.key` present or committed, so `PANEL_SIGN_PUBKEY` / `main.signPubKey` build
-   empty and the code takes the "sha256-over-mTLS" fallback path. The ed25519 chain in
-   Sections 4–5 activates only after `make keygen` and committing `signing.pub`. (There is a
-   `docs/todos/agent-release-signing.md`.)
-2. **`SOURCE_REPO` is unset in `.env`**, so it resolves to the `docker-compose.yml` default
-   `https://github.com/packalyst/wireguard-admin-panel` with `SOURCE_FORGE=github`.
-   `manage.sh::detect_source_repo` derives it from `git remote origin` on run.
-3. **The install download and the mTLS channel are deliberately different doors/ports.**
-   `/agent/{token}` is on the main api router over Traefik/443 (real cert, rate-limit/blocklist
-   middleware); enroll/report/commands/update are on the separate mTLS listener (default
-   **:9443**, Settings-controlled). The agent dials that listener at a **direct IP** (public or
-   WireGuard), never the Cloudflare-proxied SSL domain, which only forwards 80/443 and can't
-   pass client certs.
-4. **Client certs have a 90-day TTL** (`clientCertTTL = 90 * 24h` in `service.go`); I did not
-   find an automatic renewal path — worth confirming whether long-lived agents are expected to
-   re-enroll.
-5. **Panel update-check compares by prefix**: `up_to_date = strings.HasPrefix(remoteTip,
-   builtCommit)` where the built commit is a short sha — an intentional short-vs-full-sha match,
-   not a bug.
+Supporting properties: one-time, hashed enrollment tokens; short-lived client certs bound to a
+machine identity; agent private keys that never leave the host; and a panel that is only a
+**cache/relay** for signed releases — never itself a trust authority for their contents.
