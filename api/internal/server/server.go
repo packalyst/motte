@@ -44,7 +44,7 @@ type Service struct {
 	dpkgLogPath string
 
 	// Optional hooks, wired by main.go to avoid import cycles.
-	Certs     func() []CertInfo                            // TLS certs (traefik)
+	Certs     func() []CertInfo                              // TLS certs (traefik)
 	GeoLookup func(ip string) (owner string, country string) // enrich login IPs
 }
 
@@ -60,9 +60,10 @@ func New(db *sql.DB) *Service {
 
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetSecurity":        s.handleGetSecurity,
-		"GetPackages":        s.handleGetPackages,
-		"ForgetSudoFailure":  s.handleForgetSudoFailure,
+		"GetSecurity":       s.handleGetSecurity,
+		"GetPackages":       s.handleGetPackages,
+		"ForgetSudoFailure": s.handleForgetSudoFailure,
+		"PanelUpdateCheck":  s.handlePanelUpdateCheck,
 	}
 }
 
@@ -71,7 +72,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 type loginEvent struct {
 	User    string    `json:"user"`
 	IP      string    `json:"ip"`
-	Method  string    `json:"method"`  // publickey | password | ...
+	Method  string    `json:"method"` // publickey | password | ...
 	Country string    `json:"country,omitempty"`
 	Owner   string    `json:"owner,omitempty"`
 	When    time.Time `json:"when"`
@@ -675,12 +676,12 @@ func parseAnyTime(line string, now time.Time) (time.Time, bool) {
 // rsyslog high-precision ("…​.387291+03:00"), journald short-iso ("…+0200"),
 // UTC "Z", and no-offset forms.
 var isoLayouts = []string{
-	time.RFC3339Nano,                    // 2006-01-02T15:04:05.999999999Z07:00 (frac + ±HH:MM / Z)
-	time.RFC3339,                        // 2006-01-02T15:04:05Z07:00
+	time.RFC3339Nano,                     // 2006-01-02T15:04:05.999999999Z07:00 (frac + ±HH:MM / Z)
+	time.RFC3339,                         // 2006-01-02T15:04:05Z07:00
 	"2006-01-02T15:04:05.999999999-0700", // frac + ±HHMM (no colon)
-	"2006-01-02T15:04:05-0700",          // journald short-iso, ±HHMM
-	"2006-01-02T15:04:05.999999999",     // frac, no offset
-	"2006-01-02T15:04:05",               // bare
+	"2006-01-02T15:04:05-0700",           // journald short-iso, ±HHMM
+	"2006-01-02T15:04:05.999999999",      // frac, no offset
+	"2006-01-02T15:04:05",                // bare
 }
 
 // parseISOTime parses a leading ISO-8601 timestamp token of any common shape.

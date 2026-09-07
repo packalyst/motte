@@ -44,9 +44,13 @@ import (
 	"api/internal/ws"
 )
 
-// version identifies this panel build; override at link time with
+// version identifies this panel build (short commit sha); override at link time with
 // -ldflags "-X main.version=x.y.z". Stamped into backup files for compatibility.
 var version = "dev"
+
+// branch is the git branch this panel was built from, injected via -X main.branch. Used by
+// the panel update-check to compare against the correct branch tip on the source repo.
+var branch = ""
 
 func main() {
 	// One-shot re-key subcommands (`api --rekey` / `--rekey-check`) run with the
@@ -66,8 +70,9 @@ func main() {
 	}
 	log.Printf("Loaded configuration v%s with %d services", cfg.Version, len(cfg.Services))
 
-	// Surface the build version to the API (/api/schema) so the UI can show it.
+	// Surface the build version + branch to the API (/api/schema + update-check).
 	router.PanelVersion = version
+	router.PanelBranch = branch
 
 	// Create router
 	r := router.New(cfg)

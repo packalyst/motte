@@ -22,9 +22,13 @@ type AuthValidator func(token string) bool
 // authValidator is the registered auth validator
 var authValidator AuthValidator
 
-// PanelVersion is the build/version string (git describe), set by main at startup and
-// surfaced on /api/schema so the UI can show which build is running.
+// PanelVersion is the build commit (short sha), set by main at startup and surfaced on
+// /api/schema so the UI can show which build is running.
 var PanelVersion = "dev"
+
+// PanelBranch is the git branch this panel was built from, set by main at startup. Used by
+// the panel update-check to compare against the right branch tip on the source repo.
+var PanelBranch = ""
 
 // HandlerFunc is the standard handler function type
 type HandlerFunc func(w http.ResponseWriter, r *http.Request)

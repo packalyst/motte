@@ -12,6 +12,10 @@ COPY . .
 # docker compose). Defaults to "dev" for a plain `docker build`.
 ARG VERSION=dev
 
+# Git branch this build came from (passed by manage.sh / docker compose). Used by the panel
+# update-check to compare against the right branch tip on the source repo.
+ARG BRANCH=
+
 # Base64 ed25519 public key (from the committed signing.pub, passed by manage.sh /
 # docker compose). When empty, release-signature enforcement is disabled; when set, the
 # panel requires a valid checksums.txt.sig on every agent release it serves.
@@ -20,7 +24,7 @@ ARG SIGN_PUBKEY=
 # Download dependencies and build (build the whole ./cmd package, not just
 # main.go, so multi-file cmd packages compile correctly).
 RUN go mod tidy && \
-    CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION} -X api/internal/fleet.signPubKey=${SIGN_PUBKEY}" -o /api ./cmd
+    CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION} -X main.branch=${BRANCH} -X api/internal/fleet.signPubKey=${SIGN_PUBKEY}" -o /api ./cmd
 
 # Final stage
 FROM debian:bookworm-slim

@@ -1585,6 +1585,14 @@
           ],
           "handler": "ForgetSudoFailure",
           "description": "Dismiss a recorded sudo failure"
+        },
+        {
+          "path": "/update-check",
+          "methods": [
+            "GET"
+          ],
+          "handler": "PanelUpdateCheck",
+          "description": "Whether the panel's source branch tip is ahead of this build"
         }
       ]
     },

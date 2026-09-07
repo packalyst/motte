@@ -13,6 +13,7 @@
   let routerStatus = $state(null)
   let expandedApi = $state(null)
   let apiSchema = $state(null)
+  let updateCheck = $state(null) // { checked, up_to_date, latest, branch }
 
   // Service display config (icons, colors, order)
   const serviceConfig = {
@@ -116,12 +117,14 @@
 
   onMount(async () => {
     try {
-      const [router, schema] = await Promise.all([
+      const [router, schema, upd] = await Promise.all([
         apiGet('/api/vpn/router/status').catch(() => null),
-        apiGet('/api/schema').catch(() => null)
+        apiGet('/api/schema').catch(() => null),
+        apiGet('/api/server/update-check').catch(() => null)
       ])
       routerStatus = router
       apiSchema = schema
+      updateCheck = upd
     } catch (e) {
       // Ignore
     }
@@ -141,6 +144,17 @@
       <Icon name="git-commit" size={14} />
       <span>Panel build</span>
       <Badge variant="muted" size="sm"><span class="font-mono">{panelVersion}</span></Badge>
+      {#if updateCheck?.checked}
+        {#if updateCheck.up_to_date}
+          <Badge variant="success" size="sm">
+            <Icon name="check" size={12} /> Up to date
+          </Badge>
+        {:else}
+          <Badge variant="warning" size="sm">
+            <Icon name="arrow-up-right" size={12} /> Update available{updateCheck.latest ? ` → ${updateCheck.latest}` : ''}
+          </Badge>
+        {/if}
+      {/if}
     </div>
   {/if}
 

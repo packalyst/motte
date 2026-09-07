@@ -2924,6 +2924,9 @@ echo ""
 PANEL_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
 [ -n "$(git status --porcelain 2>/dev/null)" ] && PANEL_VERSION="${PANEL_VERSION}-dirty"
 export PANEL_VERSION
+# The branch this build tracks, so the panel's update-check compares against the right tip.
+PANEL_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+export PANEL_BRANCH
 echo -e "${CYAN}Panel version:${NC} $PANEL_VERSION"
 
 # Bake the release-signing public key into the panel so it verifies agent-release signatures

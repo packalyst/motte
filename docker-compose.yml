@@ -120,6 +120,7 @@ services:
       context: ./api
       args:
         VERSION: ${PANEL_VERSION:-dev}
+        BRANCH: ${PANEL_BRANCH:-}
         SIGN_PUBKEY: ${PANEL_SIGN_PUBKEY:-}
     container_name: api
     restart: unless-stopped
