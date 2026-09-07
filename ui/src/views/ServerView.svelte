@@ -118,7 +118,6 @@
   // Active sessions come from loginctl (one row per user+IP, real live count). Alarms are
   // closed remote-root logins from the ledger (root that is NOT currently connected).
   const activeSessions = $derived(data?.logins?.active || [])
-  const activeConnCount = $derived(activeSessions.reduce((a, s) => a + (s.count || 0), 0))
   const alarmLogins = $derived((data?.logins?.recent || []).filter(l => !l.active && l.root && l.ip && !isLocal(l.ip)))
 
   // Exposure: group listening ports by the process that owns them.
@@ -196,16 +195,6 @@
           <div class="{tileK}"><Icon name="activity" size={13} />Load</div>
           <div class="text-2xl font-bold tabular-nums">{latest?.load?.[0]?.toFixed(2) ?? '—'}</div>
           <div class="{tileM}">1m avg · {latest?.cores_n ?? '—'} cores</div>
-        </div>
-        <div class="{card}">
-          <div class="{tileK}"><Icon name="chart-line" size={13} />Disk I/O</div>
-          <div class="text-lg font-bold tabular-nums leading-tight" style="color:var(--rx)">R {latest?.disk ? fmtRate(latest.disk.read_bps) : '—'}</div>
-          <div class="{tileM} tabular-nums font-medium" style="color:var(--tx)">W {latest?.disk ? fmtRate(latest.disk.write_bps) : '—'}</div>
-        </div>
-        <div class="{card}">
-          <div class="{tileK}"><Icon name="terminal-2" size={13} />Sessions</div>
-          <div class="text-2xl font-bold tabular-nums">{activeConnCount}</div>
-          <div class="{tileM}">active connection{activeConnCount === 1 ? '' : 's'}</div>
         </div>
       </div>
 
