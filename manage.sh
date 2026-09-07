@@ -2947,9 +2947,11 @@ echo -e "${CYAN}Panel version:${NC} $PANEL_VERSION"
 # enforcement stays off (unsigned/legacy releases keep working). The PRIVATE key is never here.
 if [ -f signing.pub ]; then
     PANEL_SIGN_PUBKEY=$(tr -d ' \t\r\n' < signing.pub)
-    echo -e "${CYAN}Release signing:${NC} enforced (public key baked in)"
+    echo -e "${CYAN}Release signing:${NC} ${GREEN}ON${NC} (public key baked in — releases must be signed)"
 else
     PANEL_SIGN_PUBKEY=""
+    echo -e "${CYAN}Release signing:${NC} ${YELLOW}OFF${NC} (no signing.pub — agent binaries trusted by sha256/TLS only)"
+    echo -e "  ${YELLOW}To enable: run 'make keygen' in agent/, commit signing.pub, then rebuild.${NC}"
 fi
 export PANEL_SIGN_PUBKEY
 

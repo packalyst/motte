@@ -148,6 +148,10 @@ func (s *Service) IngestCVEs(machineID, scannedAt string, findings []CVE) error 
 // machine comes from the client cert.
 func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 	m := machineFrom(r)
+	if m == nil {
+		writeErr(w, http.StatusUnauthorized, "unknown machine")
+		return
+	}
 	var body io.Reader = http.MaxBytesReader(w, r.Body, 64<<20) // 64 MiB compressed cap
 	if r.Header.Get("Content-Encoding") == "gzip" {
 		gz, err := gzip.NewReader(body)
@@ -172,8 +176,9 @@ func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 			Title     string `json:"title"`
 		} `json:"findings"`
 	}
-	// Cap the decompressed stream too (decompression-bomb guard).
-	if err := json.NewDecoder(io.LimitReader(body, 512<<20)).Decode(&payload); err != nil {
+	// Cap the decompressed stream too (decompression-bomb guard). 64 MiB comfortably fits the
+	// truncated finding set (~200k rows) while stopping one agent from OOMing the panel.
+	if err := json.NewDecoder(io.LimitReader(body, 64<<20)).Decode(&payload); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
