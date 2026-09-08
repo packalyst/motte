@@ -624,7 +624,7 @@
             {#if panelBlocked > 0}<Button variant="ghost" size="sm" icon="trash" onclick={clearBlocks}>Clear</Button>{/if}
           </div>
         </div>
-        {@render note("Two independent layers: CrowdSec + manual bans (the list above), and the panel blocklist — the whole explicit blocklist (incl. country/ASN CIDRs) pushed as its own rule you can update or clear without touching the bans.")}
+        {@render note("The panel blocklist is a separate rule — update or clear it without touching the bans above.")}
       </div>
 
       <!-- SECURITY EVENTS -->
