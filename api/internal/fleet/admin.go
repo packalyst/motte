@@ -36,6 +36,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"ExportCVEs":      s.handleExportCVEs,
 		"FixPackages":     s.handleFixPackages,
 		"MachineCommands": s.handleMachineCommands,
+		"FIM":             s.handleFIM,
 	}
 }
 

@@ -63,8 +63,9 @@ func summarize(raw string) *MachineSummary {
 			Counts map[string]int `json:"counts"`
 		} `json:"cves"`
 		Facts struct {
-			OS  map[string]string `json:"os"`
-			FIM []any             `json:"fim"`
+			OS map[string]string `json:"os"`
+			// FIM events ride a separate /fim-report; the periodic report carries only the count.
+			FIMCount int `json:"fim_count"`
 		} `json:"facts"`
 	}
 	if err := json.Unmarshal([]byte(raw), &r); err != nil {
@@ -73,7 +74,7 @@ func summarize(raw string) *MachineSummary {
 	s := &MachineSummary{
 		CPU: r.Metrics.CPU, Mem: r.Metrics.Mem, Disk: r.Metrics.Disk,
 		CVETotal: r.CVEs.Total, CVECritical: r.CVEs.Counts["CRITICAL"],
-		Bans: r.Intrusion.ActiveBans, Blocked: len(r.Blocked), FIM: len(r.Facts.FIM),
+		Bans: r.Intrusion.ActiveBans, Blocked: len(r.Blocked), FIM: r.Facts.FIMCount,
 		Agent: r.Agent,
 	}
 	if name := r.Facts.OS["name"]; name != "" {
@@ -97,6 +98,7 @@ func (s *Service) DeleteMachine(id string) error {
 	for _, q := range []string{
 		`DELETE FROM fleet_commands WHERE machine_id = ?`,
 		`DELETE FROM fleet_cves WHERE machine_id = ?`,
+		`DELETE FROM fleet_fim WHERE machine_id = ?`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
 			_ = tx.Rollback()

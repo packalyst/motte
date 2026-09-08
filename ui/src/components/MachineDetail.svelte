@@ -14,6 +14,7 @@
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
+  import Modal from './Modal.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
@@ -63,17 +64,29 @@
   }
   const kphase = $derived(kernel ? (kernelPhase[kernel.phase] || { dot: 'bg-muted-foreground', label: kernel.phase }) : null)
 
-  // merged security feed: bans first (most severe), then FIM changes.
-  const feed = $derived.by(() => {
-    const out = []
-    for (const d of intr?.decisions || []) {
-      out.push({ tone: 'crit', body: `Banned ${d.value}`, meta: d.scenario || d.type || 'ban', src: 'crowdsec' })
-    }
-    for (const f of (facts?.fim || []).slice().reverse()) {
-      out.push({ tone: f.action === 'DELETED' ? 'crit' : 'warn', body: `${f.action || 'changed'} ${f.path}`, meta: '', src: 'osquery' })
-    }
-    return out
-  })
+  // On-host CrowdSec bans (most severe first). File-integrity (FIM) changes ride their own
+  // out-of-band feed (fleet_fim) and open in a modal — the report only carries the count.
+  const feed = $derived.by(() =>
+    (intr?.decisions || []).map((d) => ({
+      tone: 'crit', body: `Banned ${d.value}`, meta: d.scenario || d.type || 'ban',
+    }))
+  )
+  // FIM change count comes from the periodic report; the full list is fetched on demand.
+  const fimCount = $derived(facts?.fim_count || 0)
+  let fimOpen = $state(false)
+  let fimEvents = $state([])
+  let fimTotal = $state(0)
+  let fimLoading = $state(false)
+  async function openFim() {
+    fimOpen = true
+    if (fimEvents.length) return // keep what's loaded until the modal is reopened stale
+    fimLoading = true
+    try {
+      const res = await apiGet('/api/fleet/fim?machine_id=' + encodeURIComponent(machine.id) + '&limit=500')
+      fimEvents = res?.events || []
+      fimTotal = res?.total || fimEvents.length
+    } catch { fimEvents = [] } finally { fimLoading = false }
+  }
 
   let commands = $state([])
   // machine-level CVE roll-up (unique CVEs, affected packages, fixable) — the report's cves
@@ -640,24 +653,68 @@
       </div>
 
       <!-- SECURITY EVENTS -->
-      <div class="bg-card border rounded-xl p-4 {feed.some((e) => e.tone === 'crit') ? 'border-destructive/40' : 'border-border'}">
-        {@render head('shield-lock', 'Security events', 'CrowdSec bans + osquery FIM', 'text-warning')}
+      <div class="bg-card border rounded-xl p-4 {feed.length || fimCount ? 'border-destructive/40' : 'border-border'}">
+        {@render head('shield-lock', 'Security events', 'CrowdSec bans + file-integrity changes', 'text-warning')}
         {#if feed.length}
           <div class="max-h-72 overflow-y-auto -mr-1 pr-1">
             {#each feed.slice(0, 100) as e}
               <div class="flex items-baseline gap-2.5 py-1.5 border-t border-border first:border-t-0 text-sm">
                 <span class="w-1.5 h-1.5 rounded-full shrink-0 self-center {toneDot[e.tone]}"></span>
                 <span class="flex-1 min-w-0 break-all"><span class="font-mono text-xs">{e.body}</span>{#if e.meta}<span class="text-muted-foreground text-xs"> — {e.meta}</span>{/if}</span>
-                <span class="text-[9px] text-muted-foreground shrink-0">{e.src}</span>
+                <span class="text-[9px] text-muted-foreground shrink-0">crowdsec</span>
               </div>
             {/each}
           </div>
         {:else}
-          <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No bans and no file-integrity changes.</div>
+          <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No active bans.</div>
         {/if}
-        {@render note('CrowdSec bans attackers on-host automatically. The FIM lines (a watched file changed) are the "someone got in" signals worth investigating.')}
+        <!-- FIM roll-up: count + drill-down (the full list rides its own /fim endpoint) -->
+        <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+          <Icon name="file-search" size={16} class={fimCount ? 'text-warning' : 'text-muted-foreground'} />
+          <span class="text-sm flex-1 min-w-0">
+            {#if fimCount}<span class="font-medium">{fimCount.toLocaleString()}</span> file-integrity change{fimCount === 1 ? '' : 's'}{:else}<span class="text-muted-foreground">No file-integrity changes</span>{/if}
+          </span>
+          {#if fimCount}<Button size="sm" variant="ghost" icon="eye" onclick={openFim}>View all</Button>{/if}
+        </div>
+        {@render note('CrowdSec bans attackers on-host automatically. File-integrity changes (a watched file changed) are the "someone got in" signals worth investigating.')}
       </div>
       </div><!-- /RIGHT column -->
     </div>
   {/if}
 </div>
+
+<!-- FILE-INTEGRITY DRILL-DOWN -->
+<Modal bind:open={fimOpen} size="xl" title="File-integrity changes" bodyClass="p-0">
+  {#if fimLoading}
+    <div class="p-8 text-center text-muted-foreground text-sm">Loading…</div>
+  {:else if fimEvents.length}
+    <div class="px-4 py-2 text-xs text-muted-foreground border-b border-border">
+      Showing {fimEvents.length.toLocaleString()} of {fimTotal.toLocaleString()} watched-file changes, most recent first.
+    </div>
+    <div class="max-h-[60vh] overflow-y-auto">
+      <table class="w-full text-sm">
+        <thead class="sticky top-0 bg-card">
+          <tr class="text-left text-xs text-muted-foreground border-b border-border">
+            <th class="font-medium px-4 py-2">Action</th>
+            <th class="font-medium px-4 py-2">Path</th>
+            <th class="font-medium px-4 py-2 text-right">When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each fimEvents as e}
+            <tr class="border-b border-border/60 align-top">
+              <td class="px-4 py-1.5 whitespace-nowrap">
+                <span class="w-1.5 h-1.5 rounded-full inline-block mr-1.5 align-middle {e.action === 'DELETED' ? 'bg-destructive' : 'bg-warning'}"></span>
+                <span class="text-xs">{(e.action || 'CHANGED').toLowerCase()}</span>
+              </td>
+              <td class="px-4 py-1.5 font-mono text-xs break-all">{e.path}</td>
+              <td class="px-4 py-1.5 text-right text-xs text-muted-foreground whitespace-nowrap">{e.time ? timeAgo(Number(e.time) ? new Date(Number(e.time) * 1000).toISOString() : e.time) : ''}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <div class="p-8 text-center text-success flex items-center justify-center gap-2 text-sm"><Icon name="circle-check" size={16} />No file-integrity changes recorded.</div>
+  {/if}
+</Modal>

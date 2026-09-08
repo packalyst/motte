@@ -1705,6 +1705,14 @@
           "description": "Delete a machine and invalidate its cert"
         },
         {
+          "path": "/fim",
+          "methods": [
+            "GET"
+          ],
+          "handler": "FIM",
+          "description": "Machine file-integrity events (?machine_id=&limit=&offset=)"
+        },
+        {
           "path": "/cves/groups",
           "methods": [
             "GET"

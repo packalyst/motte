@@ -39,6 +39,7 @@ func (s *Service) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /report", s.requireClientCert(s.HandleReport))
 	mux.HandleFunc("POST /cve-report", s.requireClientCert(s.HandleCVEReport))
+	mux.HandleFunc("POST /fim-report", s.requireClientCert(s.HandleFIMReport))
 	mux.HandleFunc("GET /commands", s.requireClientCert(s.HandleCommands))
 	mux.HandleFunc("POST /commands/ack", s.requireClientCert(s.HandleCommandAck))
 	mux.HandleFunc("POST /deregister", s.requireClientCert(s.HandleDeregister))

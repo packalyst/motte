@@ -479,7 +479,7 @@ func parsePort(v string) (int, error) {
 // the total rows removed so the caller can decide whether to VACUUM.
 func sweepOrphans(db *sql.DB) int64 {
 	var total int64
-	for _, tbl := range []string{"fleet_cves", "fleet_metrics", "fleet_commands"} {
+	for _, tbl := range []string{"fleet_cves", "fleet_fim", "fleet_metrics", "fleet_commands"} {
 		res, err := db.Exec(`DELETE FROM ` + tbl + ` WHERE NOT EXISTS (` +
 			`SELECT 1 FROM fleet_machines m WHERE m.id = ` + tbl + `.machine_id)`)
 		if err != nil {
@@ -550,6 +550,14 @@ func ensureSchema(db *sql.DB) error {
 			scanned_at TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_machine ON fleet_cves(machine_id, severity)`,
+		`CREATE TABLE IF NOT EXISTS fleet_fim (
+			machine_id TEXT NOT NULL,
+			action     TEXT,
+			path       TEXT,
+			sha256     TEXT,
+			event_time TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_fleet_fim_machine ON fleet_fim(machine_id)`,
 		`CREATE TABLE IF NOT EXISTS fleet_metrics (
 			machine_id TEXT NOT NULL,
 			bucket     INTEGER NOT NULL,
