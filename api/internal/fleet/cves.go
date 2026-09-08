@@ -30,15 +30,17 @@ type CVE struct {
 // CVEGroup is one bucket of a machine's findings: the OS, or an app project (the
 // directory holding its manifests). Sorted worst-first, it drives the grouping.
 type CVEGroup struct {
-	Project  string `json:"project"`
-	Class    string `json:"class"`
-	Type     string `json:"type"`
-	Total    int    `json:"total"`
-	Critical int    `json:"critical"`
-	High     int    `json:"high"`
-	Medium   int    `json:"medium"`
-	Low      int    `json:"low"`
-	Fixable  int    `json:"fixable"` // has a fixed version
+	Project    string `json:"project"`
+	Class      string `json:"class"`
+	Type       string `json:"type"`
+	Total      int    `json:"total"`       // findings (CVE×package) in this scope
+	UniqueCVEs int    `json:"unique_cves"` // distinct CVE ids in this scope
+	Packages   int    `json:"packages"`    // distinct affected packages in this scope
+	Critical   int    `json:"critical"`
+	High       int    `json:"high"`
+	Medium     int    `json:"medium"`
+	Low        int    `json:"low"`
+	Fixable    int    `json:"fixable"` // findings with a fixed version
 }
 
 // CVESummary is the machine-level roll-up. Total is raw findings (CVE×package) — noisy on a
@@ -202,7 +204,7 @@ func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 // CVEGroups returns a machine's findings bucketed by project, worst-first.
 func (s *Service) CVEGroups(machineID string) ([]CVEGroup, error) {
 	rows, err := s.db.Query(`SELECT project, MAX(class), MAX(type),
-		COUNT(*),
+		COUNT(*), COUNT(DISTINCT cve_id), COUNT(DISTINCT pkg),
 		SUM(severity='CRITICAL'), SUM(severity='HIGH'), SUM(severity='MEDIUM'), SUM(severity='LOW'),
 		SUM(fixed != '' AND fixed IS NOT NULL)
 		FROM fleet_cves WHERE machine_id = ?
@@ -215,7 +217,7 @@ func (s *Service) CVEGroups(machineID string) ([]CVEGroup, error) {
 	out := []CVEGroup{}
 	for rows.Next() {
 		var g CVEGroup
-		if err := rows.Scan(&g.Project, &g.Class, &g.Type, &g.Total, &g.Critical, &g.High, &g.Medium, &g.Low, &g.Fixable); err != nil {
+		if err := rows.Scan(&g.Project, &g.Class, &g.Type, &g.Total, &g.UniqueCVEs, &g.Packages, &g.Critical, &g.High, &g.Medium, &g.Low, &g.Fixable); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -422,7 +424,10 @@ func (s *Service) handleCVEGroups(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "query failed", http.StatusInternalServerError)
 		return
 	}
-	router.JSON(w, map[string]any{"summary": summary, "groups": groups})
+	// Freshness: when the machine was last scanned (for the "scanned N ago" + stale badge).
+	var scannedAt string
+	_ = s.db.QueryRow(`SELECT COALESCE(MAX(scanned_at), '') FROM fleet_cves WHERE machine_id = ?`, id).Scan(&scannedAt)
+	router.JSON(w, map[string]any{"summary": summary, "groups": groups, "scanned_at": scannedAt})
 }
 
 // handleListCVEs (GET /api/fleet/cves?machine_id=&severity=&class=&target=&fixable=&q=&limit=&offset=).

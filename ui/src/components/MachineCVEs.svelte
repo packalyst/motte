@@ -6,8 +6,9 @@
    * CVEs expand to an "Update kernel & reboot" action instead (the fix is a new kernel).
    * Filters + page are persisted per machine so a refresh lands you back where you were.
    */
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { apiGet, apiPost, apiGetBlob, toast, confirm } from '../stores/app.js'
+  import { timeAgo } from '$lib/utils/format.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Badge from './Badge.svelte'
@@ -26,6 +27,9 @@
   let total = $state(0)
   let loading = $state(true)
   let fixing = $state(false)
+  let scannedAt = $state('')  // last scan time (freshness)
+  let busy = $state(null)     // { message } — overlays + disables the page while an op runs
+  let scanWatch = null        // interval: polls for a fresh scan after a rescan/update
 
   // filters — default to "has a fix" so the actionable set leads. Persisted per machine.
   let severity = $state('')
@@ -83,11 +87,25 @@
     })),
   ])
 
+  // Scoped KPI view: when a scope is selected the tiles reflect that bucket, else the whole
+  // machine. (unique/packages/fixable come from the per-scope group counts.)
+  const scopeGroup = $derived(project ? groups.find((g) => g.project === project) : null)
+  const view = $derived(
+    scopeGroup
+      ? { total: scopeGroup.total, unique_cves: scopeGroup.unique_cves, packages: scopeGroup.packages, fixable: scopeGroup.fixable }
+      : summary
+      ? { total: summary.total, unique_cves: summary.unique_cves, packages: summary.packages, fixable: summary.fixable }
+      : null
+  )
+  // Freshness: time since last scan + a stale flag (> 7 days).
+  const scanStale = $derived(scannedAt ? Date.now() - Date.parse(scannedAt) > 7 * 24 * 3600 * 1000 : false)
+
   async function loadSummary() {
     try {
       const res = await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id))
       summary = res?.summary || null
       groups = res?.groups || []
+      scannedAt = res?.scanned_at || ''
       hasKernel = groups.some((g) => g.project === 'Kernel')
     } catch { summary = null }
   }
@@ -145,18 +163,57 @@
     finally { fixing = false }
   }
 
-  async function updateKernel() {
-    const ok = await confirm({
-      title: `Update kernel · ${machine.name}`,
-      message: `Run the full kernel update on ${machine.name}? This installs the newest kernel, then AUTOMATICALLY REBOOTS the host to activate it, and after it boots back up it purges the old kernels and re-scans — so the kernel CVEs clear on their own. The host will be briefly offline during the reboot. Honors dry-run (nothing changes, no reboot).`,
-      confirmText: 'Update kernel & reboot', variant: 'danger',
-    })
+  // Panel-issued actions (queued; the agent runs them on its next check-in). After queueing
+  // we overlay a "busy" state and poll for a fresh scan so the page updates itself.
+  async function issue(type, opts) {
+    if (busy) return
+    const ok = await confirm(opts.confirm)
     if (!ok) return
     try {
-      await apiPost('/api/fleet/command', { machine_id: machine.id, type: 'update-kernel' })
-      toast('Kernel update queued — the host will reboot itself and finish cleanup automatically', 'success')
+      await apiPost('/api/fleet/command', { machine_id: machine.id, type })
+      toast(opts.toast, 'success')
+      busy = { message: opts.busy }
+      watchForScan()
     } catch (e) { toast('Failed: ' + e.message, 'error') }
   }
+  const rescan = () => issue('rescan', {
+    confirm: { title: `Rescan · ${machine.name}`, message: `Re-run the Trivy CVE scan on ${machine.name}? The agent runs it on its next check-in and reports fresh findings.`, confirmText: 'Queue rescan', variant: 'primary' },
+    toast: 'Rescan queued', busy: 'Rescan queued — waiting for the agent to report fresh results…',
+  })
+  const updateSystem = () => issue('apply-updates', {
+    confirm: { title: `Update system · ${machine.name}`, message: `Upgrade OS packages that have a fix on ${machine.name}, then rescan? This clears fixable OS-package CVEs. Honors dry-run.`, confirmText: 'Queue update', variant: 'primary' },
+    toast: 'System update queued', busy: 'System update queued — upgrading packages, then rescanning…',
+  })
+  const updateKernel = () => issue('update-kernel', {
+    confirm: { title: `Update kernel · ${machine.name}`, message: `Install the newest kernel on ${machine.name}, AUTOMATICALLY REBOOT to activate it, then purge old kernels and re-scan — kernel CVEs clear on their own. The host is briefly offline during the reboot. Honors dry-run (nothing changes, no reboot).`, confirmText: 'Update kernel & reboot', variant: 'danger' },
+    toast: 'Kernel update queued — the host reboots and finishes cleanup automatically', busy: 'Kernel update queued — the host will install, reboot, then rescan…',
+  })
+
+  // watchForScan polls the groups endpoint until scanned_at changes (a fresh scan landed),
+  // then reloads everything and lifts the overlay. Caps out after ~6 min.
+  function watchForScan() {
+    const before = scannedAt
+    let tries = 0
+    clearInterval(scanWatch)
+    scanWatch = setInterval(async () => {
+      tries++
+      try {
+        const res = await apiGet('/api/fleet/cves/groups?machine_id=' + encodeURIComponent(machine.id))
+        if (res?.scanned_at && res.scanned_at !== before) {
+          clearInterval(scanWatch); scanWatch = null
+          summary = res.summary || null; groups = res.groups || []; scannedAt = res.scanned_at
+          hasKernel = groups.some((g) => g.project === 'Kernel')
+          busy = null
+          await loadList()
+          toast('Fresh scan received', 'success')
+        }
+      } catch { /* transient — keep polling */ }
+      if (tries >= 45) { clearInterval(scanWatch); scanWatch = null; busy = null }
+    }, 8000)
+  }
+  // Let the operator keep browsing while it runs — the watch keeps updating in the background.
+  function dismissBusy() { busy = null }
+  onDestroy(() => { if (scanWatch) clearInterval(scanWatch) })
 
   async function exportCSV() {
     try {
@@ -180,7 +237,7 @@
   ].map((s) => ({ ...s, pct: Math.round((s.n / summary.unique_cves) * 1000) / 10 })) : [])
 </script>
 
-<div class="space-y-4">
+<div class="space-y-4 relative">
   <!-- header -->
   <div class="flex items-center gap-3 flex-wrap">
     <button onclick={onback} title="Back to machine"
@@ -189,35 +246,45 @@
     </button>
     <div class="min-w-0 flex-1">
       <div class="text-lg font-semibold text-foreground truncate leading-tight">Vulnerabilities</div>
-      <div class="text-[11px] text-muted-foreground truncate">{machine.name || machine.id} · {total.toLocaleString()} CVE{total === 1 ? '' : 's'} matching</div>
+      <div class="text-[11px] text-muted-foreground truncate flex items-center gap-2 flex-wrap">
+        <span>{machine.name || machine.id} · {total.toLocaleString()} CVE{total === 1 ? '' : 's'} matching</span>
+        {#if scannedAt}
+          <span class="inline-flex items-center gap-1 {scanStale ? 'text-warning font-medium' : ''}">
+            <Icon name="clock" size={11} /> scanned {timeAgo(scannedAt)}
+            {#if scanStale}<Badge variant="warning" size="sm">stale — rescan</Badge>{/if}
+          </span>
+        {/if}
+      </div>
     </div>
-    <Button variant="outline" size="sm" icon="download" onclick={exportCSV}>Export CSV</Button>
-    {#if hasKernel}
-      <Button variant="primary" size="sm" icon="cpu" onclick={updateKernel}>Update kernel & reboot</Button>
-    {/if}
   </div>
 
-  <!-- KPI tiles -->
-  {#if summary}
+  <!-- KPI tiles — reflect the selected scope when one is chosen -->
+  {#if view}
+    {#if project}
+      <div class="text-[11px] text-muted-foreground flex items-center gap-1.5">
+        <Icon name="filter" size={12} /> Showing scope <b class="text-foreground">{project}</b> — tiles below reflect this scope.
+        <button class="text-primary hover:underline" onclick={() => { project = ''; applyFilters() }}>show all</button>
+      </div>
+    {/if}
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <div class="bg-card border border-border rounded-xl p-3">
         <div class="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Findings</div>
-        <div class="text-2xl font-bold tabular-nums text-foreground">{summary.total.toLocaleString()}</div>
+        <div class="text-2xl font-bold tabular-nums text-foreground">{view.total.toLocaleString()}</div>
         <div class="text-[11px] text-muted-foreground">CVE × package rows</div>
       </div>
       <div class="bg-card border border-border rounded-xl p-3">
         <div class="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Unique CVEs</div>
-        <div class="text-2xl font-bold tabular-nums text-foreground">{summary.unique_cves.toLocaleString()}</div>
+        <div class="text-2xl font-bold tabular-nums text-foreground">{view.unique_cves.toLocaleString()}</div>
         <div class="text-[11px] text-muted-foreground">distinct advisories</div>
       </div>
       <div class="bg-card border border-border rounded-xl p-3">
         <div class="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Packages affected</div>
-        <div class="text-2xl font-bold tabular-nums text-foreground">{summary.packages.toLocaleString()}</div>
-        <div class="text-[11px] text-muted-foreground">across OS + app deps</div>
+        <div class="text-2xl font-bold tabular-nums text-foreground">{view.packages.toLocaleString()}</div>
+        <div class="text-[11px] text-muted-foreground">{project ? 'in this scope' : 'across OS + app deps'}</div>
       </div>
       <div class="bg-card border border-border rounded-xl p-3">
         <div class="text-[10px] uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-1"><Icon name="tool" size={11} class="text-success" />Fixable</div>
-        <div class="text-2xl font-bold tabular-nums text-success">{summary.fixable.toLocaleString()}</div>
+        <div class="text-2xl font-bold tabular-nums text-success">{view.fixable.toLocaleString()}</div>
         <div class="text-[11px] text-muted-foreground">have an upgrade</div>
       </div>
     </div>
@@ -259,8 +326,30 @@
       <Select bind:value={project} options={scopeOptions} class="w-52" onchange={applyFilters} />
     </div>
     <Checkbox variant="switch" bind:checked={fixable} label="Has a fix" onchange={applyFilters} />
-    <div class="flex-1 min-w-[180px] ml-auto">
+    <div class="flex-1 min-w-[160px]">
       <Input bind:value={q} prefixIcon="search" placeholder="Search CVE id or package…" onkeydown={(e) => e.key === 'Enter' && applyFilters()} />
+    </div>
+    <!-- grouped actions — contextual to the selected scope -->
+    <div class="btn-group">
+      <button onclick={exportCSV} class="custom_btns" data-kt-tooltip>
+        <Icon name="download" size={15} />
+        <span data-kt-tooltip-content class="kt-tooltip hidden">Export CSV (current filters)</span>
+      </button>
+      <button onclick={rescan} disabled={!!busy} class="custom_btns" data-kt-tooltip>
+        <Icon name="refresh" size={15} />
+        <span data-kt-tooltip-content class="kt-tooltip hidden">Rescan now (Trivy)</span>
+      </button>
+      {#if project === 'OS'}
+        <button onclick={updateSystem} disabled={!!busy} class="custom_btns" data-kt-tooltip>
+          <Icon name="package" size={15} />
+          <span data-kt-tooltip-content class="kt-tooltip hidden">Update system packages, then rescan</span>
+        </button>
+      {:else if project === 'Kernel'}
+        <button onclick={updateKernel} disabled={!!busy} class="custom_btns" data-kt-tooltip>
+          <Icon name="cpu" size={15} />
+          <span data-kt-tooltip-content class="kt-tooltip hidden">Update kernel &amp; reboot</span>
+        </button>
+      {/if}
     </div>
   </div>
 
@@ -348,6 +437,19 @@
       <div class="ml-auto flex items-center gap-2">
         <Button variant="ghost" size="sm" onclick={() => (selected = new Set())}>Clear</Button>
         <Button variant="primary" size="sm" icon="refresh-alert" onclick={fixSelected} loading={fixing}>Fix selected</Button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- busy overlay: something is running (rescan / update); the page disables until a fresh
+       scan lands (or the operator dismisses to keep browsing while it finishes). -->
+  {#if busy}
+    <div class="absolute inset-0 z-20 bg-background/70 backdrop-blur-sm flex items-start justify-center pt-24 rounded-xl">
+      <div class="bg-card border border-border rounded-xl shadow-lg p-5 max-w-sm text-center space-y-3">
+        <Icon name="loader-2" size={28} class="animate-spin text-primary mx-auto" />
+        <div class="text-sm font-semibold text-foreground">Working on it…</div>
+        <div class="text-[12px] text-muted-foreground">{busy.message}</div>
+        <button onclick={dismissBusy} class="text-[11px] text-primary hover:underline">Keep browsing — it'll refresh when the scan lands</button>
       </div>
     </div>
   {/if}
