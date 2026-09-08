@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -39,23 +40,64 @@ func (s *Service) HandleFIMReport(w http.ResponseWriter, r *http.Request) {
 		defer gz.Close()
 		body = gz
 	}
-	var payload struct {
-		Events []FIMEvent `json:"events"`
-	}
-	if err := json.NewDecoder(io.LimitReader(body, 32<<20)).Decode(&payload); err != nil {
+	// Stream-decode with a hard element cap enforced DURING decode (not after): we stop
+	// reading once we have maxEvents, so a highly-compressible flood of tiny array elements
+	// — small enough to slip under the compressed cap — can't amplify into a giant in-memory
+	// slice. Honest agents send <=200 events (tailFIM), so this only bites abuse.
+	const maxEvents = 5000
+	events, err := decodeFIMEvents(io.LimitReader(body, 8<<20), maxEvents)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	const maxEvents = 5000
-	if len(payload.Events) > maxEvents {
-		payload.Events = payload.Events[len(payload.Events)-maxEvents:]
-	}
-	if err := s.IngestFIM(m.ID, payload.Events); err != nil {
+	if err := s.IngestFIM(m.ID, events); err != nil {
 		writeErr(w, http.StatusInternalServerError, "store failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"stored": len(payload.Events)})
+	writeJSON(w, http.StatusOK, map[string]int{"stored": len(events)})
 }
+
+// decodeFIMEvents streams {"events":[...]} and returns at most max events, stopping the moment
+// the cap is hit so the decoded slice can never exceed max regardless of the input size.
+func decodeFIMEvents(r io.Reader, max int) ([]FIMEvent, error) {
+	dec := json.NewDecoder(r)
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, errBadFIM
+	}
+	events := []FIMEvent{}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		if key != "events" {
+			var skip json.RawMessage // bounded by the caller's LimitReader
+			if err := dec.Decode(&skip); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
+			return nil, errBadFIM
+		}
+		for dec.More() {
+			if len(events) >= max {
+				return events, nil // cap reached — ignore the rest of the stream
+			}
+			var e FIMEvent
+			if err := dec.Decode(&e); err != nil {
+				return nil, err
+			}
+			events = append(events, e)
+		}
+		if _, err := dec.Token(); err != nil { // consume ']'
+			return nil, err
+		}
+	}
+	return events, nil
+}
+
+var errBadFIM = errors.New("malformed fim payload")
 
 // IngestFIM replaces the machine's FIM rows with events, in one transaction.
 func (s *Service) IngestFIM(machineID string, events []FIMEvent) error {
