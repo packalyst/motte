@@ -624,7 +624,6 @@
             {#if panelBlocked > 0}<Button variant="ghost" size="sm" icon="trash" onclick={clearBlocks}>Clear</Button>{/if}
           </div>
         </div>
-        {@render note("The panel blocklist is a separate rule — update or clear it without touching the bans above.")}
       </div>
 
       <!-- SECURITY EVENTS -->
