@@ -234,11 +234,14 @@
     [machine.wg_pubkey ? (machine.wg_pubkey.length > 14 ? machine.wg_pubkey.slice(0, 14) + '…' : machine.wg_pubkey) : '', machine.wg_ip || '']
       .filter(Boolean).join(' · '),
   )
-  // Host facts shown in the Agent & Host card (icon · label · value). 9 → a clean 3×3 grid.
+  // Host facts shown in the Agent & Host card (icon · label · value). 12 → a clean 3×4 grid.
   const hostFacts = $derived([
     ['device-desktop', 'OS', [facts?.os?.name, facts?.os?.version].filter(Boolean).join(' ')],
     ['box', 'Kernel', facts?.kernel || ''],
     ['cpu', 'CPU', facts?.system?.cpu_brand],
+    ['database', 'RAM', facts?.system?.physical_memory ? formatBytes(Number(facts.system.physical_memory)) : ''],
+    ['world', 'Server IP', facts?.system?.primary_ip || ''],
+    ['clock-hour-4', 'Timezone', facts?.system?.timezone || ''],
     ['clock', 'Uptime', m.uptime ? fmtUptime(m.uptime) : ''],
     ['server', 'Host', report?.host],
     ['activity', 'Last report', report?.time ? timeAgo(report.time) : ''],
@@ -412,9 +415,17 @@
               </div>
             {/each}
           </div>
-          {#if facts?.users?.length}
-            <div class="mt-2 text-[11px] text-muted-foreground">
-              Sessions: {#each facts.users as u, i}{i > 0 ? ', ' : ''}<span class="font-mono text-foreground">{u.user}</span>{u.host ? ` (${u.host})` : ''}{/each}
+          {#if facts?.sessions?.length}
+            <div class="mt-2 pt-2 border-t border-border">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Login sessions</div>
+              {#each facts.sessions as s}
+                <div class="flex items-center gap-2 py-0.5 text-xs">
+                  <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.active ? 'bg-success' : 'bg-muted-foreground/40'}" title={s.active ? 'active' : 'idle'}></span>
+                  <span class="font-mono text-foreground shrink-0">{s.user}</span>
+                  <span class="text-muted-foreground font-mono truncate">{s.host || s.tty || 'local'}</span>
+                  <span class="text-muted-foreground ml-auto shrink-0">{s.when ? timeAgo(s.when) : ''}</span>
+                </div>
+              {/each}
             </div>
           {/if}
         </div>
