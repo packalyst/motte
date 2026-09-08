@@ -20,7 +20,8 @@ var allowedCommands = map[string]bool{
 	"apply-updates": true,
 	"restart":       true,
 	"rescan":        true, // re-run the Trivy CVE scan now (don't wait for the interval)
-	"sync-blocks":   true, // push the panel's explicit blocklist onto this machine
+	"sync-blocks":   true, // replace the machine's panel-pushed blocklist with the panel's current one
+	"clear-blocks":  true, // empty the machine's panel-pushed blocklist (leaves CrowdSec/manual bans)
 	"fix-packages":  true, // targeted OS-package upgrades for selected CVEs
 	"update-kernel": true, // install newest kernel meta-packages (+ reboot separately)
 	"set-dry-run":   true, // flip enforcement on/off (dry-run) live

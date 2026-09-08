@@ -182,9 +182,14 @@
   }
 
   const pushBlocks = () => cmd('sync-blocks', null, {
-    endpoint: '/api/fleet/push-blocks', title: 'Push panel blocklist',
-    message: `Push the panel's current blocklist (its manually + auto-blocked IPs and ranges) onto ${machine.name}? It drops them in its own nftables. Country/ASN mega-lists are excluded.`,
-    done: (r) => `Pushing ${r.count} blocks to ${machine.name}`,
+    endpoint: '/api/fleet/push-blocks', title: 'Push / update panel blocklist',
+    message: `Push the panel's entire explicit blocklist (manual + auto-blocked IPs, ranges, and country/ASN CIDRs) onto ${machine.name}? It REPLACES the machine's panel-blocklist set (a rule separate from CrowdSec/manual bans), so re-pushing just updates it.`,
+    done: (r) => `Replacing panel blocklist on ${machine.name} with ${r.count} entries`,
+  })
+  const clearBlocks = () => cmd('clear-blocks', null, {
+    endpoint: '/api/fleet/clear-blocks', title: 'Clear panel blocklist', variant: 'destructive', confirmText: 'Clear',
+    message: `Empty the panel-pushed blocklist on ${machine.name}? CrowdSec and manual blocks are NOT affected — only the entries you pushed from the panel are removed.`,
+    done: () => `Clearing panel blocklist on ${machine.name}`,
   })
   const applyUpdates = () => cmd('apply-updates', null, { title: 'Apply updates', message: `Run system package updates on ${machine.name}? OS-package CVEs are fixed by this; a kernel CVE also needs a reboot.` })
   const setDryRun = (enabled) => cmd('set-dry-run', { enabled }, {
@@ -243,6 +248,7 @@
   ])
   // IPs this host is currently enforcing a block on (from the live report).
   const blockedIPs = $derived(report?.blocked || [])
+  const panelBlocked = $derived(report?.panel_blocked ?? 0)
 
   // Live-usage rows. Memory/Disk get a tooltip with the absolute bytes (agent v0.1.17+);
   // CPU is inherently a % so it has none.
@@ -581,7 +587,7 @@
 
       <!-- BLOCKING -->
       <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('ban', 'Blocking', `${blockedIPs.length} IP${blockedIPs.length === 1 ? '' : 's'} blocked on this host`, 'text-destructive')}
+        {@render head('ban', 'Blocking', `${blockedIPs.length} IP${blockedIPs.length === 1 ? '' : 's'} blocked (CrowdSec + manual)`, 'text-destructive')}
         <div class="flex flex-wrap items-center gap-2">
           <div class="flex-1 min-w-[180px]">
             <Input bind:value={blockIP} prefixIcon="world" placeholder="IP to block / unblock" class="font-mono"
@@ -600,9 +606,25 @@
               </div>
             {/each}
           </div>
+        {:else}
+          <div class="mt-3 text-[12px] text-muted-foreground">No CrowdSec or manual blocks right now.</div>
         {/if}
-        <div class="mt-3"><Button variant="outline" size="sm" icon="arrow-down" onclick={pushBlocks}>Push panel blocklist</Button></div>
-        {@render note("Block or unblock one IP, or push the panel's whole blocklist down so this host drops the same attackers the panel already knows about.")}
+
+        <!-- panel-pushed blocklist: a SEPARATE nftables set, replaced/cleared wholesale -->
+        <div class="mt-3 pt-3 border-t border-border">
+          <div class="flex items-center gap-2 flex-wrap">
+            <Icon name="list" size={14} class="text-muted-foreground shrink-0" />
+            <div class="min-w-0 flex-1">
+              <div class="text-[13px] font-medium text-foreground">Panel blocklist</div>
+              <div class="text-[11px] text-muted-foreground">
+                {#if panelBlocked > 0}{panelBlocked.toLocaleString()} entr{panelBlocked === 1 ? 'y' : 'ies'} pushed · separate rule from bans{:else}Not pushed to this host yet{/if}
+              </div>
+            </div>
+            <Button variant="outline" size="sm" icon="arrow-down" onclick={pushBlocks}>{panelBlocked > 0 ? 'Update' : 'Push'}</Button>
+            {#if panelBlocked > 0}<Button variant="ghost" size="sm" icon="trash" onclick={clearBlocks}>Clear</Button>{/if}
+          </div>
+        </div>
+        {@render note("Two independent layers: CrowdSec + manual bans (the list above), and the panel blocklist — the whole explicit blocklist (incl. country/ASN CIDRs) pushed as its own rule you can update or clear without touching the bans.")}
       </div>
 
       <!-- SECURITY EVENTS -->

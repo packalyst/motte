@@ -1686,7 +1686,15 @@
             "POST"
           ],
           "handler": "PushBlocks",
-          "description": "Push the panel's explicit blocklist onto a machine"
+          "description": "Push the panel's explicit blocklist onto a machine (replaces its panel set)"
+        },
+        {
+          "path": "/clear-blocks",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ClearBlocks",
+          "description": "Clear a machine's panel-pushed blocklist set"
         },
         {
           "path": "/machine/delete",

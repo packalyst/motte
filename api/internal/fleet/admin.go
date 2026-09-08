@@ -28,6 +28,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"FleetEndpoints":  s.handleEndpoints,
 		"SetConfig":       s.handleSetConfig,
 		"PushBlocks":      s.handlePushBlocks,
+		"ClearBlocks":     s.handleClearBlocks,
 		"DeleteMachine":   s.handleDeleteMachine,
 		"CVEGroups":       s.handleCVEGroups,
 		"ListCVEs":        s.handleListCVEs,
@@ -72,12 +73,11 @@ func (s *Service) handlePushBlocks(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "blocklist unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	// Push the whole explicit blocklist — that's the point of "push panel blocklist". The
+	// entries are IPv4 CIDRs/IPs (a country compresses to a few thousand CIDRs), and the
+	// agent replaces its panel set wholesale in one nft transaction, so there's no per-entry
+	// cost to fear here.
 	ips := s.blockedIPs()
-	// Cap defensively so a runaway blocklist can't build a giant nft set on the host.
-	const maxPush = 5000
-	if len(ips) > maxPush {
-		ips = ips[:maxPush]
-	}
 	payload, _ := json.Marshal(map[string]any{"ips": ips})
 	id, err := s.Enqueue(req.MachineID, "sync-blocks", payload)
 	if err != nil {
@@ -85,6 +85,24 @@ func (s *Service) handlePushBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	router.JSON(w, map[string]any{"command_id": id, "count": len(ips)})
+}
+
+// handleClearBlocks queues a clear-blocks command that empties the machine's panel-pushed
+// blocklist set (CrowdSec/manual bans are untouched). POST /api/fleet/clear-blocks {"machine_id"}
+func (s *Service) handleClearBlocks(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MachineID string `json:"machine_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil || req.MachineID == "" {
+		router.JSONError(w, "machine_id required", http.StatusBadRequest)
+		return
+	}
+	id, err := s.Enqueue(req.MachineID, "clear-blocks", nil)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	router.JSON(w, map[string]any{"command_id": id})
 }
 
 // handleSetConfig turns the fleet listener on/off and sets its port, then applies
