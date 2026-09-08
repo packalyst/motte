@@ -612,6 +612,33 @@
         </div>
         {@render note('Fixable OS-package CVEs clear via “Apply updates” on the Agent card; kernel CVEs via “Update kernel”. “View all & fix” opens the full list grouped by OS/project to upgrade only selected packages.')}
       </div>
+
+      <!-- SECURITY EVENTS -->
+      <div class="bg-card border rounded-xl p-4 {feed.length || fimCount ? 'border-destructive/40' : 'border-border'}">
+        {@render head('shield-lock', 'Security events', 'CrowdSec bans + file-integrity changes', 'text-warning')}
+        {#if feed.length}
+          <div class="max-h-72 overflow-y-auto -mr-1 pr-1">
+            {#each feed.slice(0, 100) as e}
+              <div class="flex items-baseline gap-2.5 py-1.5 border-t border-border first:border-t-0 text-sm">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0 self-center {toneDot[e.tone]}"></span>
+                <span class="flex-1 min-w-0 break-all"><span class="font-mono text-xs">{e.body}</span>{#if e.meta}<span class="text-muted-foreground text-xs"> — {e.meta}</span>{/if}</span>
+                <span class="text-[9px] text-muted-foreground shrink-0">crowdsec</span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No active bans.</div>
+        {/if}
+        <!-- FIM roll-up: count + drill-down (the full list rides its own /fim endpoint) -->
+        <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+          <Icon name="file-search" size={16} class={fimCount ? 'text-warning' : 'text-muted-foreground'} />
+          <span class="text-sm flex-1 min-w-0">
+            {#if fimCount}<span class="font-medium">{fimCount.toLocaleString()}</span> file-integrity change{fimCount === 1 ? '' : 's'}{:else}<span class="text-muted-foreground">No file-integrity changes</span>{/if}
+          </span>
+          {#if fimCount}<Button size="sm" variant="ghost" icon="eye" onclick={openFim}>View all</Button>{/if}
+        </div>
+        {@render note('CrowdSec bans attackers on-host automatically. File-integrity changes (a watched file changed) are the "someone got in" signals worth investigating.')}
+      </div>
       </div><!-- /LEFT column -->
 
       <!-- RIGHT column -->
@@ -715,32 +742,6 @@
         </div>
       </div>
 
-      <!-- SECURITY EVENTS -->
-      <div class="bg-card border rounded-xl p-4 {feed.length || fimCount ? 'border-destructive/40' : 'border-border'}">
-        {@render head('shield-lock', 'Security events', 'CrowdSec bans + file-integrity changes', 'text-warning')}
-        {#if feed.length}
-          <div class="max-h-72 overflow-y-auto -mr-1 pr-1">
-            {#each feed.slice(0, 100) as e}
-              <div class="flex items-baseline gap-2.5 py-1.5 border-t border-border first:border-t-0 text-sm">
-                <span class="w-1.5 h-1.5 rounded-full shrink-0 self-center {toneDot[e.tone]}"></span>
-                <span class="flex-1 min-w-0 break-all"><span class="font-mono text-xs">{e.body}</span>{#if e.meta}<span class="text-muted-foreground text-xs"> — {e.meta}</span>{/if}</span>
-                <span class="text-[9px] text-muted-foreground shrink-0">crowdsec</span>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No active bans.</div>
-        {/if}
-        <!-- FIM roll-up: count + drill-down (the full list rides its own /fim endpoint) -->
-        <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border">
-          <Icon name="file-search" size={16} class={fimCount ? 'text-warning' : 'text-muted-foreground'} />
-          <span class="text-sm flex-1 min-w-0">
-            {#if fimCount}<span class="font-medium">{fimCount.toLocaleString()}</span> file-integrity change{fimCount === 1 ? '' : 's'}{:else}<span class="text-muted-foreground">No file-integrity changes</span>{/if}
-          </span>
-          {#if fimCount}<Button size="sm" variant="ghost" icon="eye" onclick={openFim}>View all</Button>{/if}
-        </div>
-        {@render note('CrowdSec bans attackers on-host automatically. File-integrity changes (a watched file changed) are the "someone got in" signals worth investigating.')}
-      </div>
       </div><!-- /RIGHT column -->
     </div>
   {/if}
