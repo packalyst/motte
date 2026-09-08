@@ -71,6 +71,12 @@
       tone: 'crit', body: `Banned ${d.value}`, meta: d.scenario || d.type || 'ban',
     }))
   )
+  // Per-filesystem usage (df-style, live) and running-service memory — both from the agent facts.
+  const disks = $derived(facts?.disks || [])
+  const services = $derived(facts?.services || null)
+  // Longest top-service bar is scaled to the heaviest consumer in the list.
+  const svcMax = $derived(Math.max(1, ...(services?.top || []).map((s) => s.mem || 0)))
+
   // FIM change count comes from the periodic report; the full list is fetched on demand.
   const fimCount = $derived(facts?.fim_count || 0)
   let fimOpen = $state(false)
@@ -547,6 +553,32 @@
         {@render note('Live resource use reported by the agent. A sustained CPU spike often tracks attack traffic.')}
       </div>
 
+      <!-- DISK SPACE (per-filesystem, live) -->
+      <div class="bg-card border border-border rounded-xl p-4">
+        {@render head('database', 'Disk space', 'mounted filesystems · live', 'text-info')}
+        {#if disks.length}
+          <div class="space-y-2.5">
+            {#each disks as d}
+              {@const pct = d.total ? Math.round((d.used / d.total) * 100) : 0}
+              <div class="text-xs">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-mono truncate">{d.mount}</span>
+                  <span class="text-[10px] text-muted-foreground">{d.fstype}</span>
+                  <span class="ml-auto text-muted-foreground tabular-nums shrink-0">{formatBytes(d.used)} / {formatBytes(d.total)}</span>
+                  <span class="w-9 text-right tabular-nums font-medium shrink-0">{pct}%</span>
+                </div>
+                <span class="block h-2 rounded-full bg-muted overflow-hidden">
+                  <span class="block h-full rounded-full {usageColor(pct)}" style="width:{Math.min(pct, 100)}%"></span>
+                </span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="text-sm text-muted-foreground py-1">No filesystem usage reported.</div>
+        {/if}
+        {@render note('On-disk filesystems only (tmpfs and other virtual mounts are hidden). A filesystem near 100% is what fills logs and stalls services — watch the fullest one.')}
+      </div>
+
       <!-- VULNERABILITIES (summary — full list is the drill-down) -->
       <div class="bg-card border border-border rounded-xl p-4">
         <!-- header: title/subtitle left, total upper-right -->
@@ -609,6 +641,37 @@
           <div class="text-sm text-muted-foreground py-1">No listening ports reported.</div>
         {/if}
         {@render note('“Exposed” ports are open on all interfaces (reachable from the internet unless firewalled); “local” ones only from the box itself. An unexpected exposed port is worth a look.')}
+      </div>
+
+      <!-- SERVICES (running count + top memory consumers) -->
+      <div class="bg-card border border-border rounded-xl p-4">
+        {@render head('stack-2', 'Services', `${services?.active ?? 0} running · top memory`, 'text-info')}
+        {#if services?.top?.length}
+          <div class="space-y-2.5">
+            {#each services.top as s}
+              <div class="text-xs">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-mono truncate">{s.name}</span>
+                  <span class="ml-auto text-muted-foreground tabular-nums shrink-0">{formatBytes(s.mem)}</span>
+                </div>
+                <span class="block h-2 rounded-full bg-muted overflow-hidden">
+                  <span class="block h-full rounded-full bg-info" style="width:{Math.max(2, Math.round((s.mem / svcMax) * 100))}%"></span>
+                </span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="text-sm text-muted-foreground py-1">No systemd services reported.</div>
+        {/if}
+        {#if services?.agent}
+          <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border text-xs">
+            <Icon name="robot" size={15} class="text-muted-foreground" />
+            <span class="text-muted-foreground">wgscout agent</span>
+            <span class="ml-auto tabular-nums font-medium">{formatBytes(services.agent.mem)}</span>
+            <span class="text-muted-foreground tabular-nums">· {(services.agent.cpu || 0).toFixed(1)}% CPU</span>
+          </div>
+        {/if}
+        {@render note('Running systemd services and the five using the most memory (from each service’s cgroup), plus what the wgscout agent itself uses — so the monitoring’s own footprint is visible.')}
       </div>
 
       <!-- BLOCKING -->
