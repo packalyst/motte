@@ -249,6 +249,8 @@
   // IPs this host is currently enforcing a block on (from the live report).
   const blockedIPs = $derived(report?.blocked || [])
   const panelBlocked = $derived(report?.panel_blocked ?? 0)
+  // A push/clear is in flight until the agent runs it — disable the buttons meanwhile.
+  const blocklistBusy = $derived(commands.some((c) => (c.type === 'sync-blocks' || c.type === 'clear-blocks') && (c.status === 'pending' || c.status === 'delivered')))
 
   // Live-usage rows. Memory/Disk get a tooltip with the absolute bytes (agent v0.1.17+);
   // CPU is inherently a % so it has none.
@@ -620,8 +622,8 @@
                 {#if panelBlocked > 0}{panelBlocked.toLocaleString()} entr{panelBlocked === 1 ? 'y' : 'ies'} pushed · separate rule from bans{:else}Not pushed to this host yet{/if}
               </div>
             </div>
-            <Button variant="outline" size="sm" icon="arrow-down" onclick={pushBlocks}>{panelBlocked > 0 ? 'Update' : 'Push'}</Button>
-            {#if panelBlocked > 0}<Button variant="ghost" size="sm" icon="trash" onclick={clearBlocks}>Clear</Button>{/if}
+            <Button variant="outline" size="sm" icon="arrow-down" onclick={pushBlocks} loading={blocklistBusy} disabled={blocklistBusy}>{blocklistBusy ? 'Syncing…' : panelBlocked > 0 ? 'Update' : 'Push'}</Button>
+            {#if panelBlocked > 0}<Button variant="ghost" size="sm" icon="trash" onclick={clearBlocks} disabled={blocklistBusy}>Clear</Button>{/if}
           </div>
         </div>
       </div>
