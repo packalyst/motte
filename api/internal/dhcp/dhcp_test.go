@@ -135,8 +135,12 @@ func TestRenderDnsmasqConf(t *testing.T) {
 	n := baseNet()
 	res := []Client{{MAC: "aa:bb:cc:dd:ee:ff", IP: "10.20.20.50", Name: "cam 1", Approved: true}}
 	got := renderDnsmasqConf(n, res)
+	// port=0 is a GLOBAL that lives ONLY in the base conf — repeating it here makes dnsmasq
+	// crash-loop with "illegal repeated keyword". (Regression guard, 2026-10-18.)
+	if strings.Contains(got, "port=0") {
+		t.Fatalf("per-network conf must not repeat the base global port=0:\n%s", got)
+	}
 	for _, want := range []string{
-		"port=0",
 		"interface=ens19",
 		"dhcp-range=10.20.20.50,10.20.20.200,255.255.255.0,43200s",
 		"dhcp-option=3,10.20.20.1",

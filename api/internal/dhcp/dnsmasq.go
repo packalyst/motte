@@ -43,7 +43,9 @@ func dnsmasqConfPath(iface string) (string, error) {
 func renderDnsmasqConf(n *Network, reservations []Client) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Managed by wgpanel — do not edit. Network: %s (%s)\n", n.Iface, n.CIDR)
-	b.WriteString("port=0\n") // DHCP only; AdGuard keeps :53
+	// Global single-value keywords (port=0, …) live ONLY in the base conf. dnsmasq loads base +
+	// this file together, so repeating one here is an "illegal repeated keyword" that crash-loops
+	// the container. Keep this file to per-network directives only.
 	fmt.Fprintf(&b, "interface=%s\n", n.Iface)
 	b.WriteString("bind-interfaces\n") // never listen on other NICs (e.g. the WAN)
 	b.WriteString("no-resolv\n")
@@ -135,20 +137,31 @@ func (s *Service) writeDnsmasqDisabled(n *Network) error {
 	return reloadDnsmasq()
 }
 
-// dnsmasqTest runs `dnsmasq --test` against the candidate config in isolation. The binary is in
-// the api image (dnsmasq-base); --test only checks syntax, it does not bind or touch the NIC.
+// dnsmasqBaseGlobals mirrors the GLOBAL directives in containers/dnsmasq/dnsmasq.base.conf. Keep
+// it in sync with that file. dnsmasqTest prepends these so a candidate is validated the way
+// dnsmasq actually loads it (base globals + conf-dir), not in isolation.
+const dnsmasqBaseGlobals = "port=0\n"
+
+// dnsmasqTest validates the candidate the SAME way the container loads it: a base conf carrying
+// the globals + a conf-dir that pulls the candidate in. Testing the file alone (as this used to)
+// misses a per-network file that repeats a base global like `port` — which passes `--test` solo
+// but makes the running dnsmasq error "illegal repeated keyword" and crash-loop. The binary is in
+// the api image (dnsmasq-base); --test only checks the config, it does not bind or touch a NIC.
 func dnsmasqTest(content string) error {
-	f, err := os.CreateTemp("", "wgpanel-dnsmasq-*.conf")
+	dir, err := os.MkdirTemp("", "wgpanel-dnsmasq")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, "wgpanel-candidate.conf"), []byte(content), 0o600); err != nil {
 		return err
 	}
-	f.Close()
-	out, err := exec.Command("dnsmasq", "--test", "--conf-file="+f.Name()).CombinedOutput()
+	base := filepath.Join(dir, "base.conf")
+	// conf-dir matches wgpanel-*.conf so it pulls the candidate but not base.conf itself.
+	if err := os.WriteFile(base, []byte(dnsmasqBaseGlobals+"conf-dir="+dir+",wgpanel-*.conf\n"), 0o600); err != nil {
+		return err
+	}
+	out, err := exec.Command("dnsmasq", "--test", "--conf-file="+base).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
