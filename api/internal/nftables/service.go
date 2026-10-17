@@ -154,7 +154,27 @@ func (s *Service) applyTable(t Table) error {
 		}
 	}
 
+	// After the rules land, drop stale conntrack for any IPs the table isolates, so a freshly
+	// tightened ACL cuts existing flows immediately instead of leaving them on the
+	// established-flow fast-path until they idle out. Best-effort: never fails the apply.
+	if f, ok := t.(ConntrackFlusher); ok {
+		s.flushConntrack(f.ConntrackFlushTargets())
+	}
+
 	return nil
+}
+
+// flushConntrack deletes existing conntrack entries sourced from or destined to each IP. Best
+// effort: `conntrack -D` exits non-zero when nothing matched and may be absent, so errors are
+// ignored (the next packet is re-evaluated against the new rules regardless).
+func (s *Service) flushConntrack(ips []string) {
+	for _, ip := range ips {
+		if ip == "" {
+			continue
+		}
+		_ = exec.Command("conntrack", "-D", "-s", ip).Run()
+		_ = exec.Command("conntrack", "-D", "-d", ip).Run()
+	}
 }
 
 // Exec runs an nft command

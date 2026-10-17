@@ -23,6 +23,27 @@ func (t *VPNACLTable) Name() string   { return "wgadmin_vpn_acl" }
 func (t *VPNACLTable) Family() string { return "inet" }
 func (t *VPNACLTable) Priority() int  { return 20 }
 
+// ConntrackFlushTargets returns the IPs of fully-isolated (block_all) peers. After the ACL
+// applies, their already-established flows are dropped so isolation takes effect immediately
+// rather than surviving on the ct established,related fast-path until the flow idles out.
+// Quarantined vips are deliberately NOT flushed: they may still be *reached*, so tearing down
+// an in-progress inbound session would be wrong — quarantine only blocks what they INITIATE.
+func (t *VPNACLTable) ConntrackFlushTargets() []string {
+	rows, err := t.db.Query(`SELECT ip FROM vpn_clients WHERE acl_policy = ?`, helper.ACLPolicyBlockAll)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ips []string
+	for rows.Next() {
+		var ip string
+		if err := rows.Scan(&ip); err == nil && ValidateIPv4OrCIDR(ip) {
+			ips = append(ips, ip)
+		}
+	}
+	return ips
+}
+
 // Build generates the nftables script for VPN ACL
 func (t *VPNACLTable) Build() (string, error) {
 	wgIPRange := helper.GetEnvOptional("WG_IP_RANGE", "")
