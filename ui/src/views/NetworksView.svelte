@@ -417,7 +417,7 @@
   </div>
 
   {#snippet footer()}
-    <Button variant="ghost" onclick={() => formOpen = false}>Cancel</Button>
+    <Button variant="secondary" onclick={() => formOpen = false}>Cancel</Button>
     <Button variant="primary" loading={saving} onclick={saveForm}>{editing ? 'Save' : 'Create'}</Button>
   {/snippet}
 </Modal>
