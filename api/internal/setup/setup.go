@@ -479,13 +479,12 @@ func (s *Service) handleTestHeadscale(w http.ResponseWriter, r *http.Request) {
 	}
 	testURL := baseURL + "/user"
 
-	// Test connection to headscale. Refuse redirects so a malicious/misconfigured
-	// target can't bounce this server-side request to an internal host (e.g. the
-	// cloud-metadata endpoint), which would slip past the URL sanitizer above.
-	client := &http.Client{
-		Timeout:       helper.HTTPClientTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	// Test connection to headscale. The dial-time SSRF guard refuses link-local/metadata
+	// even when reached via a hostname that resolves there (which slips past the string
+	// sanitizer above), while still allowing a legitimately-internal Headscale. Redirects
+	// are also refused so a target can't bounce the request elsewhere server-side.
+	client := helper.SafeInternalHTTPClient(helper.HTTPClientTimeout)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	testReq, err := http.NewRequest("GET", testURL, nil)
 	if err != nil {
 		router.JSONError(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)

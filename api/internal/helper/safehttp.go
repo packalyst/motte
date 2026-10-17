@@ -60,3 +60,37 @@ func SafeExternalHTTPClient(timeout time.Duration) *http.Client {
 		},
 	}
 }
+
+// SafeInternalHTTPClient is for operator-supplied URLs that MAY legitimately be internal
+// (e.g. a self-hosted Headscale on a private/overlay IP) but must never be steered to the
+// cloud-metadata / link-local range. Unlike SafeExternalHTTPClient it ALLOWS RFC1918,
+// loopback and CGNAT (those are valid internal targets here), but blocks link-local,
+// multicast and the unspecified address at DIAL time on the RESOLVED ip — so a hostname
+// that resolves to 169.254.169.254 (metadata) can't slip past string validation, and the
+// check also covers every redirect hop.
+func SafeInternalHTTPClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	dialer.Control = func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return fmt.Errorf("refusing to dial unresolvable address %q", address)
+		}
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+			ip.IsUnspecified() || ip.IsMulticast() {
+			return fmt.Errorf("refusing to connect to %s (SSRF guard: link-local/metadata)", ip)
+		}
+		return nil // private / loopback / overlay / public are all legitimate internal targets
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext:           dialer.DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+	}
+}
