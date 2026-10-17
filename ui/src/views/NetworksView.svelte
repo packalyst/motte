@@ -4,11 +4,15 @@
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
+  import Input from '../components/Input.svelte'
+  import Select from '../components/Select.svelte'
+  import Checkbox from '../components/Checkbox.svelte'
 
   let { loading = $bindable(true) } = $props()
 
   let networks = $state([])
   let interfaces = $state([])
+  let suggestions = $state([]) // safe CIDR candidates from the backend
   let wan = $state('')
   let vpnClients = $state([])
 
@@ -21,6 +25,8 @@
   let editing = $state(null)
   let saving = $state(false)
   let form = $state(blankForm())
+  let cidrChoice = $state('') // selected suggestion CIDR or '__custom__'
+  let customCidr = $state(false)
 
   // Per-client reservation inline edit.
   let editClientId = $state(null)
@@ -41,6 +47,7 @@
       ])
       networks = n.networks || []
       interfaces = ifc.interfaces || []
+      suggestions = ifc.suggestions || []
       wan = ifc.wan || ''
       vpnClients = Array.isArray(vc) ? vc : (vc.clients || [])
     } catch (e) {
@@ -76,10 +83,71 @@
     form.gateway_ip = i.addrs[0].split('/')[0]
     form.pool_start = `${a}.${b}.${c}.50`
     form.pool_end = `${a}.${b}.${c}.200`
+    // The interface already carries an address — switch to custom so the prefilled CIDR shows.
+    customCidr = true
+    cidrChoice = '__custom__'
   }
 
-  function openAdd() { editing = null; form = blankForm(); formOpen = true }
-  function openEdit(net) { editing = net; form = { ...net }; formOpen = true }
+  // Lease presets (seconds) for the dropdown; the backend accepts 2min–30d.
+  const LEASE_PRESETS = [
+    { value: 3600, label: '1 hour' },
+    { value: 21600, label: '6 hours' },
+    { value: 43200, label: '12 hours' },
+    { value: 86400, label: '1 day' },
+    { value: 604800, label: '7 days' },
+    { value: 2592000, label: '30 days' },
+  ]
+  // Include the current lease as a "custom" option if it isn't one of the presets (e.g. editing).
+  let leaseOptions = $derived.by(() => {
+    const opts = LEASE_PRESETS.slice()
+    const cur = Number(form.lease_secs)
+    if (!opts.some((o) => o.value === cur)) {
+      opts.push({ value: cur, label: `Custom (${Math.round((cur / 3600) * 10) / 10}h)` })
+    }
+    return opts
+  })
+  let cidrOptions = $derived([
+    ...suggestions.map((s) => ({ value: s.cidr, label: s.cidr })),
+    { value: '__custom__', label: 'Custom subnet…' },
+  ])
+  let selectedIface = $derived(interfaces.find((i) => i.name === form.iface))
+
+  // Apply a picked suggestion (gateway/pool follow the subnet), or reveal the custom input.
+  function applySuggestion() {
+    if (cidrChoice === '__custom__') { customCidr = true; return }
+    const s = suggestions.find((x) => x.cidr === cidrChoice)
+    if (!s) return
+    customCidr = false
+    form.cidr = s.cidr
+    form.gateway_ip = s.gateway_ip
+    form.pool_start = s.pool_start
+    form.pool_end = s.pool_end
+  }
+  // Custom subnet typed → derive gateway (.1) and pool (.50–.200) defaults from it.
+  function onCustomCidr() {
+    const nb = networkBase(form.cidr)
+    if (!nb) return
+    const [a, b, c] = nb.base
+    form.gateway_ip = `${a}.${b}.${c}.1`
+    form.pool_start = `${a}.${b}.${c}.50`
+    form.pool_end = `${a}.${b}.${c}.200`
+  }
+
+  function openAdd() {
+    editing = null
+    form = blankForm()
+    customCidr = suggestions.length === 0
+    cidrChoice = suggestions.length ? suggestions[0].cidr : '__custom__'
+    applySuggestion()
+    formOpen = true
+  }
+  function openEdit(net) {
+    editing = net
+    form = { ...net }
+    customCidr = true
+    cidrChoice = '__custom__'
+    formOpen = true
+  }
 
   async function saveForm() {
     saving = true
@@ -282,70 +350,70 @@
 </div>
 
 <!-- Add / edit modal -->
-<Modal bind:open={formOpen} title={editing ? 'Edit network' : 'Add network'} size="md">
+<Modal bind:open={formOpen} title={editing ? 'Edit network' : 'Add network'} size="lg">
   <div class="flex flex-col gap-4">
-    <div>
-      <label class="text-sm font-medium" for="dhcp-iface">Interface</label>
-      {#if editing}
-        <input id="dhcp-iface" class="kt-input w-full mt-1 font-mono" value={form.iface} disabled />
-        <p class="text-xs text-base-content/50 mt-1">The interface can't be changed after creation.</p>
+    <!-- Interface -->
+    {#if editing}
+      <Input label="Interface" value={form.iface} disabled prefixIcon="plug-connected" class="font-mono"
+             helperText="The interface can't be changed after creation." />
+    {:else}
+      <Select label="Interface" bind:value={form.iface} onchange={onPickIface}
+              helperText={`Your WAN (${wan || 'unknown'}), docker and VPN interfaces are hidden — they can't be used.`}>
+        <option value="" disabled>Select an internal interface…</option>
+        {#each interfaces as i (i.name)}
+          <option value={i.name} disabled={i.managed}>
+            {i.name}{i.addrs?.length ? ` (${i.addrs[0]})` : ''}{i.up ? '' : ' — down'}{i.managed ? ' — already managed' : ''}
+          </option>
+        {/each}
+      </Select>
+    {/if}
+
+    <!-- Pre-save warning: this NIC is already defined in a hand-written netplan file -->
+    {#if selectedIface?.conflict}
+      <div class="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+        <Icon name="alert-triangle" class="text-warning mt-0.5 shrink-0" />
+        <div>
+          <span class="font-medium">{form.iface} is already configured in <span class="font-mono">{selectedIface.conflict}</span>.</span>
+          Remove that stanza first — the panel will own this interface's address. Leaving both can cause a duplicate address or a failed apply.
+        </div>
+      </div>
+    {/if}
+
+    <!-- Subnet: pick a safe suggestion or enter a custom one -->
+    <div class="grid grid-cols-2 gap-3">
+      <Select label="Subnet (CIDR)" bind:value={cidrChoice} onchange={applySuggestion}
+              options={cidrOptions} helperText="Suggestions avoid your VPN and existing networks." />
+      {#if customCidr}
+        <Input label="Custom subnet" bind:value={form.cidr} oninput={onCustomCidr}
+               prefixIcon="network" placeholder="10.20.20.0/24" class="font-mono" />
       {:else}
-        <select id="dhcp-iface" class="kt-select w-full mt-1" bind:value={form.iface} onchange={onPickIface}>
-          <option value="" disabled>Select an internal interface…</option>
-          {#each interfaces as i (i.name)}
-            <option value={i.name} disabled={i.managed}>
-              {i.name}{i.addrs?.length ? ` (${i.addrs[0]})` : ''}{i.up ? '' : ' — down'}{i.managed ? ' — already managed' : ''}
-            </option>
-          {/each}
-        </select>
-        <p class="text-xs text-base-content/50 mt-1">Your WAN ({wan || 'unknown'}), docker and VPN interfaces are hidden — they can't be used.</p>
+        <Input label="Subnet" value={form.cidr} disabled prefixIcon="network" class="font-mono" />
       {/if}
     </div>
 
     <div class="grid grid-cols-2 gap-3">
-      <div>
-        <label class="text-sm font-medium" for="dhcp-cidr">Subnet (CIDR)</label>
-        <input id="dhcp-cidr" class="kt-input w-full mt-1 font-mono" bind:value={form.cidr} placeholder="10.20.20.0/24" />
-      </div>
-      <div>
-        <label class="text-sm font-medium" for="dhcp-gw">Gateway IP</label>
-        <input id="dhcp-gw" class="kt-input w-full mt-1 font-mono" bind:value={form.gateway_ip} placeholder="10.20.20.1" />
-      </div>
-      <div>
-        <label class="text-sm font-medium" for="dhcp-ps">Pool start</label>
-        <input id="dhcp-ps" class="kt-input w-full mt-1 font-mono" bind:value={form.pool_start} placeholder="10.20.20.50" />
-      </div>
-      <div>
-        <label class="text-sm font-medium" for="dhcp-pe">Pool end</label>
-        <input id="dhcp-pe" class="kt-input w-full mt-1 font-mono" bind:value={form.pool_end} placeholder="10.20.20.200" />
-      </div>
-      <div>
-        <label class="text-sm font-medium" for="dhcp-lease">Lease (hours)</label>
-        <input id="dhcp-lease" type="number" min="1" class="kt-input w-full mt-1"
-               value={leaseHours(form.lease_secs)} oninput={(e) => form.lease_secs = Math.round(Number(e.target.value) * 3600)} />
-      </div>
-      <div>
-        <label class="text-sm font-medium" for="dhcp-domain">Domain</label>
-        <input id="dhcp-domain" class="kt-input w-full mt-1" bind:value={form.domain} placeholder="lan" />
-      </div>
+      <Input label="Gateway IP" bind:value={form.gateway_ip} prefixIcon="router"
+             placeholder="10.20.20.1" class="font-mono" />
+      <Input label="Domain" bind:value={form.domain} prefixIcon="world-www" placeholder="lan"
+             helperText="DNS suffix for clients — a device 'laptop' resolves as laptop.<domain>." />
+      <Input label="Pool start" bind:value={form.pool_start} prefixIcon="list"
+             placeholder="10.20.20.50" class="font-mono" />
+      <Input label="Pool end" bind:value={form.pool_end} prefixIcon="list"
+             placeholder="10.20.20.200" class="font-mono" />
+      <Select label="Lease time" bind:value={form.lease_secs} options={leaseOptions} />
+      <Select label="Registration" bind:value={form.mode}
+              options={[
+                { value: 'approve', label: 'Approve — device waits for your OK' },
+                { value: 'auto', label: 'Auto — any device gets an address' },
+              ]} />
     </div>
 
-    <div>
-      <label class="text-sm font-medium" for="dhcp-mode">Registration</label>
-      <select id="dhcp-mode" class="kt-select w-full mt-1" bind:value={form.mode}>
-        <option value="approve">Approve — a new device gets no address until you approve it</option>
-        <option value="auto">Auto — any device on the segment gets an address</option>
-      </select>
+    <div class="flex flex-col gap-2 pt-1">
+      <Checkbox variant="switch" bind:checked={form.nat_enabled}
+                label="Allow internet access (NAT out the WAN)"
+                helperText="Off = fully isolated sandbox." />
+      <Checkbox variant="switch" bind:checked={form.enabled} label="Enabled" />
     </div>
-
-    <label class="flex items-center gap-2 text-sm">
-      <input type="checkbox" class="kt-checkbox" bind:checked={form.nat_enabled} />
-      Allow internet access (NAT out the WAN) — <span class="text-base-content/50">off = fully isolated sandbox</span>
-    </label>
-    <label class="flex items-center gap-2 text-sm">
-      <input type="checkbox" class="kt-checkbox" bind:checked={form.enabled} />
-      Enabled
-    </label>
   </div>
 
   {#snippet footer()}

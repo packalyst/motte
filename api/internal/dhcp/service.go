@@ -103,17 +103,17 @@ func (s *Service) handleListInterfaces(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not list interfaces", 500)
 		return
 	}
+	nets, _ := s.listNetworks()
 	managed := map[string]bool{}
-	if nets, err := s.listNetworks(); err == nil {
-		for _, n := range nets {
-			managed[n.Iface] = true
-		}
+	for _, n := range nets {
+		managed[n.Iface] = true
 	}
 	type ifaceInfo struct {
-		Name    string   `json:"name"`
-		Addrs   []string `json:"addrs"`
-		Up      bool     `json:"up"`
-		Managed bool     `json:"managed"`
+		Name     string   `json:"name"`
+		Addrs    []string `json:"addrs"`
+		Up       bool     `json:"up"`
+		Managed  bool     `json:"managed"`
+		Conflict string   `json:"conflict,omitempty"` // non-empty = a hand-written netplan file already defines this NIC
 	}
 	out := []ifaceInfo{}
 	for _, in := range ifaces {
@@ -130,11 +130,16 @@ func (s *Service) handleListInterfaces(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, ifaceInfo{
 			Name: in.Name, Addrs: addrs,
-			Up:      in.Flags&net.FlagUp != 0,
-			Managed: managed[in.Name],
+			Up:       in.Flags&net.FlagUp != 0,
+			Managed:  managed[in.Name],
+			Conflict: netplanConflict(in.Name),
 		})
 	}
-	router.JSON(w, map[string]any{"interfaces": out, "wan": wan})
+	router.JSON(w, map[string]any{
+		"interfaces":  out,
+		"wan":         wan,
+		"suggestions": suggestSubnets(nets, 6),
+	})
 }
 
 func logReconcile(iface string, err error) {

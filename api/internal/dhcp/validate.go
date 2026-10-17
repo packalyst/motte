@@ -124,6 +124,70 @@ func validateAddressing(n *Network, others []Network) error {
 	return nil
 }
 
+// SubnetSuggestion is a ready-to-use safe /24 the UI offers in a dropdown, with sensible gateway
+// and pool defaults derived from it.
+type SubnetSuggestion struct {
+	CIDR      string `json:"cidr"`
+	GatewayIP string `json:"gateway_ip"`
+	PoolStart string `json:"pool_start"`
+	PoolEnd   string `json:"pool_end"`
+}
+
+// candidateSubnets is the curated pool of uncommon RFC1918 /24s suggestSubnets draws from —
+// chosen to avoid colliding with typical home/office LANs (192.168.0/1.x) and each other.
+var candidateSubnets = []string{
+	"10.20.20.0/24", "10.30.30.0/24", "10.40.40.0/24", "10.50.50.0/24", "10.60.60.0/24",
+	"172.16.20.0/24", "172.16.30.0/24", "192.168.70.0/24", "192.168.80.0/24", "10.100.100.0/24",
+}
+
+// suggestSubnets returns up to max candidate /24s that don't overlap the VPN ranges
+// (WG_IP_RANGE / HEADSCALE_IP_RANGE) or any existing managed network — the backend is the one
+// place that knows all of those, so the suggestions are safe by construction (the full validation
+// still runs on save). gateway is .1, pool .50–.200.
+func suggestSubnets(others []Network, max int) []SubnetSuggestion {
+	var avoid []*net.IPNet
+	for _, env := range []string{"WG_IP_RANGE", "HEADSCALE_IP_RANGE"} {
+		if r := strings.TrimSpace(helper.GetEnvOptional(env, "")); r != "" {
+			if _, n, e := net.ParseCIDR(r); e == nil {
+				avoid = append(avoid, n)
+			}
+		}
+	}
+	for _, o := range others {
+		if _, n, e := net.ParseCIDR(o.CIDR); e == nil {
+			avoid = append(avoid, n)
+		}
+	}
+	out := []SubnetSuggestion{}
+	for _, c := range candidateSubnets {
+		_, cnet, err := net.ParseCIDR(c)
+		if err != nil {
+			continue
+		}
+		clash := false
+		for _, a := range avoid {
+			if netsOverlap(cnet, a) {
+				clash = true
+				break
+			}
+		}
+		if clash {
+			continue
+		}
+		b := cnet.IP.To4()
+		out = append(out, SubnetSuggestion{
+			CIDR:      cnet.String(),
+			GatewayIP: fmt.Sprintf("%d.%d.%d.1", b[0], b[1], b[2]),
+			PoolStart: fmt.Sprintf("%d.%d.%d.50", b[0], b[1], b[2]),
+			PoolEnd:   fmt.Sprintf("%d.%d.%d.200", b[0], b[1], b[2]),
+		})
+		if len(out) >= max {
+			break
+		}
+	}
+	return out
+}
+
 // requireNonWANInterface refuses the interface that carries the default route. Running DHCP /
 // reassigning the address there would hijack the box's own uplink and could lock the operator
 // out — the single most important guard in this feature.
