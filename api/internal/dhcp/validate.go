@@ -133,54 +133,60 @@ type SubnetSuggestion struct {
 	PoolEnd   string `json:"pool_end"`
 }
 
-// candidateSubnets is the curated pool of uncommon RFC1918 /24s suggestSubnets draws from —
-// chosen to avoid colliding with typical home/office LANs (192.168.0/1.x) and each other.
-var candidateSubnets = []string{
-	"10.20.20.0/24", "10.30.30.0/24", "10.40.40.0/24", "10.50.50.0/24", "10.60.60.0/24",
-	"172.16.20.0/24", "172.16.30.0/24", "192.168.70.0/24", "192.168.80.0/24", "10.100.100.0/24",
-}
-
-// suggestSubnets returns up to max candidate /24s that don't overlap the VPN ranges
-// (WG_IP_RANGE / HEADSCALE_IP_RANGE) or any existing managed network — the backend is the one
-// place that knows all of those, so the suggestions are safe by construction (the full validation
-// still runs on save). gateway is .1, pool .50–.200.
-func suggestSubnets(others []Network, max int) []SubnetSuggestion {
-	var avoid []*net.IPNet
-	for _, env := range []string{"WG_IP_RANGE", "HEADSCALE_IP_RANGE"} {
-		if r := strings.TrimSpace(helper.GetEnvOptional(env, "")); r != "" {
-			if _, n, e := net.ParseCIDR(r); e == nil {
-				avoid = append(avoid, n)
+// subnetPool is the ordered list of candidate CIDRs the suggester draws from. An operator can
+// override it with DHCP_SUBNET_POOL (comma-separated CIDRs); otherwise it's generated
+// algorithmically across 10.0.0.0/8 as 10.N.N.0/24 for N = 20,30,…,250 — a memorable
+// 10.20.20 / 10.30.30 / 10.40.40 … shape with no hand-maintained list that effectively never
+// runs out.
+func subnetPool() []string {
+	if raw := strings.TrimSpace(helper.GetEnvOptional("DHCP_SUBNET_POOL", "")); raw != "" {
+		var pool []string
+		for _, c := range strings.Split(raw, ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				pool = append(pool, c)
 			}
 		}
-	}
-	for _, o := range others {
-		if _, n, e := net.ParseCIDR(o.CIDR); e == nil {
-			avoid = append(avoid, n)
+		if len(pool) > 0 {
+			return pool
 		}
 	}
+	pool := make([]string, 0, 24)
+	for n := 20; n <= 250; n += 10 {
+		pool = append(pool, fmt.Sprintf("10.%d.%d.0/24", n, n))
+	}
+	return pool
+}
+
+// suggestSubnets returns up to max candidate /24s that are safe to use RIGHT NOW: for each
+// pool entry it derives gateway .1 / pool .50–.200 and only offers it if it passes the SAME
+// validateAddressing a save runs — so overlap with the VPN ranges (WG_IP_RANGE /
+// HEADSCALE_IP_RANGE) or an existing managed network, a non-private range, etc. are impossible
+// by construction. The validator is the single source of truth for "safe"; this just proposes.
+func suggestSubnets(others []Network, max int) []SubnetSuggestion {
 	out := []SubnetSuggestion{}
-	for _, c := range candidateSubnets {
-		_, cnet, err := net.ParseCIDR(c)
+	for _, c := range subnetPool() {
+		_, cnet, err := net.ParseCIDR(strings.TrimSpace(c))
 		if err != nil {
 			continue
 		}
-		clash := false
-		for _, a := range avoid {
-			if netsOverlap(cnet, a) {
-				clash = true
-				break
-			}
-		}
-		if clash {
+		b := cnet.IP.To4()
+		if b == nil {
 			continue
 		}
-		b := cnet.IP.To4()
-		out = append(out, SubnetSuggestion{
+		s := SubnetSuggestion{
 			CIDR:      cnet.String(),
 			GatewayIP: fmt.Sprintf("%d.%d.%d.1", b[0], b[1], b[2]),
 			PoolStart: fmt.Sprintf("%d.%d.%d.50", b[0], b[1], b[2]),
 			PoolEnd:   fmt.Sprintf("%d.%d.%d.200", b[0], b[1], b[2]),
-		})
+		}
+		// Sentinel iface so the iface-reuse check in validateAddressing can't false-match (we're
+		// probing addressing only — the real interface is chosen separately in the form).
+		probe := &Network{Iface: "\x00probe", CIDR: s.CIDR, GatewayIP: s.GatewayIP, PoolStart: s.PoolStart,
+			PoolEnd: s.PoolEnd, LeaseSecs: 43200, Domain: "lan", Mode: "approve"}
+		if validateAddressing(probe, others) != nil {
+			continue // overlaps a VPN/existing range, or the derived pool doesn't fit — skip it
+		}
+		out = append(out, s)
 		if len(out) >= max {
 			break
 		}
