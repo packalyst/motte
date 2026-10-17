@@ -334,6 +334,51 @@ func createSchema(db *sql.DB) error {
 		UNIQUE(virtual_ip_id, source_client_id)
 	);
 
+	-- DHCP-managed private networks the panel gateways (dnsmasq DHCP-only). One row per
+	-- managed interface/subnet. See internal/dhcp.
+	CREATE TABLE IF NOT EXISTS dhcp_networks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		iface TEXT NOT NULL UNIQUE,
+		cidr TEXT NOT NULL,
+		gateway_ip TEXT NOT NULL,
+		pool_start TEXT NOT NULL,
+		pool_end TEXT NOT NULL,
+		lease_secs INTEGER NOT NULL DEFAULT 43200,
+		domain TEXT DEFAULT 'lan',
+		mode TEXT NOT NULL DEFAULT 'approve' CHECK(mode IN ('auto','approve')),
+		nat_enabled INTEGER NOT NULL DEFAULT 0,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- DHCP clients (leases/reservations), keyed by MAC (vpn_clients.name is not unique and the
+	-- name->host mapping is lossy/collision-prone; MAC is the stable key). approved gates the
+	-- 'approve' registration mode — an unapproved MAC is handed no lease.
+	CREATE TABLE IF NOT EXISTS dhcp_clients (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		network_id INTEGER NOT NULL,
+		mac TEXT NOT NULL UNIQUE,
+		ip TEXT DEFAULT '',
+		name TEXT DEFAULT '',
+		approved INTEGER NOT NULL DEFAULT 0,
+		last_seen DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (network_id) REFERENCES dhcp_networks(id) ON DELETE CASCADE
+	);
+
+	-- Which VPN clients may reach a managed network (default-deny: empty = nobody). Mirrors
+	-- vpn_virtual_ip_acl; enforced in the nft forward chain, never the advisory Headscale ACL.
+	CREATE TABLE IF NOT EXISTS dhcp_network_acl (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		network_id INTEGER NOT NULL,
+		source_client_id INTEGER NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (network_id) REFERENCES dhcp_networks(id) ON DELETE CASCADE,
+		FOREIGN KEY (source_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
+		UNIQUE(network_id, source_client_id)
+	);
+
 	-- VPN router status tracking
 	CREATE TABLE IF NOT EXISTS vpn_router_config (
 		id INTEGER PRIMARY KEY CHECK(id = 1),
