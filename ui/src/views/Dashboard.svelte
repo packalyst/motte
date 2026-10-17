@@ -12,6 +12,7 @@
   const views = {
     overview: () => import('./OverviewView.svelte'),
     nodes: () => import('./NodesView.svelte'),
+    networks: () => import('./NetworksView.svelte'),
     users: () => import('./UsersView.svelte'),
     firewall: () => import('./FirewallView.svelte'),
     server: () => import('./ServerView.svelte'),
@@ -52,7 +53,7 @@
   // Submenu groups → their child view ids. Drives auto-expand + collapse so the
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
-    'grp-clients': ['nodes', 'fleet'],
+    'grp-clients': ['nodes', 'fleet', 'networks'],
     'grp-monitoring': ['analytics', 'logs', 'activity', 'routines'],
     'grp-web': ['traefik', 'domains', 'tunnels'],
     'grp-services': ['adguard', 'docker'],
@@ -133,6 +134,7 @@
       children: [
         { id: 'nodes', label: 'Nodes', icon: 'server' },
         { id: 'fleet', label: 'Machines', icon: 'device-desktop' },
+        { id: 'networks', label: 'Networks', icon: 'router' },
       ]
     },
     {
