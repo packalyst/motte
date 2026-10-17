@@ -186,6 +186,14 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 				Src:    []string{safeName},
 				Dst:    []string{"*:*"},
 			})
+			// ...and let everyone reach it (mirrors the nft inbound accept for allow_all).
+			// This replaces the old blanket "every Headscale client -> wireguard-network"
+			// grant removed below, which was broader than the nft data-plane gate permits.
+			acl.ACLs = append(acl.ACLs, ACLEntry{
+				Action: "accept",
+				Src:    []string{"*"},
+				Dst:    []string{safeName + ":*"},
+			})
 		}
 	}
 
@@ -226,18 +234,11 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 		}
 	}
 
-	// Allow access to wireguard-network via vpn-router for all Headscale clients
-	// (except block_all which are isolated)
-	for _, c := range clients {
-		if c.Type == "headscale" && c.Policy != helper.ACLPolicyBlockAll {
-			safeName := names[c.ID]
-			acl.ACLs = append(acl.ACLs, ACLEntry{
-				Action: "accept",
-				Src:    []string{safeName},
-				Dst:    []string{"wireguard-network:*"},
-			})
-		}
-	}
+	// NOTE: there is deliberately no blanket "every Headscale client -> wireguard-network"
+	// grant. It was broader than the nftables gate (which default-denies hs->wg and only
+	// allows explicit pairs, allow_all peers, and the router), so it over-stated access in the
+	// advisory layer. Explicit rules (above), allow_all inbound (above) and the router rules
+	// cover every path nft actually permits. Access to a WireGuard peer is granted per-peer.
 
 	return acl, nil
 }
