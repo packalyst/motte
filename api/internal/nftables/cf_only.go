@@ -1,7 +1,9 @@
 package nftables
 
 import (
+	"database/sql"
 	"strings"
+	"sync/atomic"
 
 	"api/internal/database"
 	"api/internal/helper"
@@ -97,18 +99,31 @@ func cfRules(v4, v6, trusted []string, prefix string) []string {
 	return rules
 }
 
+// lastCFOnlyRestrict remembers the last successfully-read value. A genuinely-absent setting
+// (sql.ErrNoRows) means off, but a TRANSIENT DB error during a rebuild must NOT silently drop
+// Cloudflare-only protection (that would re-open 80/443 to the internet) — on such an error we
+// keep the last-known state instead of failing open.
+var lastCFOnlyRestrict atomic.Bool
+
 // restrictEnabled reports whether 80/443 should be Cloudflare-only. True only when
-// `web_cloudflare_only` is explicitly "on"; anything else (incl. missing / read
-// error) is off, so the panel fails open.
+// `web_cloudflare_only` is explicitly "on"; a missing setting is off; a transient read error
+// keeps whatever was last known (so a DB hiccup can't silently expose the web ports).
 func (t *CloudflareOnlyTable) restrictEnabled() bool {
 	if t.db == nil {
 		return false
 	}
 	var v string
-	if err := t.db.QueryRow(`SELECT value FROM settings WHERE key = ? AND encrypted = 0`, "web_cloudflare_only").Scan(&v); err != nil {
+	err := t.db.QueryRow(`SELECT value FROM settings WHERE key = ? AND encrypted = 0`, "web_cloudflare_only").Scan(&v)
+	if err == sql.ErrNoRows { // genuinely not configured → off
+		lastCFOnlyRestrict.Store(false)
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(v), "on")
+	if err != nil { // transient DB error → keep last-known state, don't strip protection
+		return lastCFOnlyRestrict.Load()
+	}
+	on := strings.EqualFold(strings.TrimSpace(v), "on")
+	lastCFOnlyRestrict.Store(on)
+	return on
 }
 
 // splitCIDRs partitions CIDR strings into IPv4 and IPv6 (v6 = contains ':').
