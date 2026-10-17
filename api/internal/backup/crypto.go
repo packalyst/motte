@@ -3,24 +3,33 @@ package backup
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/pbkdf2"
 	"crypto/rand"
-	"crypto/sha256"
 	"io"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // Passphrase sealing for backup files. The config document is sealed with
-// AES-256-GCM under a key derived from the user's passphrase (PBKDF2-SHA256).
-// This is deliberately independent of the panel's ENCRYPTION_SECRET: a backup must
-// restore onto a DIFFERENT host whose ENCRYPTION_SECRET differs, so secrets travel
-// as plaintext INSIDE the sealed body and are re-encrypted under the destination
-// host on import. The file itself is inert without the passphrase.
+// AES-256-GCM under a key derived from the user's passphrase (Argon2id). Argon2id is
+// memory-hard, so the whole backup — which carries every private key + credential as
+// plaintext inside the sealed body — is far costlier to crack offline than a fast
+// hash like PBKDF2 if the file ever leaks. This is deliberately independent of the
+// panel's ENCRYPTION_SECRET: a backup must restore onto a DIFFERENT host whose
+// ENCRYPTION_SECRET differs, so secrets travel as plaintext INSIDE the sealed body
+// and are re-encrypted under the destination host on import. The file itself is inert
+// without the passphrase.
 
 const (
-	kdfName = "pbkdf2-sha256"
-	kdfIter = 600_000 // OWASP 2023 floor for PBKDF2-HMAC-SHA256
-	saltLen = 16
-	keyLen  = 32 // AES-256
+	kdfName = "argon2id"
+	// Argon2id cost parameters (OWASP-recommended class). kdfIter is the time cost and is
+	// recorded in the envelope as "iter"; memory and threads are fixed here (the open path
+	// derives with these same constants — backups are not portable across param changes,
+	// which is fine for this deployment).
+	kdfIter      = 3
+	argonMemKiB  = 64 * 1024 // 64 MiB — memory-hard, defeats cheap GPU/ASIC cracking
+	argonThreads = 4
+	saltLen      = 16
+	keyLen       = 32 // AES-256
 )
 
 // errBadPass is returned for a wrong passphrase or any tampering — GCM auth
@@ -31,9 +40,10 @@ type passErr string
 
 func (e passErr) Error() string { return string(e) }
 
-// deriveKey stretches the passphrase into a 256-bit key with the given salt.
+// deriveKey stretches the passphrase into a 256-bit key with the given salt using Argon2id.
+// (Returns an error for signature symmetry with the callers; Argon2id itself can't fail.)
 func deriveKey(passphrase string, salt []byte) ([]byte, error) {
-	return pbkdf2.Key(sha256.New, passphrase, salt, kdfIter, keyLen)
+	return argon2.IDKey([]byte(passphrase), salt, kdfIter, argonMemKiB, argonThreads, keyLen), nil
 }
 
 // seal encrypts plaintext under the passphrase. aad (the cleartext envelope header)

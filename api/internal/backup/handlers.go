@@ -3,7 +3,6 @@ package backup
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -53,8 +52,8 @@ func (s *Service) handleExport(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if len(req.Passphrase) < MinPassphrase {
-		router.JSONError(w, fmt.Sprintf("passphrase must be at least %d characters", MinPassphrase), http.StatusBadRequest)
+	if err := ValidatePassphrase(req.Passphrase); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	db := s.db()
