@@ -30,6 +30,39 @@ func TestDnsmasqConfPath(t *testing.T) {
 	}
 }
 
+// suggestSubnets must never offer a subnet that overlaps the VPN ranges or an existing managed
+// network — the whole point is that a suggestion is safe by construction.
+func TestSuggestSubnets(t *testing.T) {
+	t.Setenv("WG_IP_RANGE", "10.20.20.0/24")
+	t.Setenv("HEADSCALE_IP_RANGE", "")
+	others := []Network{{CIDR: "10.30.30.0/24"}}
+
+	got := suggestSubnets(others, 6)
+	if len(got) == 0 {
+		t.Fatal("expected at least one suggestion")
+	}
+	if len(got) > 6 {
+		t.Fatalf("must respect max=6, got %d", len(got))
+	}
+	for _, s := range got {
+		if s.CIDR == "10.20.20.0/24" {
+			t.Errorf("suggested the WG range %s", s.CIDR)
+		}
+		if s.CIDR == "10.30.30.0/24" {
+			t.Errorf("suggested an existing managed network %s", s.CIDR)
+		}
+		if !strings.HasSuffix(s.GatewayIP, ".1") {
+			t.Errorf("gateway should be .1, got %s", s.GatewayIP)
+		}
+		// Every suggestion must survive the real validator.
+		n := &Network{Iface: "ens99", CIDR: s.CIDR, GatewayIP: s.GatewayIP,
+			PoolStart: s.PoolStart, PoolEnd: s.PoolEnd, LeaseSecs: 43200, Domain: "lan", Mode: "approve"}
+		if err := validateAddressing(n, others); err != nil {
+			t.Errorf("suggested %s failed validateAddressing: %v", s.CIDR, err)
+		}
+	}
+}
+
 func baseNet() *Network {
 	return &Network{
 		Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1",

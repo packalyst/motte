@@ -133,6 +133,40 @@ func (s *Service) InterfaceReady(n *Network) error {
 	return gatewayLive(n.Iface, n.GatewayIP)
 }
 
+// netplanConflict reports whether the interface is already defined in a netplan file the panel
+// does NOT own (i.e. a hand-written stanza), returning that filename. It's a pre-save warning so
+// an operator doesn't end up with two definitions fighting over one NIC. Text-scan heuristic (no
+// YAML dep): a non-wgpanel file with a line whose key is "<iface>:". Best-effort — empty on any
+// read error (the netplan generate during ApplyNetwork is still the hard validity gate).
+func netplanConflict(iface string) string {
+	out, err := exec.Command("nsenter", append(append([]string{}, nsenterHost...), "ls", "-1", netplanDir)...).Output()
+	if err != nil {
+		return ""
+	}
+	ownDropIn := "90-wgpanel-" + iface + ".yaml"
+	for _, f := range strings.Fields(string(out)) {
+		if !strings.HasSuffix(f, ".yaml") && !strings.HasSuffix(f, ".yml") {
+			continue
+		}
+		if f == ownDropIn {
+			continue // our own managed drop-in isn't a conflict
+		}
+		content, ok := hostReadFile(netplanDir + "/" + f)
+		if !ok {
+			continue
+		}
+		for _, line := range strings.Split(string(content), "\n") {
+			// Normalize: trim indentation and surrounding quotes netplan allows on keys.
+			key := strings.TrimSpace(line)
+			key = strings.TrimPrefix(key, "\"")
+			if key == iface+":" || key == iface+"\":" || strings.HasPrefix(key, iface+":") {
+				return f
+			}
+		}
+	}
+	return ""
+}
+
 // gatewayLive checks the gateway address is assigned to the interface right now (ip runs
 // directly — the container shares the host network namespace).
 func gatewayLive(iface, gatewayIP string) error {
