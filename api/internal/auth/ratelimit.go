@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/subtle"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,8 +68,17 @@ func markTOTPUsed(userID int64, code string) {
 }
 
 func init() {
-	// Initialize trusted proxies from environment
-	helper.InitTrustedProxies(helper.GetEnvOptional("TRUSTED_PROXIES", ""))
+	// Initialize trusted proxies from environment. If TRUSTED_PROXIES is left blank,
+	// fall back to the Traefik container IP so forwarding headers are still honoured —
+	// otherwise every request would appear to come from the proxy and the per-IP login
+	// rate-limit would collapse into one global bucket (any 5 bad logins lock out all).
+	// docker-compose already applies this fallback at the env layer; doing it here too
+	// keeps it correct however the binary is launched.
+	tp := strings.TrimSpace(helper.GetEnvOptional("TRUSTED_PROXIES", ""))
+	if tp == "" {
+		tp = strings.TrimSpace(helper.GetEnvOptional("TRAEFIK_CONTAINER_IP", ""))
+	}
+	helper.InitTrustedProxies(tp)
 }
 
 // cleanupRateLimitMaps removes stale login/TOTP attempt entries and expired TOTP
