@@ -957,6 +957,24 @@
         }
       ]
     },
+    "dhcp": {
+      "prefix": "/api/dhcp",
+      "enabled": true,
+      "endpoints": [
+        { "path": "/interfaces", "methods": ["GET"], "handler": "ListInterfaces", "description": "List candidate interfaces for a managed network (WAN/docker/VPN excluded)" },
+        { "path": "/networks", "methods": ["GET"], "handler": "ListNetworks", "description": "List managed DHCP networks" },
+        { "path": "/networks", "methods": ["POST"], "handler": "CreateNetwork", "description": "Create a managed DHCP network" },
+        { "path": "/networks/{id}", "methods": ["GET"], "handler": "GetNetwork", "description": "Get a network with its clients and reachability ACL" },
+        { "path": "/networks/{id}", "methods": ["PUT"], "handler": "UpdateNetwork", "description": "Update a managed DHCP network" },
+        { "path": "/networks/{id}", "methods": ["DELETE"], "handler": "DeleteNetwork", "description": "Delete a managed DHCP network" },
+        { "path": "/networks/{id}/clients", "methods": ["GET"], "handler": "ListClients", "description": "List DHCP clients/leases for a network" },
+        { "path": "/networks/{id}/acl", "methods": ["POST"], "handler": "AddACL", "description": "Grant a VPN client reachability to the network" },
+        { "path": "/networks/{id}/acl/{clientId}", "methods": ["DELETE"], "handler": "RemoveACL", "description": "Revoke a VPN client's reachability" },
+        { "path": "/clients/{id}/approve", "methods": ["POST"], "handler": "ApproveClient", "description": "Approve a DHCP client (approve mode)" },
+        { "path": "/clients/{id}", "methods": ["PUT"], "handler": "UpdateClient", "description": "Set a DHCP client's reservation (IP/name)" },
+        { "path": "/clients/{id}", "methods": ["DELETE"], "handler": "DeleteClient", "description": "Delete a DHCP client" }
+      ]
+    },
     "vpn": {
       "prefix": "/api/vpn",
       "enabled": true,

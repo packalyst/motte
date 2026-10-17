@@ -17,6 +17,7 @@ import (
 	"api/internal/backup"
 	"api/internal/config"
 	"api/internal/database"
+	"api/internal/dhcp"
 	"api/internal/docker"
 	"api/internal/domains"
 	"api/internal/events"
@@ -251,6 +252,19 @@ func main() {
 			wireguard.SetService(wgSvc) // Store instance for other packages
 			r.RegisterService("wireguard", wgSvc.Handlers())
 			log.Println("WireGuard service registered")
+		}
+	}
+
+	// DHCP (managed private networks): gateways isolated LAN segments, runs DHCP-only dnsmasq,
+	// and gates VPN reachability through the nft forward chain. Needs the nftables service for
+	// the reachability table (nil → reachability not enforced, logged at apply).
+	if config.IsServiceEnabled("dhcp") {
+		if dhcpDB, err := database.GetDB(); err != nil {
+			log.Printf("Warning: Failed to initialize dhcp service: %v", err)
+		} else {
+			dhcpSvc := dhcp.New(dhcpDB, nftSvc)
+			r.RegisterService("dhcp", dhcpSvc.Handlers())
+			log.Println("DHCP service registered")
 		}
 	}
 
