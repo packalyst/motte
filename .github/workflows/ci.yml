@@ -1,0 +1,65 @@
+# Blocking CI — the gates that must pass before merge. Every command here is run the same way
+# locally (see docs/reference/coding-standards.md) and is known-green. Security/quality scanners
+# that may surface pre-existing findings live in security.yml / codeql.yml as ADVISORY jobs so
+# they report without wedging the pipeline.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [api, agent]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          # agent has no external deps / no go.sum; skip module caching to stay robust.
+          cache: false
+      - name: gofmt (must be clean)
+        working-directory: ${{ matrix.module }}
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "::error::gofmt needed on:"; echo "$out"; exit 1
+          fi
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+      - name: go build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+      - name: install nftables (for the dhcp nft -c test)
+        if: matrix.module == 'api'
+        run: sudo apt-get update && sudo apt-get install -y nftables
+      - name: go test
+        working-directory: ${{ matrix.module }}
+        run: go test ./...
+
+  frontend:
+    name: frontend (ui)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: install
+        working-directory: ui
+        run: npm ci
+      - name: build
+        working-directory: ui
+        run: npm run build

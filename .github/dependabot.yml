@@ -1,0 +1,57 @@
+# Dependabot — automated "newer version of deps" + security-update PRs across every ecosystem
+# in the repo: the two Go modules, the UI, the GitHub Actions themselves, and every Dockerfile
+# base image. Weekly cadence; grouped where noisy.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /api
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, go]
+
+  - package-ecosystem: gomod
+    directory: /agent
+    schedule:
+      interval: weekly
+    labels: [dependencies, go]
+
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, ui]
+    groups:
+      ui-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, ci]
+
+  - package-ecosystem: docker
+    directory: /api
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /ui
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /containers/dnsmasq
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /containers/turbotunnels
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
