@@ -929,9 +929,26 @@
   let bkUsers = $state(false)
   let bkFleet = $state(false)
   let bkExporting = $state(false)
+  let bkGenerated = $state('')   // last generated passphrase, shown once so it can be saved
+
+  // generateBackupPassphrase fills both fields with a strong random passphrase (client-side,
+  // never sent anywhere) so the backup — which seals every secret — isn't protected by a weak
+  // human-chosen phrase. 24 chars from a 65-char set ≈ 140+ bits.
+  function generateBackupPassphrase() {
+    const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*'
+    const buf = new Uint32Array(24)
+    crypto.getRandomValues(buf)
+    let out = ''
+    for (let i = 0; i < buf.length; i++) out += charset[buf[i] % charset.length]
+    bkPass = out
+    bkPass2 = out
+    bkGenerated = out
+    navigator.clipboard?.writeText(out).catch(() => {})
+    toast('Strong passphrase generated & copied — save it now; the backup is unrecoverable without it', 'success')
+  }
 
   async function exportBackup() {
-    if (bkPass.length < 12) return toast('Passphrase must be at least 12 characters', 'error')
+    if (bkPass.length < 16) return toast('Passphrase must be at least 16 characters', 'error')
     if (bkPass !== bkPass2) return toast('Passphrases do not match', 'error')
     bkExporting = true
     try {
@@ -945,6 +962,7 @@
       toast('Backup downloaded — keep it and its passphrase safe', 'success')
       bkPass = ''
       bkPass2 = ''
+      bkGenerated = ''
     } catch (e) {
       toast(e.message || 'Export failed', 'error')
     } finally {
@@ -1935,8 +1953,18 @@
           <!-- EXPORT -->
           <div class="space-y-3">
             <div class="flex items-center gap-2 text-sm font-medium"><Icon name="download" size={15} class="text-muted-foreground" /> Export</div>
-            <Input label="Passphrase" type="password" bind:value={bkPass} placeholder="At least 12 characters" />
+            <Input label="Passphrase" type="password" bind:value={bkPass} placeholder="At least 16 characters" />
             <Input label="Confirm passphrase" type="password" bind:value={bkPass2} placeholder="Repeat passphrase" />
+            <button type="button" onclick={generateBackupPassphrase}
+              class="inline-flex items-center gap-1.5 text-xs text-info hover:underline cursor-pointer">
+              <Icon name="wand" size={13} /> Generate strong passphrase
+            </button>
+            {#if bkGenerated}
+              <div class="rounded-lg border border-info/40 bg-info/5 p-2.5 text-xs">
+                <div class="text-muted-foreground mb-1">Save this now — it was copied to your clipboard. The backup can't be opened without it:</div>
+                <code class="block font-mono break-all select-all text-foreground">{bkGenerated}</code>
+              </div>
+            {/if}
             <div class="space-y-2 pt-1">
               <label class="flex items-center justify-between gap-3 text-sm cursor-pointer">
                 <span><span class="font-medium">Include admin users</span><span class="block text-xs text-muted-foreground">Accounts, password hashes &amp; 2FA</span></span>

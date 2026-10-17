@@ -24,10 +24,27 @@ const (
 	fileVersion = 1
 	// MinPassphrase is the shortest passphrase we accept — a backup carries every
 	// secret the panel holds, so a weak passphrase is a real risk offline once a
-	// file leaks. 600k PBKDF2 iterations raise per-guess cost; the length floor
-	// keeps the guess space itself large.
-	MinPassphrase = 12
+	// file leaks. Argon2id raises per-guess cost; the length floor and the weak-input
+	// rejection in ValidatePassphrase keep the guess space itself large.
+	MinPassphrase = 16
 )
+
+// ValidatePassphrase enforces the backup passphrase policy. Beyond the length floor it rejects
+// trivially weak input (too few distinct characters — e.g. a single repeated or alternating
+// run) that would fall fast to an offline guess despite the floor.
+func ValidatePassphrase(p string) error {
+	if len(p) < MinPassphrase {
+		return fmt.Errorf("passphrase must be at least %d characters", MinPassphrase)
+	}
+	uniq := make(map[rune]struct{})
+	for _, r := range p {
+		uniq[r] = struct{}{}
+	}
+	if len(uniq) < 6 {
+		return fmt.Errorf("passphrase is too simple — use at least 6 different characters")
+	}
+	return nil
+}
 
 // Table tiers. Core is always exported; users and fleet are opt-in.
 var (

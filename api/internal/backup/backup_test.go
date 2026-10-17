@@ -159,7 +159,7 @@ func TestOpenTamperedKDFParams(t *testing.T) {
 	blob, _ := Export(db, "the right passphrase", "test", false, false)
 	// Downgrade the iteration count in the cleartext envelope. It's now bound as AAD,
 	// so the open must reject it (defends a future iter-downgrade attack).
-	tampered := strings.Replace(string(blob), `"iter": 600000`, `"iter": 1`, 1)
+	tampered := strings.Replace(string(blob), `"iter": 3`, `"iter": 1`, 1)
 	if tampered == string(blob) {
 		t.Fatal("test setup: iter field not found to tamper")
 	}
