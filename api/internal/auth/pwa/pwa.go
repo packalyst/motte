@@ -29,10 +29,10 @@ const PushTTL = 86400 // 24 hours
 
 // Service handles all PWA-related operations
 type Service struct {
-	db         *database.DB
-	vapidKeys  *VAPIDKeys
-	subject    string
-	mu         sync.RWMutex
+	db        *database.DB
+	vapidKeys *VAPIDKeys
+	subject   string
+	mu        sync.RWMutex
 }
 
 var (

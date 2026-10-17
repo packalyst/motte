@@ -15,18 +15,18 @@ import (
 // Never a shell string. The agent independently re-checks this set before acting,
 // so a compromised panel row still can't make the agent run arbitrary code.
 var allowedCommands = map[string]bool{
-	"block":         true,
-	"unblock":       true,
-	"apply-updates": true,
-	"restart":       true,
-	"rescan":        true, // re-run the Trivy CVE scan now (don't wait for the interval)
-	"sync-blocks":   true, // replace the machine's panel-pushed blocklist with the panel's current one
-	"clear-blocks":  true, // empty the machine's panel-pushed blocklist (leaves CrowdSec/manual bans)
-	"fix-packages":  true, // targeted OS-package upgrades for selected CVEs
-	"update-kernel": true, // install newest kernel meta-packages (+ reboot separately)
-	"set-dry-run":   true, // flip enforcement on/off (dry-run) live
-	"update-agent":  true, // self-update the wgscout binary to the latest verified release
-	"set-log-level": true, // flip agent+sub-agent verbosity live (quiet|debug)
+	"block":          true,
+	"unblock":        true,
+	"apply-updates":  true,
+	"restart":        true,
+	"rescan":         true, // re-run the Trivy CVE scan now (don't wait for the interval)
+	"sync-blocks":    true, // replace the machine's panel-pushed blocklist with the panel's current one
+	"clear-blocks":   true, // empty the machine's panel-pushed blocklist (leaves CrowdSec/manual bans)
+	"fix-packages":   true, // targeted OS-package upgrades for selected CVEs
+	"update-kernel":  true, // install newest kernel meta-packages (+ reboot separately)
+	"set-dry-run":    true, // flip enforcement on/off (dry-run) live
+	"update-agent":   true, // self-update the wgscout binary to the latest verified release
+	"set-log-level":  true, // flip agent+sub-agent verbosity live (quiet|debug)
 	"set-panel-port": true, // tell the agent the panel's mTLS port changed (reconnect)
 }
 

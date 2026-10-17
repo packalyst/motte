@@ -18,10 +18,10 @@ type PushSubscription struct {
 
 // SubscribeRequest represents a push subscription request from client
 type SubscribeRequest struct {
-	DeviceName   string `json:"deviceName"`
-	Endpoint     string `json:"endpoint"`
-	KeyP256DH    string `json:"keyP256dh"`
-	KeyAuth      string `json:"keyAuth"`
+	DeviceName     string `json:"deviceName"`
+	Endpoint       string `json:"endpoint"`
+	KeyP256DH      string `json:"keyP256dh"`
+	KeyAuth        string `json:"keyAuth"`
 	ExpirationTime *int64 `json:"expirationTime,omitempty"`
 }
 
@@ -55,12 +55,12 @@ type LocationRequest struct {
 
 // Notification represents a push notification to send
 type Notification struct {
-	Title   string            `json:"title"`
-	Body    string            `json:"body"`
-	Icon    string            `json:"icon,omitempty"`
-	Badge   string            `json:"badge,omitempty"`
-	Tag     string            `json:"tag,omitempty"`
-	Data    map[string]string `json:"data,omitempty"`
+	Title   string               `json:"title"`
+	Body    string               `json:"body"`
+	Icon    string               `json:"icon,omitempty"`
+	Badge   string               `json:"badge,omitempty"`
+	Tag     string               `json:"tag,omitempty"`
+	Data    map[string]string    `json:"data,omitempty"`
 	Actions []NotificationAction `json:"actions,omitempty"`
 }
 

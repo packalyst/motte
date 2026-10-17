@@ -124,7 +124,7 @@ func (t *VPNACLTable) loadRules() ([]aclRule, error) {
 // aclVirtualIP is a virtual IP plus the source peer IPs allowed to reach it.
 type aclVirtualIP struct {
 	IP         string
-	Target     string   // DNAT target device IP, if this vip forwards to a LAN device
+	Target     string // DNAT target device IP, if this vip forwards to a LAN device
 	Restricted bool
 	Quarantine bool     // may be reached, but can't initiate to other peers
 	Allowed    []string // allowed source peer IPs (only meaningful when Restricted)
