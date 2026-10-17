@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"api/internal/database"
 	"api/internal/helper"
@@ -115,27 +116,51 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 		rules = append(rules, r)
 	}
 
+	// Reserved host names that must not be claimed by a client (emitted below).
+	routerName := helper.GetEnv("VPN_ROUTER_NAME")
+	if routerName == "" {
+		routerName = "vpn-router"
+	}
+
+	// Assign a STABLE, UNIQUE Headscale host name per client. sanitizeHostName is lossy
+	// ("cam 1" and "cam-1" both collapse to "cam-1"), so without this two clients could claim
+	// the same name: acl.Hosts would keep only the last (random map order) and an ACL grant
+	// could attach to the wrong host. Assign in ID order and suffix any duplicate so every
+	// client gets a distinct name that also can't collide with the reserved names.
+	used := map[string]bool{"wireguard-network": true, routerName: true}
+	names := make(map[int]string, len(clients))
+	ids := make([]int, 0, len(clients))
+	for id := range clients {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	for _, id := range ids {
+		base := sanitizeHostName(clients[id].Name)
+		if base == "" {
+			base = fmt.Sprintf("client-%d", id)
+		}
+		name := base
+		for i := 2; used[name]; i++ {
+			name = fmt.Sprintf("%s-%d", base, i)
+		}
+		used[name] = true
+		names[id] = name
+	}
+
 	// Build Headscale ACL
 	acl := &HeadscaleACL{
 		Hosts: make(map[string]string),
 		ACLs:  []ACLEntry{},
 	}
 
-	// Add all clients to hosts (except block_all which are isolated)
-	for _, c := range clients {
-		safeName := sanitizeHostName(c.Name)
-		acl.Hosts[safeName] = c.IP
+	// Add all clients to hosts
+	for id, c := range clients {
+		acl.Hosts[names[id]] = c.IP
 	}
 
 	// Add WireGuard network as a host entry for routing
 	if wgIPRange != "" {
 		acl.Hosts["wireguard-network"] = wgIPRange
-	}
-
-	// Allow router to access everything (needed for subnet routing)
-	routerName := helper.GetEnv("VPN_ROUTER_NAME")
-	if routerName == "" {
-		routerName = "vpn-router"
 	}
 	acl.ACLs = append(acl.ACLs, ACLEntry{
 		Action: "accept",
@@ -154,7 +179,7 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 	// Handle "allow_all" policies first - these clients can reach everyone
 	for _, c := range clients {
 		if c.Policy == helper.ACLPolicyAllowAll {
-			safeName := sanitizeHostName(c.Name)
+			safeName := names[c.ID]
 			// Allow this client to reach everything
 			acl.ACLs = append(acl.ACLs, ACLEntry{
 				Action: "accept",
@@ -187,8 +212,8 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 			continue
 		}
 
-		srcName := sanitizeHostName(src.Name)
-		dstName := sanitizeHostName(dst.Name)
+		srcName := names[src.ID]
+		dstName := names[dst.ID]
 
 		key := fmt.Sprintf("%s->%s", srcName, dstName)
 		if !allowedPairs[key] {
@@ -205,7 +230,7 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 	// (except block_all which are isolated)
 	for _, c := range clients {
 		if c.Type == "headscale" && c.Policy != helper.ACLPolicyBlockAll {
-			safeName := sanitizeHostName(c.Name)
+			safeName := names[c.ID]
 			acl.ACLs = append(acl.ACLs, ACLEntry{
 				Action: "accept",
 				Src:    []string{safeName},
