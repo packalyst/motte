@@ -10,11 +10,7 @@ updates:
     open-pull-requests-limit: 5
     labels: [dependencies, go]
 
-  - package-ecosystem: gomod
-    directory: /agent
-    schedule:
-      interval: weekly
-    labels: [dependencies, go]
+  # NB: /agent is intentionally not committed yet (.gitignore) — add a gomod entry when it is.
 
   - package-ecosystem: npm
     directory: /ui

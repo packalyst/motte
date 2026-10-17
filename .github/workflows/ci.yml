@@ -1,7 +1,7 @@
 # Blocking CI — the gates that must pass before merge. Every command here is run the same way
 # locally (see docs/reference/coding-standards.md) and is known-green. Security/quality scanners
-# that may surface pre-existing findings live in security.yml / codeql.yml as ADVISORY jobs so
-# they report without wedging the pipeline.
+# that may surface pre-existing findings live in security.yml (and GitHub's default CodeQL setup)
+# as ADVISORY jobs so they report without wedging the pipeline.
 name: CI
 
 on:
@@ -19,7 +19,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [api, agent]
+        # agent/ is intentionally not committed yet (.gitignore) — add it back here when it is.
+        module: [api]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -56,10 +57,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui/package-lock.json
+          # ui/package-lock.json is gitignored, so key the cache on package.json and use
+          # `npm install` (npm ci requires a committed lockfile).
+          cache-dependency-path: ui/package.json
       - name: install
         working-directory: ui
-        run: npm ci
+        run: npm install
       - name: build
         working-directory: ui
         run: npm run build

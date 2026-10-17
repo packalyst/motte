@@ -738,9 +738,9 @@ func (s *Service) handleSetWatcher(w http.ResponseWriter, r *http.Request) {
 // Respects the same filter params as GET /api/logs so a filtered view can be
 // cleared without touching other entries:
 //
-//   ?type=inbound         → delete only inbound rows
-//   ?status=403           → delete only rows with that status
-//   ?search=api.foo.com   → delete rows matching the domain/IP substring
+//	?type=inbound         → delete only inbound rows
+//	?status=403           → delete only rows with that status
+//	?search=api.foo.com   → delete rows matching the domain/IP substring
 //
 // No params → delete ALL rows. Returns { "deleted": N }.
 func (s *Service) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {

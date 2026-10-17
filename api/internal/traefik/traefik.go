@@ -658,10 +658,10 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 //
 // This is what makes the toggle survive:
 //   - `docker restart api`  (yaml file is preserved by bind mount, so nothing
-//                            to restore — but this runs anyway, and is idempotent)
+//     to restore — but this runs anyway, and is idempotent)
 //   - `docker compose down && up`  (same as above)
 //   - `manage.sh` re-run  (regenerates core.yml from template, wiping the
-//                          runtime middleware attachments — restore rewrites them)
+//     runtime middleware attachments — restore rewrites them)
 func (s *Service) RestoreVPNOnlyMode() {
 	if LoadVPNOnlyMode == nil {
 		return // main.go didn't wire the loader — nothing to restore

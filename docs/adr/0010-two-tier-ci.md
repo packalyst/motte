@@ -17,7 +17,7 @@ Split CI into two tiers:
 - **Blocking** (`ci.yml`): `go build` / `go vet` / `gofmt` / `go test` for both modules, and the
   ui `vite build` — the exact commands already verified green, so the gate is meaningful from day
   one.
-- **Advisory** (`security.yml`, `codeql.yml`): every scanner runs on each push/PR and weekly, and
+- **Advisory** (`security.yml` + GitHub's default CodeQL setup): every scanner runs on each push/PR and weekly, and
   **reports** findings (`continue-on-error`) without failing the build. A scanner is **promoted**
   into the blocking tier (drop `continue-on-error`, move the job) once it runs clean repo-wide.
 

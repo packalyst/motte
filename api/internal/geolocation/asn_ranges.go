@@ -18,6 +18,7 @@ const maxASNv4CIDRs = 131072
 // IPv6 CSVs number the IPv4 space in one of two ways depending on the file:
 //   - IPv4-mapped ::ffff:a.b.c.d  (bytes 10-11 = 0xff), and
 //   - plain low 32 bits ::a.b.c.d (bytes 10-11 = 0).
+//
 // Both keep bytes 0-9 zero, so we accept either and read the address from the
 // low four bytes. Returns (0,false) for genuine IPv6 keys (any non-zero byte in
 // 0-9, or a non-{0x0000,0xffff} pair at 10-11) — the firewall is IPv4-only.
