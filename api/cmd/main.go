@@ -234,6 +234,14 @@ func main() {
 			log.Println("Firewall service registered")
 		}
 	}
+	// If the firewall is enabled but its layer (nftables or the firewall service) didn't come
+	// up, the gate is NOT being managed. Flag it so the UI shows a visible warning rather than
+	// leaving the operator to spot it in the boot log. (Not fatal: crashing here would lock the
+	// operator out, which is the very failure mode we're guarding against elsewhere.)
+	if config.IsServiceEnabled("firewall") && (nftSvc == nil || fwSvc == nil) {
+		log.Printf("WARNING: firewall enabled but NOT active (nftables/firewall init failed) — rules are not being managed")
+		helper.SetFirewallActive(false)
+	}
 
 	if config.IsServiceEnabled("wireguard") {
 		wgSvc, err := wireguard.New(dataDir + "/wireguard")

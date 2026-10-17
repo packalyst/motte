@@ -59,6 +59,9 @@ type SetupStatus struct {
 	HasAdmin           bool `json:"hasAdmin"`
 	HasHeadscale       bool `json:"hasHeadscale"`
 	AdguardPassChanged bool `json:"adguardPassChanged"`
+	// FirewallActive is false when the firewall is enabled but failed to initialize — the
+	// gate is then NOT being managed, so the UI surfaces a warning instead of a silent log line.
+	FirewallActive bool `json:"firewallActive"`
 }
 
 // SetupRequest represents the setup wizard data
@@ -350,6 +353,9 @@ func (s *Service) GetStatus() (*SetupStatus, error) {
 
 	// Setup is complete if we have admin and headscale
 	status.Completed = status.HasAdmin && status.HasHeadscale
+
+	// Surface whether the firewall layer actually came up (set once at boot).
+	status.FirewallActive = helper.FirewallActive()
 
 	return status, nil
 }
