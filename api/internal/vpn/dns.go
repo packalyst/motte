@@ -1,6 +1,7 @@
 package vpn
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -18,13 +19,28 @@ func getVPNDNSSuffix() string {
 	return "." + baseDomain
 }
 
-// AddClientDNS adds a DNS rewrite for a VPN client
+// AddClientDNS adds a DNS rewrite for a VPN client. AdGuard's rewrite/add APPENDS (it allows
+// multiple answers per domain), so we never add blindly: if the name already resolves to a
+// DIFFERENT IP, another device owns it — refuse so the operator renames, rather than stacking
+// duplicate answers (wrong-host lookups) or silently stealing the name. Re-adding the same
+// name→IP is a no-op.
 func AddClientDNS(name, ip string) error {
 	suffix := getVPNDNSSuffix()
 	if suffix == "" {
 		return nil
 	}
 	domain := sanitizeForDNS(name) + suffix
+	if existing, err := adguard.GetRewrites(); err == nil {
+		for _, r := range existing {
+			if r.Domain != domain {
+				continue
+			}
+			if r.Answer == ip {
+				return nil // already set for this client — idempotent
+			}
+			return fmt.Errorf("DNS name %q is already in use by another device — rename this client", domain)
+		}
+	}
 	return adguard.AddRewrite(domain, ip)
 }
 
