@@ -228,7 +228,7 @@ services:
   # ============================================
   dnsmasq:
     build:
-      context: ./dnsmasq
+      context: ./containers/dnsmasq
     container_name: dnsmasq
     restart: unless-stopped
     logging: *default-logging
@@ -297,7 +297,7 @@ services:
   # restart is "no" so a bare `docker compose up` (with no config) doesn't loop;
   # the panel-created container sets its own unless-stopped policy.
   turbotunnels:
-    build: ./turbotunnels
+    build: ./containers/turbotunnels
     container_name: turbotunnels
     restart: "no"
     logging: *default-logging

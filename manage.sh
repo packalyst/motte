@@ -2996,6 +2996,16 @@ fi
 
 echo ""
 
+# Drop the now-dangling images left behind by `--build` (the previous, now-untagged
+# versions of api/ui/dnsmasq/add-ons), so repeated updates don't slowly fill the disk.
+# Dangling-ONLY (no -a): tagged images and any image still used by a running or stopped
+# container — including a running add-on on its old image — are never touched; volumes and
+# build cache are never touched. Best-effort so a prune hiccup can't fail the deploy.
+echo -e "${YELLOW}Cleaning up old build layers...${NC}"
+docker image prune -f >/dev/null 2>&1 || true
+
+echo ""
+
 # Post-deploy SSL certificate check
 if [ "$SSL_ENABLED" = "true" ]; then
     echo -e "${YELLOW}Waiting for SSL certificate...${NC}"
