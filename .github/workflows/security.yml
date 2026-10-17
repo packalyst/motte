@@ -23,7 +23,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [api, agent]
+        # agent/ is intentionally not committed yet (.gitignore) — add it back here when it is.
+        module: [api]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -123,11 +124,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui/package-lock.json
+          cache-dependency-path: ui/package.json
       - working-directory: ui
         continue-on-error: true
         run: |
-          npm ci
+          npm install
           echo "## npm audit" >> "$GITHUB_STEP_SUMMARY"
           npm audit --omit=dev || true
           echo "## outdated" >> "$GITHUB_STEP_SUMMARY"
