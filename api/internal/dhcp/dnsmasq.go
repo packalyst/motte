@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,7 +19,22 @@ const dnsmasqConfDir = "/dhcp-conf"
 // dnsmasqContainer is restarted (via the socket-proxy, not exec) to reload config.
 const dnsmasqContainer = "dnsmasq"
 
-func dnsmasqConfPath(iface string) string { return dnsmasqConfDir + "/wgpanel-" + iface + ".conf" }
+// dnsmasqConfPath returns the per-network config path and GUARANTEES it stays inside
+// dnsmasqConfDir. iface is already validated (validIface forbids '/') before a network is
+// persisted and is wrapped between a fixed prefix/suffix, so it cannot introduce a path
+// separator — but this is a privileged file write, so we re-validate and assert containment at
+// the boundary rather than trust the stored value. Fails closed: a bad iface yields an error, not
+// a path that could escape the directory.
+func dnsmasqConfPath(iface string) (string, error) {
+	if !validIface(iface) {
+		return "", fmt.Errorf("invalid interface name %q", iface)
+	}
+	p := filepath.Join(dnsmasqConfDir, "wgpanel-"+iface+".conf")
+	if filepath.Dir(p) != dnsmasqConfDir {
+		return "", fmt.Errorf("refusing dnsmasq path outside %s: %q", dnsmasqConfDir, p)
+	}
+	return p, nil
+}
 
 // renderDnsmasqConf builds the DHCP-only config for one network. port=0 means no DNS (AdGuard
 // owns :53); clients are pointed at the gateway for DNS (option 6) and routing (option 3). In
@@ -83,6 +99,10 @@ func sanitizeDHCPName(name string) string {
 // (mirrors the nft -c gate), then writes it and reloads dnsmasq. A config that fails the test is
 // never written, so a bad entry can't take DHCP down.
 func (s *Service) writeDnsmasqConfig(n *Network) error {
+	path, err := dnsmasqConfPath(n.Iface)
+	if err != nil {
+		return err
+	}
 	reservations, err := s.approvedReservations(n.ID)
 	if err != nil {
 		return err
@@ -94,7 +114,7 @@ func (s *Service) writeDnsmasqConfig(n *Network) error {
 	if err := os.MkdirAll(dnsmasqConfDir, 0o755); err != nil {
 		return fmt.Errorf("dnsmasq conf dir: %w", err)
 	}
-	if err := os.WriteFile(dnsmasqConfPath(n.Iface), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write dnsmasq config: %w", err)
 	}
 	return reloadDnsmasq()
@@ -103,7 +123,10 @@ func (s *Service) writeDnsmasqConfig(n *Network) error {
 // writeDnsmasqDisabled removes a network's config and reloads (used when a network is disabled
 // or deleted).
 func (s *Service) writeDnsmasqDisabled(n *Network) error {
-	path := dnsmasqConfPath(n.Iface)
+	path, err := dnsmasqConfPath(n.Iface)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(path); err == nil {
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("remove dnsmasq config: %w", err)
