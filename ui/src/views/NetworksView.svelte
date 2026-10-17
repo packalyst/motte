@@ -7,6 +7,9 @@
   import Input from '../components/Input.svelte'
   import Select from '../components/Select.svelte'
   import Checkbox from '../components/Checkbox.svelte'
+  import InfoCard from '../components/InfoCard.svelte'
+  import Toolbar from '../components/Toolbar.svelte'
+  import EmptyState from '../components/EmptyState.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -15,6 +18,12 @@
   let suggestions = $state([]) // safe CIDR candidates from the backend
   let wan = $state('')
   let vpnClients = $state([])
+  let searchQuery = $state('')
+  let filteredNetworks = $derived(
+    !searchQuery.trim()
+      ? networks
+      : networks.filter((n) => `${n.iface} ${n.cidr}`.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+  )
 
   // Inline per-network detail (clients + reachability), fetched on expand.
   let expandedId = $state(null)
@@ -224,30 +233,27 @@
   function leaseHours(secs) { return Math.round((secs / 3600) * 10) / 10 }
 </script>
 
-<div class="p-4 sm:p-6 max-w-5xl mx-auto">
-  <div class="flex items-center justify-between gap-3 mb-5">
-    <div>
-      <h1 class="text-xl font-semibold flex items-center gap-2">
-        <Icon name="router" size={22} class="text-primary" /> Private Networks
-      </h1>
-      <p class="text-sm text-base-content/60 mt-1">
-        The panel acts as gateway + DHCP for an isolated LAN segment. Devices are reachable over
-        the VPN only after you opt a client in — default-deny.
-      </p>
-    </div>
-    <Button variant="primary" icon="plus" onclick={openAdd}>Add network</Button>
-  </div>
+<div class="space-y-4">
+  <InfoCard
+    icon="router"
+    title="Private Networks"
+    description="The panel acts as gateway + DHCP for an isolated LAN segment. Devices are reachable over the VPN only after you opt a client in — default-deny."
+  />
+
+  <Toolbar bind:search={searchQuery} placeholder="Search networks...">
+    <Button size="xs" icon="plus" onclick={openAdd}>Add network</Button>
+  </Toolbar>
 
   {#if !networks.length}
-    <div class="text-center py-16 border border-dashed border-base-300 rounded-xl">
-      <Icon name="router" size={40} class="text-base-content/30 mx-auto" />
-      <p class="mt-3 text-base-content/70">No managed networks yet.</p>
-      <p class="text-sm text-base-content/50">Add one to hand out DHCP addresses on an internal interface.</p>
-    </div>
+    <EmptyState
+      icon="router"
+      title="No managed networks yet"
+      description="Add one to hand out DHCP addresses on an internal interface."
+    />
   {/if}
 
   <div class="flex flex-col gap-3">
-    {#each networks as net (net.id)}
+    {#each filteredNetworks as net (net.id)}
       <div class="border border-base-300 rounded-xl overflow-hidden">
         <!-- Network summary row -->
         <button class="w-full flex items-center gap-3 p-4 text-left hover:bg-base-200/40 transition-colors"
