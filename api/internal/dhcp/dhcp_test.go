@@ -63,21 +63,6 @@ func TestSuggestSubnets(t *testing.T) {
 	}
 }
 
-// DHCP_SUBNET_POOL overrides the default 10.N.N generator with an explicit list.
-func TestSuggestSubnets_EnvOverride(t *testing.T) {
-	t.Setenv("WG_IP_RANGE", "")
-	t.Setenv("HEADSCALE_IP_RANGE", "")
-	t.Setenv("DHCP_SUBNET_POOL", "192.168.123.0/24, 10.77.77.0/24")
-
-	got := suggestSubnets(nil, 6)
-	if len(got) != 2 {
-		t.Fatalf("expected the 2 pool entries, got %d (%v)", len(got), got)
-	}
-	if got[0].CIDR != "192.168.123.0/24" || got[1].CIDR != "10.77.77.0/24" {
-		t.Errorf("env pool not honoured in order: %+v", got)
-	}
-}
-
 func baseNet() *Network {
 	return &Network{
 		Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1",

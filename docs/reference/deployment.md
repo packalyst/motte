@@ -140,7 +140,6 @@ Notable groups in `.env.example` (see the file for the full annotated list):
 - **SSL**: `SSL_ENABLED`, `SSL_DOMAIN`, `LETSENCRYPT_EMAIL`, `CF_WILDCARD_ENABLED`, `CF_API_EMAIL`, `CF_DNS_API_TOKEN`.
 - **Networks**: `IGNORE_NETWORKS` (private ranges the firewall ignores + the VPN-only middleware allows), `DOCKER_SUBNET`/`DOCKER_GATEWAY`, static container IPs, `TRAEFIK_API`.
 - **Security**: `ENCRYPTION_SECRET` (REQUIRED), `TRUSTED_PROXIES`.
-- **DHCP (optional)**: `DHCP_SUBNET_POOL` — comma-separated CIDRs the managed-network UI suggests; unset = generated as `10.N.N.0/24` (`10.20.20.0/24`, `10.30.30.0/24`, …). Suggestions are always re-validated (no overlap with the VPN/existing networks), so this only changes which ranges are *offered*.
 - **Rate limiting**: `RATE_LIMIT_*` (normal + strict).
 - **Logs**: `TRAEFIK_LOGS`/`TRAEFIK_MAIN_LOG`/`ADGUARD_LOGS`/`KERN_LOG` paths, storage limits, GeoIP enrichment, log rotation.
 - **Turbotunnels**: `PROXY_DOMAIN` + rotation rate-limit knobs.
