@@ -121,7 +121,10 @@ func (s *Service) DeleteMachine(id string) error {
 // out — so the panel shows it as gone (list-only, delete to remove) rather than just
 // "offline". Keeps the row so the operator can see + delete it deliberately.
 func (s *Service) MarkUninstalled(id string) error {
-	_, err := s.db.Exec(`UPDATE fleet_machines SET status='uninstalled', last_seen=? WHERE id=?`,
+	// revoked=1 kills the client cert's mTLS access the moment the agent deregisters —
+	// otherwise a copy of the retired host's cert+key keeps authenticating until its 90-day
+	// TTL or a manual delete. Re-installing enrolls a fresh row, so this doesn't block return.
+	_, err := s.db.Exec(`UPDATE fleet_machines SET status='uninstalled', revoked=1, last_seen=? WHERE id=?`,
 		time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
