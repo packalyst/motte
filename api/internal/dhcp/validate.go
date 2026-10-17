@@ -133,23 +133,10 @@ type SubnetSuggestion struct {
 	PoolEnd   string `json:"pool_end"`
 }
 
-// subnetPool is the ordered list of candidate CIDRs the suggester draws from. An operator can
-// override it with DHCP_SUBNET_POOL (comma-separated CIDRs); otherwise it's generated
-// algorithmically across 10.0.0.0/8 as 10.N.N.0/24 for N = 20,30,…,250 — a memorable
-// 10.20.20 / 10.30.30 / 10.40.40 … shape with no hand-maintained list that effectively never
-// runs out.
+// subnetPool generates the candidate CIDRs algorithmically across 10.0.0.0/8 as 10.N.N.0/24 for
+// N = 20,30,…,250 — a memorable 10.20.20 / 10.30.30 / 10.40.40 … sequence with no hand-maintained
+// list that effectively never runs out.
 func subnetPool() []string {
-	if raw := strings.TrimSpace(helper.GetEnvOptional("DHCP_SUBNET_POOL", "")); raw != "" {
-		var pool []string
-		for _, c := range strings.Split(raw, ",") {
-			if c = strings.TrimSpace(c); c != "" {
-				pool = append(pool, c)
-			}
-		}
-		if len(pool) > 0 {
-			return pool
-		}
-	}
 	pool := make([]string, 0, 24)
 	for n := 20; n <= 250; n += 10 {
 		pool = append(pool, fmt.Sprintf("10.%d.%d.0/24", n, n))
