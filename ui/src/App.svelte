@@ -14,6 +14,7 @@
   let checking = $state(true)
   let needsSetup = $state(false)
   let showAdguardBanner = $state(false)
+  let fwInactive = $state(false)   // firewall enabled but failed to init — gate not managed
 
   // Set global logout handler for API 401 errors
   setGlobalLogoutHandler(() => {
@@ -66,6 +67,8 @@
       }
       // Check if AdGuard password needs to be configured
       showAdguardBanner = !setupStatus.adguardPassChanged
+      // Firewall layer failed to come up → the gate isn't being managed. Warn prominently.
+      fwInactive = setupStatus.firewallActive === false
     } catch {
       // Ignore errors
     }
@@ -131,6 +134,11 @@
 {:else if needsSetup}
   <SetupWizard onComplete={handleSetupComplete} />
 {:else if user}
+  {#if fwInactive}
+    <div class="fixed bottom-0 inset-x-0 z-[9999] bg-destructive text-destructive-foreground text-sm text-center py-2 px-4 font-medium shadow-lg">
+      Firewall not active — the firewall layer failed to start, so your rules are <strong>not being managed</strong>. Check the panel host (nftables), then reload.
+    </div>
+  {/if}
   <Dashboard onLogout={handleLogout} {showAdguardBanner} onDismissAdguardBanner={() => showAdguardBanner = false} />
 {:else}
   <Login onLogin={handleLogin} />
