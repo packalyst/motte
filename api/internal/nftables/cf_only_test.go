@@ -80,6 +80,37 @@ func TestCloudflareOnlyBuild_Enabled(t *testing.T) {
 	}
 }
 
+// Regression (2026-10-17): a TRANSIENT DB read error must NOT strip Cloudflare-only
+// protection. restrictEnabled keeps the last-known-restrictive state on any error that isn't
+// sql.ErrNoRows; previously a read error fell through to "off", silently exposing 80/443.
+func TestCloudflareOnlyBuild_FailsClosedOnDBError(t *testing.T) {
+	db := cfTestDB(t, "on")
+	tbl := NewCloudflareOnlyTable(db)
+
+	// Prime the last-known state to "restricted".
+	out, err := tbl.Build()
+	if err != nil {
+		t.Fatalf("initial Build: %v", err)
+	}
+	if !strings.Contains(out, "tcp dport { 80, 443 } drop") {
+		t.Fatalf("precondition: an enabled build must drop the web ports:\n%s", out)
+	}
+
+	// Make the settings read fail with a non-ErrNoRows error, leaving the handle open so
+	// only restrictEnabled is affected.
+	if _, err := db.DB.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings: %v", err)
+	}
+
+	out2, err := tbl.Build()
+	if err != nil {
+		t.Fatalf("Build after a DB error must not itself error: %v", err)
+	}
+	if !strings.Contains(out2, "tcp dport { 80, 443 } drop") {
+		t.Fatalf("fail-CLOSED expected: a transient DB error must keep the drop, got:\n%s", out2)
+	}
+}
+
 func TestSplitCIDRs(t *testing.T) {
 	v4, v6 := splitCIDRs([]string{"1.2.3.0/24", "2606:4700::/32", "104.16.0.0/13"})
 	if len(v4) != 2 || len(v6) != 1 {
