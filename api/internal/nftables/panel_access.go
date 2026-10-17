@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"api/internal/database"
 )
@@ -81,22 +82,32 @@ func (t *PanelAccessTable) Build() (string, error) {
 	return sb.String(), nil
 }
 
+// lastPanelAccessRestrict remembers the last good read so a TRANSIENT DB error can't silently
+// stop restricting the API port (which would re-expose it to the public). A genuinely-absent
+// setting (sql.ErrNoRows) means direct access is allowed — the safe default for a fresh,
+// domain-less install.
+var lastPanelAccessRestrict atomic.Bool
+
 // restrictEnabled reports whether the API port should be closed to the public. It is only
 // true when the `api_direct_access` setting is explicitly "off"; a missing setting means
-// direct access is allowed (the safe default for a fresh, domain-less install).
+// direct access is allowed (the safe default for a fresh, domain-less install); a transient
+// read error keeps whatever was last known (so a DB hiccup can't silently re-expose the API).
 func (t *PanelAccessTable) restrictEnabled() bool {
 	if t.db == nil {
 		return false
 	}
 	var v string
 	err := t.db.QueryRow(`SELECT value FROM settings WHERE key = ? AND encrypted = 0`, "api_direct_access").Scan(&v)
-	if err != nil {
-		if err != sql.ErrNoRows {
-			return false // on any read error, fail open (don't restrict)
-		}
+	if err == sql.ErrNoRows { // not configured → direct access allowed (safe default)
+		lastPanelAccessRestrict.Store(false)
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(v), "off")
+	if err != nil { // transient DB error → keep last-known state, don't stop restricting
+		return lastPanelAccessRestrict.Load()
+	}
+	restrict := strings.EqualFold(strings.TrimSpace(v), "off")
+	lastPanelAccessRestrict.Store(restrict)
+	return restrict
 }
 
 // apiPort returns the validated API_PORT (1–65535).
