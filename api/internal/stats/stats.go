@@ -7,8 +7,8 @@ import (
 )
 
 var (
-	startTime  time.Time
-	startOnce  sync.Once
+	startTime   time.Time
+	startOnce   sync.Once
 	wsClientsFn func() int
 )
 
@@ -24,11 +24,11 @@ type SystemStats struct {
 
 // TrafficStats contains VPN traffic metrics
 type TrafficStats struct {
-	TotalTx int64        `json:"total_tx"` // total bytes sent
-	TotalRx int64        `json:"total_rx"` // total bytes received
-	RateTx  int64        `json:"rate_tx"`  // bytes/sec sent
-	RateRx  int64        `json:"rate_rx"`  // bytes/sec received
-	ByPeer  []PeerTraffic `json:"by_peer"` // per-peer breakdown
+	TotalTx int64         `json:"total_tx"` // total bytes sent
+	TotalRx int64         `json:"total_rx"` // total bytes received
+	RateTx  int64         `json:"rate_tx"`  // bytes/sec sent
+	RateRx  int64         `json:"rate_rx"`  // bytes/sec received
+	ByPeer  []PeerTraffic `json:"by_peer"`  // per-peer breakdown
 }
 
 // PeerTraffic contains traffic for a single peer

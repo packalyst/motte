@@ -287,13 +287,12 @@ func (s *Service) GetSubscriptionsByUserIDs(userIDs []int64) ([]PushSubscription
 	return subs, nil
 }
 
-
 // validPushDomains contains allowed push service domains
 var validPushDomains = []string{
-	"fcm.googleapis.com",           // Google/Android/Chrome
-	"web.push.apple.com",           // Apple/Safari/iOS
+	"fcm.googleapis.com",                // Google/Android/Chrome
+	"web.push.apple.com",                // Apple/Safari/iOS
 	"updates.push.services.mozilla.com", // Firefox
-	".notify.windows.com",          // Edge/Windows (wildcard suffix)
+	".notify.windows.com",               // Edge/Windows (wildcard suffix)
 }
 
 // isValidPushEndpoint checks if the endpoint is from a known push service

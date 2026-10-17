@@ -4,12 +4,12 @@ import "testing"
 
 func TestSanitizeMachineName(t *testing.T) {
 	cases := map[string]string{
-		"ubuntu24":                       "ubuntu24",
-		"web-01.example.com":             "web-01.example.com",
-		"  spaced  name  ":               "spaced  name",
-		`<img src=x onerror="steal()">`:  "img srcx onerrorsteal", // all HTML metachars stripped
-		"a\nb\tc":                        "abc",                    // control chars stripped
-		"":                               "",
+		"ubuntu24":                      "ubuntu24",
+		"web-01.example.com":            "web-01.example.com",
+		"  spaced  name  ":              "spaced  name",
+		`<img src=x onerror="steal()">`: "img srcx onerrorsteal", // all HTML metachars stripped
+		"a\nb\tc":                       "abc",                   // control chars stripped
+		"":                              "",
 	}
 	for in, want := range cases {
 		if got := sanitizeMachineName(in); got != want {

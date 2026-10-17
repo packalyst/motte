@@ -277,9 +277,9 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		// Jails (fail2ban)
 		"GetLogFiles": s.handleGetLogFiles,
 		"GetJails":    s.handleGetJails,
-		"CreateJail": s.handleCreateJail,
-		"GetJail":    s.handleGetJail,
-		"UpdateJail": s.handleUpdateJail,
-		"DeleteJail": s.handleDeleteJail,
+		"CreateJail":  s.handleCreateJail,
+		"GetJail":     s.handleGetJail,
+		"UpdateJail":  s.handleUpdateJail,
+		"DeleteJail":  s.handleDeleteJail,
 	}
 }
