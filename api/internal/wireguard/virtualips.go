@@ -202,6 +202,25 @@ func loadVIPAllowed(vipID int64) []int64 {
 }
 
 // handleAddVirtualIP  POST /api/wg/peers/{id}/vips
+// validateVIPTarget rejects a virtual-IP device target that is itself a VPN participant. The
+// target must be a LAN device behind a peer — never another peer or loopback. Otherwise a vip
+// pointed at a real peer's address, with Quarantine on, would drop that unrelated peer's
+// traffic (the quarantine rule drops by the target's source IP).
+func (s *Service) validateVIPTarget(ip net.IP) error {
+	if ip.IsLoopback() {
+		return fmt.Errorf("device IP can't be loopback")
+	}
+	for _, cidr := range []string{s.config.IPRange, s.config.HeadscaleIPRange} {
+		if cidr == "" {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(cidr); err == nil && n.Contains(ip) {
+			return fmt.Errorf("device IP %s is inside the VPN range — a virtual IP must point to a LAN device, not another VPN peer", ip)
+		}
+	}
+	return nil
+}
+
 func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 	id := router.ExtractPathParam(r, "/api/wg/peers/")
 	peer := s.peerStore.Get(id)
@@ -232,8 +251,13 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimSpace(req.TargetIP)
 	port := 0
 	if target != "" {
-		if ip := net.ParseIP(target); ip == nil || ip.To4() == nil {
+		ip := net.ParseIP(target)
+		if ip == nil || ip.To4() == nil {
 			router.JSONError(w, "device IP must be a valid IPv4 address", http.StatusBadRequest)
+			return
+		}
+		if err := s.validateVIPTarget(ip); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		// port 0 = forward every port (e.g. ONVIF, which needs 554 + HTTP + dynamic RTP);
