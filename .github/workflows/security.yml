@@ -1,0 +1,132 @@
+# Advisory security & quality scanners. Everything here is continue-on-error: it REPORTS
+# findings (in each step's log / the job summary) but does NOT fail the build yet — so the
+# pipeline is green on day one while the findings are driven to zero. Promote a scanner to a
+# blocking gate (move it into ci.yml, drop continue-on-error) once it runs clean.
+name: Security & quality (advisory)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # weekly — new CVEs land against unchanged code
+
+permissions:
+  contents: read
+
+jobs:
+  # --- Go: SAST, CVE scan, dead code, duplication -------------------------------------------
+  go-analysis:
+    name: go analysis (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [api, agent]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache: false
+
+      - name: gosec (SAST — injection, weak crypto, path traversal, …)
+        working-directory: ${{ matrix.module }}
+        continue-on-error: true
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest ./... || true
+
+      - name: govulncheck (known CVEs in deps + stdlib, reachability-aware)
+        working-directory: ${{ matrix.module }}
+        continue-on-error: true
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./... || true
+
+      - name: staticcheck (bugs + simplifications)
+        working-directory: ${{ matrix.module }}
+        continue-on-error: true
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./... || true
+
+      - name: deadcode (unreachable functions)
+        working-directory: ${{ matrix.module }}
+        continue-on-error: true
+        run: go run golang.org/x/tools/cmd/deadcode@latest ./... || true
+
+      - name: dupl (copy-paste / DRY violations)
+        working-directory: ${{ matrix.module }}
+        continue-on-error: true
+        run: go run github.com/mibk/dupl@latest -threshold 120 . || true
+
+      - name: outdated modules (informational)
+        working-directory: ${{ matrix.module }}
+        continue-on-error: true
+        run: go list -u -m all 2>/dev/null | grep '\[' || echo "all modules current"
+
+  # --- Dependency + secret + misconfig scan across the whole repo ----------------------------
+  trivy:
+    name: trivy (deps, secrets, Dockerfile misconfig)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "0" # advisory — report, never fail
+
+  gitleaks:
+    name: gitleaks (committed secrets)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  hadolint:
+    name: hadolint (Dockerfiles)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - api/Dockerfile
+          - ui/Dockerfile
+          - containers/dnsmasq/Dockerfile
+          - containers/turbotunnels/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        continue-on-error: true
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          failure-threshold: error
+
+  # --- UI dependency CVEs + outdated ---------------------------------------------------------
+  npm-audit:
+    name: npm audit (ui deps)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - working-directory: ui
+        continue-on-error: true
+        run: |
+          npm ci
+          echo "## npm audit" >> "$GITHUB_STEP_SUMMARY"
+          npm audit --omit=dev || true
+          echo "## outdated" >> "$GITHUB_STEP_SUMMARY"
+          npm outdated || true

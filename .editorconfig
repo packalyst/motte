@@ -1,0 +1,28 @@
+# https://editorconfig.org — keep whitespace consistent across editors.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Go is tab-indented (gofmt); don't let an editor expand them.
+[*.go]
+indent_style = tab
+
+[Makefile]
+indent_style = tab
+
+[*.{js,ts,svelte,css,json,yml,yaml,md,sh}]
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+# Don't touch vendored/generated or lockfiles.
+[{**/package-lock.json,**/go.sum}]
+trim_trailing_whitespace = false
+insert_final_newline = false
