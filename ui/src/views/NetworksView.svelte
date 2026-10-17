@@ -10,6 +10,7 @@
   import InfoCard from '../components/InfoCard.svelte'
   import Toolbar from '../components/Toolbar.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import Badge from '../components/Badge.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -254,51 +255,54 @@
 
   <div class="flex flex-col gap-3">
     {#each filteredNetworks as net (net.id)}
-      <div class="border border-base-300 rounded-xl overflow-hidden">
+      <div class="bg-card border rounded-xl overflow-hidden shadow-sm transition-colors {expandedId === net.id ? 'border-primary/40' : 'border-border hover:border-primary/40'}">
         <!-- Network summary row -->
-        <button class="w-full flex items-center gap-3 p-4 text-left hover:bg-base-200/40 transition-colors"
+        <button class="w-full flex items-center gap-3 p-4 text-left hover:bg-muted/40 transition-colors"
                 onclick={() => toggleExpand(net.id)}>
-          <Icon name={expandedId === net.id ? 'chevron-down' : 'chevron-right'} size={16} class="text-base-content/50" />
+          <span class="w-9 h-9 rounded-lg grid place-items-center border shrink-0 {net.enabled ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-muted border-border text-muted-foreground'}">
+            <Icon name="router" size={18} />
+          </span>
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-medium">{net.iface}</span>
-              <span class="text-sm text-base-content/60 font-mono">{net.cidr}</span>
-              {#if !net.enabled}<span class="kt-badge kt-badge-sm kt-badge-outline">disabled</span>{/if}
-              <span class="kt-badge kt-badge-sm {net.mode === 'approve' ? 'kt-badge-warning' : 'kt-badge-secondary'} kt-badge-outline">{net.mode}</span>
-              {#if net.nat_enabled}<span class="kt-badge kt-badge-sm kt-badge-info kt-badge-outline">internet-out</span>{/if}
+              <span class="font-medium text-foreground">{net.iface}</span>
+              <span class="text-sm text-muted-foreground font-mono">{net.cidr}</span>
+              {#if !net.enabled}<Badge variant="secondary">disabled</Badge>{/if}
+              <Badge variant={net.mode === 'approve' ? 'warning' : 'secondary'}>{net.mode}</Badge>
+              {#if net.nat_enabled}<Badge variant="info">internet-out</Badge>{/if}
             </div>
-            <div class="text-xs text-base-content/50 mt-0.5 font-mono">
+            <div class="text-xs text-muted-foreground mt-0.5 font-mono">
               gw {net.gateway_ip} · pool {net.pool_start}–{net.pool_end} · lease {leaseHours(net.lease_secs)}h
             </div>
           </div>
           <span class="flex items-center gap-1" role="group">
             <Button variant="ghost" size="sm" icon="pencil" iconOnly onclick={(e) => { e.stopPropagation(); openEdit(net) }} tooltip="Edit" />
             <Button variant="ghost" size="sm" icon="trash" iconOnly onclick={(e) => { e.stopPropagation(); removeNetwork(net) }} tooltip="Delete" />
+            <Icon name={expandedId === net.id ? 'chevron-down' : 'chevron-right'} size={16} class="text-muted-foreground ml-1" />
           </span>
         </button>
 
         <!-- Expanded detail -->
         {#if expandedId === net.id && detail}
-          <div class="border-t border-base-300 p-4 bg-base-200/20 flex flex-col gap-6">
+          <div class="border-t border-border p-4 bg-muted/30 flex flex-col gap-6">
             <!-- Devices / leases -->
             <div>
-              <h3 class="text-sm font-semibold mb-2 flex items-center gap-2">
+              <h3 class="text-sm font-semibold mb-2 flex items-center gap-2 text-foreground">
                 <Icon name="device-desktop" size={16} /> Devices
-                <span class="text-xs font-normal text-base-content/50">({detail.clients?.length || 0})</span>
+                <span class="text-xs font-normal text-muted-foreground">({detail.clients?.length || 0})</span>
               </h3>
               {#if !detail.clients?.length}
-                <p class="text-sm text-base-content/50">No devices have asked for an address yet.</p>
+                <p class="text-sm text-muted-foreground">No devices have asked for an address yet.</p>
               {:else}
                 <div class="overflow-x-auto">
                   <table class="w-full text-sm">
-                    <thead class="text-xs text-base-content/50 text-left">
+                    <thead class="text-xs text-muted-foreground text-left">
                       <tr><th class="py-1 pr-3"></th><th class="py-1 pr-3">Name</th><th class="py-1 pr-3">MAC</th><th class="py-1 pr-3">IP</th><th class="py-1 pr-3"></th></tr>
                     </thead>
                     <tbody>
                       {#each detail.clients as c (c.id)}
-                        <tr class="border-t border-base-300/60">
+                        <tr class="border-t border-border/60">
                           <td class="py-1.5 pr-3">
-                            <span class="inline-block w-2 h-2 rounded-full {c.online ? 'bg-success' : 'bg-base-content/20'}" title={c.online ? 'online' : 'offline'}></span>
+                            <span class="inline-block w-2 h-2 rounded-full {c.online ? 'bg-success' : 'bg-muted-foreground/30'}" title={c.online ? 'online' : 'offline'}></span>
                           </td>
                           {#if editClientId === c.id}
                             <td class="py-1.5 pr-3"><input class="kt-input kt-input-sm w-28" bind:value={resName} placeholder="name" /></td>
@@ -330,20 +334,18 @@
 
             <!-- Reachability -->
             <div>
-              <h3 class="text-sm font-semibold mb-1 flex items-center gap-2">
+              <h3 class="text-sm font-semibold mb-1 flex items-center gap-2 text-foreground">
                 <Icon name="shield-check" size={16} /> Who can reach this network
               </h3>
-              <p class="text-xs text-base-content/50 mb-2">Default-deny. Tick a VPN client to let it reach the whole {net.cidr} over WireGuard.</p>
+              <p class="text-xs text-muted-foreground mb-2">Default-deny. Tick a VPN client to let it reach the whole {net.cidr} over WireGuard.</p>
               {#if !vpnClients.length}
-                <p class="text-sm text-base-content/50">No VPN clients yet.</p>
+                <p class="text-sm text-muted-foreground">No VPN clients yet.</p>
               {:else}
                 <div class="flex flex-wrap gap-2">
                   {#each vpnClients as vc (vc.id)}
-                    <button class="kt-badge kt-badge-sm cursor-pointer {aclHas(vc.id) ? 'kt-badge-success' : 'kt-badge-outline kt-badge-secondary'}"
-                            onclick={() => toggleReach(vc)} title={vc.ip}>
-                      {#if aclHas(vc.id)}<Icon name="check" size={12} />{/if}
-                      {vc.name} <span class="opacity-60 font-mono">{vc.ip}</span>
-                    </button>
+                    <Checkbox variant="chip" color="success" icon="plug-connected"
+                              checked={aclHas(vc.id)} onchange={() => toggleReach(vc)}
+                              label={`${vc.name} · ${vc.ip}`} />
                   {/each}
                 </div>
               {/if}
