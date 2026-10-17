@@ -58,6 +58,7 @@ run from the project root, so relative bind mounts resolve against the checkout.
 | `ui` | built from `./ui` (`target: production`) | `vpn-network` (`${UI_CONTAINER_IP}`) | Svelte dashboard; Traefik routes `PathPrefix('/')` to it. |
 | `vpn-router` | `tailscale/tailscale:latest` | `network_mode: host` | **profile `vpn-router`** — bridges WG ↔ Headscale via subnet routing. |
 | `turbotunnels` | built from `./containers/turbotunnels` | `vpn-network` (`${TURBOTUNNELS_CONTAINER_IP}`) | **profile `turbotunnels`** — image only; runtime container is created by the panel via the Docker API. `restart: "no"`. |
+| `dnsmasq` | built from `./containers/dnsmasq` | **`network_mode: host`**, `NET_ADMIN` | DHCP-only (`port=0`) server for managed private networks; config/leases in the `dhcp_conf` / `dhcp_leases` volumes. Idle until a network is configured. |
 
 Key invariants (from the compose comments — read them, they encode security decisions):
 
