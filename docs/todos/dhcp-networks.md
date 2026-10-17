@@ -4,7 +4,11 @@ Let the panel act as the **gateway/router** for an isolated private network behi
 IPs to devices on it via DHCP, surface those devices as a new entity type, and make them
 reachable over WireGuard under the existing default-deny ACL model.
 
-- **Status:** Open (designed, agreed 2026-10-17; not started)
+- **Status:** Built (2026-10-17) — all 4 phases + UI + dnsmasq container. Approach chosen with
+  the operator: interface brought up scoped with `ip addr replace` (never a global
+  `netplan apply`) + validated netplan drop-in for persistence; `dnsmasq --test` pre-reload gate
+  (dnsmasq-base in the api image); reload by restarting the dnsmasq container via the
+  socket-proxy. Needs real-host verification (netplan/nsenter, DHCP hand-out, reachability).
 - **Priority:** Medium — net-new capability. Phase 1 (interface safety) overlaps the P0
   lockout-safety work from the security audit and should land with it.
 
