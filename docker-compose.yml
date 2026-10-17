@@ -159,6 +159,9 @@ services:
       - WG_SERVER_IP=${WG_SERVER_IP}
       - WG_DNS=${WG_DNS}
       - HEADSCALE_IP_RANGE=${HEADSCALE_IP_RANGE}
+      # Optional: override the DHCP managed-network subnet suggestions (comma-separated CIDRs).
+      # Unset = generated as 10.N.N.0/24 (10.20.20.0/24, 10.30.30.0/24, …).
+      - DHCP_SUBNET_POOL=${DHCP_SUBNET_POOL:-}
       # Traefik settings
       - TRAEFIK_API=${TRAEFIK_API}
       - TRAEFIK_PORT=${TRAEFIK_PORT}
