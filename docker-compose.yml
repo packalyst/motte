@@ -202,6 +202,10 @@ services:
       - ./headscale/config:/headscale/config
       # Docker socket removed - using docker-socket-proxy instead
       - /etc/ssh/sshd_config:/etc/ssh/sshd_config
+      # DHCP (managed private networks): the panel writes per-network dnsmasq configs here and
+      # reads the lease files back — both shared with the dnsmasq container.
+      - dhcp_conf:/dhcp-conf
+      - dhcp_leases:/dhcp-leases
 
   # ============================================
   # ADGUARD HOME - DNS Server with Query Logging
@@ -215,6 +219,25 @@ services:
     volumes:
       - ./adguard/work:/opt/adguardhome/work
       - ./adguard/conf:/opt/adguardhome/conf
+
+  # ============================================
+  # DNSMASQ - DHCP server for the panel's managed private networks (DHCP only; AdGuard owns DNS)
+  # Host-networked + NET_ADMIN so it can serve DHCP broadcast on the segment NICs. Per-network
+  # configs are written by the panel into the shared dhcp_conf volume; the panel reloads this
+  # container via the docker-socket-proxy (no docker-exec). Idles harmlessly with no networks.
+  # ============================================
+  dnsmasq:
+    build:
+      context: ./dnsmasq
+    container_name: dnsmasq
+    restart: unless-stopped
+    logging: *default-logging
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - dhcp_conf:/etc/dnsmasq.d
+      - dhcp_leases:/var/lib/misc
 
   # ============================================
   # UI - Unified Web Dashboard
@@ -286,6 +309,9 @@ services:
 
 volumes:
   api_data:
+  # Shared between the api (writes configs, reads leases) and the dnsmasq container.
+  dhcp_conf:
+  dhcp_leases:
 
 networks:
   vpn-network:
