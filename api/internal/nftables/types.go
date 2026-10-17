@@ -15,6 +15,14 @@ type Table interface {
 	Priority() int
 }
 
+// ConntrackFlusher is an optional interface a Table may implement. After its rules apply, the
+// service drops existing conntrack entries for the returned IPs, so a newly-tightened rule takes
+// effect on already-established flows instead of letting them ride the `ct established,related`
+// fast-path until they idle out. Used by the VPN ACL to make isolating a peer take hold now.
+type ConntrackFlusher interface {
+	ConntrackFlushTargets() []string
+}
+
 // Service manages all nftables operations
 type Service struct {
 	db     *database.DB
