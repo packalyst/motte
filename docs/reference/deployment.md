@@ -57,7 +57,7 @@ run from the project root, so relative bind mounts resolve against the checkout.
 | `adguard` | `adguard/adguardhome:latest` | **`network_mode: host`** | DNS + query logging. |
 | `ui` | built from `./ui` (`target: production`) | `vpn-network` (`${UI_CONTAINER_IP}`) | Svelte dashboard; Traefik routes `PathPrefix('/')` to it. |
 | `vpn-router` | `tailscale/tailscale:latest` | `network_mode: host` | **profile `vpn-router`** — bridges WG ↔ Headscale via subnet routing. |
-| `turbotunnels` | built from `./turbotunnels` | `vpn-network` (`${TURBOTUNNELS_CONTAINER_IP}`) | **profile `turbotunnels`** — image only; runtime container is created by the panel via the Docker API. `restart: "no"`. |
+| `turbotunnels` | built from `./containers/turbotunnels` | `vpn-network` (`${TURBOTUNNELS_CONTAINER_IP}`) | **profile `turbotunnels`** — image only; runtime container is created by the panel via the Docker API. `restart: "no"`. |
 
 Key invariants (from the compose comments — read them, they encode security decisions):
 
