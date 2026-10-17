@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+// dnsmasqConfPath must never return a path outside dnsmasqConfDir, no matter the interface value
+// (defense-in-depth against a tampered/unvalidated DB value feeding a privileged file write).
+func TestDnsmasqConfPath(t *testing.T) {
+	ok := []string{"ens19", "eth0", "eth0.100", "br-lan", "vlan_5"}
+	for _, iface := range ok {
+		p, err := dnsmasqConfPath(iface)
+		if err != nil {
+			t.Errorf("dnsmasqConfPath(%q) unexpected error: %v", iface, err)
+			continue
+		}
+		if want := "/dhcp-conf/wgpanel-" + iface + ".conf"; p != want {
+			t.Errorf("dnsmasqConfPath(%q) = %q, want %q", iface, p, want)
+		}
+	}
+	// Anything that could escape the dir (a separator) or is otherwise invalid must fail closed.
+	bad := []string{"", "../../etc/passwd", "a/b", "/etc/x", "name with space", strings.Repeat("x", 16)}
+	for _, iface := range bad {
+		if p, err := dnsmasqConfPath(iface); err == nil {
+			t.Errorf("dnsmasqConfPath(%q) = %q, want error", iface, p)
+		}
+	}
+}
+
 func baseNet() *Network {
 	return &Network{
 		Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1",
