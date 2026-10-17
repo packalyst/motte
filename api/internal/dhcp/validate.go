@@ -48,7 +48,13 @@ func validateNetwork(n *Network, others []Network) error {
 	if err := requireNonWANInterface(n.Iface); err != nil {
 		return err
 	}
+	return validateAddressing(n, others)
+}
 
+// validateAddressing checks the subnet/gateway/pool/lease/mode/domain and overlap rules and
+// normalizes the fields. Split out from the interface/WAN check so it's deterministically
+// testable without a live host.
+func validateAddressing(n *Network, others []Network) error {
 	_, ipnet, err := net.ParseCIDR(strings.TrimSpace(n.CIDR))
 	if err != nil {
 		return fmt.Errorf("invalid subnet CIDR (e.g. 10.20.20.0/24)")
