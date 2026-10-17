@@ -32,8 +32,23 @@ func (t *ReachabilityTable) Build() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Resolve each network's opted-in VPN client IPs up front, so the renderer stays pure.
+	allowed := make(map[int64][]string, len(nets))
+	for i := range nets {
+		ids, _ := svc.listNetworkACL(nets[i].ID)
+		for _, id := range ids {
+			if ip, err := svc.clientIPByID(id); err == nil {
+				allowed[nets[i].ID] = append(allowed[nets[i].ID], ip)
+			}
+		}
+	}
 	wan, _ := defaultRouteInterface()
+	return renderReachability(nets, allowed, wan), nil
+}
 
+// renderReachability builds the nft script (pure: no DB, no host calls) so it can be unit-tested
+// and syntax-checked with `nft -c`. Every IP/CIDR/iface is validated before emission.
+func renderReachability(nets []Network, allowed map[int64][]string, wan string) string {
 	var fwd strings.Builder
 	var nat strings.Builder
 	for i := range nets {
@@ -47,10 +62,8 @@ func (t *ReachabilityTable) Build() (string, error) {
 		fmt.Fprintf(&fwd, "        # network %s (%s)\n", n.Iface, n.CIDR)
 
 		// Opted-in VPN clients may reach the segment.
-		ids, _ := svc.listNetworkACL(n.ID)
-		for _, id := range ids {
-			ip, err := svc.clientIPByID(id)
-			if err != nil || net.ParseIP(ip) == nil {
+		for _, ip := range allowed[n.ID] {
+			if net.ParseIP(ip) == nil {
 				continue
 			}
 			fmt.Fprintf(&fwd, "        ip saddr %s ip daddr %s accept\n", ip, n.CIDR)
@@ -80,7 +93,7 @@ func (t *ReachabilityTable) Build() (string, error) {
 	sb.WriteString(nat.String())
 	sb.WriteString("    }\n")
 	sb.WriteString("}\n")
-	return sb.String(), nil
+	return sb.String()
 }
 
 // ensureIPForward enables IPv4 forwarding (needed to route between wg0 and the segment). Writes
