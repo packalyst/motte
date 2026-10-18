@@ -2025,6 +2025,38 @@
           "min_role": "admin"
         }
       ]
+    },
+    "alerts": {
+      "prefix": "/api/alerts",
+      "endpoints": [
+        {
+          "path": "/config",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetConfig",
+          "description": "Get alert rules",
+          "min_role": "admin"
+        },
+        {
+          "path": "/config",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "SaveConfig",
+          "description": "Save alert rules",
+          "min_role": "admin"
+        },
+        {
+          "path": "/test",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Test",
+          "description": "Send a test alert",
+          "min_role": "admin"
+        }
+      ]
     }
   },
   "middleware": {
