@@ -33,20 +33,27 @@ func (s *Service) requireAuthIfAdminExists(w http.ResponseWriter, r *http.Reques
 		return true // genuinely first run — no admin yet, no one to authenticate as
 	}
 
-	token := r.Header.Get("Authorization")
+	// Cookie-or-Bearer (these endpoints bypass the RBAC router, so resolve + role-check here).
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
-	token = strings.TrimPrefix(token, "Bearer ")
 
 	if s.auth == nil {
 		router.JSONError(w, "Auth service not available", http.StatusInternalServerError)
 		return false
 	}
 
-	if _, err := s.auth.ValidateSession(token); err != nil {
+	user, err := s.auth.ValidateSession(token)
+	if err != nil {
 		router.JSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	// Post-setup, these endpoints reconfigure core infrastructure and can probe internal hosts
+	// (test/detect-headscale) — restrict to admin+, not any authenticated user.
+	if !auth.RoleAtLeast(user.Role, auth.RoleAdmin) {
+		router.JSONError(w, "insufficient role for this action", http.StatusForbidden)
 		return false
 	}
 
