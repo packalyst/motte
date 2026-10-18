@@ -1536,52 +1536,45 @@
                 {@const serviceName = p.service || (p.port === 22 ? 'SSH' : p.port === 80 ? 'HTTP' : p.port === 443 ? 'HTTPS' : p.port === 51820 ? 'WireGuard' : '')}
                 {@const isPublic = p.scope !== 'private'}
                 {@const svc = serviceName ? serviceName + ' — ' : ''}
-                {@const scopeTip = !p.lockable
-                  ? `Managed by Docker${serviceName ? ': ' + serviceName : ''}`
-                  : isPublic
+                {@const lockBtn = {
+                  icon: isPublic ? 'lock-open' : 'lock',
+                  onclick: () => toggleScope(p),
+                  tooltip: isPublic
                     ? `${svc}Public: reachable from the internet. Click to make private (VPN & LAN only).`
-                    : `${svc}Private: VPN & LAN only. Click to make public (reachable from the internet).`}
-                <div class="flex items-center gap-1.5">
-                  {#if p.lockable && !p.essential}
-                    <!-- Normal port: removable -->
-                    <Input
-                      value={p.port}
-                      disabled
-                      class="flex-1"
-                      prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                      suffixAddonBtn={{
-                        icon: "trash",
-                        onclick: () => confirmRemovePort(p.port, p.protocol),
-                        tooltip: "Remove port"
-                      }}
-                    />
-                  {:else}
-                    <!-- Essential / Docker: not removable -->
-                    <Input
-                      value={p.port}
-                      disabled
-                      class="flex-1"
-                      prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    />
-                  {/if}
-                  <!-- Scope lock: green open = public, red closed = private; Docker ports are not togglable. -->
-                  <button
-                    type="button"
-                    disabled={!p.lockable}
-                    onclick={() => p.lockable && toggleScope(p)}
-                    aria-label={scopeTip}
-                    data-kt-tooltip=""
-                    class="shrink-0 grid place-items-center w-8 h-8 rounded-md border transition-colors
-                      {!p.lockable
-                        ? 'opacity-50 cursor-not-allowed border-border text-muted-foreground'
-                        : isPublic
-                          ? 'border-green-500/40 text-green-600 hover:bg-green-500/10'
-                          : 'border-red-500/40 text-red-600 hover:bg-red-500/10'}"
-                  >
-                    <Icon name={isPublic ? 'lock-open' : 'lock'} size={16} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">{scopeTip}</span>
-                  </button>
-                </div>
+                    : `${svc}Private: VPN & LAN only. Click to make public (reachable from the internet).`
+                }}
+                {#if !p.lockable}
+                  <!-- Docker-published: reachability is Docker's (DNAT), not our allow-set — static lock. -->
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    suffixAddonIcon={{ icon: "lock", tooltip: `Managed by Docker${serviceName ? ': ' + serviceName : ''}` }}
+                  />
+                {:else if p.essential}
+                  <!-- Essential: can't be removed, but can be made public/private. Group colour shows the state. -->
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    suffixAddonBtn={lockBtn}
+                    class={isPublic ? 'kt-input-group-success' : 'kt-input-group-destructive'}
+                  />
+                {:else}
+                  <!-- Normal: scope lock (right) + remove (left). -->
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    prefixAddonBtn={{
+                      icon: "trash",
+                      onclick: () => confirmRemovePort(p.port, p.protocol),
+                      tooltip: "Remove port"
+                    }}
+                    suffixAddonBtn={lockBtn}
+                    class={isPublic ? 'kt-input-group-success' : 'kt-input-group-destructive'}
+                  />
+                {/if}
               {/each}
             </div>
           {:else}
@@ -2009,11 +2002,11 @@
           <!-- EXPORT -->
           <div class="space-y-3">
             <div class="flex items-center gap-2 text-sm font-medium"><Icon name="download" size={15} class="text-muted-foreground" /> Export</div>
-            <Input label="Passphrase" type="password" bind:value={bkPass} placeholder="At least 16 characters" />
-            <Input label="Confirm passphrase" type="password" bind:value={bkPass2} placeholder="Repeat passphrase" />
+            <Input label="Passphrase" type="password" prefixIcon="lock" bind:value={bkPass} placeholder="At least 16 characters" />
+            <Input label="Confirm passphrase" type="password" prefixIcon="lock" bind:value={bkPass2} placeholder="Repeat passphrase" />
             <button type="button" onclick={generateBackupPassphrase}
-              class="inline-flex items-center gap-1.5 text-xs text-info hover:underline cursor-pointer">
-              <Icon name="wand" size={13} /> Generate strong passphrase
+              class="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-info/40 text-info text-xs py-2 hover:bg-info/5 transition cursor-pointer">
+              <Icon name="wand" size={14} /> Generate a strong passphrase for me
             </button>
             {#if bkGenerated}
               <div class="rounded-lg border border-info/40 bg-info/5 p-2.5 text-xs">
@@ -2045,7 +2038,7 @@
                 <input type="file" accept=".wgbackup,application/json" class="hidden" onchange={onImportFile} />
               </label>
             </div>
-            <Input label="Passphrase" type="password" bind:value={impPass} placeholder="Backup passphrase" />
+            <Input label="Passphrase" type="password" prefixIcon="lock" bind:value={impPass} placeholder="Backup passphrase" />
             <Button variant="outline" icon="eye" loading={impLoading} onclick={previewImport} disabled={!impFileText || !impPass}>Preview changes</Button>
 
             {#if impPreview}
