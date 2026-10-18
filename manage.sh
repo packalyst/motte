@@ -1735,6 +1735,23 @@ if [ "$IPTABLES_RULES" -gt 0 ]; then
     echo -e "  ${YELLOW}⚠${NC} iptables has $IPTABLES_RULES active rules"
 fi
 
+# iptables backend sanity. The panel (and Docker) manage rules through the nft backend; a legacy
+# backend holding rules in a SECOND store is also evaluated at every netfilter hook and can
+# silently drop or allow traffic the nft view doesn't show. Warn only — never rewrite the host's
+# firewall backend from the installer.
+IPTABLES_BIN=$(readlink -f "$(command -v iptables 2>/dev/null)" 2>/dev/null)
+if [ -n "$IPTABLES_BIN" ] && [ "${IPTABLES_BIN%legacy}" != "$IPTABLES_BIN" ]; then
+    echo -e "  ${YELLOW}⚠${NC} 'iptables' resolves to the LEGACY backend (panel expects nft): $IPTABLES_BIN"
+    echo -e "     switch with: sudo update-alternatives --set iptables /usr/sbin/iptables-nft"
+fi
+if command -v iptables-legacy &> /dev/null; then
+    LEGACY_RULES=$(sudo iptables-legacy -S 2>/dev/null | grep -vcE '^-P ')
+    if [ "${LEGACY_RULES:-0}" -gt 0 ]; then
+        echo -e "  ${YELLOW}⚠${NC} $LEGACY_RULES rule(s) in the legacy iptables backend (often Tailscale) — evaluated alongside nft"
+        echo -e "     review if traffic is unexpectedly dropped: sudo iptables-legacy -S"
+    fi
+fi
+
 echo ""
 
 # Handle conflicts
