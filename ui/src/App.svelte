@@ -134,7 +134,7 @@
       Firewall not active — the firewall layer failed to start, so your rules are <strong>not being managed</strong>. Check the panel host (nftables), then reload.
     </div>
   {/if}
-  <Dashboard onLogout={handleLogout} {showAdguardBanner} onDismissAdguardBanner={() => showAdguardBanner = false} />
+  <Dashboard {user} onLogout={handleLogout} {showAdguardBanner} onDismissAdguardBanner={() => showAdguardBanner = false} />
 {:else}
   <Login onLogin={handleLogin} />
 {/if}

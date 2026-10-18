@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -17,11 +18,53 @@ import (
 	"api/internal/helper"
 )
 
-// AuthValidator is a function that validates a session token
-type AuthValidator func(token string) bool
+// Principal is the authenticated operator behind a request, resolved from the session by the
+// auth service. The auth middleware injects it into the request context for both role
+// enforcement (here) and handlers that need the caller's identity/scope (via CurrentUser).
+type Principal struct {
+	UserID      int64
+	Username    string
+	Role        string
+	ScopeKind   string
+	ScopeValues string
+}
 
-// authValidator is the registered auth validator
-var authValidator AuthValidator
+// AuthResolver validates a session token and returns the principal it belongs to.
+type AuthResolver func(token string) (*Principal, bool)
+
+// authResolver is the registered auth resolver.
+var authResolver AuthResolver
+
+// principalCtxKey keys the Principal in a request context.
+type principalCtxKey struct{}
+
+// CurrentUser returns the authenticated principal for a request, or nil on a public route.
+func CurrentUser(r *http.Request) *Principal {
+	p, _ := r.Context().Value(principalCtxKey{}).(*Principal)
+	return p
+}
+
+// roleRank mirrors auth's role ladder (auth is the source of truth). The router only needs the
+// ordering to compare an endpoint's configured min_role against the caller's role; keeping the
+// four strings here avoids an import cycle (auth imports router). 0 (unknown) fails closed.
+var roleRank = map[string]int{"viewer": 1, "operator": 2, "admin": 3, "owner": 4}
+
+// defaultRoleForMethod is the min role when an endpoint sets no explicit min_role: reads need
+// viewer, mutations need admin (least privilege — operational writes are opted down per route).
+func defaultRoleForMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return "viewer"
+	default:
+		return "admin"
+	}
+}
+
+// roleSatisfies reports whether have-role meets the min-role requirement.
+func roleSatisfies(have, min string) bool {
+	h, m := roleRank[have], roleRank[min]
+	return h > 0 && m > 0 && h >= m
+}
 
 // PanelVersion is the build commit (short sha), set by main at startup and surfaced on
 // /api/schema so the UI can show which build is running.
@@ -93,6 +136,7 @@ func (r *Router) Build() http.Handler {
 				fullPattern: fullPattern,
 				methods:     endpoint.Methods,
 				handler:     handler,
+				minRole:     endpoint.MinRole,
 			})
 			log.Printf("Registered: %s %v -> %s", fullPattern, endpoint.Methods, endpoint.Handler)
 		}
@@ -116,6 +160,7 @@ type routeHandler struct {
 	fullPattern string
 	methods     []string
 	handler     HandlerFunc
+	minRole     string // least-privileged role allowed; "" → defaultRoleForMethod
 }
 
 // registerCombinedEndpointV2 registers multiple handlers for a single actual path pattern
@@ -131,6 +176,9 @@ func (r *Router) registerCombinedEndpointV2(actualPattern string, handlers []rou
 		for _, rh := range handlers {
 			// Check if path matches the full pattern
 			if r.pathMatches(path, rh.fullPattern) && r.methodAllowed(req.Method, rh.methods) {
+				if !r.authorizeRole(w, req, rh.minRole) {
+					return
+				}
 				rh.handler(w, req)
 				return
 			}
@@ -148,6 +196,26 @@ func (r *Router) registerCombinedEndpointV2(actualPattern string, handlers []rou
 		}
 		JSONError(w, "Not found", http.StatusNotFound)
 	})
+}
+
+// authorizeRole enforces the matched endpoint's minimum role against the request's principal.
+// A nil principal means the auth middleware classified the path as public (it never injects
+// one there), so no role is required. Otherwise the caller's role must meet minRole, or the
+// endpoint's method default when minRole is unset.
+func (r *Router) authorizeRole(w http.ResponseWriter, req *http.Request, minRole string) bool {
+	p := CurrentUser(req)
+	if p == nil {
+		return true // public route
+	}
+	required := minRole
+	if required == "" {
+		required = defaultRoleForMethod(req.Method)
+	}
+	if !roleSatisfies(p.Role, required) {
+		JSONError(w, "insufficient role for this action", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // pathMatches checks if a request path matches a pattern (with {param} support)
@@ -215,9 +283,9 @@ func (r *Router) methodAllowed(method string, allowed []string) bool {
 	return false
 }
 
-// SetAuthValidator sets the auth validator function
-func SetAuthValidator(validator AuthValidator) {
-	authValidator = validator
+// SetAuthResolver sets the auth resolver function.
+func SetAuthResolver(resolver AuthResolver) {
+	authResolver = resolver
 }
 
 // applyMiddleware wraps the handler with configured middleware
@@ -310,13 +378,13 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// Auth is required but unavailable: the validator is only registered when the
+		// Auth is required but unavailable: the resolver is only registered when the
 		// auth service is enabled AND initializes successfully (see cmd/main.go). A nil
-		// validator therefore means auth is disabled or failed to init at boot — fail
+		// resolver therefore means auth is disabled or failed to init at boot — fail
 		// CLOSED for protected paths rather than serving them with no authentication.
 		// Public paths (login, setup, health) are matched above, so this can't lock out
 		// the setup wizard or login.
-		if authValidator == nil {
+		if authResolver == nil {
 			JSONError(w, "Authentication unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -328,12 +396,17 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Validate token
-		if !authValidator(token) {
+		// Validate token and resolve the principal (identity + role + scope).
+		principal, ok := authResolver(token)
+		if !ok || principal == nil {
 			JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
 			return
 		}
 
+		// Carry the principal so per-route role enforcement and handlers can read it. Role
+		// authorization happens at dispatch (registerCombinedEndpointV2), where the matched
+		// endpoint's min_role is known.
+		req = req.WithContext(context.WithValue(req.Context(), principalCtxKey{}, principal))
 		next.ServeHTTP(w, req)
 	})
 }

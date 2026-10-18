@@ -121,10 +121,20 @@ func main() {
 			authSvc.Start()          // Start background cleanup
 			r.RegisterService("auth", authSvc.Handlers())
 
-			// Register auth validator for middleware
-			router.SetAuthValidator(func(token string) bool {
-				_, err := authSvc.ValidateSession(token)
-				return err == nil
+			// Register auth resolver for middleware: validates the session and surfaces the
+			// principal (identity + role + scope) for role enforcement and handlers.
+			router.SetAuthResolver(func(token string) (*router.Principal, bool) {
+				u, err := authSvc.ValidateSession(token)
+				if err != nil || u == nil {
+					return nil, false
+				}
+				return &router.Principal{
+					UserID:      u.ID,
+					Username:    u.Username,
+					Role:        u.Role,
+					ScopeKind:   u.ScopeKind,
+					ScopeValues: u.ScopeValues,
+				}, true
 			})
 
 			log.Println("Auth service registered")

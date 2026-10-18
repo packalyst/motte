@@ -32,10 +32,14 @@
     routines: () => import('./RoutinesView.svelte'),
     settings: () => import('./SettingsView.svelte'),
     profile: () => import('./ProfileView.svelte'),
+    team: () => import('./TeamView.svelte'),
     about: () => import('./AboutView.svelte')
   }
 
-  let { onLogout, showAdguardBanner = false, onDismissAdguardBanner } = $props()
+  let { user = null, onLogout, showAdguardBanner = false, onDismissAdguardBanner } = $props()
+
+  // Panel user/role management is an admin+ area.
+  const canManageTeam = $derived(user?.role === 'owner' || user?.role === 'admin')
 
   let sidebarOpen = $state(false)
   let loading = $state(true)
@@ -218,6 +222,7 @@
     // Topbar-only views (not in the sidebar nav):
     if (viewId === 'iplookup') return 'IP Lookup'
     if (viewId === 'settings') return 'Settings'
+    if (viewId === 'team') return 'Panel Users'
     if (viewId === 'about') return 'About'
     for (const item of navItems) {
       if (item.id === viewId) return item.label
@@ -358,9 +363,17 @@
             <Icon name="user" size={14} />
           </div>
           <div class="flex-1 min-w-0 text-left">
-            <div class="truncate text-sm font-medium text-foreground">admin</div>
+            <div class="truncate text-sm font-medium text-foreground">{user?.username || 'account'}</div>
+            {#if user?.role}
+              <div class="truncate text-[11px] text-muted-foreground capitalize">{user.role}</div>
+            {/if}
           </div>
         </button>
+        {#if canManageTeam}
+          <button onclick={() => navigate('team')} class="custom_btns flex-shrink-0" title="Panel users & roles">
+            <Icon name="users" size={14} />
+          </button>
+        {/if}
         <button onclick={toggleTheme} class="custom_btns flex-shrink-0" title="Toggle theme">
           {#if $theme === 'dark'}
             <Icon name="sun" size={14} />

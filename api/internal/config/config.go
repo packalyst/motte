@@ -12,6 +12,10 @@ type EndpointConfig struct {
 	Methods     []string `json:"methods"`
 	Handler     string   `json:"handler"`
 	Description string   `json:"description"`
+	// MinRole is the least-privileged role allowed to call this endpoint. Empty means the
+	// router's default applies: read methods (GET/HEAD) need "viewer", mutating methods need
+	// "admin". Downgrade operational writes to "operator" or raise sensitive ones to "owner".
+	MinRole string `json:"min_role,omitempty"`
 }
 
 // ServiceConfig represents a service configuration

@@ -373,9 +373,9 @@ func (s *Service) CompleteSetup(req *SetupRequest) error {
 		return fmt.Errorf("headscale public URL is required")
 	}
 
-	// Create admin user (if not exists)
+	// Create the first user as the break-glass owner (if none exists).
 	if s.auth != nil && !s.auth.HasUsers() {
-		_, err := s.auth.CreateUser(req.AdminUsername, req.AdminPassword)
+		_, err := s.auth.CreateUser(req.AdminUsername, req.AdminPassword, auth.RoleOwner)
 		if err != nil {
 			return fmt.Errorf("failed to create admin user: %v", err)
 		}

@@ -127,7 +127,8 @@
             "POST"
           ],
           "handler": "Logout",
-          "description": "Logout and invalidate session"
+          "description": "Logout and invalidate session",
+          "min_role": "viewer"
         },
         {
           "path": "/me",
@@ -143,7 +144,8 @@
             "POST"
           ],
           "handler": "CreateUser",
-          "description": "Create new user"
+          "description": "Create new user",
+          "min_role": "admin"
         },
         {
           "path": "/sessions",
@@ -159,7 +161,8 @@
             "POST"
           ],
           "handler": "RevokeSession",
-          "description": "Revoke specific session"
+          "description": "Revoke specific session",
+          "min_role": "viewer"
         },
         {
           "path": "/sessions/revoke-others",
@@ -167,7 +170,8 @@
             "POST"
           ],
           "handler": "RevokeOtherSessions",
-          "description": "Revoke all other sessions"
+          "description": "Revoke all other sessions",
+          "min_role": "viewer"
         },
         {
           "path": "/change-password",
@@ -175,7 +179,8 @@
             "POST"
           ],
           "handler": "ChangePassword",
-          "description": "Change password"
+          "description": "Change password",
+          "min_role": "viewer"
         },
         {
           "path": "/2fa/status",
@@ -191,7 +196,8 @@
             "POST"
           ],
           "handler": "Setup2FA",
-          "description": "Start 2FA setup, generate secret and QR code"
+          "description": "Start 2FA setup, generate secret and QR code",
+          "min_role": "viewer"
         },
         {
           "path": "/2fa/enable",
@@ -199,7 +205,8 @@
             "POST"
           ],
           "handler": "Enable2FA",
-          "description": "Verify code and enable 2FA"
+          "description": "Verify code and enable 2FA",
+          "min_role": "viewer"
         },
         {
           "path": "/2fa/disable",
@@ -207,7 +214,44 @@
             "POST"
           ],
           "handler": "Disable2FA",
-          "description": "Disable 2FA (requires password and code)"
+          "description": "Disable 2FA (requires password and code)",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/users",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ListUsers",
+          "description": "List users with roles and scopes",
+          "min_role": "admin"
+        },
+        {
+          "path": "/users/role",
+          "methods": [
+            "POST"
+          ],
+          "handler": "UpdateUserRole",
+          "description": "Change a user's role",
+          "min_role": "admin"
+        },
+        {
+          "path": "/users/scope",
+          "methods": [
+            "POST"
+          ],
+          "handler": "UpdateUserScope",
+          "description": "Set a user's fleet machine scope",
+          "min_role": "admin"
+        },
+        {
+          "path": "/users/delete",
+          "methods": [
+            "POST"
+          ],
+          "handler": "DeleteUser",
+          "description": "Delete a user",
+          "min_role": "admin"
         }
       ]
     },
@@ -275,7 +319,8 @@
             "POST"
           ],
           "handler": "ClearStats",
-          "description": "Clear L3/L7 block-counter samples (chart only; never the blocklist)"
+          "description": "Clear L3/L7 block-counter samples (chart only; never the blocklist)",
+          "min_role": "operator"
         },
         {
           "path": "/entries",
@@ -291,7 +336,8 @@
             "POST"
           ],
           "handler": "CreateEntry",
-          "description": "Create firewall entry"
+          "description": "Create firewall entry",
+          "min_role": "operator"
         },
         {
           "path": "/entries/{id}",
@@ -299,7 +345,8 @@
             "DELETE"
           ],
           "handler": "DeleteEntry",
-          "description": "Delete firewall entry"
+          "description": "Delete firewall entry",
+          "min_role": "operator"
         },
         {
           "path": "/entries/{id}/toggle",
@@ -307,7 +354,8 @@
             "POST"
           ],
           "handler": "ToggleEntry",
-          "description": "Toggle entry enabled/disabled"
+          "description": "Toggle entry enabled/disabled",
+          "min_role": "operator"
         },
         {
           "path": "/entries/bulk",
@@ -315,7 +363,8 @@
             "POST"
           ],
           "handler": "BulkEntries",
-          "description": "Bulk operations on entries"
+          "description": "Bulk operations on entries",
+          "min_role": "operator"
         },
         {
           "path": "/entries/import",
@@ -323,7 +372,8 @@
             "POST"
           ],
           "handler": "ImportEntries",
-          "description": "Import from blocklist"
+          "description": "Import from blocklist",
+          "min_role": "operator"
         },
         {
           "path": "/entries/source/{source}",
@@ -331,7 +381,8 @@
             "DELETE"
           ],
           "handler": "DeleteBySource",
-          "description": "Delete all entries from source"
+          "description": "Delete all entries from source",
+          "min_role": "operator"
         },
         {
           "path": "/entries/all",
@@ -339,7 +390,8 @@
             "DELETE"
           ],
           "handler": "DeleteAll",
-          "description": "Delete all non-essential entries"
+          "description": "Delete all non-essential entries",
+          "min_role": "operator"
         },
         {
           "path": "/ports",
@@ -443,7 +495,8 @@
             "POST"
           ],
           "handler": "ApplyRules",
-          "description": "Apply firewall rules"
+          "description": "Apply firewall rules",
+          "min_role": "operator"
         },
         {
           "path": "/sync-status",
@@ -969,18 +1022,102 @@
       "prefix": "/api/dhcp",
       "enabled": true,
       "endpoints": [
-        { "path": "/interfaces", "methods": ["GET"], "handler": "ListInterfaces", "description": "List candidate interfaces for a managed network (WAN/docker/VPN excluded)" },
-        { "path": "/networks", "methods": ["GET"], "handler": "ListNetworks", "description": "List managed DHCP networks" },
-        { "path": "/networks", "methods": ["POST"], "handler": "CreateNetwork", "description": "Create a managed DHCP network" },
-        { "path": "/networks/{id}", "methods": ["GET"], "handler": "GetNetwork", "description": "Get a network with its clients and reachability ACL" },
-        { "path": "/networks/{id}", "methods": ["PUT"], "handler": "UpdateNetwork", "description": "Update a managed DHCP network" },
-        { "path": "/networks/{id}", "methods": ["DELETE"], "handler": "DeleteNetwork", "description": "Delete a managed DHCP network" },
-        { "path": "/networks/{id}/clients", "methods": ["GET"], "handler": "ListClients", "description": "List DHCP clients/leases for a network" },
-        { "path": "/networks/{id}/acl", "methods": ["POST"], "handler": "AddACL", "description": "Grant a VPN client reachability to the network" },
-        { "path": "/networks/{id}/acl/{clientId}", "methods": ["DELETE"], "handler": "RemoveACL", "description": "Revoke a VPN client's reachability" },
-        { "path": "/clients/{id}/approve", "methods": ["POST"], "handler": "ApproveClient", "description": "Approve a DHCP client (approve mode)" },
-        { "path": "/clients/{id}", "methods": ["PUT"], "handler": "UpdateClient", "description": "Set a DHCP client's reservation (IP/name)" },
-        { "path": "/clients/{id}", "methods": ["DELETE"], "handler": "DeleteClient", "description": "Delete a DHCP client" }
+        {
+          "path": "/interfaces",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ListInterfaces",
+          "description": "List candidate interfaces for a managed network (WAN/docker/VPN excluded)"
+        },
+        {
+          "path": "/networks",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ListNetworks",
+          "description": "List managed DHCP networks"
+        },
+        {
+          "path": "/networks",
+          "methods": [
+            "POST"
+          ],
+          "handler": "CreateNetwork",
+          "description": "Create a managed DHCP network"
+        },
+        {
+          "path": "/networks/{id}",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetNetwork",
+          "description": "Get a network with its clients and reachability ACL"
+        },
+        {
+          "path": "/networks/{id}",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "UpdateNetwork",
+          "description": "Update a managed DHCP network"
+        },
+        {
+          "path": "/networks/{id}",
+          "methods": [
+            "DELETE"
+          ],
+          "handler": "DeleteNetwork",
+          "description": "Delete a managed DHCP network"
+        },
+        {
+          "path": "/networks/{id}/clients",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ListClients",
+          "description": "List DHCP clients/leases for a network"
+        },
+        {
+          "path": "/networks/{id}/acl",
+          "methods": [
+            "POST"
+          ],
+          "handler": "AddACL",
+          "description": "Grant a VPN client reachability to the network"
+        },
+        {
+          "path": "/networks/{id}/acl/{clientId}",
+          "methods": [
+            "DELETE"
+          ],
+          "handler": "RemoveACL",
+          "description": "Revoke a VPN client's reachability"
+        },
+        {
+          "path": "/clients/{id}/approve",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ApproveClient",
+          "description": "Approve a DHCP client (approve mode)"
+        },
+        {
+          "path": "/clients/{id}",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "UpdateClient",
+          "description": "Set a DHCP client's reservation (IP/name)"
+        },
+        {
+          "path": "/clients/{id}",
+          "methods": [
+            "DELETE"
+          ],
+          "handler": "DeleteClient",
+          "description": "Delete a DHCP client"
+        }
       ]
     },
     "vpn": {
@@ -1478,7 +1615,8 @@
             "DELETE"
           ],
           "handler": "GetSubscriptions",
-          "description": "List or delete push subscriptions"
+          "description": "List or delete push subscriptions",
+          "min_role": "viewer"
         },
         {
           "path": "/subscribe",
@@ -1486,7 +1624,8 @@
             "POST"
           ],
           "handler": "Subscribe",
-          "description": "Register push subscription"
+          "description": "Register push subscription",
+          "min_role": "viewer"
         },
         {
           "path": "/unsubscribe",
@@ -1494,7 +1633,8 @@
             "POST"
           ],
           "handler": "Unsubscribe",
-          "description": "Remove push subscription"
+          "description": "Remove push subscription",
+          "min_role": "viewer"
         },
         {
           "path": "/preferences",
@@ -1503,7 +1643,8 @@
             "PUT"
           ],
           "handler": "Preferences",
-          "description": "Get or update notification preferences"
+          "description": "Get or update notification preferences",
+          "min_role": "viewer"
         },
         {
           "path": "/locations",
@@ -1512,7 +1653,8 @@
             "DELETE"
           ],
           "handler": "Locations",
-          "description": "Get or delete device locations"
+          "description": "Get or delete device locations",
+          "min_role": "viewer"
         },
         {
           "path": "/location",
@@ -1520,7 +1662,8 @@
             "POST"
           ],
           "handler": "StoreLocation",
-          "description": "Store device location"
+          "description": "Store device location",
+          "min_role": "viewer"
         },
         {
           "path": "/test",
@@ -1528,7 +1671,8 @@
             "POST"
           ],
           "handler": "TestNotification",
-          "description": "Send test notification"
+          "description": "Send test notification",
+          "min_role": "viewer"
         }
       ]
     },
@@ -1632,7 +1776,8 @@
             "POST"
           ],
           "handler": "CreateToken",
-          "description": "Mint a one-time agent enrollment token"
+          "description": "Mint a one-time agent enrollment token",
+          "min_role": "admin"
         },
         {
           "path": "/tokens",
@@ -1640,7 +1785,8 @@
             "GET"
           ],
           "handler": "ListTokens",
-          "description": "Outstanding enrollment tokens (metadata only)"
+          "description": "Outstanding enrollment tokens (metadata only)",
+          "min_role": "admin"
         },
         {
           "path": "/tokens",
@@ -1648,7 +1794,8 @@
             "DELETE"
           ],
           "handler": "DeleteToken",
-          "description": "Cancel an outstanding enrollment token by id"
+          "description": "Cancel an outstanding enrollment token by id",
+          "min_role": "admin"
         },
         {
           "path": "/machines",
@@ -1672,7 +1819,8 @@
             "POST"
           ],
           "handler": "EnqueueCommand",
-          "description": "Queue an allowlisted command for a machine"
+          "description": "Queue an allowlisted command for a machine",
+          "min_role": "operator"
         },
         {
           "path": "/report",
@@ -1704,7 +1852,8 @@
             "POST"
           ],
           "handler": "SetConfig",
-          "description": "Enable/disable fleet listener + set port"
+          "description": "Enable/disable fleet listener + set port",
+          "min_role": "admin"
         },
         {
           "path": "/push-blocks",
@@ -1712,7 +1861,8 @@
             "POST"
           ],
           "handler": "PushBlocks",
-          "description": "Push the panel's explicit blocklist onto a machine (replaces its panel set)"
+          "description": "Push the panel's explicit blocklist onto a machine (replaces its panel set)",
+          "min_role": "operator"
         },
         {
           "path": "/clear-blocks",
@@ -1720,7 +1870,8 @@
             "POST"
           ],
           "handler": "ClearBlocks",
-          "description": "Clear a machine's panel-pushed blocklist set"
+          "description": "Clear a machine's panel-pushed blocklist set",
+          "min_role": "operator"
         },
         {
           "path": "/machine/delete",
@@ -1728,7 +1879,8 @@
             "POST"
           ],
           "handler": "DeleteMachine",
-          "description": "Delete a machine and invalidate its cert"
+          "description": "Delete a machine and invalidate its cert",
+          "min_role": "admin"
         },
         {
           "path": "/fim",
@@ -1768,7 +1920,8 @@
             "POST"
           ],
           "handler": "FixPackages",
-          "description": "Queue a targeted OS-package upgrade for selected CVEs"
+          "description": "Queue a targeted OS-package upgrade for selected CVEs",
+          "min_role": "operator"
         },
         {
           "path": "/cves/export",

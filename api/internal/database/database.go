@@ -207,7 +207,12 @@ func createSchema(db *sql.DB) error {
 		totp_secret_enc TEXT,
 		totp_enabled INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		last_login DATETIME
+		last_login DATETIME,
+		-- RBAC: role is the privilege tier; scope bounds which fleet machines the user may act
+		-- on (kind = all|tag|host, values = CSV of tags or machine IDs; ignored for owner/admin).
+		role TEXT NOT NULL DEFAULT 'admin',
+		scope_kind TEXT NOT NULL DEFAULT 'all',
+		scope_values TEXT NOT NULL DEFAULT ''
 	);
 
 	-- Settings table (key-value store)
@@ -595,6 +600,34 @@ func runMigrations(db *sql.DB) {
 	if err == nil && count == 0 {
 		if _, err := db.Exec(`ALTER TABLE vpn_acl_rules ADD COLUMN bidirectional INTEGER DEFAULT 0`); err == nil {
 			log.Printf("Migration: added bidirectional column to vpn_acl_rules")
+		}
+	}
+
+	// Add RBAC columns to users if missing. Existing single-admin installs predate roles, so
+	// every current user was effectively a full admin — migrate them to 'owner' (not the
+	// 'admin' column default, which is for newly added columns before the UPDATE) so nobody is
+	// locked out and there's always a break-glass owner. scope defaults to all (unrestricted).
+	rbacCols := []struct{ name, ddl string }{
+		{"role", `ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`},
+		{"scope_kind", `ALTER TABLE users ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'all'`},
+		{"scope_values", `ALTER TABLE users ADD COLUMN scope_values TEXT NOT NULL DEFAULT ''`},
+	}
+	roleAdded := false
+	for _, c := range rbacCols {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = ?`, c.name).Scan(&count)
+		if err == nil && count == 0 {
+			if _, err := db.Exec(c.ddl); err == nil {
+				log.Printf("Migration: added %s column to users", c.name)
+				if c.name == "role" {
+					roleAdded = true
+				}
+			}
+		}
+	}
+	if roleAdded {
+		// Promote pre-RBAC accounts to owner (they already had full control).
+		if _, err := db.Exec(`UPDATE users SET role = 'owner'`); err == nil {
+			log.Printf("Migration: promoted existing users to 'owner' (break-glass)")
 		}
 	}
 
