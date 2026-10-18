@@ -23,13 +23,11 @@ func (s *Service) ensureL7Table() {
 	})
 }
 
-// HandleInternalL7Block records a batch of sentinel block counts. Internal-only: it
-// refuses any request carrying proxy/edge headers, the same guard the blocklist
-// endpoint uses — only a direct call over the internal network is accepted.
+// HandleInternalL7Block records a batch of sentinel block counts. Internal-only: it accepts
+// only loopback/private-network callers by their real socket address (internalCallerAllowed),
+// the same guard the blocklist endpoint uses.
 func (s *Service) HandleInternalL7Block(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("CF-Connecting-IP") != "" ||
-		r.Header.Get("X-Forwarded-For") != "" ||
-		r.Header.Get("X-Real-IP") != "" {
+	if !internalCallerAllowed(r) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
