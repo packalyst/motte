@@ -252,6 +252,15 @@
           "handler": "DeleteUser",
           "description": "Delete a user",
           "min_role": "admin"
+        },
+        {
+          "path": "/unlock",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Unlock",
+          "description": "Re-authenticate to unlock an idle session",
+          "min_role": "viewer"
         }
       ]
     },

@@ -106,12 +106,12 @@ func (s *Service) handleUpdateUserRole(w http.ResponseWriter, r *http.Request) {
 		UserID          int64  `json:"user_id"`
 		Role            string `json:"role"`
 		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if err := s.VerifyPassword(caller.ID, req.CurrentPassword); err != nil {
-		router.JSONError(w, "current password is incorrect", http.StatusUnauthorized)
+	if !s.stepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
 		return
 	}
 	if !ValidRole(req.Role) {
@@ -160,12 +160,12 @@ func (s *Service) handleUpdateUserScope(w http.ResponseWriter, r *http.Request) 
 		ScopeKind       string `json:"scope_kind"`
 		ScopeValues     string `json:"scope_values"`
 		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if err := s.VerifyPassword(caller.ID, req.CurrentPassword); err != nil {
-		router.JSONError(w, "current password is incorrect", http.StatusUnauthorized)
+	if !s.stepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
 		return
 	}
 	if !ValidScopeKind(req.ScopeKind) {
@@ -203,12 +203,12 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID          int64  `json:"user_id"`
 		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if err := s.VerifyPassword(caller.ID, req.CurrentPassword); err != nil {
-		router.JSONError(w, "current password is incorrect", http.StatusUnauthorized)
+	if !s.stepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
 		return
 	}
 	target, err := s.getUser(req.UserID)

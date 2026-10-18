@@ -46,18 +46,18 @@ func TestEnqueueGuardrail(t *testing.T) {
 	}
 
 	// Allow-tier: enqueued directly.
-	id, status, err := svc.enqueueGuarded(req(), "m1", "block", "", json.RawMessage(`{"ip":"1.2.3.4"}`))
+	id, status, err := svc.enqueueGuarded(req(), "m1", "block", "", "", json.RawMessage(`{"ip":"1.2.3.4"}`))
 	if err != nil || status != http.StatusOK || id == "" {
 		t.Fatalf("allow-tier block: id=%q status=%d err=%v, want ok", id, status, err)
 	}
 
 	// Block-tier: not allowlisted → refused.
-	if _, status, err := svc.enqueueGuarded(req(), "m1", "rm-rf-slash", "", nil); err == nil || status != http.StatusBadRequest {
+	if _, status, err := svc.enqueueGuarded(req(), "m1", "rm-rf-slash", "", "", nil); err == nil || status != http.StatusBadRequest {
 		t.Fatalf("block-tier: status=%d err=%v, want 400 + error", status, err)
 	}
 
 	// Confirm-tier without a verifiable operator → step-up required (428), not enqueued.
-	if _, status, err := svc.enqueueGuarded(req(), "m1", "restart", "", nil); err == nil || status != http.StatusPreconditionRequired {
+	if _, status, err := svc.enqueueGuarded(req(), "m1", "restart", "", "", nil); err == nil || status != http.StatusPreconditionRequired {
 		t.Fatalf("confirm-tier: status=%d err=%v, want 428 + error", status, err)
 	}
 }

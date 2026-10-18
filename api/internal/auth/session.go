@@ -73,6 +73,37 @@ func (s *Service) RevokeOtherSessions(currentToken string, userID int64) (int64,
 	return result.RowsAffected()
 }
 
+// handleUnlock re-authenticates the current session for the idle-lock screen. It verifies the
+// caller's password (and a fresh 2FA code when enabled) via step-up, WITHOUT issuing a new
+// session — success just tells the client it may dismiss its lock overlay. The request also
+// refreshes the session's last-active time through the normal middleware. Any authenticated
+// user may unlock their own session; a wrong credential returns 428 (re-prompt), not 401.
+func (s *Service) handleUnlock(w http.ResponseWriter, r *http.Request) {
+	token := helper.SessionToken(r)
+	if token == "" {
+		router.JSONError(w, "No token provided", http.StatusUnauthorized)
+		return
+	}
+	user, err := s.ValidateSession(token)
+	if err != nil {
+		router.JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	if !s.stepUp(w, user.ID, req.CurrentPassword, req.TotpCode) {
+		return
+	}
+	events.Audit("auth", "session_unlocked", events.SeverityInfo, user.Username, helper.GetClientIP(r),
+		fmt.Sprintf("Idle session unlocked for %q", user.Username))
+	router.JSON(w, map[string]bool{"ok": true})
+}
+
 // VerifyPassword checks a plaintext password against the stored hash for a user.
 // Returns nil on match. Used for step-up re-authentication on sensitive actions
 // (change password, create user) so a stolen session token alone is not enough.
