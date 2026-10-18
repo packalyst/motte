@@ -264,6 +264,9 @@ func main() {
 		} else {
 			dhcpSvc := dhcp.New(dhcpDB, nftSvc)
 			r.RegisterService("dhcp", dhcpSvc.Handlers())
+			// Re-apply live state (interface, dnsmasq, FORWARD punch-through, reachability) on boot:
+			// a plain restart otherwise leaves Docker's flushed FORWARD chain dropping segment traffic.
+			go dhcpSvc.ReconcileAll()
 			log.Println("DHCP service registered")
 		}
 	}

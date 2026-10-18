@@ -76,6 +76,27 @@ func (s *Service) Reconcile(n *Network) error {
 	return nil
 }
 
+// ReconcileAll re-applies every enabled network at startup. Reconcile otherwise runs only on a
+// create/update, so without this the interface address, dnsmasq config, the Docker FORWARD
+// punch-through, and reachability would silently drop after an api or Docker restart (a Docker
+// restart flushes the FORWARD chain). Mirrors how WireGuard's setupNAT self-heals on boot.
+// Best-effort and logged: one bad network must not block startup.
+func (s *Service) ReconcileAll() {
+	nets, err := s.listNetworks()
+	if err != nil {
+		log.Printf("dhcp: startup reconcile: list networks: %v", err)
+		return
+	}
+	for i := range nets {
+		if !nets[i].Enabled {
+			continue
+		}
+		if err := s.Reconcile(&nets[i]); err != nil {
+			logReconcile(nets[i].Iface, err)
+		}
+	}
+}
+
 // reapplyReachability asks the firewall to rebuild (the reachability table reads the DB each
 // build). Best-effort — a nil nft service just means reachability isn't enforced yet.
 func (s *Service) reapplyReachability() {
