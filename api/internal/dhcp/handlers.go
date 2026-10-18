@@ -123,6 +123,7 @@ func (s *Service) handleDeleteNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not delete network", http.StatusInternalServerError)
 		return
 	}
+	removeLeaseFile(n.Iface) // purge stale dnsmasq leases so a future net on this NIC starts clean
 	s.reapplyReachability()
 	router.JSON(w, map[string]any{"ok": true})
 }
