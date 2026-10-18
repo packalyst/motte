@@ -13,6 +13,7 @@
   import ContentBlock from '../components/ContentBlock.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import Modal from '../components/Modal.svelte'
+  import OffhostBackup from '../components/OffhostBackup.svelte'
 
   let { loading = $bindable(true) } = $props()
   let savingAdguard = $state(false)
@@ -2085,6 +2086,11 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Off-host backups - Full width -->
+    <div class="mt-4">
+      <OffhostBackup />
     </div>
 
     <!-- About - Full width -->
