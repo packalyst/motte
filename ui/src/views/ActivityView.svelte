@@ -16,6 +16,7 @@
   const sourceOptions = [
     { value: '', label: 'All sources' },
     { value: 'auth', label: 'Auth' },
+    { value: 'fleet', label: 'Fleet' },
     { value: 'firewall', label: 'Firewall' },
     { value: 'wireguard', label: 'Peers' },
     { value: 'adguard', label: 'AdGuard' },

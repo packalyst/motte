@@ -80,9 +80,10 @@ func (s *Service) handlePushBlocks(w http.ResponseWriter, r *http.Request) {
 	// cost to fear here.
 	ips := s.blockedIPs()
 	payload, _ := json.Marshal(map[string]any{"ips": ips})
-	id, err := s.Enqueue(req.MachineID, "sync-blocks", payload)
+	// sync-blocks is allow-tier (no step-up); route through the guardrail for audit coverage.
+	id, status, err := s.enqueueGuarded(r, req.MachineID, "sync-blocks", "", payload)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		router.JSONError(w, err.Error(), status)
 		return
 	}
 	router.JSON(w, map[string]any{"command_id": id, "count": len(ips)})
@@ -92,15 +93,16 @@ func (s *Service) handlePushBlocks(w http.ResponseWriter, r *http.Request) {
 // blocklist set (CrowdSec/manual bans are untouched). POST /api/fleet/clear-blocks {"machine_id"}
 func (s *Service) handleClearBlocks(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineID string `json:"machine_id"`
+		MachineID       string `json:"machine_id"`
+		CurrentPassword string `json:"currentPassword"` // step-up: clear-blocks is confirm-tier
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil || req.MachineID == "" {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
-	id, err := s.Enqueue(req.MachineID, "clear-blocks", nil)
+	id, status, err := s.enqueueGuarded(r, req.MachineID, "clear-blocks", req.CurrentPassword, nil)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		router.JSONError(w, err.Error(), status)
 		return
 	}
 	router.JSON(w, map[string]any{"command_id": id})
@@ -335,9 +337,10 @@ func (s *Service) handleCAInfo(w http.ResponseWriter, r *http.Request) {
 // POST /api/fleet/command  {"machine_id":"...","type":"block","payload":{"ip":"1.2.3.4"}}
 func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineID string          `json:"machine_id"`
-		Type      string          `json:"type"`
-		Payload   json.RawMessage `json:"payload"`
+		MachineID       string          `json:"machine_id"`
+		Type            string          `json:"type"`
+		Payload         json.RawMessage `json:"payload"`
+		CurrentPassword string          `json:"currentPassword"` // step-up, for confirm-tier commands
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		router.JSONError(w, "bad json", http.StatusBadRequest)
@@ -347,9 +350,9 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
-	id, err := s.Enqueue(req.MachineID, req.Type, req.Payload)
+	id, status, err := s.enqueueGuarded(r, req.MachineID, req.Type, req.CurrentPassword, req.Payload)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		router.JSONError(w, err.Error(), status)
 		return
 	}
 	s.broadcastCommands(req.MachineID) // show the newly-queued command live

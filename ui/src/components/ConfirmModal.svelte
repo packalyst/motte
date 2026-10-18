@@ -1,5 +1,5 @@
 <script>
-  import { confirmModalStore, closeConfirmModal, setConfirmCheckbox } from '../stores/app.js'
+  import { confirmModalStore, closeConfirmModal, setConfirmCheckbox, setConfirmPassword } from '../stores/app.js'
   import Modal from './Modal.svelte'
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
@@ -115,13 +115,34 @@
           />
         </div>
       {/if}
+
+      {#if $confirmModalStore.passwordPrompt}
+        <!-- Step-up re-authentication: the operator confirms a sensitive action with their password. -->
+        <div class="pt-1 border-t border-border space-y-1.5">
+          <label class="text-sm font-medium text-foreground" for="confirm-stepup-password">
+            {$confirmModalStore.passwordPrompt.label || 'Confirm your password'}
+          </label>
+          <div class="kt-input">
+            <Icon name="lock" class="text-muted-foreground" />
+            <input
+              id="confirm-stepup-password"
+              type="password"
+              autocomplete="current-password"
+              placeholder={$confirmModalStore.passwordPrompt.placeholder || 'Your password'}
+              value={$confirmModalStore.passwordValue}
+              oninput={(e) => setConfirmPassword(e.target.value)}
+              onkeydown={(e) => { if (e.key === 'Enter' && $confirmModalStore.passwordValue) handleConfirm() }}
+            />
+          </div>
+        </div>
+      {/if}
     </div>
 
     {#snippet footer()}
       <Button onclick={handleCancel} variant="secondary" disabled={$confirmModalStore.loading}>
         {$confirmModalStore.cancelText}
       </Button>
-      <Button onclick={handleConfirm} variant={buttonVariantMap[$confirmModalStore.variant]} disabled={$confirmModalStore.loading}>
+      <Button onclick={handleConfirm} variant={buttonVariantMap[$confirmModalStore.variant]} disabled={$confirmModalStore.loading || ($confirmModalStore.passwordPrompt && !$confirmModalStore.passwordValue)}>
         {#if $confirmModalStore.loading}
           <Icon name="refresh" size={14} class="animate-spin mr-1" />
         {/if}

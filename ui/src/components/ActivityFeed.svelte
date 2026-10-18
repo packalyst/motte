@@ -29,6 +29,7 @@
     docker: 'box',
     geolocation: 'world',
     auth: 'shield-lock',
+    fleet: 'device-desktop',
   }
   // Color per severity.
   const SEVERITY = {

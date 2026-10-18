@@ -584,9 +584,11 @@ func (s *Service) handleFixPackages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload, _ := json.Marshal(map[string]any{"packages": req.Packages})
-	cid, err := s.Enqueue(req.MachineID, "fix-packages", payload)
+	// fix-packages is allow-tier (targeted, operator-selected remediation); route through the
+	// guardrail for audit coverage.
+	cid, status, err := s.enqueueGuarded(r, req.MachineID, "fix-packages", "", payload)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		router.JSONError(w, err.Error(), status)
 		return
 	}
 	router.JSON(w, map[string]any{"command_id": cid, "count": len(req.Packages)})

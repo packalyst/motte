@@ -9,6 +9,10 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"api/internal/auth"
+	"api/internal/events"
+	"api/internal/helper"
 )
 
 // allowedCommands is the ONLY set of actions the panel can tell an agent to run.
@@ -28,6 +32,86 @@ var allowedCommands = map[string]bool{
 	"update-agent":   true, // self-update the wgscout binary to the latest verified release
 	"set-log-level":  true, // flip agent+sub-agent verbosity live (quiet|debug)
 	"set-panel-port": true, // tell the agent the panel's mTLS port changed (reconnect)
+}
+
+// confirmCommands are the destructive / security-impacting actions the panel will only
+// enqueue after STEP-UP re-authentication (the operator re-entering their current password).
+// They form the middle tier of the command guardrail:
+//
+//	BLOCK   — not in allowedCommands; Enqueue refuses it outright.
+//	CONFIRM — listed here; requires step-up, then enqueued.
+//	ALLOW   — any other allowlisted command; enqueued directly.
+//
+// Every operator-initiated enqueue is audit-logged (who, from where, which tier), regardless.
+var confirmCommands = map[string]bool{
+	"apply-updates": true, // system package upgrades — can break the host or force a reboot
+	"update-kernel": true, // installs a new kernel; reboot to activate
+	"restart":       true, // restarts tools or the whole host
+	"update-agent":  true, // swaps the wgscout binary and restarts the service
+	"set-dry-run":   true, // flips enforcement on/off — turning it OFF removes protection
+	"clear-blocks":  true, // empties the machine's panel-pushed blocklist
+}
+
+// requiresStepUp reports whether ctype is a confirm-tier command.
+func requiresStepUp(ctype string) bool { return confirmCommands[ctype] }
+
+// actingAdmin resolves the operator behind an authenticated panel request, for audit
+// attribution and step-up verification. Returns ("", 0) when it can't be determined (e.g.
+// no auth service wired); callers that require step-up treat that as a failure.
+func (s *Service) actingAdmin(r *http.Request) (string, int64) {
+	authSvc := auth.GetService()
+	if authSvc == nil {
+		return "", 0
+	}
+	u, err := authSvc.ValidateSession(helper.SessionToken(r))
+	if err != nil || u == nil {
+		return "", 0
+	}
+	return u.Username, u.ID
+}
+
+// enqueueGuarded applies the command guardrail and then enqueues. A confirm-tier command
+// requires the operator's current password (verified server-side); every attempt is audited
+// with who/where; and the allowlist (block tier) is still enforced by Enqueue. currentPassword
+// is ignored for allow-tier commands. It returns the HTTP status the caller should send: 428
+// when step-up is needed (so the UI can prompt for the password and retry), 401 on a wrong
+// password, 400 when the command is not allowlisted, 200 on success.
+func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassword string, payload json.RawMessage) (string, int, error) {
+	actor, userID := s.actingAdmin(r)
+	ip := helper.GetClientIP(r)
+
+	if requiresStepUp(ctype) {
+		authSvc := auth.GetService()
+		if authSvc == nil || userID == 0 {
+			events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
+				fmt.Sprintf("Command %q on %s denied: operator could not be verified for step-up", ctype, machineID))
+			return "", http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
+		}
+		if currentPassword == "" {
+			// Benign first attempt — the UI hasn't prompted yet. Signal step-up, don't audit.
+			return "", http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
+		}
+		if err := authSvc.VerifyPassword(userID, currentPassword); err != nil {
+			events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
+				fmt.Sprintf("Command %q on %s denied: step-up re-authentication failed", ctype, machineID))
+			return "", http.StatusUnauthorized, fmt.Errorf("current password is incorrect")
+		}
+	}
+
+	id, err := s.Enqueue(machineID, ctype, payload)
+	if err != nil {
+		events.Audit("fleet", "command_blocked", events.SeverityWarning, actor, ip,
+			fmt.Sprintf("Command %q on %s rejected: %v", ctype, machineID, err))
+		return "", http.StatusBadRequest, err
+	}
+
+	sev := events.SeverityInfo
+	if requiresStepUp(ctype) {
+		sev = events.SeverityWarning
+	}
+	events.Audit("fleet", "command_"+ctype, sev, actor, ip,
+		fmt.Sprintf("Command %q queued for machine %s", ctype, machineID))
+	return id, http.StatusOK, nil
 }
 
 // Command is one queued instruction for a machine.
