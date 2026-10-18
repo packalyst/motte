@@ -60,6 +60,69 @@
           ],
           "handler": "Import",
           "description": "Apply a backup (faithful replace) then reconcile live state"
+        },
+        {
+          "path": "/offhost/config",
+          "methods": [
+            "GET"
+          ],
+          "handler": "OffhostGetConfig",
+          "description": "Get off-host backup config",
+          "min_role": "admin"
+        },
+        {
+          "path": "/offhost/config",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "OffhostSaveConfig",
+          "description": "Save off-host backup config",
+          "min_role": "admin"
+        },
+        {
+          "path": "/offhost/test",
+          "methods": [
+            "POST"
+          ],
+          "handler": "OffhostTest",
+          "description": "Test an off-host destination",
+          "min_role": "admin"
+        },
+        {
+          "path": "/offhost/run",
+          "methods": [
+            "POST"
+          ],
+          "handler": "OffhostRun",
+          "description": "Run an off-host backup now",
+          "min_role": "admin"
+        },
+        {
+          "path": "/offhost/list",
+          "methods": [
+            "GET"
+          ],
+          "handler": "OffhostList",
+          "description": "List off-host backups",
+          "min_role": "admin"
+        },
+        {
+          "path": "/offhost/status",
+          "methods": [
+            "GET"
+          ],
+          "handler": "OffhostStatus",
+          "description": "Off-host backup status",
+          "min_role": "admin"
+        },
+        {
+          "path": "/offhost/restore",
+          "methods": [
+            "POST"
+          ],
+          "handler": "OffhostRestore",
+          "description": "Restore from an off-host backup",
+          "min_role": "admin"
         }
       ]
     },

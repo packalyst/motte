@@ -554,6 +554,7 @@ func main() {
 		},
 	})
 	r.RegisterService("backup", backupSvc.Handlers())
+	backupSvc.Start() // off-host scheduled-backup ticker
 	log.Println("Backup & migrate service registered")
 
 	// Initialize WebSocket service

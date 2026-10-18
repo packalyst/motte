@@ -30,6 +30,14 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"Export":  s.handleExport,
 		"Preview": s.handlePreview,
 		"Import":  s.handleImport,
+		// Off-host (scheduled, automated upload of the sealed bundle to S3/SFTP).
+		"OffhostGetConfig":  s.handleOffhostGetConfig,
+		"OffhostSaveConfig": s.handleOffhostSaveConfig,
+		"OffhostTest":       s.handleOffhostTest,
+		"OffhostRun":        s.handleOffhostRunNow,
+		"OffhostList":       s.handleOffhostList,
+		"OffhostStatus":     s.handleOffhostStatus,
+		"OffhostRestore":    s.handleOffhostRestore,
 	}
 }
 
