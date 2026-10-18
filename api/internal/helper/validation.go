@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -50,24 +49,6 @@ func ValidatePort(port int) error {
 		return &ValidationError{Field: "port", Message: "port must be between 1 and 65535"}
 	}
 	return nil
-}
-
-// ValidatePortString validates a port from string input
-func ValidatePortString(portStr string) (int, error) {
-	if portStr == "" {
-		return 0, &ValidationError{Field: "port", Message: "port is required"}
-	}
-
-	port, err := strconv.Atoi(strings.TrimSpace(portStr))
-	if err != nil {
-		return 0, &ValidationError{Field: "port", Message: "port must be a number"}
-	}
-
-	if err := ValidatePort(port); err != nil {
-		return 0, err
-	}
-
-	return port, nil
 }
 
 // ValidateDomain validates a domain name
@@ -237,38 +218,6 @@ func SanitizeDomainName(domain string) string {
 
 	// Lowercase
 	return strings.ToLower(prefix + safe)
-}
-
-// ValidateURL validates a URL for safe usage (prevents SSRF)
-// Allows only http/https schemes and validates format
-func ValidateURL(rawURL string) error {
-	if rawURL == "" {
-		return &ValidationError{Field: "url", Message: "URL is required"}
-	}
-
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
-		return &ValidationError{Field: "url", Message: "invalid URL format"}
-	}
-
-	// Only allow http and https schemes
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return &ValidationError{Field: "url", Message: "URL must use http or https scheme"}
-	}
-
-	// Must have a host
-	if parsed.Host == "" {
-		return &ValidationError{Field: "url", Message: "URL must have a host"}
-	}
-
-	return nil
-}
-
-// ValidateInternalServiceURL validates a URL for internal service connections
-// Used for Headscale, AdGuard, etc. - blocks dangerous metadata endpoints
-func ValidateInternalServiceURL(rawURL string) error {
-	_, err := SanitizeInternalServiceURL(rawURL)
-	return err
 }
 
 // SanitizeInternalServiceURL validates and returns a sanitized URL for internal services

@@ -1,10 +1,8 @@
 package dhcp
 
 import (
-	"bufio"
 	"fmt"
 	"net"
-	"os/exec"
 	"strings"
 
 	"api/internal/helper"
@@ -198,20 +196,7 @@ func requireNonWANInterface(iface string) error {
 
 // defaultRouteInterface returns the interface of the IPv4 default route via `ip route`.
 func defaultRouteInterface() (string, error) {
-	out, err := exec.Command("ip", "-4", "route", "show", "default").Output()
-	if err != nil {
-		return "", err
-	}
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
-	for sc.Scan() {
-		f := strings.Fields(sc.Text())
-		for i := 0; i < len(f)-1; i++ {
-			if f[i] == "dev" {
-				return f[i+1], nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no default route found")
+	return helper.DefaultRouteInterface()
 }
 
 func isPrivateNet(n *net.IPNet) bool {

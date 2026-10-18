@@ -54,19 +54,3 @@ func BoolFromNull(nb sql.NullBool, defaultVal bool) bool {
 	}
 	return defaultVal
 }
-
-// Int64FromNull converts sql.NullInt64 to int64 with a default value
-func Int64FromNull(ni sql.NullInt64, defaultVal int64) int64 {
-	if ni.Valid {
-		return ni.Int64
-	}
-	return defaultVal
-}
-
-// Float64FromNull converts sql.NullFloat64 to float64 with a default value
-func Float64FromNull(nf sql.NullFloat64, defaultVal float64) float64 {
-	if nf.Valid {
-		return nf.Float64
-	}
-	return defaultVal
-}

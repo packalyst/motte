@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"log"
 	"net"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 
 	"api/internal/database"
+	"api/internal/helper"
 )
 
 // isValidPortElement guards the inet_service set boundary: a numeric port 1-65535 or a
@@ -45,18 +45,8 @@ func keepIPv4CIDRs(in []string) []string {
 // Re-detected on every script render so cable swaps / wifi changes self-heal.
 // Returns "" if detection fails (e.g. no default route) — caller must skip the rule.
 func detectWANInterface() string {
-	out, err := exec.Command("ip", "-4", "route", "show", "default").Output()
-	if err != nil {
-		return ""
-	}
-	// Output shape: "default via 192.168.1.1 dev eth0 proto dhcp ..."
-	fields := strings.Fields(string(out))
-	for i, f := range fields {
-		if f == "dev" && i+1 < len(fields) {
-			return fields[i+1]
-		}
-	}
-	return ""
+	iface, _ := helper.DefaultRouteInterface()
+	return iface
 }
 
 // loadNoInternetPeerIPs returns IPs of all VPN peers that have block_internet = 1.
