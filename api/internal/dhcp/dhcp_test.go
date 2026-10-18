@@ -245,7 +245,7 @@ func TestReachabilityNftSyntax(t *testing.T) {
 
 func TestSanitizeLeaseName(t *testing.T) {
 	cases := map[string]string{
-		"cp":            "cp",
+		"laptop":        "laptop",
 		"  host-1  ":    "host-1",
 		"*":             "",
 		"":              "",
