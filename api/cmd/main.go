@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"api/internal/adguard"
+	"api/internal/alerts"
 	"api/internal/auth"
 	"api/internal/auth/pwa"
 	"api/internal/backup"
@@ -556,6 +557,15 @@ func main() {
 	r.RegisterService("backup", backupSvc.Handlers())
 	backupSvc.Start() // off-host scheduled-backup ticker
 	log.Println("Backup & migrate service registered")
+
+	// Resource-threshold alerts (CPU/memory/disk → webhook + push).
+	if alertSvc, err := alerts.New(); err != nil {
+		log.Printf("Alerts service unavailable: %v", err)
+	} else {
+		r.RegisterService("alerts", alertSvc.Handlers())
+		alertSvc.Start()
+		log.Println("Alerts service registered")
+	}
 
 	// Initialize WebSocket service
 	wsSvc := ws.New()

@@ -105,6 +105,20 @@ func (c *Collector) Run() {
 	}
 }
 
+// Snapshot takes a one-shot reading of the gauge metrics, independent of the WS collector (which
+// only samples while the dashboard is open). mem% and disk% are instantaneous; CPU% is measured
+// over a brief internal window since it needs two samples to diff. Used by the alerts evaluator so
+// thresholds are checked even when nobody is watching the dashboard.
+func Snapshot() (cpu, mem, disk float64) {
+	c1, _ := readCPU()
+	time.Sleep(300 * time.Millisecond)
+	c2, _ := readCPU()
+	cpu = cpuBusy(c1, c2)
+	mem, _, _ = readMem()
+	disk, _, _ = readDiskSpace()
+	return cpu, mem, disk
+}
+
 // sample reads /proc once and returns the computed Stats. It returns ok=false on
 // the first tick (or after an idle gap), when there is no valid baseline yet to
 // diff against — the caller simply skips the broadcast for that tick.
