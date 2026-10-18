@@ -23,24 +23,7 @@ func ValidateIdentifier(s string) bool {
 	return validIdentifier.MatchString(s) && len(s) <= 64
 }
 
-// ValidateIPOrCIDR checks if a string is a valid IP address or CIDR
-func ValidateIPOrCIDR(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	// Try parsing as CIDR
-	if _, _, err := net.ParseCIDR(s); err == nil {
-		return true
-	}
-	// Try parsing as IP
-	if ip := net.ParseIP(s); ip != nil {
-		return true
-	}
-	return false
-}
-
-// ValidateIPv4OrCIDR is like ValidateIPOrCIDR but rejects IPv6. The firewall and vpn_acl
+// ValidateIPv4OrCIDR rejects IPv6. The firewall and vpn_acl
 // tables emit IPv4-only matchers (ip saddr/daddr) and ipv4_addr sets, so an IPv6 address
 // reaching a rule produces invalid nftables and — because the table is applied atomically
 // (delete + recreate in one script) — wedges the ENTIRE table, silently dropping all its
