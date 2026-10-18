@@ -1,5 +1,5 @@
 <script>
-  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiPost, toast, stepUpConfirm, currentUser } from '../stores/app.js'
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import Select from '../components/Select.svelte'
@@ -18,6 +18,7 @@
   let addPassword = $state('')
   let addRole = $state('viewer')
   let addCurrentPw = $state('')
+  let addTotp = $state('')
   let addBusy = $state(false)
 
   // Scope editor
@@ -25,7 +26,12 @@
   let scopeKind = $state('all')
   let scopeValues = $state('')
   let scopeCurrentPw = $state('')
+  let scopeTotp = $state('')
   let scopeBusy = $state(false)
+
+  // Whether the signed-in operator has 2FA — step-up then also needs a fresh authenticator code.
+  const needsTotp = $derived(!!$currentUser?.totpEnabled)
+  const totpOk = (v) => !needsTotp || v.length === 6
   const scopeKindOptions = [
     { value: 'all', label: 'All machines' },
     { value: 'tag', label: 'By tag' },
@@ -73,20 +79,20 @@
     }
   }
 
-  // Step-up: prompt for the operator's password, returns it or null if cancelled.
+  // Step-up: prompt for the operator's password (and 2FA code when enabled). Returns
+  // { password, totp } or null if cancelled.
   async function stepUp(message) {
-    const r = await confirm({
+    const r = await stepUpConfirm({
       title: 'Confirm your password',
       message,
       confirmText: 'Authorize',
       variant: 'destructive',
-      passwordPrompt: { label: 'Your password' },
     })
-    return r?.confirmed && r?.password ? r.password : null
+    return r?.confirmed && r?.password ? { password: r.password, totp: r.totp || '' } : null
   }
 
   async function addUser() {
-    if (!addUsername.trim() || !addPassword || !addCurrentPw) return
+    if (!addUsername.trim() || !addPassword || !addCurrentPw || !totpOk(addTotp)) return
     addBusy = true
     try {
       await apiPost('/api/auth/users', {
@@ -94,10 +100,11 @@
         password: addPassword,
         role: addRole,
         currentPassword: addCurrentPw,
+        totpCode: addTotp,
       })
       toast(`User "${addUsername.trim()}" created`, 'success')
       showAdd = false
-      addUsername = addPassword = addCurrentPw = ''
+      addUsername = addPassword = addCurrentPw = addTotp = ''
       addRole = 'viewer'
       await load()
     } catch (e) {
@@ -109,10 +116,10 @@
 
   async function changeRole(u, role) {
     if (role === u.role) return
-    const pw = await stepUp(`Change ${u.username}'s role from ${u.role} to ${role}?`)
-    if (!pw) { await load(); return } // reload to reset the select if cancelled
+    const su = await stepUp(`Change ${u.username}'s role from ${u.role} to ${role}?`)
+    if (!su) { await load(); return } // reload to reset the select if cancelled
     try {
-      await apiPost('/api/auth/users/role', { user_id: u.id, role, currentPassword: pw })
+      await apiPost('/api/auth/users/role', { user_id: u.id, role, currentPassword: su.password, totpCode: su.totp })
       toast(`${u.username} is now ${role}`, 'success')
       await load()
     } catch (e) {
@@ -126,10 +133,11 @@
     scopeKind = u.scopeKind || 'all'
     scopeValues = u.scopeValues || ''
     scopeCurrentPw = ''
+    scopeTotp = ''
   }
 
   async function saveScope() {
-    if (!scopeUser || !scopeCurrentPw) return
+    if (!scopeUser || !scopeCurrentPw || !totpOk(scopeTotp)) return
     scopeBusy = true
     try {
       await apiPost('/api/auth/users/scope', {
@@ -137,6 +145,7 @@
         scope_kind: scopeKind,
         scope_values: scopeKind === 'all' ? '' : scopeValues.trim(),
         currentPassword: scopeCurrentPw,
+        totpCode: scopeTotp,
       })
       toast(`Scope updated for ${scopeUser.username}`, 'success')
       scopeUser = null
@@ -149,10 +158,10 @@
   }
 
   async function removeUser(u) {
-    const pw = await stepUp(`Delete the account "${u.username}" (${u.role})? This cannot be undone.`)
-    if (!pw) return
+    const su = await stepUp(`Delete the account "${u.username}" (${u.role})? This cannot be undone.`)
+    if (!su) return
     try {
-      await apiPost('/api/auth/users/delete', { user_id: u.id, currentPassword: pw })
+      await apiPost('/api/auth/users/delete', { user_id: u.id, currentPassword: su.password, totpCode: su.totp })
       toast(`Deleted ${u.username}`, 'success')
       await load()
     } catch (e) {
@@ -268,11 +277,15 @@
       <div class="space-y-1 pt-1 border-t border-border">
         <label class="text-sm font-medium" for="tu-stepup">Confirm with your password</label>
         <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="tu-stepup" type="password" bind:value={addCurrentPw} placeholder="your current password" autocomplete="current-password" /></div>
+        {#if needsTotp}
+          <label class="text-sm font-medium" for="tu-totp">Authenticator code</label>
+          <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="tu-totp" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="123456" value={addTotp} oninput={(e) => (addTotp = e.target.value.replace(/\D/g, ''))} /></div>
+        {/if}
       </div>
     </div>
     {#snippet footer()}
       <Button onclick={() => (showAdd = false)} variant="secondary" disabled={addBusy}>Cancel</Button>
-      <Button onclick={addUser} variant="primary" disabled={addBusy || !addUsername.trim() || !addPassword || !addCurrentPw}>
+      <Button onclick={addUser} variant="primary" disabled={addBusy || !addUsername.trim() || !addPassword || !addCurrentPw || !totpOk(addTotp)}>
         {#if addBusy}<Icon name="refresh" size={14} class="animate-spin mr-1" />{/if}
         Create user
       </Button>
@@ -297,11 +310,15 @@
       <div class="space-y-1 pt-1 border-t border-border">
         <label class="text-sm font-medium" for="sc-stepup">Confirm with your password</label>
         <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="sc-stepup" type="password" bind:value={scopeCurrentPw} placeholder="your current password" autocomplete="current-password" /></div>
+        {#if needsTotp}
+          <label class="text-sm font-medium" for="sc-totp">Authenticator code</label>
+          <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="sc-totp" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="123456" value={scopeTotp} oninput={(e) => (scopeTotp = e.target.value.replace(/\D/g, ''))} /></div>
+        {/if}
       </div>
     </div>
     {#snippet footer()}
       <Button onclick={() => (scopeUser = null)} variant="secondary" disabled={scopeBusy}>Cancel</Button>
-      <Button onclick={saveScope} variant="primary" disabled={scopeBusy || !scopeCurrentPw || (scopeKind !== 'all' && !scopeValues.trim())}>
+      <Button onclick={saveScope} variant="primary" disabled={scopeBusy || !scopeCurrentPw || !totpOk(scopeTotp) || (scopeKind !== 'all' && !scopeValues.trim())}>
         {#if scopeBusy}<Icon name="refresh" size={14} class="animate-spin mr-1" />{/if}
         Save scope
       </Button>
