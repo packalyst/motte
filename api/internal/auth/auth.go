@@ -22,7 +22,6 @@ import (
 	"api/internal/settings"
 
 	"github.com/pquerna/otp/totp"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // LoginNotifyFunc is called after successful login (for push notifications)
@@ -170,7 +169,7 @@ func (s *Service) CreateUser(username, password string) (*User, error) {
 	}
 
 	// Hash password
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := hashPassword(password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %v", err)
 	}
@@ -178,7 +177,7 @@ func (s *Service) CreateUser(username, password string) (*User, error) {
 	// Insert user
 	result, err := s.db.Exec(
 		"INSERT INTO users (username, password_hash) VALUES (?, ?)",
-		username, string(hash),
+		username, hash,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -211,8 +210,9 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 	).Scan(&user.ID, &user.Username, &passwordHash, &user.CreatedAt, &lastLogin, &totpSecretEnc, &totpEnabled)
 
 	if err == sql.ErrNoRows {
-		// Perform dummy bcrypt comparison to prevent timing attacks
-		bcrypt.CompareHashAndPassword([]byte("$2a$10$dummyhashtopreventtimingattacks"), []byte(password))
+		// Spend one Argon2id computation so the unknown-user path matches the timing of a
+		// real verification (user-enumeration resistance).
+		dummyVerify(password)
 		return nil, ErrInvalidCredentials
 	}
 	if err != nil {
@@ -220,8 +220,9 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 	}
 	user.LastLogin = database.TimeFromNull(lastLogin, time.Time{})
 
-	// Verify password
-	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+	// Verify password (Argon2id, or legacy bcrypt pending migration).
+	passwordOK, needsRehash, _ := verifyPassword(password, passwordHash)
+	if !passwordOK {
 		return nil, ErrInvalidCredentials
 	}
 
@@ -257,6 +258,11 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 			// Clear TOTP attempts on success (refunds the reserved slot).
 			clearTOTPAttempts(user.ID)
 		}
+	}
+
+	// Password verified and 2FA (if any) satisfied — migrate a legacy/weak hash to Argon2id.
+	if needsRehash {
+		s.upgradeHash(user.ID, password)
 	}
 
 	// Create session with IP and user agent
