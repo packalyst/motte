@@ -1535,46 +1535,53 @@
               {#each sortedPorts as p}
                 {@const serviceName = p.service || (p.port === 22 ? 'SSH' : p.port === 80 ? 'HTTP' : p.port === 443 ? 'HTTPS' : p.port === 51820 ? 'WireGuard' : '')}
                 {@const isPublic = p.scope !== 'private'}
-                {@const lockBtn = {
-                  icon: isPublic ? 'lock-open' : 'lock',
-                  variant: isPublic ? 'success' : 'secondary',
-                  onclick: () => toggleScope(p),
-                  tooltip: isPublic
-                    ? 'Public — reachable from the internet. Click to make it private (VPN & LAN only).'
-                    : 'Private — VPN & LAN only. Click to make it public (reachable from the internet).'
-                }}
-                {#if !p.lockable}
-                  <!-- Docker-published: reachability is Docker's (DNAT), not our allow-set — show a static lock. -->
-                  <Input
-                    value={p.port}
-                    disabled
-                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    suffixAddonIcon={{ icon: "lock", tooltip: `Managed by Docker${serviceName ? ': ' + serviceName : ''}` }}
-                    class="kt-input-group-warning"
-                  />
-                {:else if p.essential}
-                  <!-- Essential: can't be removed, but can be made public/private. -->
-                  <Input
-                    value={p.port}
-                    disabled
-                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    suffixAddonBtn={lockBtn}
-                    class="kt-input-group-warning"
-                  />
-                {:else}
-                  <!-- Normal: scope lock (right) + remove (left). -->
-                  <Input
-                    value={p.port}
-                    disabled
-                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    prefixAddonBtn={{
-                      icon: "trash",
-                      onclick: () => confirmRemovePort(p.port, p.protocol),
-                      tooltip: "Remove port"
-                    }}
-                    suffixAddonBtn={lockBtn}
-                  />
-                {/if}
+                {@const svc = serviceName ? serviceName + ' — ' : ''}
+                {@const scopeTip = !p.lockable
+                  ? `Managed by Docker${serviceName ? ': ' + serviceName : ''}`
+                  : isPublic
+                    ? `${svc}Public: reachable from the internet. Click to make private (VPN & LAN only).`
+                    : `${svc}Private: VPN & LAN only. Click to make public (reachable from the internet).`}
+                <div class="flex items-center gap-1.5">
+                  {#if p.lockable && !p.essential}
+                    <!-- Normal port: removable -->
+                    <Input
+                      value={p.port}
+                      disabled
+                      class="flex-1"
+                      prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                      suffixAddonBtn={{
+                        icon: "trash",
+                        onclick: () => confirmRemovePort(p.port, p.protocol),
+                        tooltip: "Remove port"
+                      }}
+                    />
+                  {:else}
+                    <!-- Essential / Docker: not removable -->
+                    <Input
+                      value={p.port}
+                      disabled
+                      class="flex-1"
+                      prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    />
+                  {/if}
+                  <!-- Scope lock: green open = public, red closed = private; Docker ports are not togglable. -->
+                  <button
+                    type="button"
+                    disabled={!p.lockable}
+                    onclick={() => p.lockable && toggleScope(p)}
+                    aria-label={scopeTip}
+                    data-kt-tooltip=""
+                    class="shrink-0 grid place-items-center w-8 h-8 rounded-md border transition-colors
+                      {!p.lockable
+                        ? 'opacity-50 cursor-not-allowed border-border text-muted-foreground'
+                        : isPublic
+                          ? 'border-green-500/40 text-green-600 hover:bg-green-500/10'
+                          : 'border-red-500/40 text-red-600 hover:bg-red-500/10'}"
+                  >
+                    <Icon name={isPublic ? 'lock-open' : 'lock'} size={16} />
+                    <span data-kt-tooltip-content class="kt-tooltip hidden">{scopeTip}</span>
+                  </button>
+                </div>
               {/each}
             </div>
           {:else}
