@@ -92,6 +92,52 @@ func (t *FirewallTable) Name() string   { return "wgadmin_firewall" }
 func (t *FirewallTable) Family() string { return "inet" }
 func (t *FirewallTable) Priority() int  { return 10 }
 
+// managedSegmentIfaces returns the interface names of enabled DHCP-managed private networks. The
+// input chain opens the panel's own DHCP to devices on exactly these NICs (never the WAN).
+// Read straight from the shared DB so this package needn't import dhcp (which imports this one).
+func (t *FirewallTable) managedSegmentIfaces() []string {
+	if t.db == nil {
+		return nil
+	}
+	rows, err := t.db.Query(`SELECT iface FROM dhcp_networks WHERE enabled = 1`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var iface string
+		if err := rows.Scan(&iface); err != nil {
+			continue
+		}
+		if iface = strings.TrimSpace(iface); iface != "" {
+			out = append(out, iface)
+		}
+	}
+	return out
+}
+
+// segmentInputRules opens DHCP (udp/67) to the panel's own dnsmasq on each managed LAN interface,
+// scoped by iifname so the port is NEVER reachable from the WAN. DNS to the box is NOT opened here:
+// it already rides the global allowed-ports list (udp/53), the same path VPN clients use, so
+// duplicating it would be pointless. Pure/unit-testable; an unmanaged NIC or the WAN matches none
+// of these and stays shut.
+func segmentInputRules(ifaces []string) []string {
+	var rules []string
+	for _, iface := range ifaces {
+		s := SanitizeElement(iface)
+		if s == "" {
+			continue
+		}
+		rules = append(rules,
+			"# Managed LAN \""+s+"\": accept DHCP in (scoped to this NIC, never the WAN)",
+			"iifname \""+s+"\" udp dport 67 accept",
+			"",
+		)
+	}
+	return rules
+}
+
 // Build generates the nftables script
 func (t *FirewallTable) Build() (string, error) {
 	// Clean overlapping ranges first
@@ -445,6 +491,11 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 		"iif lo accept",
 		"",
 	}
+	// Managed private LANs: accept DHCP (udp/67) in on each segment NIC so devices can get an
+	// address from the panel's dnsmasq. Rebuilt from the DB on every apply, so adding/removing a
+	// network adds/removes this automatically — and it's scoped per-NIC, never on the WAN. (DNS to
+	// the box already rides the global allowed-ports list, same as VPN clients.)
+	inputRules = append(inputRules, segmentInputRules(t.managedSegmentIfaces())...)
 	// NOTE: IPv4 `ip protocol icmp accept` is intentionally emitted AFTER the block drops
 	// (below), so a blocked IP/country/ASN can't even ping the server. Established/related
 	// ICMP (incl. PMTUD errors) still rides the ct rule at the top of the chain.
