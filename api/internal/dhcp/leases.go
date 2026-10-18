@@ -56,8 +56,28 @@ func parseLeases(iface string) []lease {
 func (s *Service) syncLeases(n *Network) {
 	auto := n.Mode == "auto"
 	for _, l := range parseLeases(n.Iface) {
-		_ = s.upsertClient(n.ID, l.MAC, l.IP, auto)
+		_ = s.upsertClient(n.ID, l.MAC, l.IP, l.Name, auto)
 	}
+}
+
+// sanitizeLeaseName keeps a DHCP-advertised hostname safe/sane for display: trims it, drops the
+// "*" placeholder and control characters, and caps the length. Empty if nothing usable is left.
+func sanitizeLeaseName(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "*" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f { // strip control chars
+			continue
+		}
+		b.WriteRune(r)
+		if b.Len() >= 63 {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // clientsWithLive returns the network's known clients (from the DB) with Online set from the live
