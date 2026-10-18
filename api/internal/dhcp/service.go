@@ -67,8 +67,8 @@ func (s *Service) Reconcile(n *Network) error {
 	if err := s.InterfaceReady(n); err != nil {
 		return err // fail closed: no DHCP on an interface that isn't actually up
 	}
-	ensureIPForward()             // routing between wg0 and the segment needs IPv4 forwarding
-	ensureSegmentForward(n.Iface) // and Docker's FORWARD drop must not swallow segment↔WAN traffic
+	ensureIPForward()     // routing between wg0 and the segment needs IPv4 forwarding
+	syncSegmentForward(n) // open/close the scoped segment↔WAN punch-through past Docker's FORWARD drop
 	if err := s.writeDnsmasqConfig(n); err != nil {
 		return err
 	}
