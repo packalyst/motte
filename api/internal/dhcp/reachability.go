@@ -7,7 +7,30 @@ import (
 	"strings"
 
 	"api/internal/database"
+	"api/internal/helper"
+	"api/internal/nftables"
 )
+
+// rfc1918Ranges are the private IPv4 blocks a managed segment must never reach via internet-out.
+// Combined at build time with the live WireGuard/Headscale ranges to form the private_ranges set,
+// so the segment's NAT path reaches the PUBLIC internet only — never other internal/VPN networks.
+var rfc1918Ranges = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+
+// privateReachRanges returns the destinations the segment must not reach when internet-out is on:
+// RFC1918 plus the live VPN/overlay ranges (same env the VPN ACL reads, so it tracks the real
+// deployment instead of hardcoding). Invalid/empty env values are skipped.
+func privateReachRanges() []string {
+	ranges := append([]string{}, rfc1918Ranges...)
+	for _, r := range []string{
+		helper.GetEnvOptional("WG_IP_RANGE", ""),
+		helper.GetEnvOptional("HEADSCALE_IP_RANGE", ""),
+	} {
+		if nftables.ValidateIPv4OrCIDR(r) {
+			ranges = append(ranges, r)
+		}
+	}
+	return ranges
+}
 
 // ReachabilityTable builds `inet wgadmin_dhcp_net`: a default-deny forward chain exposing each
 // managed segment to only the opted-in VPN clients, plus an off-by-default masquerade for
@@ -56,12 +79,12 @@ func (t *ReachabilityTable) Build() (string, error) {
 		}
 	}
 	wan, _ := defaultRouteInterface()
-	return renderReachability(nets, allowed, approved, wan), nil
+	return renderReachability(nets, allowed, approved, wan, privateReachRanges()), nil
 }
 
 // renderReachability builds the nft script (pure: no DB, no host calls) so it can be unit-tested
 // and syntax-checked with `nft -c`. Every IP/CIDR/iface is validated before emission.
-func renderReachability(nets []Network, allowed map[int64][]string, approved map[int64][]string, wan string) string {
+func renderReachability(nets []Network, allowed map[int64][]string, approved map[int64][]string, wan string, privateRanges []string) string {
 	var fwd strings.Builder
 	var nat strings.Builder
 	for i := range nets {
@@ -82,18 +105,30 @@ func renderReachability(nets []Network, allowed map[int64][]string, approved map
 			targets = approved[n.ID]
 		}
 
-		// Opted-in VPN clients may reach the forwardable hosts.
+		// Opted-in VPN clients and the segment reach each OTHER — the grant is symmetric, exactly
+		// like the VPN ACL (so a ticked client can initiate to the device and the device back to
+		// it). Emitted ABOVE the private-range drop below so a ticked client inside a VPN range
+		// stays reachable.
 		for _, ip := range allowed[n.ID] {
 			if net.ParseIP(ip) == nil {
 				continue
 			}
 			for _, t := range targets {
-				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr %s accept\n", ip, t)
+				for _, rule := range nftables.BidirectionalAccept(ip, t) {
+					fmt.Fprintf(&fwd, "        %s\n", rule)
+				}
 			}
 		}
 
-		// Internet-out (off by default): allow forwardable hosts OUT the WAN + masquerade the subnet.
+		// Internet-out (off by default): reach the PUBLIC internet only + masquerade the subnet.
 		if n.NATEnabled && validIface(wan) {
+			// Leak guard: refuse the segment → private/VPN ranges BEFORE the WAN accept, so a
+			// destination that merely routes via the WAN NIC (e.g. a datacenter 10.0.0.0/8) is
+			// dropped instead of silently masqueraded out. Its own subnet is excluded (local, and
+			// never forwarded anyway); the allow-pairs above already cleared any ticked VPN client.
+			if len(privateRanges) > 0 {
+				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr @private_ranges ip daddr != %s drop\n", n.CIDR, n.CIDR)
+			}
 			for _, t := range targets {
 				fmt.Fprintf(&fwd, "        ip saddr %s oifname %q accept\n", t, wan)
 			}
@@ -108,6 +143,9 @@ func renderReachability(nets []Network, allowed map[int64][]string, approved map
 
 	var sb strings.Builder
 	sb.WriteString("table inet wgadmin_dhcp_net {\n")
+	// private_ranges: destinations a segment must never reach via internet-out (RFC1918 + the live
+	// VPN/overlay ranges). Interval+auto-merge so overlapping CIDRs collapse cleanly.
+	sb.WriteString(nftables.BuildSet("private_ranges", "ipv4_addr", []string{"interval", "auto-merge"}, privateRanges))
 	sb.WriteString("    chain forward {\n")
 	sb.WriteString("        type filter hook forward priority 10; policy accept;\n")
 	sb.WriteString("        ct state established,related accept\n")
