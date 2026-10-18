@@ -71,6 +71,7 @@
 
   // Session settings
   let sessionTimeout = $state('24')
+  let idleLock = $state('0') // minutes of inactivity before the UI locks; '0' = disabled
   let metricsRetention = $state('90')
   let displayTimezone = $state('browser')
   let sessionChanged = $state(false)
@@ -241,10 +242,11 @@
 
       // Session
       sessionTimeout = settings.session_timeout || '24'
+      idleLock = String(settings.idle_lock_minutes ?? 0)
       metricsRetention = String(settings.metrics_retention_days || 90)
       displayTimezone = settings.display_timezone || 'browser'
       setDisplayTimezone(displayTimezone)
-      originalSession = { timeout: sessionTimeout, retention: metricsRetention, timezone: displayTimezone }
+      originalSession = { timeout: sessionTimeout, idleLock, retention: metricsRetention, timezone: displayTimezone }
 
       // Scanner
       scannerSettings = {
@@ -319,7 +321,7 @@
   })
 
   $effect(() => {
-    sessionChanged = sessionTimeout !== originalSession.timeout || metricsRetention !== originalSession.retention || displayTimezone !== originalSession.timezone
+    sessionChanged = sessionTimeout !== originalSession.timeout || idleLock !== originalSession.idleLock || metricsRetention !== originalSession.retention || displayTimezone !== originalSession.timezone
   })
 
   // Derived state for scanner change detection
@@ -416,11 +418,12 @@
     try {
       await apiPut('/api/settings', {
         session_timeout: sessionTimeout,
+        idle_lock_minutes: parseInt(idleLock, 10),
         metrics_retention_days: parseInt(metricsRetention, 10),
         display_timezone: displayTimezone
       })
       setDisplayTimezone(displayTimezone)
-      originalSession = { timeout: sessionTimeout, retention: metricsRetention, timezone: displayTimezone }
+      originalSession = { timeout: sessionTimeout, idleLock, retention: metricsRetention, timezone: displayTimezone }
       sessionChanged = false
       toast('Session settings saved', 'success')
     } catch (e) {
@@ -1242,6 +1245,17 @@
                 { value: '24', label: '24 hours' },
                 { value: '168', label: '7 days' },
                 { value: '720', label: '30 days' }
+              ]}
+            />
+            <Select
+              label="Idle lock"
+              bind:value={idleLock}
+              options={[
+                { value: '0', label: 'Disabled' },
+                { value: '5', label: 'After 5 min' },
+                { value: '15', label: 'After 15 min' },
+                { value: '30', label: 'After 30 min' },
+                { value: '60', label: 'After 1 hour' }
               ]}
             />
             <Select

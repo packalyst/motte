@@ -7,7 +7,7 @@
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm, stepUpConfirm } from '../stores/app.js'
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
@@ -219,15 +219,14 @@
       // Destructive (confirm-tier) commands require step-up re-authentication: the panel
       // answers 428 until the operator's current password is supplied. Prompt and retry once.
       if (e.status === 428) {
-        const su = await confirm({
+        const su = await stepUpConfirm({
           title: `Confirm "${opts.title || type}"`,
-          message: `This is a sensitive action on ${machine.name}. Re-enter your password to authorize it.`,
+          message: `This is a sensitive action on ${machine.name}. Re-enter your credentials to authorize it.`,
           confirmText: 'Authorize', variant: 'destructive',
-          passwordPrompt: { label: 'Your password' },
         })
         if (!su?.confirmed || !su?.password) return
         try {
-          await send({ currentPassword: su.password })
+          await send({ currentPassword: su.password, totpCode: su.totp || '' })
         } catch (e2) {
           toast('Failed: ' + e2.message, 'error')
         }

@@ -1,5 +1,5 @@
 <script>
-  import { confirmModalStore, closeConfirmModal, setConfirmCheckbox, setConfirmPassword } from '../stores/app.js'
+  import { confirmModalStore, closeConfirmModal, setConfirmCheckbox, setConfirmPassword, setConfirmTotp } from '../stores/app.js'
   import Modal from './Modal.svelte'
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
@@ -131,7 +131,30 @@
               placeholder={$confirmModalStore.passwordPrompt.placeholder || 'Your password'}
               value={$confirmModalStore.passwordValue}
               oninput={(e) => setConfirmPassword(e.target.value)}
-              onkeydown={(e) => { if (e.key === 'Enter' && $confirmModalStore.passwordValue) handleConfirm() }}
+              onkeydown={(e) => { if (e.key === 'Enter' && $confirmModalStore.passwordValue && !$confirmModalStore.totpPrompt) handleConfirm() }}
+            />
+          </div>
+        </div>
+      {/if}
+
+      {#if $confirmModalStore.totpPrompt}
+        <!-- Step-up 2FA: the operator also enters a current authenticator code. -->
+        <div class="space-y-1.5">
+          <label class="text-sm font-medium text-foreground" for="confirm-stepup-totp">
+            {$confirmModalStore.totpPrompt.label || 'Authenticator code'}
+          </label>
+          <div class="kt-input">
+            <Icon name="shield-lock" class="text-muted-foreground" />
+            <input
+              id="confirm-stepup-totp"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="6"
+              placeholder="123456"
+              value={$confirmModalStore.totpValue}
+              oninput={(e) => setConfirmTotp(e.target.value.replace(/\D/g, ''))}
+              onkeydown={(e) => { if (e.key === 'Enter' && $confirmModalStore.passwordValue && $confirmModalStore.totpValue.length === 6) handleConfirm() }}
             />
           </div>
         </div>
@@ -142,7 +165,7 @@
       <Button onclick={handleCancel} variant="secondary" disabled={$confirmModalStore.loading}>
         {$confirmModalStore.cancelText}
       </Button>
-      <Button onclick={handleConfirm} variant={buttonVariantMap[$confirmModalStore.variant]} disabled={$confirmModalStore.loading || ($confirmModalStore.passwordPrompt && !$confirmModalStore.passwordValue)}>
+      <Button onclick={handleConfirm} variant={buttonVariantMap[$confirmModalStore.variant]} disabled={$confirmModalStore.loading || ($confirmModalStore.passwordPrompt && !$confirmModalStore.passwordValue) || ($confirmModalStore.totpPrompt && $confirmModalStore.totpValue.length !== 6)}>
         {#if $confirmModalStore.loading}
           <Icon name="refresh" size={14} class="animate-spin mr-1" />
         {/if}

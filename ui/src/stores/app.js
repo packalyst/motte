@@ -1,4 +1,8 @@
-import { writable } from 'svelte/store'
+import { writable, get } from 'svelte/store'
+
+// The signed-in user (null when logged out). Set by App.svelte; read by step-up helpers and the
+// idle lock so they know the caller's 2FA status and idle-lock policy without prop threading.
+export const currentUser = writable(null)
 
 // Theme
 const savedTheme = typeof localStorage !== 'undefined' ? localStorage.getItem('hs_theme') : 'dark'
@@ -152,6 +156,8 @@ export const confirmModalStore = writable({
   checkboxChecked: false,
   passwordPrompt: null,  // optional { label, placeholder } — renders a password field (step-up)
   passwordValue: '',
+  totpPrompt: null,      // optional { label } — renders a 2FA code field (step-up when 2FA is on)
+  totpValue: '',
   resolve: null
 })
 
@@ -177,8 +183,24 @@ export function confirm(options) {
       checkboxChecked: options.checkbox?.checked ?? false,
       passwordPrompt: options.passwordPrompt || null,
       passwordValue: '',
+      totpPrompt: options.totpPrompt || null,
+      totpValue: '',
       resolve
     })
+  })
+}
+
+// Step-up confirm for sensitive actions: always prompts for the password and, when the current
+// user has 2FA enabled, also prompts for a fresh authenticator code. Resolves to
+// { confirmed, password, totp }. Callers send { currentPassword: r.password, totpCode: r.totp }.
+export function stepUpConfirm(options = {}) {
+  const u = get(currentUser)
+  return confirm({
+    variant: 'primary',
+    confirmText: 'Confirm',
+    ...options,
+    passwordPrompt: options.passwordPrompt || { label: 'Your password' },
+    totpPrompt: u?.totpEnabled ? (options.totpPrompt || { label: 'Authenticator code' }) : null
   })
 }
 
@@ -186,16 +208,17 @@ export function confirm(options) {
 export function closeConfirmModal(confirmed) {
   confirmModalStore.update(state => {
     if (state.resolve) {
-      if (state.checkbox || state.passwordPrompt) {
+      if (state.checkbox || state.passwordPrompt || state.totpPrompt) {
         const out = { confirmed }
         if (state.checkbox) out.checked = state.checkboxChecked
         if (state.passwordPrompt) out.password = state.passwordValue
+        if (state.totpPrompt) out.totp = state.totpValue
         state.resolve(out)
       } else {
         state.resolve(confirmed)
       }
     }
-    return { ...state, open: false, resolve: null, passwordValue: '' }
+    return { ...state, open: false, resolve: null, passwordValue: '', totpValue: '' }
   })
 }
 
@@ -207,6 +230,11 @@ export function setConfirmCheckbox(checked) {
 // Update the confirm dialog's password field (called by ConfirmModal)
 export function setConfirmPassword(value) {
   confirmModalStore.update(state => ({ ...state, passwordValue: value }))
+}
+
+// Update the confirm dialog's 2FA code field (called by ConfirmModal)
+export function setConfirmTotp(value) {
+  confirmModalStore.update(state => ({ ...state, totpValue: value }))
 }
 
 // Set loading state on confirm modal
