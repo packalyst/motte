@@ -34,6 +34,9 @@ func (t *ReachabilityTable) Build() (string, error) {
 	}
 	// Resolve each network's opted-in VPN client IPs up front, so the renderer stays pure.
 	allowed := make(map[int64][]string, len(nets))
+	// In "approve" mode the forward gate opens per-device: only approved devices' IPs may be
+	// forwarded (reached by VPN / routed out). Pending devices get an address but no forwarding.
+	approved := make(map[int64][]string, len(nets))
 	for i := range nets {
 		ids, _ := svc.listNetworkACL(nets[i].ID)
 		for _, id := range ids {
@@ -41,14 +44,24 @@ func (t *ReachabilityTable) Build() (string, error) {
 				allowed[nets[i].ID] = append(allowed[nets[i].ID], ip)
 			}
 		}
+		if nets[i].Mode == "approve" {
+			_, cnet, _ := net.ParseCIDR(nets[i].CIDR)
+			clients, _ := svc.listClients(nets[i].ID)
+			for _, c := range clients {
+				ip := net.ParseIP(strings.TrimSpace(c.IP))
+				if c.Approved && ip != nil && ip.To4() != nil && cnet != nil && cnet.Contains(ip) {
+					approved[nets[i].ID] = append(approved[nets[i].ID], ip.String())
+				}
+			}
+		}
 	}
 	wan, _ := defaultRouteInterface()
-	return renderReachability(nets, allowed, wan), nil
+	return renderReachability(nets, allowed, approved, wan), nil
 }
 
 // renderReachability builds the nft script (pure: no DB, no host calls) so it can be unit-tested
 // and syntax-checked with `nft -c`. Every IP/CIDR/iface is validated before emission.
-func renderReachability(nets []Network, allowed map[int64][]string, wan string) string {
+func renderReachability(nets []Network, allowed map[int64][]string, approved map[int64][]string, wan string) string {
 	var fwd strings.Builder
 	var nat strings.Builder
 	for i := range nets {
@@ -59,19 +72,31 @@ func renderReachability(nets []Network, allowed map[int64][]string, wan string) 
 		if _, _, err := net.ParseCIDR(n.CIDR); err != nil {
 			continue // defensive: never emit an unvalidated CIDR
 		}
-		fmt.Fprintf(&fwd, "        # network %s (%s)\n", n.Iface, n.CIDR)
+		fmt.Fprintf(&fwd, "        # network %s (%s, %s)\n", n.Iface, n.CIDR, n.Mode)
 
-		// Opted-in VPN clients may reach the segment.
+		// What may be forwarded: the whole subnet in "auto" mode, or only approved devices' IPs in
+		// "approve" mode (pending devices get an address but are gated here). An approve network
+		// with nothing approved yet has no targets, so nothing on it is reachable.
+		targets := []string{n.CIDR}
+		if n.Mode == "approve" {
+			targets = approved[n.ID]
+		}
+
+		// Opted-in VPN clients may reach the forwardable hosts.
 		for _, ip := range allowed[n.ID] {
 			if net.ParseIP(ip) == nil {
 				continue
 			}
-			fmt.Fprintf(&fwd, "        ip saddr %s ip daddr %s accept\n", ip, n.CIDR)
+			for _, t := range targets {
+				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr %s accept\n", ip, t)
+			}
 		}
 
-		// Internet-out (off by default): allow the segment OUT the WAN + masquerade it.
+		// Internet-out (off by default): allow forwardable hosts OUT the WAN + masquerade the subnet.
 		if n.NATEnabled && validIface(wan) {
-			fmt.Fprintf(&fwd, "        ip saddr %s oifname %q accept\n", n.CIDR, wan)
+			for _, t := range targets {
+				fmt.Fprintf(&fwd, "        ip saddr %s oifname %q accept\n", t, wan)
+			}
 			fmt.Fprintf(&nat, "        ip saddr %s oifname %q masquerade\n", n.CIDR, wan)
 		}
 

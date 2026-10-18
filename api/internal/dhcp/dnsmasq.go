@@ -37,9 +37,11 @@ func dnsmasqConfPath(iface string) (string, error) {
 }
 
 // renderDnsmasqConf builds the DHCP-only config for one network. port=0 means no DNS (AdGuard
-// owns :53); clients are pointed at the gateway for DNS (option 6) and routing (option 3). In
-// "approve" mode only reserved+approved MACs (tagged `known`) get a lease; everything else is
-// ignored. In "auto" mode any device in the pool gets one.
+// owns :53); clients are pointed at the gateway for DNS (option 6) and routing (option 3). dnsmasq
+// hands out addresses in BOTH modes — approval is enforced by the firewall (a per-device
+// reachability gate), NOT by withholding the lease, so a pending device still gets an IP and shows
+// up in the UI. Approved devices additionally get a dhcp-host reservation to pin a stable IP,
+// because the firewall gate keys on that IP.
 func renderDnsmasqConf(n *Network, reservations []Client) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Managed by wgpanel — do not edit. Network: %s (%s)\n", n.Iface, n.CIDR)
@@ -58,22 +60,17 @@ func renderDnsmasqConf(n *Network, reservations []Client) string {
 	}
 	fmt.Fprintf(&b, "dhcp-leasefile=/var/lib/misc/wgpanel-%s.leases\n", n.Iface)
 
-	// Reservations (validated MAC/IP/name). In approve mode they also carry set:known.
-	tag := ""
-	if n.Mode == "approve" {
-		tag = "set:known,"
-	}
+	// Reservations (validated MAC/IP/name) pin a stable IP for approved devices — the firewall's
+	// per-device reachability gate keys on that IP, so an approved device keeps its access across
+	// reboots. Pending (unapproved) devices just take a pool address; the gate blocks them until
+	// approved. dnsmasq itself never withholds a lease based on approval.
 	for _, c := range reservations {
 		name := sanitizeDHCPName(c.Name)
-		line := fmt.Sprintf("dhcp-host=%s,%s%s", strings.ToLower(c.MAC), tag, c.IP)
+		line := fmt.Sprintf("dhcp-host=%s,%s", strings.ToLower(c.MAC), c.IP)
 		if name != "" {
 			line += "," + name
 		}
 		b.WriteString(line + "\n")
-	}
-	if n.Mode == "approve" {
-		// Hand nothing to an unknown MAC until it's approved (gets a reservation → tag known).
-		b.WriteString("dhcp-ignore=tag:!known\n")
 	}
 	return b.String()
 }

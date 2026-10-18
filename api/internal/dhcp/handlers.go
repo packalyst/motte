@@ -200,7 +200,8 @@ func (s *Service) handleApproveClient(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not approve", http.StatusInternalServerError)
 		return
 	}
-	s.reconcileDnsmasqFor(c.NetworkID)
+	s.reconcileDnsmasqFor(c.NetworkID) // pin the approved device's IP
+	s.reapplyReachability()            // open the firewall gate for it
 	router.JSON(w, map[string]any{"ok": true})
 }
 
@@ -235,6 +236,7 @@ func (s *Service) handleUpdateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reconcileDnsmasqFor(c.NetworkID)
+	s.reapplyReachability() // a changed reservation IP moves the per-device gate
 	router.JSON(w, map[string]any{"ok": true})
 }
 
@@ -248,6 +250,7 @@ func (s *Service) handleDeleteClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reconcileDnsmasqFor(c.NetworkID)
+	s.reapplyReachability() // revoke the deleted device's gate
 	router.JSON(w, map[string]any{"ok": true})
 }
 
