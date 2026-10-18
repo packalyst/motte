@@ -67,54 +67,54 @@ func (s *Service) actingAdmin(r *http.Request) (string, int64) {
 	return "", 0
 }
 
-// enqueueGuarded applies the command guardrail and then enqueues. A confirm-tier command
-// requires the operator's current password (verified server-side); every attempt is audited
-// with who/where; and the allowlist (block tier) is still enforced by Enqueue. currentPassword
-// is ignored for allow-tier commands. When the operator has 2FA enabled, a fresh TOTP code
-// (currentTOTP) is also required — fail-closed. It returns the HTTP status the caller should
-// send: 428 when step-up is needed OR fails (so the UI prompts for the password/2FA code and
-// retries — never 401, which the client treats as a session expiry), 400 when the command is
-// not allowlisted, 200 on success.
-func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassword, currentTOTP string, payload json.RawMessage) (string, int, error) {
+// verifyCommandStepUp performs step-up re-authentication ONCE for a confirm-tier command. It
+// returns (0, nil) when step-up passed or isn't required, else a 428 status + message to relay
+// (never 401, which the client treats as a session expiry). Factored out so a bulk run verifies
+// a single time — a replay-protected TOTP code cannot be reused once per host.
+func (s *Service) verifyCommandStepUp(r *http.Request, ctype, currentPassword, currentTOTP string) (int, error) {
+	if !requiresStepUp(ctype) {
+		return 0, nil
+	}
 	actor, userID := s.actingAdmin(r)
 	ip := helper.GetClientIP(r)
+	authSvc := auth.GetService()
+	if authSvc == nil || userID == 0 {
+		events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
+			fmt.Sprintf("Command %q denied: operator could not be verified for step-up", ctype))
+		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
+	}
+	if currentPassword == "" {
+		// Benign first attempt — the UI hasn't prompted yet. Signal step-up, don't audit.
+		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
+	}
+	if err := authSvc.VerifyStepUp(userID, currentPassword, currentTOTP); err != nil {
+		if errors.Is(err, auth.ErrStepUpTOTPRequired) {
+			return http.StatusPreconditionRequired, fmt.Errorf("two-factor authentication code required")
+		}
+		events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
+			fmt.Sprintf("Command %q denied: step-up re-authentication failed", ctype))
+		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication failed")
+	}
+	return 0, nil
+}
 
-	// Scope: the operator must be allowed to act on this specific machine.
+// enqueueCore applies the per-machine scope check + allowlist (block tier) + audit, then enqueues.
+// It does NOT do step-up — callers verify that first (enqueueGuarded for one machine, the bulk
+// handler once for many). Returns 403 (out of scope), 400 (not allowlisted) or 200.
+func (s *Service) enqueueCore(r *http.Request, machineID, ctype string, payload json.RawMessage) (string, int, error) {
+	actor, _ := s.actingAdmin(r)
+	ip := helper.GetClientIP(r)
 	if !s.machineAllowed(r, machineID) {
 		events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
 			fmt.Sprintf("Command %q on %s denied: outside the operator's machine scope", ctype, machineID))
 		return "", http.StatusForbidden, fmt.Errorf("your scope does not include this machine")
 	}
-
-	if requiresStepUp(ctype) {
-		authSvc := auth.GetService()
-		if authSvc == nil || userID == 0 {
-			events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
-				fmt.Sprintf("Command %q on %s denied: operator could not be verified for step-up", ctype, machineID))
-			return "", http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
-		}
-		if currentPassword == "" {
-			// Benign first attempt — the UI hasn't prompted yet. Signal step-up, don't audit.
-			return "", http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
-		}
-		if err := authSvc.VerifyStepUp(userID, currentPassword, currentTOTP); err != nil {
-			if errors.Is(err, auth.ErrStepUpTOTPRequired) {
-				// Password was right but the 2FA code is still needed — benign prompt, don't audit.
-				return "", http.StatusPreconditionRequired, fmt.Errorf("two-factor authentication code required")
-			}
-			events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
-				fmt.Sprintf("Command %q on %s denied: step-up re-authentication failed", ctype, machineID))
-			return "", http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication failed")
-		}
-	}
-
 	id, err := s.Enqueue(machineID, ctype, payload)
 	if err != nil {
 		events.Audit("fleet", "command_blocked", events.SeverityWarning, actor, ip,
 			fmt.Sprintf("Command %q on %s rejected: %v", ctype, machineID, err))
 		return "", http.StatusBadRequest, err
 	}
-
 	sev := events.SeverityInfo
 	if requiresStepUp(ctype) {
 		sev = events.SeverityWarning
@@ -122,6 +122,15 @@ func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassw
 	events.Audit("fleet", "command_"+ctype, sev, actor, ip,
 		fmt.Sprintf("Command %q queued for machine %s", ctype, machineID))
 	return id, http.StatusOK, nil
+}
+
+// enqueueGuarded applies the command guardrail (step-up for confirm-tier, then scope + allowlist +
+// audit) and enqueues for ONE machine. Returns the HTTP status the caller should send.
+func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassword, currentTOTP string, payload json.RawMessage) (string, int, error) {
+	if status, err := s.verifyCommandStepUp(r, ctype, currentPassword, currentTOTP); err != nil {
+		return "", status, err
+	}
+	return s.enqueueCore(r, machineID, ctype, payload)
 }
 
 // Command is one queued instruction for a machine.

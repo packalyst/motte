@@ -2023,6 +2023,15 @@
           "handler": "SetMachineTags",
           "description": "Set a machine's tags (for operator scoping)",
           "min_role": "admin"
+        },
+        {
+          "path": "/bulk-command",
+          "methods": [
+            "POST"
+          ],
+          "handler": "BulkCommand",
+          "description": "Queue a command across multiple machines",
+          "min_role": "operator"
         }
       ]
     },
