@@ -101,7 +101,7 @@ func (s *Service) handlePushBlocks(w http.ResponseWriter, r *http.Request) {
 	ips := s.blockedIPs()
 	payload, _ := json.Marshal(map[string]any{"ips": ips})
 	// sync-blocks is allow-tier (no step-up); route through the guardrail for audit coverage.
-	id, status, err := s.enqueueGuarded(r, req.MachineID, "sync-blocks", "", payload)
+	id, status, err := s.enqueueGuarded(r, req.MachineID, "sync-blocks", "", "", payload)
 	if err != nil {
 		router.JSONError(w, err.Error(), status)
 		return
@@ -115,12 +115,13 @@ func (s *Service) handleClearBlocks(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		MachineID       string `json:"machine_id"`
 		CurrentPassword string `json:"currentPassword"` // step-up: clear-blocks is confirm-tier
+		TotpCode        string `json:"totpCode"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil || req.MachineID == "" {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
-	id, status, err := s.enqueueGuarded(r, req.MachineID, "clear-blocks", req.CurrentPassword, nil)
+	id, status, err := s.enqueueGuarded(r, req.MachineID, "clear-blocks", req.CurrentPassword, req.TotpCode, nil)
 	if err != nil {
 		router.JSONError(w, err.Error(), status)
 		return
@@ -362,6 +363,7 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		Type            string          `json:"type"`
 		Payload         json.RawMessage `json:"payload"`
 		CurrentPassword string          `json:"currentPassword"` // step-up, for confirm-tier commands
+		TotpCode        string          `json:"totpCode"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		router.JSONError(w, "bad json", http.StatusBadRequest)
@@ -371,7 +373,7 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
-	id, status, err := s.enqueueGuarded(r, req.MachineID, req.Type, req.CurrentPassword, req.Payload)
+	id, status, err := s.enqueueGuarded(r, req.MachineID, req.Type, req.CurrentPassword, req.TotpCode, req.Payload)
 	if err != nil {
 		router.JSONError(w, err.Error(), status)
 		return

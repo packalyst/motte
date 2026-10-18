@@ -99,7 +99,8 @@ type SettingsResponse struct {
 	AdGuardDashboardURL     string `json:"adguard_dashboard_url"`     // URL when dashboard enabled
 
 	// Session
-	SessionTimeout string `json:"session_timeout"`
+	SessionTimeout  string `json:"session_timeout"`
+	IdleLockMinutes int    `json:"idle_lock_minutes"` // 0 = idle lock disabled
 
 	// Port Scanner
 	ScannerPortStart  int `json:"scanner_port_start"`
@@ -128,6 +129,7 @@ type UpdateSettingsRequest struct {
 	AdGuardDashboardEnabled *bool   `json:"adguard_dashboard_enabled,omitempty"`
 	AdGuardQuerylogSize     *int    `json:"adguard_querylog_size,omitempty"` // querylog.size_memory in MB
 	SessionTimeout          *string `json:"session_timeout,omitempty"`
+	IdleLockMinutes         *int    `json:"idle_lock_minutes,omitempty"`      // 0 = disable the idle lock
 	APIDirectAccess         *bool   `json:"api_direct_access,omitempty"`      // false = close the API port to the public internet (L3)
 	WebCloudflareOnly       *bool   `json:"web_cloudflare_only,omitempty"`    // true = allow only Cloudflare edge IPs to reach 80/443 (L3)
 	MetricsRetentionDays    *int    `json:"metrics_retention_days,omitempty"` // window (days) for all aggregate tables
@@ -240,6 +242,7 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 	} else {
 		result["session_timeout"] = strconv.Itoa(config.GetSessionConfig().TimeoutHours)
 	}
+	result["idle_lock_minutes"] = GetSettingInt("idle_lock_minutes", 0)
 
 	// Aggregate-metrics retention window (days)
 	result["metrics_retention_days"] = GetRetentionDays()
@@ -425,6 +428,23 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Updated session_timeout to %s hours", *req.SessionTimeout)
+	}
+
+	// Idle lock (minutes of inactivity before the UI locks and requires re-auth). 0 disables it;
+	// clamp to a sane ceiling. Opt-in — default 0 so behaviour is unchanged until an admin sets it.
+	if req.IdleLockMinutes != nil {
+		v := *req.IdleLockMinutes
+		if v < 0 {
+			v = 0
+		}
+		if v > 1440 {
+			v = 1440
+		}
+		if err := setSetting("idle_lock_minutes", strconv.Itoa(v)); err != nil {
+			router.JSONError(w, "Failed to save idle_lock_minutes: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Printf("Updated idle_lock_minutes to %d", v)
 	}
 
 	// Aggregate-metrics retention (days). Drives the central prune sweep across all

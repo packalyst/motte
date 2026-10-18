@@ -124,6 +124,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"Setup2FA":            s.handleSetup2FA,
 		"Enable2FA":           s.handleEnable2FA,
 		"Disable2FA":          s.handleDisable2FA,
+		"Unlock":              s.handleUnlock,
 	}
 }
 
@@ -490,7 +491,18 @@ func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	router.JSON(w, user)
+	// Embed the user's fields and add session-policy hints the UI needs: whether to collect a
+	// 2FA code on step-up prompts, and the idle-lock timeout (0 = disabled).
+	resp := struct {
+		*User
+		TOTPEnabled     bool `json:"totpEnabled"`
+		IdleLockMinutes int  `json:"idleLockMinutes"`
+	}{
+		User:            user,
+		TOTPEnabled:     s.TOTPEnabled(user.ID),
+		IdleLockMinutes: settings.GetSettingInt("idle_lock_minutes", 0),
+	}
+	router.JSON(w, resp)
 }
 
 func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -514,13 +526,13 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Password        string `json:"password"`
 		Role            string `json:"role"`
 		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
-	if err := s.VerifyPassword(caller.ID, req.CurrentPassword); err != nil {
-		router.JSONError(w, "current password is incorrect", http.StatusUnauthorized)
+	if !s.stepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
 		return
 	}
 

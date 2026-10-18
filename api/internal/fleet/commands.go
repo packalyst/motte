@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -69,10 +70,12 @@ func (s *Service) actingAdmin(r *http.Request) (string, int64) {
 // enqueueGuarded applies the command guardrail and then enqueues. A confirm-tier command
 // requires the operator's current password (verified server-side); every attempt is audited
 // with who/where; and the allowlist (block tier) is still enforced by Enqueue. currentPassword
-// is ignored for allow-tier commands. It returns the HTTP status the caller should send: 428
-// when step-up is needed (so the UI can prompt for the password and retry), 401 on a wrong
-// password, 400 when the command is not allowlisted, 200 on success.
-func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassword string, payload json.RawMessage) (string, int, error) {
+// is ignored for allow-tier commands. When the operator has 2FA enabled, a fresh TOTP code
+// (currentTOTP) is also required — fail-closed. It returns the HTTP status the caller should
+// send: 428 when step-up is needed OR fails (so the UI prompts for the password/2FA code and
+// retries — never 401, which the client treats as a session expiry), 400 when the command is
+// not allowlisted, 200 on success.
+func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassword, currentTOTP string, payload json.RawMessage) (string, int, error) {
 	actor, userID := s.actingAdmin(r)
 	ip := helper.GetClientIP(r)
 
@@ -94,10 +97,14 @@ func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassw
 			// Benign first attempt — the UI hasn't prompted yet. Signal step-up, don't audit.
 			return "", http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
 		}
-		if err := authSvc.VerifyPassword(userID, currentPassword); err != nil {
+		if err := authSvc.VerifyStepUp(userID, currentPassword, currentTOTP); err != nil {
+			if errors.Is(err, auth.ErrStepUpTOTPRequired) {
+				// Password was right but the 2FA code is still needed — benign prompt, don't audit.
+				return "", http.StatusPreconditionRequired, fmt.Errorf("two-factor authentication code required")
+			}
 			events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
 				fmt.Sprintf("Command %q on %s denied: step-up re-authentication failed", ctype, machineID))
-			return "", http.StatusUnauthorized, fmt.Errorf("current password is incorrect")
+			return "", http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication failed")
 		}
 	}
 
