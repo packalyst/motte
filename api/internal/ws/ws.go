@@ -117,16 +117,28 @@ func (s *Service) GetHub() *Hub {
 // HandleWebSocket handles WebSocket upgrade requests
 // Authentication is done via first message after connection (more secure than URL query param)
 func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Upgrade to WebSocket first; authentication happens via the first message.
-	// The token is never accepted in the URL query — that would leak it into
-	// proxy/access logs and browser history.
 	authSvc := auth.GetService()
+	if authSvc == nil {
+		http.Error(w, "auth service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
-	// Prefer authenticating from the handshake itself: browsers attach the HttpOnly session
-	// cookie to the WebSocket upgrade (they cannot set an Authorization header on it), and
-	// non-browser clients may send Bearer. Only if neither is present/valid do we fall back
-	// to the legacy first-message token.
+	// Authenticate the handshake BEFORE upgrading whenever the client presents a credential:
+	// browsers attach the HttpOnly session cookie to the WS upgrade, non-browser clients may
+	// send Bearer (helper.SessionToken reads both). A present-but-invalid credential is
+	// refused at the HTTP layer — we never accept the socket for an unauthenticated principal.
+	// The token is never read from the URL query (that would leak into proxy/access logs and
+	// browser history).
 	handshakeToken := helper.SessionToken(r)
+	var user *auth.User
+	if handshakeToken != "" {
+		u, verr := authSvc.ValidateSession(handshakeToken)
+		if verr != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		user = u
+	}
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -134,21 +146,11 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if authSvc == nil {
-		conn.WriteMessage(1, []byte(`{"type":"error","error":"Auth service unavailable"}`))
-		conn.Close()
-		return
-	}
-
-	var user *auth.User
-	if handshakeToken != "" {
-		if u, verr := authSvc.ValidateSession(handshakeToken); verr == nil {
-			user = u
-		}
-	}
-
 	if user == nil {
-		// Fall back to first-message auth: {"action":"auth","token":"..."}.
+		// No handshake credential: fall back to first-message auth for clients that cannot
+		// present a cookie/Bearer on the upgrade. Fail-closed — the socket carries no data
+		// until a valid token arrives within the read deadline.
+		// Message shape: {"action":"auth","token":"..."}.
 		conn.SetReadDeadline(time.Now().Add(helper.WebSocketReadTimeout))
 		_, msg, rerr := conn.ReadMessage()
 		if rerr != nil {
