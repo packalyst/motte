@@ -242,3 +242,19 @@ func TestReachabilityNftSyntax(t *testing.T) {
 		t.Fatalf("nft rejected the generated ruleset: %v\n%s\n---\n%s", err, strings.TrimSpace(s), script)
 	}
 }
+
+func TestSanitizeLeaseName(t *testing.T) {
+	cases := map[string]string{
+		"cp":            "cp",
+		"  host-1  ":    "host-1",
+		"*":             "",
+		"":              "",
+		"bad\x00name":   "badname",
+		"tab\tin\tname": "tabinname",
+	}
+	for in, want := range cases {
+		if got := sanitizeLeaseName(in); got != want {
+			t.Errorf("sanitizeLeaseName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

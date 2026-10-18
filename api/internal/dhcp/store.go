@@ -121,14 +121,19 @@ func (s *Service) getClient(id int64) (*Client, error) {
 	return &c, nil
 }
 
-// upsertClient records a seen MAC (auto-approved in "auto" mode). It never downgrades an
-// existing approval and keeps a hand-set name/reservation.
-func (s *Service) upsertClient(networkID int64, mac, ip string, autoApprove bool) error {
+// upsertClient records a seen MAC (auto-approved in "auto" mode). name is the hostname the device
+// advertised via DHCP; it seeds the display name on first sight and fills a still-empty name later,
+// but NEVER overwrites one set by hand (a reservation). It also never downgrades an approval.
+func (s *Service) upsertClient(networkID int64, mac, ip, name string, autoApprove bool) error {
 	mac = strings.ToLower(strings.TrimSpace(mac))
-	_, err := s.db.Exec(`INSERT INTO dhcp_clients (network_id, mac, ip, approved, last_seen)
-		VALUES (?,?,?,?,?)
-		ON CONFLICT(mac) DO UPDATE SET ip=excluded.ip, last_seen=excluded.last_seen`,
-		networkID, mac, ip, b2i(autoApprove), time.Now().UTC().Format(time.RFC3339))
+	name = sanitizeLeaseName(name)
+	_, err := s.db.Exec(`INSERT INTO dhcp_clients (network_id, mac, ip, name, approved, last_seen)
+		VALUES (?,?,?,?,?,?)
+		ON CONFLICT(mac) DO UPDATE SET
+			ip=excluded.ip,
+			last_seen=excluded.last_seen,
+			name=CASE WHEN dhcp_clients.name IS NULL OR dhcp_clients.name='' THEN excluded.name ELSE dhcp_clients.name END`,
+		networkID, mac, ip, name, b2i(autoApprove), time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 
