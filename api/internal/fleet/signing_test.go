@@ -63,3 +63,42 @@ func TestVerifyChecksumsSig(t *testing.T) {
 		t.Error("signingEnabled() should be false with no key")
 	}
 }
+
+// TestVerifyChecksumsSigKeyRollover checks that with two baked-in keys a signature from EITHER
+// verifies (so a rotation can bake {old,new} and retire old later), while a signature from a
+// third, un-baked key still fails.
+func TestVerifyChecksumsSigKeyRollover(t *testing.T) {
+	pub1, priv1, _ := ed25519.GenerateKey(rand.Reader)
+	pub2, priv2, _ := ed25519.GenerateKey(rand.Reader)
+	_, priv3, _ := ed25519.GenerateKey(rand.Reader) // not baked in
+	msg := []byte("abc123  wgscout-linux-amd64\n")
+
+	orig := signPubKey
+	defer func() { signPubKey = orig }()
+	// Two keys, comma-separated as the build plumbing bakes them.
+	signPubKey = base64.StdEncoding.EncodeToString(pub1) + "," + base64.StdEncoding.EncodeToString(pub2)
+
+	if !signingEnabled() {
+		t.Fatal("signingEnabled() should be true with keys set")
+	}
+	for name, priv := range map[string]ed25519.PrivateKey{"first key": priv1, "second key": priv2} {
+		sig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, msg))
+		if err := verifyChecksumsSig(msg, []byte(sig)); err != nil {
+			t.Errorf("signature from the %s should verify during rollover: %v", name, err)
+		}
+	}
+	// A key that isn't baked in must not verify.
+	bad := base64.StdEncoding.EncodeToString(ed25519.Sign(priv3, msg))
+	if err := verifyChecksumsSig(msg, []byte(bad)); err == nil {
+		t.Error("signature from an un-baked key must fail")
+	}
+
+	// A present-but-unparseable key set must fail closed, not fall through to no-verify.
+	signPubKey = "garbage-1,garbage-2"
+	if !signingEnabled() {
+		t.Error("signingEnabled() stays true for a present (if malformed) key string")
+	}
+	if err := verifyChecksumsSig(msg, []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv1, msg)))); err == nil {
+		t.Error("unparseable baked-in keys must fail closed")
+	}
+}
