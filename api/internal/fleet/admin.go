@@ -23,6 +23,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"ListMachines":    s.handleListMachines,
 		"CAInfo":          s.handleCAInfo,
 		"EnqueueCommand":  s.handleEnqueueCommand,
+		"BulkCommand":     s.handleBulkCommand,
 		"MachineReport":   s.handleMachineReport,
 		"MetricsHistory":  s.handleMetricsHistory,
 		"FleetEndpoints":  s.handleEndpoints,
@@ -380,6 +381,61 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	s.broadcastCommands(req.MachineID) // show the newly-queued command live
 	router.JSON(w, map[string]string{"command_id": id})
+}
+
+// handleBulkCommand queues one allowlisted command across several machines at once. Step-up is
+// verified ONCE (a replay-protected TOTP code can't be reused per host), then each machine goes
+// through the same per-machine scope + allowlist + audit checks. Hosts outside the operator's
+// scope or that reject the command are reported per-host without failing the whole batch.
+// POST /api/fleet/bulk-command  {"machine_ids":["a","b"],"type":"apply-updates","payload":{},"currentPassword":"...","totpCode":"..."}
+func (s *Service) handleBulkCommand(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MachineIDs      []string        `json:"machine_ids"`
+		Type            string          `json:"type"`
+		Payload         json.RawMessage `json:"payload"`
+		CurrentPassword string          `json:"currentPassword"`
+		TotpCode        string          `json:"totpCode"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		router.JSONError(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if len(req.MachineIDs) == 0 {
+		router.JSONError(w, "machine_ids required", http.StatusBadRequest)
+		return
+	}
+	if len(req.MachineIDs) > 500 {
+		router.JSONError(w, "too many machines in one request", http.StatusBadRequest)
+		return
+	}
+	// Verify step-up once for the whole batch (428 → the UI prompts and retries).
+	if status, err := s.verifyCommandStepUp(r, req.Type, req.CurrentPassword, req.TotpCode); err != nil {
+		router.JSONError(w, err.Error(), status)
+		return
+	}
+
+	type result struct {
+		MachineID string `json:"machine_id"`
+		OK        bool   `json:"ok"`
+		CommandID string `json:"command_id,omitempty"`
+		Error     string `json:"error,omitempty"`
+	}
+	results := make([]result, 0, len(req.MachineIDs))
+	queued := 0
+	for _, id := range req.MachineIDs {
+		if id == "" {
+			continue
+		}
+		cid, _, err := s.enqueueCore(r, id, req.Type, req.Payload)
+		if err != nil {
+			results = append(results, result{MachineID: id, OK: false, Error: err.Error()})
+			continue
+		}
+		results = append(results, result{MachineID: id, OK: true, CommandID: cid})
+		queued++
+		s.broadcastCommands(id)
+	}
+	router.JSON(w, map[string]interface{}{"queued": queued, "total": len(results), "results": results})
 }
 
 // handleMachineReport returns a machine's latest report JSON.
