@@ -150,6 +150,9 @@ func (s *Service) handleFIM(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireMachineAccess(w, r, id) {
+		return
+	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 || limit > 1000 {
 		limit = 200

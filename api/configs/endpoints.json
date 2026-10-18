@@ -1938,6 +1938,15 @@
           ],
           "handler": "MachineCommands",
           "description": "Recent commands for a machine (?machine_id=)"
+        },
+        {
+          "path": "/machine/tags",
+          "methods": [
+            "POST"
+          ],
+          "handler": "SetMachineTags",
+          "description": "Set a machine's tags (for operator scoping)",
+          "min_role": "admin"
         }
       ]
     }

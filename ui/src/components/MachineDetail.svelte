@@ -21,6 +21,26 @@
 
   let { machine, latestAgent = null, onback, ondeleted, onviewcves } = $props()
 
+  // Machine tags — drive operator/viewer scoping. Editing is admin+ (backend-enforced).
+  let tags = $state([...(machine.tags || [])])
+  let newTag = $state('')
+  async function saveTags(next) {
+    try {
+      await apiPost('/api/fleet/machine/tags', { machine_id: machine.id, tags: next })
+      tags = next
+      toast('Tags updated', 'success')
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
+  }
+  function addTag() {
+    const t = newTag.trim()
+    newTag = ''
+    if (!t || tags.includes(t)) return
+    saveTags([...tags, t])
+  }
+  const removeTag = (t) => saveTags(tags.filter((x) => x !== t))
+
   // Self-update landed in agent 0.1.20; older agents can't be updated from the panel.
   const MIN_SELFUPDATE = '0.1.20'
   // Compare dotted numeric versions ("0.1.20"): -1 a<b, 0 equal, 1 a>b.
@@ -387,6 +407,19 @@
         <Icon name="trash" size={14} />Delete
       </button>
     </div>
+  </div>
+
+  <!-- Tags: label this machine for access scoping (operators can be limited to a tag). -->
+  <div class="flex items-center gap-2 flex-wrap text-xs">
+    <Icon name="tag" size={14} class="text-muted-foreground shrink-0" />
+    {#each tags as t (t)}
+      <span class="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+        {t}
+        <button onclick={() => removeTag(t)} class="hover:text-destructive cursor-pointer" title="Remove tag"><Icon name="x" size={11} /></button>
+      </span>
+    {/each}
+    <input bind:value={newTag} onkeydown={(e) => e.key === 'Enter' && addTag()} placeholder="add tag…"
+      class="bg-transparent border-b border-dashed border-border text-xs w-24 focus:outline-none focus:border-primary" />
   </div>
 
   {#if loading && !report}

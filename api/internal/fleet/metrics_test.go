@@ -52,7 +52,7 @@ func TestMetricsHistoryEndpoint(t *testing.T) {
 	svc.recordMetrics("m1", metricBody(10, 20, 30, 0.5))
 	svc.recordMetrics("m2", metricBody(90, 90, 90, 9.0)) // other machine — must not leak
 
-	req := httptest.NewRequest("GET", "/api/fleet/metrics?id=m1&range=24h", nil)
+	req := asOwner(httptest.NewRequest("GET", "/api/fleet/metrics?id=m1&range=24h", nil))
 	rec := httptest.NewRecorder()
 	svc.handleMetricsHistory(rec, req)
 	if rec.Code != 200 {
@@ -81,7 +81,7 @@ func TestMetricsHistoryValidation(t *testing.T) {
 		t.Fatalf("missing id: status = %d, want 400", rec.Code)
 	}
 	rec = httptest.NewRecorder()
-	svc.handleMetricsHistory(rec, httptest.NewRequest("GET", "/api/fleet/metrics?id=m1&range=bogus", nil))
+	svc.handleMetricsHistory(rec, asOwner(httptest.NewRequest("GET", "/api/fleet/metrics?id=m1&range=bogus", nil)))
 	if rec.Code != 200 {
 		t.Fatalf("bogus range should fall back, got %d", rec.Code)
 	}

@@ -23,7 +23,34 @@ type Machine struct {
 	EnrolledAt  time.Time       `json:"enrolled_at"`
 	LastSeen    *time.Time      `json:"last_seen,omitempty"`
 	Revoked     bool            `json:"revoked"`
+	Tags        []string        `json:"tags"`
 	Summary     *MachineSummary `json:"summary,omitempty"`
+}
+
+// splitTags parses the stored CSV tag list into a trimmed, non-empty slice.
+func splitTags(csv string) []string {
+	out := []string{}
+	for _, t := range strings.Split(csv, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// joinTags normalizes a tag slice to a de-duplicated, trimmed CSV for storage.
+func joinTags(tags []string) string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return strings.Join(out, ",")
 }
 
 // MachineSummary is the at-a-glance slice of a machine's latest report, so the fleet
@@ -170,7 +197,7 @@ func (s *Service) registerMachine(m Machine) error {
 // ListMachines returns all enrolled machines, newest first, each with an at-a-glance
 // summary parsed from its latest report (for the fleet card grid).
 func (s *Service) ListMachines() ([]Machine, error) {
-	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report
+	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report, COALESCE(tags, '')
 		FROM fleet_machines ORDER BY enrolled_at DESC`)
 	if err != nil {
 		return nil, err
@@ -179,11 +206,12 @@ func (s *Service) ListMachines() ([]Machine, error) {
 	out := []Machine{}
 	for rows.Next() {
 		var m Machine
-		var enrolled, lastSeen, wg, report sql.NullString
-		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report); err != nil {
+		var enrolled, lastSeen, wg, report, tags sql.NullString
+		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report, &tags); err != nil {
 			return nil, err
 		}
 		m.WGPubkey = wg.String
+		m.Tags = splitTags(tags.String)
 		m.Summary = summarize(report.String)
 		if enrolled.Valid {
 			m.EnrolledAt, _ = time.Parse(time.RFC3339, enrolled.String)
@@ -221,6 +249,27 @@ func (s *Service) machineByCertFP(fp string) (*Machine, error) {
 func fingerprintFromCert(cert *x509.Certificate) string {
 	sum := sha256.Sum256(cert.Raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// machineTags returns a machine's tags (empty if none/unknown).
+func (s *Service) machineTags(id string) ([]string, error) {
+	var tags sql.NullString
+	if err := s.db.QueryRow(`SELECT COALESCE(tags, '') FROM fleet_machines WHERE id = ?`, id).Scan(&tags); err != nil {
+		return nil, err
+	}
+	return splitTags(tags.String), nil
+}
+
+// SetMachineTags replaces a machine's tag set (normalized, de-duplicated CSV).
+func (s *Service) SetMachineTags(id string, tags []string) error {
+	res, err := s.db.Exec(`UPDATE fleet_machines SET tags = ? WHERE id = ?`, joinTags(tags), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // lastReport returns a machine's latest stored report JSON (or "" if none).
