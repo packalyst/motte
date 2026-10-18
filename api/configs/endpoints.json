@@ -614,7 +614,8 @@
             "GET"
           ],
           "handler": "GetPeerConfig",
-          "description": "Download peer config"
+          "description": "Download peer config",
+          "min_role": "admin"
         },
         {
           "path": "/peers/{id}/qr",
@@ -622,7 +623,8 @@
             "GET"
           ],
           "handler": "GetPeerQR",
-          "description": "Get peer QR code"
+          "description": "Get peer QR code",
+          "min_role": "admin"
         },
         {
           "path": "/peers/{id}/vips",
@@ -866,7 +868,8 @@
             "GET"
           ],
           "handler": "GetPreAuthKeys",
-          "description": "List pre-auth keys"
+          "description": "List pre-auth keys",
+          "min_role": "admin"
         },
         {
           "path": "/preauthkeys",
@@ -1294,7 +1297,8 @@
             "GET"
           ],
           "handler": "GetConfig",
-          "description": "Get the saved tunnel configuration"
+          "description": "Get the saved tunnel configuration",
+          "min_role": "admin"
         },
         {
           "path": "/config",
