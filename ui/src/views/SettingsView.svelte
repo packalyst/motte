@@ -922,6 +922,34 @@
     }
   }
 
+  // toggleScope flips a port between public (reachable from the internet) and private (VPN/LAN
+  // only). Confirms in BOTH directions — making private can cut off external access, making public
+  // re-exposes it — then calls the scope endpoint and refreshes.
+  async function toggleScope(p) {
+    const makingPrivate = p.scope !== 'private'
+    const target = makingPrivate ? 'private' : 'public'
+    const label = p.service ? `${p.port} (${p.service})` : `port ${p.port}`
+    const confirmed = await confirm({
+      title: makingPrivate ? `Make ${label} private?` : `Make ${label} public?`,
+      message: makingPrivate
+        ? `${label} will stop answering on the internet.`
+        : `${label} will be reachable from the internet again.`,
+      description: makingPrivate
+        ? 'It stays reachable over WireGuard and the local network — use this for admin pages and DNS you don’t want exposed.'
+        : 'Anyone on the internet can reach this port (still subject to your other firewall rules).',
+      confirmText: makingPrivate ? 'Make private' : 'Make public'
+    })
+    if (!confirmed) return
+    try {
+      await apiPost('/api/fw/ports/scope', { port: p.port, protocol: p.protocol, scope: target })
+      toast(`Port ${p.port} is now ${target}`, 'success')
+      const portsRes = await apiGet('/api/fw/ports')
+      ports = portsRes.ports || portsRes || []
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
+  }
+
   // ── Backup & migrate ────────────────────────────────────────────────────────
   // Export: a passphrase-encrypted file carrying the panel config (+ opt-in tiers).
   let bkPass = $state('')
@@ -1506,24 +1534,45 @@
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
               {#each sortedPorts as p}
                 {@const serviceName = p.service || (p.port === 22 ? 'SSH' : p.port === 80 ? 'HTTP' : p.port === 443 ? 'HTTPS' : p.port === 51820 ? 'WireGuard' : '')}
-                {#if p.essential}
+                {@const isPublic = p.scope !== 'private'}
+                {@const lockBtn = {
+                  icon: isPublic ? 'lock-open' : 'lock',
+                  variant: isPublic ? 'success' : 'secondary',
+                  onclick: () => toggleScope(p),
+                  tooltip: isPublic
+                    ? 'Public — reachable from the internet. Click to make it private (VPN & LAN only).'
+                    : 'Private — VPN & LAN only. Click to make it public (reachable from the internet).'
+                }}
+                {#if !p.lockable}
+                  <!-- Docker-published: reachability is Docker's (DNAT), not our allow-set — show a static lock. -->
                   <Input
                     value={p.port}
                     disabled
                     prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    suffixAddonIcon={{ icon: "lock", tooltip: `Essential: ${serviceName}` }}
+                    suffixAddonIcon={{ icon: "lock", tooltip: `Managed by Docker${serviceName ? ': ' + serviceName : ''}` }}
+                    class="kt-input-group-warning"
+                  />
+                {:else if p.essential}
+                  <!-- Essential: can't be removed, but can be made public/private. -->
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    suffixAddonBtn={lockBtn}
                     class="kt-input-group-warning"
                   />
                 {:else}
+                  <!-- Normal: scope lock (right) + remove (left). -->
                   <Input
                     value={p.port}
                     disabled
                     prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    suffixAddonBtn={{
+                    prefixAddonBtn={{
                       icon: "trash",
                       onclick: () => confirmRemovePort(p.port, p.protocol),
                       tooltip: "Remove port"
                     }}
+                    suffixAddonBtn={lockBtn}
                   />
                 {/if}
               {/each}
