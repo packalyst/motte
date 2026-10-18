@@ -220,14 +220,18 @@ func createSchema(db *sql.DB) error {
 
 	-- Activity events: one chronological feed across all subsystems
 	-- (blocks, peer changes, config edits, restarts…). Retention-capped by the
-	-- events package so it cannot grow without bound.
+	-- events package so it cannot grow without bound. The same feed doubles as the
+	-- audit trail: actor (who) and ip (from where) are set on security-relevant
+	-- rows, which the events package retains far longer than operational rows.
 	CREATE TABLE IF NOT EXISTS events (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		type TEXT NOT NULL,
 		severity TEXT NOT NULL DEFAULT 'info',
 		subsystem TEXT NOT NULL DEFAULT '',
-		message TEXT NOT NULL DEFAULT ''
+		message TEXT NOT NULL DEFAULT '',
+		actor TEXT NOT NULL DEFAULT '',
+		ip TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX IF NOT EXISTS idx_events_id_desc ON events(id DESC);
 
@@ -591,6 +595,22 @@ func runMigrations(db *sql.DB) {
 	if err == nil && count == 0 {
 		if _, err := db.Exec(`ALTER TABLE vpn_acl_rules ADD COLUMN bidirectional INTEGER DEFAULT 0`); err == nil {
 			log.Printf("Migration: added bidirectional column to vpn_acl_rules")
+		}
+	}
+
+	// Add audit columns to events if missing: actor (who) and ip (from where). These
+	// turn the activity feed into an audit trail for security-relevant actions; existing
+	// rows default to '' (operational, no attribution).
+	auditCols := []struct{ name, ddl string }{
+		{"actor", `ALTER TABLE events ADD COLUMN actor TEXT NOT NULL DEFAULT ''`},
+		{"ip", `ALTER TABLE events ADD COLUMN ip TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, c := range auditCols {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('events') WHERE name = ?`, c.name).Scan(&count)
+		if err == nil && count == 0 {
+			if _, err := db.Exec(c.ddl); err == nil {
+				log.Printf("Migration: added %s column to events", c.name)
+			}
 		}
 	}
 

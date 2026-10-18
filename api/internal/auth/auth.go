@@ -406,6 +406,9 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Rate limit: atomically check the lockout AND reserve this attempt's slot, so a burst
 	// of concurrent attempts can't slip past a stale "under the limit" read.
 	if locked, remaining := registerLoginAttempt(clientIP); locked {
+		events.Audit("auth", "login_blocked", events.SeverityWarning,
+			strings.ToLower(strings.TrimSpace(req.Username)), clientIP,
+			"Login temporarily blocked: too many failed attempts")
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
 		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds.", int(remaining.Seconds())), http.StatusTooManyRequests)
 		return
@@ -420,6 +423,9 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Genuine failure — the slot was already counted by registerLoginAttempt above.
+		events.Audit("auth", "login_failed", events.SeverityWarning,
+			strings.ToLower(strings.TrimSpace(req.Username)), clientIP,
+			fmt.Sprintf("Login failed: %s", err.Error()))
 		if err == ErrInvalidCredentials {
 			router.JSONError(w, "Invalid username or password", http.StatusUnauthorized)
 			return
@@ -430,6 +436,9 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Clear failed attempts on successful login (refunds the reserved slot).
 	clearLoginAttempts(clientIP)
+
+	events.Audit("auth", "login", events.SeverityInfo, resp.User.Username, clientIP,
+		fmt.Sprintf("Login succeeded for %q", resp.User.Username))
 
 	// Set the session as an HttpOnly, SameSite=Strict (Secure/__Host- over HTTPS) cookie so
 	// the browser never exposes it to JavaScript. The raw token is still returned in the body
@@ -444,6 +453,11 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
 	token := helper.SessionToken(r)
 	if token != "" {
+		// Resolve the session to attribute the audit entry before invalidating it.
+		if u, err := s.ValidateSession(token); err == nil {
+			events.Audit("auth", "logout", events.SeverityInfo, u.Username, helper.GetClientIP(r),
+				fmt.Sprintf("Logout for %q", u.Username))
+		}
 		s.Logout(token)
 	}
 	helper.ClearSessionCookie(w, r)
@@ -502,7 +516,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events.Log("auth", "user_created", events.SeverityWarning,
+	events.Audit("auth", "user_created", events.SeverityWarning, caller.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Panel user %q created by %q", user.Username, caller.Username))
 	router.JSON(w, user)
 }
