@@ -20,6 +20,7 @@
   import Select from '../components/Select.svelte'
   import MachineDetail from '../components/MachineDetail.svelte'
   import MachineCVEs from '../components/MachineCVEs.svelte'
+  import BulkRun from '../components/BulkRun.svelte'
   import { timeAgo } from '$lib/utils/format.js'
   import { usageColor, statusInfo, round } from '$lib/fleet.js'
 
@@ -69,6 +70,7 @@
   let creating = $state(false)
   let lastToken = $state(null)
   let showInstall = $state(false) // install-command modal
+  let bulkOpen = $state(false)    // run-on-multiple-hosts modal
   let copied = $state(false)      // gate the modal's close until the command is copied
   let pendingTokens = $state([])  // outstanding enrollment tokens (waiting for an agent)
   let nowTick = $state(Date.now()) // 1s tick to drive the expiry countdowns
@@ -422,6 +424,10 @@
         description={ep?.enabled ? 'Add a machine above — you’ll get a one-command install to run on the box.' : 'Turn the agent listener on above, then add your first machine.'} />
     </div>
   {:else}
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-sm font-semibold flex items-center gap-2"><Icon name="device-desktop" size={16} class="text-primary" />Machines</h3>
+      <Button variant="outline" size="sm" icon="player-play" onclick={() => (bulkOpen = true)}>Run on multiple…</Button>
+    </div>
     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
       {#each machines as m (m.id)}
         {@const st = statusInfo(m)}
@@ -495,3 +501,5 @@
   {/if}
 </div>
 {/if}
+
+<BulkRun bind:open={bulkOpen} machines={machines} />
