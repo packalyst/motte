@@ -57,6 +57,7 @@ func (s *Service) Reconcile(n *Network) error {
 		if err := s.writeDnsmasqDisabled(n); err != nil {
 			return err
 		}
+		removeSegmentForward(n.Iface) // stop lifting Docker's FORWARD drop for a disabled segment
 		s.reapplyReachability()
 		return nil
 	}
@@ -66,7 +67,8 @@ func (s *Service) Reconcile(n *Network) error {
 	if err := s.InterfaceReady(n); err != nil {
 		return err // fail closed: no DHCP on an interface that isn't actually up
 	}
-	ensureIPForward() // routing between wg0 and the segment needs IPv4 forwarding
+	ensureIPForward()             // routing between wg0 and the segment needs IPv4 forwarding
+	ensureSegmentForward(n.Iface) // and Docker's FORWARD drop must not swallow segment↔WAN traffic
 	if err := s.writeDnsmasqConfig(n); err != nil {
 		return err
 	}

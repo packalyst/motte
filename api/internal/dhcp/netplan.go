@@ -108,6 +108,7 @@ func (s *Service) RemoveNetwork(n *Network) error {
 	applyMu.Lock()
 	defer applyMu.Unlock()
 
+	removeSegmentForward(n.Iface) // undo the Docker FORWARD punch-through for this segment
 	if ones, err := prefixLen(n.CIDR); err == nil {
 		_ = ipCmd("addr", "del", fmt.Sprintf("%s/%d", n.GatewayIP, ones), "dev", n.Iface)
 	}
