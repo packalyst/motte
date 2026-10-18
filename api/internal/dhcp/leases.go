@@ -14,6 +14,17 @@ const apiLeaseDir = "/dhcp-leases"
 
 func apiLeasePath(iface string) string { return apiLeaseDir + "/wgpanel-" + iface + ".leases" }
 
+// removeLeaseFile deletes a network's dnsmasq lease file from the shared volume when the network is
+// deleted, so a network later created on the same NIC doesn't inherit stale leases (old devices
+// re-appearing, recycled IPs). Best-effort; guarded by validIface since the path is built from the
+// interface name.
+func removeLeaseFile(iface string) {
+	if !validIface(iface) {
+		return
+	}
+	_ = os.Remove(apiLeasePath(iface))
+}
+
 type lease struct {
 	MAC    string
 	IP     string
