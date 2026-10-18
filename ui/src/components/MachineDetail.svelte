@@ -184,12 +184,35 @@
       alert: opts.alert || false,
     })
     if (!ok) return
-    try {
-      const res = await apiPost(opts.endpoint || '/api/fleet/command',
-        opts.endpoint ? { machine_id: machine.id } : { machine_id: machine.id, type, payload })
+
+    const endpoint = opts.endpoint || '/api/fleet/command'
+    const base = opts.endpoint ? { machine_id: machine.id } : { machine_id: machine.id, type, payload }
+    const send = async (extra = {}) => {
+      const res = await apiPost(endpoint, { ...base, ...extra })
       toast(opts.done ? opts.done(res) : `${type} queued`, 'success')
       if (opts.after) opts.after()
+    }
+
+    try {
+      await send()
     } catch (e) {
+      // Destructive (confirm-tier) commands require step-up re-authentication: the panel
+      // answers 428 until the operator's current password is supplied. Prompt and retry once.
+      if (e.status === 428) {
+        const su = await confirm({
+          title: `Confirm "${opts.title || type}"`,
+          message: `This is a sensitive action on ${machine.name}. Re-enter your password to authorize it.`,
+          confirmText: 'Authorize', variant: 'destructive',
+          passwordPrompt: { label: 'Your password' },
+        })
+        if (!su?.confirmed || !su?.password) return
+        try {
+          await send({ currentPassword: su.password })
+        } catch (e2) {
+          toast('Failed: ' + e2.message, 'error')
+        }
+        return
+      }
       toast('Failed: ' + e.message, 'error')
     }
   }

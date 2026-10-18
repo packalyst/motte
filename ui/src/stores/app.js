@@ -150,12 +150,15 @@ export const confirmModalStore = writable({
   loading: false,
   checkbox: null,        // optional { label } — renders a checkbox in the dialog
   checkboxChecked: false,
+  passwordPrompt: null,  // optional { label, placeholder } — renders a password field (step-up)
+  passwordValue: '',
   resolve: null
 })
 
 // Show confirm modal and return a Promise.
-// Without a checkbox it resolves to a boolean (confirmed). With options.checkbox
-// it resolves to { confirmed, checked } so callers can read the checkbox state.
+// Plain: resolves to a boolean (confirmed). With options.checkbox it resolves to
+// { confirmed, checked }; with options.passwordPrompt it resolves to { confirmed, password }
+// (both may be combined) so callers can read the extra inputs.
 export function confirm(options) {
   return new Promise((resolve) => {
     confirmModalStore.set({
@@ -172,6 +175,8 @@ export function confirm(options) {
       loading: false,
       checkbox: options.checkbox || null,
       checkboxChecked: options.checkbox?.checked ?? false,
+      passwordPrompt: options.passwordPrompt || null,
+      passwordValue: '',
       resolve
     })
   })
@@ -181,15 +186,27 @@ export function confirm(options) {
 export function closeConfirmModal(confirmed) {
   confirmModalStore.update(state => {
     if (state.resolve) {
-      state.resolve(state.checkbox ? { confirmed, checked: state.checkboxChecked } : confirmed)
+      if (state.checkbox || state.passwordPrompt) {
+        const out = { confirmed }
+        if (state.checkbox) out.checked = state.checkboxChecked
+        if (state.passwordPrompt) out.password = state.passwordValue
+        state.resolve(out)
+      } else {
+        state.resolve(confirmed)
+      }
     }
-    return { ...state, open: false, resolve: null }
+    return { ...state, open: false, resolve: null, passwordValue: '' }
   })
 }
 
 // Update the confirm dialog's checkbox state (called by ConfirmModal)
 export function setConfirmCheckbox(checked) {
   confirmModalStore.update(state => ({ ...state, checkboxChecked: checked }))
+}
+
+// Update the confirm dialog's password field (called by ConfirmModal)
+export function setConfirmPassword(value) {
+  confirmModalStore.update(state => ({ ...state, passwordValue: value }))
 }
 
 // Set loading state on confirm modal
@@ -244,7 +261,9 @@ async function api(endpoint, options = {}) {
   }
 
   const error = await res.text().catch(() => res.statusText)
-  throw new Error(error || res.statusText)
+  const err = new Error(error || res.statusText)
+  err.status = res.status // let callers branch on it (e.g. 428 → step-up re-auth)
+  throw err
 }
 
 // HTTP method helpers

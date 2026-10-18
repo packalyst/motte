@@ -31,6 +31,30 @@ func withMachine(r *http.Request, m *Machine) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), machineCtxKey, m))
 }
 
+// TestEnqueueGuardrail covers the three guardrail tiers: allow-tier enqueues directly,
+// block-tier (not allowlisted) is refused, and confirm-tier without a verifiable operator
+// demands step-up (428) instead of enqueuing.
+func TestEnqueueGuardrail(t *testing.T) {
+	svc := newTestService(t)
+	req := func() *http.Request { return httptest.NewRequest("POST", "/api/fleet/command", nil) }
+
+	// Allow-tier: enqueued directly.
+	id, status, err := svc.enqueueGuarded(req(), "m1", "block", "", json.RawMessage(`{"ip":"1.2.3.4"}`))
+	if err != nil || status != http.StatusOK || id == "" {
+		t.Fatalf("allow-tier block: id=%q status=%d err=%v, want ok", id, status, err)
+	}
+
+	// Block-tier: not allowlisted → refused.
+	if _, status, err := svc.enqueueGuarded(req(), "m1", "rm-rf-slash", "", nil); err == nil || status != http.StatusBadRequest {
+		t.Fatalf("block-tier: status=%d err=%v, want 400 + error", status, err)
+	}
+
+	// Confirm-tier without a verifiable operator → step-up required (428), not enqueued.
+	if _, status, err := svc.enqueueGuarded(req(), "m1", "restart", "", nil); err == nil || status != http.StatusPreconditionRequired {
+		t.Fatalf("confirm-tier: status=%d err=%v, want 428 + error", status, err)
+	}
+}
+
 func TestCommandQueueDeliverAckAndReport(t *testing.T) {
 	svc := newTestService(t)
 	m := Machine{ID: "m1", Name: "web", CertFP: "sha256:aaaa", EnrolledAt: time.Now()}
