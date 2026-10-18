@@ -13,6 +13,7 @@ import (
 	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
+	"api/internal/router"
 )
 
 // allowedCommands is the ONLY set of actions the panel can tell an agent to run.
@@ -55,19 +56,14 @@ var confirmCommands = map[string]bool{
 // requiresStepUp reports whether ctype is a confirm-tier command.
 func requiresStepUp(ctype string) bool { return confirmCommands[ctype] }
 
-// actingAdmin resolves the operator behind an authenticated panel request, for audit
-// attribution and step-up verification. Returns ("", 0) when it can't be determined (e.g.
-// no auth service wired); callers that require step-up treat that as a failure.
+// actingAdmin resolves the operator behind an authenticated panel request (for audit
+// attribution and step-up verification) from the principal the router injected. Returns
+// ("", 0) when there is none; callers that require step-up treat that as a failure.
 func (s *Service) actingAdmin(r *http.Request) (string, int64) {
-	authSvc := auth.GetService()
-	if authSvc == nil {
-		return "", 0
+	if p := router.CurrentUser(r); p != nil {
+		return p.Username, p.UserID
 	}
-	u, err := authSvc.ValidateSession(helper.SessionToken(r))
-	if err != nil || u == nil {
-		return "", 0
-	}
-	return u.Username, u.ID
+	return "", 0
 }
 
 // enqueueGuarded applies the command guardrail and then enqueues. A confirm-tier command
@@ -79,6 +75,13 @@ func (s *Service) actingAdmin(r *http.Request) (string, int64) {
 func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassword string, payload json.RawMessage) (string, int, error) {
 	actor, userID := s.actingAdmin(r)
 	ip := helper.GetClientIP(r)
+
+	// Scope: the operator must be allowed to act on this specific machine.
+	if !s.machineAllowed(r, machineID) {
+		events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
+			fmt.Sprintf("Command %q on %s denied: outside the operator's machine scope", ctype, machineID))
+		return "", http.StatusForbidden, fmt.Errorf("your scope does not include this machine")
+	}
 
 	if requiresStepUp(ctype) {
 		authSvc := auth.GetService()
@@ -198,6 +201,9 @@ func (s *Service) handleMachineCommands(w http.ResponseWriter, r *http.Request) 
 	id := r.URL.Query().Get("machine_id")
 	if id == "" {
 		writeErr(w, http.StatusBadRequest, "machine_id required")
+		return
+	}
+	if !s.requireMachineAccess(w, r, id) {
 		return
 	}
 	cmds, err := s.ListMachineCommands(id, 20)

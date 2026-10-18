@@ -521,7 +521,8 @@ func ensureSchema(db *sql.DB) error {
 			last_report  TEXT,
 			enrolled_at  TEXT NOT NULL,
 			last_seen    TEXT,
-			revoked      INTEGER DEFAULT 0
+			revoked      INTEGER DEFAULT 0,
+			tags         TEXT DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS fleet_commands (
 			id           TEXT PRIMARY KEY,
@@ -579,6 +580,7 @@ func ensureSchema(db *sql.DB) error {
 	for _, alt := range []string{
 		`ALTER TABLE fleet_tokens ADD COLUMN panel_host TEXT`,
 		`ALTER TABLE fleet_cves ADD COLUMN project TEXT`,
+		`ALTER TABLE fleet_machines ADD COLUMN tags TEXT DEFAULT ''`, // RBAC tag-scoping
 	} {
 		if _, err := db.Exec(alt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			log.Printf("fleet: migration %q: %v", alt, err)

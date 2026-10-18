@@ -88,6 +88,9 @@ func (s *Service) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "id required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireMachineAccess(w, r, id) {
+		return
+	}
 	rc, ok := metricRanges[r.URL.Query().Get("range")]
 	if !ok {
 		rc = metricRanges["24h"]

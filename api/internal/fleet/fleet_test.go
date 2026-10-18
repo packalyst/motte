@@ -17,9 +17,16 @@ import (
 	"time"
 
 	"api/internal/helper"
+	"api/internal/router"
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+// asOwner attaches an unscoped owner principal to a request, as the auth middleware would for
+// an authenticated owner — so handler tests exercise the handler, not the scope gate.
+func asOwner(r *http.Request) *http.Request {
+	return r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
+}
 
 func init() {
 	// deterministic key for tests

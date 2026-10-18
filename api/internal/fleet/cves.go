@@ -462,6 +462,9 @@ func (s *Service) handleCVEGroups(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireMachineAccess(w, r, id) {
+		return
+	}
 	groups, err := s.CVEGroups(id)
 	if err != nil {
 		router.JSONError(w, "query failed", http.StatusInternalServerError)
@@ -488,6 +491,9 @@ func (s *Service) handleListCVEs(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
+	if !s.requireMachineAccess(w, r, id) {
+		return
+	}
 	cves, total, err := s.ListCVEs(id, cveFilter{
 		Severity: q.Get("severity"), Class: q.Get("class"), Project: q.Get("project"),
 		Q: q.Get("q"), CVEID: q.Get("cve_id"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
@@ -511,6 +517,9 @@ func (s *Service) handleListCVEsByCVE(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
+	if !s.requireMachineAccess(w, r, id) {
+		return
+	}
 	cves, total, err := s.ListCVEsByCVE(id, cveFilter{
 		Severity: q.Get("severity"), Project: q.Get("project"), Class: q.Get("class"),
 		Q: q.Get("q"), Fixable: q.Get("fixable") == "1" || q.Get("fixable") == "true",
@@ -531,6 +540,9 @@ func (s *Service) handleExportCVEs(w http.ResponseWriter, r *http.Request) {
 	id := q.Get("machine_id")
 	if id == "" {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
+		return
+	}
+	if !s.requireMachineAccess(w, r, id) {
 		return
 	}
 	cves, _, err := s.ListCVEs(id, cveFilter{

@@ -44,6 +44,12 @@ func CurrentUser(r *http.Request) *Principal {
 	return p
 }
 
+// ContextWithPrincipal returns ctx carrying p. The auth middleware uses it to attach the
+// resolved principal; it is also the seam tests use to simulate an authenticated caller.
+func ContextWithPrincipal(ctx context.Context, p *Principal) context.Context {
+	return context.WithValue(ctx, principalCtxKey{}, p)
+}
+
 // roleRank mirrors auth's role ladder (auth is the source of truth). The router only needs the
 // ordering to compare an endpoint's configured min_role against the caller's role; keeping the
 // four strings here avoids an import cycle (auth imports router). 0 (unknown) fails closed.
@@ -406,7 +412,7 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 		// Carry the principal so per-route role enforcement and handlers can read it. Role
 		// authorization happens at dispatch (registerCombinedEndpointV2), where the matched
 		// endpoint's min_role is known.
-		req = req.WithContext(context.WithValue(req.Context(), principalCtxKey{}, principal))
+		req = req.WithContext(ContextWithPrincipal(req.Context(), principal))
 		next.ServeHTTP(w, req)
 	})
 }

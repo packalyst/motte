@@ -30,6 +30,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"PushBlocks":      s.handlePushBlocks,
 		"ClearBlocks":     s.handleClearBlocks,
 		"DeleteMachine":   s.handleDeleteMachine,
+		"SetMachineTags":  s.handleSetMachineTags,
 		"CVEGroups":       s.handleCVEGroups,
 		"ListCVEs":        s.handleListCVEs,
 		"ListCVEsByCVE":   s.handleListCVEsByCVE,
@@ -53,6 +54,25 @@ func (s *Service) handleDeleteMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.DeleteMachine(req.MachineID); err != nil {
+		router.JSONError(w, "machine not found", http.StatusNotFound)
+		return
+	}
+	router.JSON(w, map[string]bool{"ok": true})
+}
+
+// handleSetMachineTags replaces a machine's tags, which drive tag-based operator scoping.
+// Admin+ (scoping is an administrative concern). POST /api/fleet/machine/tags
+// {"machine_id":"...","tags":["prod","db"]}
+func (s *Service) handleSetMachineTags(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MachineID string   `json:"machine_id"`
+		Tags      []string `json:"tags"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&req); err != nil || req.MachineID == "" {
+		router.JSONError(w, "machine_id required", http.StatusBadRequest)
+		return
+	}
+	if err := s.SetMachineTags(req.MachineID, req.Tags); err != nil {
 		router.JSONError(w, "machine not found", http.StatusNotFound)
 		return
 	}
@@ -297,7 +317,8 @@ func (s *Service) handleListMachines(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not list machines", http.StatusInternalServerError)
 		return
 	}
-	router.JSON(w, ms)
+	// Scope: operator/viewer only see machines in their scope; owner/admin see all.
+	router.JSON(w, s.filterMachines(r, ms))
 }
 
 // handleListTokens (GET /api/fleet/tokens) — outstanding enrollment tokens waiting
@@ -365,6 +386,9 @@ func (s *Service) handleMachineReport(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		router.JSONError(w, "id required", http.StatusBadRequest)
+		return
+	}
+	if !s.requireMachineAccess(w, r, id) {
 		return
 	}
 	raw, err := s.lastReport(id)

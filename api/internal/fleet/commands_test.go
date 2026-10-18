@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"api/internal/router"
 )
 
 // signedClientCert issues a client cert from the service CA and returns the parsed cert.
@@ -36,7 +38,12 @@ func withMachine(r *http.Request, m *Machine) *http.Request {
 // demands step-up (428) instead of enqueuing.
 func TestEnqueueGuardrail(t *testing.T) {
 	svc := newTestService(t)
-	req := func() *http.Request { return httptest.NewRequest("POST", "/api/fleet/command", nil) }
+	// An owner principal (unscoped) so the machine-scope check passes and we exercise the
+	// role/step-up/allowlist tiers in isolation.
+	req := func() *http.Request {
+		r := httptest.NewRequest("POST", "/api/fleet/command", nil)
+		return r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
+	}
 
 	// Allow-tier: enqueued directly.
 	id, status, err := svc.enqueueGuarded(req(), "m1", "block", "", json.RawMessage(`{"ip":"1.2.3.4"}`))

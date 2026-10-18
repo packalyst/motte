@@ -20,6 +20,18 @@
   let addCurrentPw = $state('')
   let addBusy = $state(false)
 
+  // Scope editor
+  let scopeUser = $state(null)
+  let scopeKind = $state('all')
+  let scopeValues = $state('')
+  let scopeCurrentPw = $state('')
+  let scopeBusy = $state(false)
+  const scopeKindOptions = [
+    { value: 'all', label: 'All machines' },
+    { value: 'tag', label: 'By tag' },
+    { value: 'host', label: 'By machine ID' },
+  ]
+
   const ROLE_BADGE = {
     owner:    'bg-destructive/10 text-destructive',
     admin:    'bg-primary/10 text-primary',
@@ -109,6 +121,33 @@
     }
   }
 
+  function openScope(u) {
+    scopeUser = u
+    scopeKind = u.scopeKind || 'all'
+    scopeValues = u.scopeValues || ''
+    scopeCurrentPw = ''
+  }
+
+  async function saveScope() {
+    if (!scopeUser || !scopeCurrentPw) return
+    scopeBusy = true
+    try {
+      await apiPost('/api/auth/users/scope', {
+        user_id: scopeUser.id,
+        scope_kind: scopeKind,
+        scope_values: scopeKind === 'all' ? '' : scopeValues.trim(),
+        currentPassword: scopeCurrentPw,
+      })
+      toast(`Scope updated for ${scopeUser.username}`, 'success')
+      scopeUser = null
+      await load()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      scopeBusy = false
+    }
+  }
+
   async function removeUser(u) {
     const pw = await stepUp(`Delete the account "${u.username}" (${u.role})? This cannot be undone.`)
     if (!pw) return
@@ -187,6 +226,11 @@
                           class="w-28"
                           onchange={(e) => changeRole(u, e.target.value)}
                         />
+                        {#if u.role === 'operator' || u.role === 'viewer'}
+                          <button onclick={() => openScope(u)} class="custom_btns" title="Set fleet machine scope">
+                            <Icon name="filter" size={14} />
+                          </button>
+                        {/if}
                         <button onclick={() => removeUser(u)} class="custom_btns text-destructive hover:bg-destructive/10" title="Delete user">
                           <Icon name="trash" size={14} />
                         </button>
@@ -231,6 +275,35 @@
       <Button onclick={addUser} variant="primary" disabled={addBusy || !addUsername.trim() || !addPassword || !addCurrentPw}>
         {#if addBusy}<Icon name="refresh" size={14} class="animate-spin mr-1" />{/if}
         Create user
+      </Button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if scopeUser}
+  <Modal open={!!scopeUser} title="Fleet machine scope — {scopeUser.username}" size="sm" onclose={() => (scopeUser = null)}>
+    <div class="space-y-3">
+      <p class="text-xs text-muted-foreground">Which fleet machines this user may see and act on. Owners and admins always see all machines.</p>
+      <div class="space-y-1">
+        <label class="text-sm font-medium" for="sc-kind">Scope</label>
+        <Select id="sc-kind" bind:value={scopeKind} options={scopeKindOptions} />
+      </div>
+      {#if scopeKind !== 'all'}
+        <div class="space-y-1">
+          <label class="text-sm font-medium" for="sc-values">{scopeKind === 'tag' ? 'Tags' : 'Machine IDs'} (comma-separated)</label>
+          <div class="kt-input"><Icon name="filter" class="text-muted-foreground" /><input id="sc-values" bind:value={scopeValues} placeholder={scopeKind === 'tag' ? 'prod, db' : 'id1, id2'} autocomplete="off" /></div>
+        </div>
+      {/if}
+      <div class="space-y-1 pt-1 border-t border-border">
+        <label class="text-sm font-medium" for="sc-stepup">Confirm with your password</label>
+        <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="sc-stepup" type="password" bind:value={scopeCurrentPw} placeholder="your current password" autocomplete="current-password" /></div>
+      </div>
+    </div>
+    {#snippet footer()}
+      <Button onclick={() => (scopeUser = null)} variant="secondary" disabled={scopeBusy}>Cancel</Button>
+      <Button onclick={saveScope} variant="primary" disabled={scopeBusy || !scopeCurrentPw || (scopeKind !== 'all' && !scopeValues.trim())}>
+        {#if scopeBusy}<Icon name="refresh" size={14} class="animate-spin mr-1" />{/if}
+        Save scope
       </Button>
     {/snippet}
   </Modal>
