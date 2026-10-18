@@ -13,7 +13,6 @@ import (
 	"api/internal/router"
 
 	"github.com/pquerna/otp/totp"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Enable2FARequest for enabling 2FA
@@ -245,9 +244,13 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify password first
-	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+	passwordOK, needsRehash, _ := verifyPassword(req.Password, passwordHash)
+	if !passwordOK {
 		router.JSONError(w, "Invalid password", http.StatusUnauthorized)
 		return
+	}
+	if needsRehash {
+		s.upgradeHash(user.ID, req.Password)
 	}
 
 	// Rate limit: atomically check + reserve a TOTP attempt slot before verifying.

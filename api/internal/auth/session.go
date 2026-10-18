@@ -10,8 +10,6 @@ import (
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // ChangePasswordRequest for password change
@@ -83,8 +81,12 @@ func (s *Service) VerifyPassword(userID int64, password string) error {
 	if err := s.db.QueryRow("SELECT password_hash FROM users WHERE id = ?", userID).Scan(&passwordHash); err != nil {
 		return errors.New("user not found")
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+	ok, needsRehash, _ := verifyPassword(password, passwordHash)
+	if !ok {
 		return errors.New("current password is incorrect")
+	}
+	if needsRehash {
+		s.upgradeHash(userID, password)
 	}
 	return nil
 }
@@ -107,13 +109,13 @@ func (s *Service) ChangePassword(userID int64, currentPassword, newPassword stri
 	}
 
 	// Hash new password
-	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	newHash, err := hashPassword(newPassword)
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %v", err)
 	}
 
 	// Update password
-	_, err = s.db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", string(newHash), userID)
+	_, err = s.db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", newHash, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update password: %v", err)
 	}
