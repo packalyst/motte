@@ -178,7 +178,10 @@ func createSchema(db *sql.DB) error {
 		expires_at DATETIME,
 		enabled BOOLEAN DEFAULT 1,
 		hit_count INTEGER DEFAULT 0,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		-- Port reachability scope: 'public' = reachable on all NICs incl. the WAN (default,
+		-- preserves existing behaviour); 'private' = reachable from VPN/LAN only, never the WAN.
+		scope TEXT NOT NULL DEFAULT 'public' CHECK(scope IN ('public', 'private'))
 	);
 
 	-- Firewall entries indexes
@@ -725,6 +728,15 @@ func runMigrations(db *sql.DB) {
 			} else {
 				log.Printf("ERROR Migration: could not begin firewall_entries 'asn' rebuild (will retry next boot): %v", err)
 			}
+		}
+	}
+
+	// Add the per-port scope column (public/private) if missing. Existing rows default to
+	// 'public', so current installs keep every port internet-reachable exactly as before.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('firewall_entries') WHERE name = 'scope'`).Scan(&count)
+	if err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE firewall_entries ADD COLUMN scope TEXT NOT NULL DEFAULT 'public'`); err == nil {
+			log.Printf("Migration: added scope column to firewall_entries (default public)")
 		}
 	}
 
