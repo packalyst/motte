@@ -28,6 +28,7 @@
     adguard: 'shield-check',
     docker: 'box',
     geolocation: 'world',
+    auth: 'shield-lock',
   }
   // Color per severity.
   const SEVERITY = {
@@ -115,7 +116,16 @@
               <span class="flex shrink-0 items-center justify-center rounded-lg {sev.bg} {sev.icon} {compact ? 'h-6 w-6' : 'h-7 w-7'}">
                 <Icon name={iconFor(e)} size={compact ? 12 : 14} />
               </span>
-              <span class="min-w-0 flex-1 text-[13px] leading-tight text-foreground truncate">{e.message}</span>
+              <span class="min-w-0 flex-1">
+                <span class="block text-[13px] leading-tight text-foreground truncate">{e.message}</span>
+                {#if !compact && (e.actor || e.ip)}
+                  <!-- Audit attribution: who did it and from where (set only on security events). -->
+                  <span class="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                    {#if e.actor}<span class="inline-flex items-center gap-1"><Icon name="user" size={11} />{e.actor}</span>{/if}
+                    {#if e.ip}<span class="inline-flex items-center gap-1 tabular-nums"><Icon name="map-pin" size={11} />{e.ip}</span>{/if}
+                  </span>
+                {/if}
+              </span>
               {#if !compact}
                 <span class="hidden sm:inline-flex shrink-0 items-center rounded bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{e.subsystem}</span>
               {/if}

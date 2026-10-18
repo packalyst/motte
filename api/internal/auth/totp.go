@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 
+	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
 
@@ -196,6 +197,8 @@ func (s *Service) handleEnable2FA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("2FA enabled for user %s", user.Username)
+	events.Audit("auth", "2fa_enabled", events.SeverityInfo, user.Username, helper.GetClientIP(r),
+		fmt.Sprintf("2FA enabled for %q", user.Username))
 	router.JSON(w, map[string]string{"message": "2FA enabled successfully"})
 }
 
@@ -284,5 +287,7 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("2FA disabled for user %s", user.Username)
+	events.Audit("auth", "2fa_disabled", events.SeverityWarning, user.Username, helper.GetClientIP(r),
+		fmt.Sprintf("2FA disabled for %q", user.Username))
 	router.JSON(w, map[string]string{"message": "2FA disabled successfully"})
 }

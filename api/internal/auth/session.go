@@ -247,7 +247,7 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("change-password: failed to revoke other sessions for user %d: %v", user.ID, err)
 	}
-	events.Log("auth", "password_changed", events.SeverityWarning,
+	events.Audit("auth", "password_changed", events.SeverityWarning, user.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Password changed for %q; %d other session(s) revoked", user.Username, revoked))
 
 	router.JSON(w, map[string]string{"message": "Password changed successfully"})
