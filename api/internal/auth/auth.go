@@ -55,10 +55,13 @@ type Service struct {
 
 // User represents a user account
 type User struct {
-	ID        int64     `json:"id"`
-	Username  string    `json:"username"`
-	CreatedAt time.Time `json:"createdAt"`
-	LastLogin time.Time `json:"lastLogin,omitempty"`
+	ID          int64     `json:"id"`
+	Username    string    `json:"username"`
+	CreatedAt   time.Time `json:"createdAt"`
+	LastLogin   time.Time `json:"lastLogin,omitempty"`
+	Role        string    `json:"role"`
+	ScopeKind   string    `json:"scopeKind,omitempty"`
+	ScopeValues string    `json:"scopeValues,omitempty"`
 }
 
 // Session represents a login session
@@ -109,6 +112,10 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"Logout":              s.handleLogout,
 		"GetCurrentUser":      s.handleGetCurrentUser,
 		"CreateUser":          s.handleCreateUser,
+		"ListUsers":           s.handleListUsers,
+		"UpdateUserRole":      s.handleUpdateUserRole,
+		"UpdateUserScope":     s.handleUpdateUserScope,
+		"DeleteUser":          s.handleDeleteUser,
 		"GetSessions":         s.handleGetSessions,
 		"RevokeSession":       s.handleRevokeSession,
 		"RevokeOtherSessions": s.handleRevokeOtherSessions,
@@ -157,12 +164,16 @@ func validatePassword(password string) error {
 	return nil
 }
 
-// CreateUser creates a new user account
-func (s *Service) CreateUser(username, password string) (*User, error) {
+// CreateUser creates a new user account with the given role. Scope defaults to all
+// (unrestricted); callers assign a narrower scope afterwards with SetUserScope.
+func (s *Service) CreateUser(username, password, role string) (*User, error) {
 	// Validate input
 	username = strings.TrimSpace(strings.ToLower(username))
 	if len(username) < 3 {
 		return nil, errors.New("username must be at least 3 characters")
+	}
+	if !ValidRole(role) {
+		return nil, fmt.Errorf("invalid role %q", role)
 	}
 	if err := validatePassword(password); err != nil {
 		return nil, err
@@ -176,8 +187,8 @@ func (s *Service) CreateUser(username, password string) (*User, error) {
 
 	// Insert user
 	result, err := s.db.Exec(
-		"INSERT INTO users (username, password_hash) VALUES (?, ?)",
-		username, hash,
+		"INSERT INTO users (username, password_hash, role, scope_kind, scope_values) VALUES (?, ?, ?, 'all', '')",
+		username, hash, role,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -191,6 +202,8 @@ func (s *Service) CreateUser(username, password string) (*User, error) {
 		ID:        id,
 		Username:  username,
 		CreatedAt: time.Now(),
+		Role:      role,
+		ScopeKind: ScopeAll,
 	}, nil
 }
 
@@ -205,9 +218,9 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 	var totpSecretEnc sql.NullString
 	var totpEnabled int
 	err := s.db.QueryRow(
-		"SELECT id, username, password_hash, created_at, last_login, totp_secret_enc, COALESCE(totp_enabled, 0) FROM users WHERE username = ?",
+		"SELECT id, username, password_hash, created_at, last_login, totp_secret_enc, COALESCE(totp_enabled, 0), role, scope_kind, scope_values FROM users WHERE username = ?",
 		username,
-	).Scan(&user.ID, &user.Username, &passwordHash, &user.CreatedAt, &lastLogin, &totpSecretEnc, &totpEnabled)
+	).Scan(&user.ID, &user.Username, &passwordHash, &user.CreatedAt, &lastLogin, &totpSecretEnc, &totpEnabled, &user.Role, &user.ScopeKind, &user.ScopeValues)
 
 	if err == sql.ErrNoRows {
 		// Spend one Argon2id computation so the unknown-user path matches the timing of a
@@ -310,13 +323,13 @@ func (s *Service) ValidateSession(token string) (*User, error) {
 	var lastLogin sql.NullTime
 
 	err := s.db.QueryRow(`
-		SELECT s.id, s.user_id, s.expires_at, u.id, u.username, u.created_at, u.last_login
+		SELECT s.id, s.user_id, s.expires_at, u.id, u.username, u.created_at, u.last_login, u.role, u.scope_kind, u.scope_values
 		FROM sessions s
 		JOIN users u ON s.user_id = u.id
 		WHERE s.id = ? AND s.expires_at > datetime('now')
 	`, hashToken(token)).Scan(
 		&session.ID, &session.UserID, &session.ExpiresAt,
-		&user.ID, &user.Username, &user.CreatedAt, &lastLogin,
+		&user.ID, &user.Username, &user.CreatedAt, &lastLogin, &user.Role, &user.ScopeKind, &user.ScopeValues,
 	)
 
 	if err == sql.ErrNoRows {
@@ -483,8 +496,8 @@ func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	// Creating another panel login is a sensitive, persistence-granting action, so it
 	// requires STEP-UP re-authentication (the caller's current password) — a stolen
-	// session token alone must not be able to mint a new admin — and it is audit-logged.
-	// (There is no UI for this yet; the endpoint stays hardened for future multi-admin.)
+	// session token alone must not be able to mint a new user — and it is audit-logged.
+	// The assigned role is owner-gated (canAssignRole); the route itself is admin+.
 	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
@@ -499,6 +512,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username        string `json:"username"`
 		Password        string `json:"password"`
+		Role            string `json:"role"`
 		CurrentPassword string `json:"currentPassword"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
@@ -510,14 +524,27 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.CreateUser(req.Username, req.Password)
+	role := req.Role
+	if role == "" {
+		role = RoleViewer // least privilege by default
+	}
+	if !ValidRole(role) {
+		router.JSONError(w, "invalid role", http.StatusBadRequest)
+		return
+	}
+	if err := s.canAssignRole(caller, role); err != nil {
+		router.JSONError(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	user, err := s.CreateUser(req.Username, req.Password, role)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	events.Audit("auth", "user_created", events.SeverityWarning, caller.Username, helper.GetClientIP(r),
-		fmt.Sprintf("Panel user %q created by %q", user.Username, caller.Username))
+		fmt.Sprintf("Panel user %q (role %s) created by %q", user.Username, role, caller.Username))
 	router.JSON(w, user)
 }
 
