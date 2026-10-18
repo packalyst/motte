@@ -144,19 +144,51 @@ func TestRenderDnsmasqConf(t *testing.T) {
 		"interface=ens19",
 		"dhcp-range=10.20.20.50,10.20.20.200,255.255.255.0,43200s",
 		"dhcp-option=3,10.20.20.1",
-		"dhcp-host=aa:bb:cc:dd:ee:ff,set:known,10.20.20.50,cam-1", // name sanitized, approve tag
-		"dhcp-ignore=tag:!known",                                  // approve mode isolates unknowns
+		"dhcp-host=aa:bb:cc:dd:ee:ff,10.20.20.50,cam-1", // reservation pins a stable IP, name sanitized
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq conf missing %q:\n%s", want, got)
 		}
 	}
+	// Approval is enforced by the firewall now, not by withholding leases — the conf carries no MAC
+	// gating in either mode (no dhcp-ignore, no set:known tag).
+	if strings.Contains(got, "dhcp-ignore") || strings.Contains(got, "set:known") {
+		t.Fatalf("approve mode must not gate leases in dnsmasq (firewall is the gate):\n%s", got)
+	}
 
-	// Auto mode must NOT ignore unknowns and must NOT tag reservations.
 	n.Mode = "auto"
 	got = renderDnsmasqConf(n, res)
 	if strings.Contains(got, "dhcp-ignore") || strings.Contains(got, "set:known") {
 		t.Fatalf("auto mode should not gate unknown clients:\n%s", got)
+	}
+}
+
+// TestReachabilityApproveGate checks the per-device firewall gate: in approve mode only approved
+// device IPs are forwardable (reachable by VPN / routable out), the whole subnet stays
+// default-denied, and with nobody approved nothing on the segment is forwardable.
+func TestReachabilityApproveGate(t *testing.T) {
+	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Mode: "approve", Enabled: true, NATEnabled: true}}
+	allowed := map[int64][]string{1: {"10.8.0.2"}}
+
+	// One approved device → accepts target that IP, never the whole subnet.
+	got := renderReachability(nets, allowed, map[int64][]string{1: {"10.20.20.55"}}, "eth0")
+	for _, want := range []string{
+		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`, // VPN reaches the approved device only
+		`ip saddr 10.20.20.55 oifname "eth0" accept`,    // approved device may route out
+		`ip daddr 10.20.20.0/24 drop`,                   // subnet still default-denied
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("approve gate missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `ip daddr 10.20.20.0/24 accept`) {
+		t.Fatalf("approve mode must not accept to the whole subnet:\n%s", got)
+	}
+
+	// Nobody approved → no forwardable targets at all.
+	empty := renderReachability(nets, allowed, map[int64][]string{}, "eth0")
+	if strings.Contains(empty, "10.8.0.2") || strings.Contains(empty, `oifname "eth0" accept`) {
+		t.Fatalf("with nobody approved, nothing should be forwardable:\n%s", empty)
 	}
 }
 
@@ -215,7 +247,7 @@ func TestReachabilityNftSyntax(t *testing.T) {
 		{ID: 3, Iface: "ens21", CIDR: "172.16.0.0/24", GatewayIP: "172.16.0.1", Enabled: false}, // disabled → skipped
 	}
 	allowed := map[int64][]string{1: {"10.8.0.2", "10.8.0.3"}}
-	script := renderReachability(nets, allowed, "eth0")
+	script := renderReachability(nets, allowed, nil, "eth0")
 
 	// Disabled network must not appear; NAT-off network must not get a masquerade.
 	if strings.Contains(script, "172.16.0.0") {
