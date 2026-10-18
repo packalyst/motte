@@ -23,12 +23,14 @@ type PortEntry struct {
 	Essential bool   `json:"essential"`
 	Service   string `json:"service,omitempty"`
 	Source    string `json:"source,omitempty"`
+	Scope     string `json:"scope"`    // "public" (reachable on the WAN) or "private" (VPN/LAN only)
+	Lockable  bool   `json:"lockable"` // false for Docker-published ports — reachability is Docker's, not our set's
 }
 
 // handleGetPorts returns allowed ports (from firewall_entries + Docker)
 func (s *Service) handleGetPorts(w http.ResponseWriter, r *http.Request) {
 	// Get ports from firewall_entries
-	rows, err := s.db.Query(`SELECT id, value, protocol, essential, COALESCE(name, ''), source
+	rows, err := s.db.Query(`SELECT id, value, protocol, essential, COALESCE(name, ''), source, COALESCE(scope, 'public')
 		FROM firewall_entries WHERE entry_type = 'port' AND action = 'allow' AND enabled = 1
 		ORDER BY CAST(value AS INTEGER)`)
 	if err != nil {
@@ -43,19 +45,24 @@ func (s *Service) handleGetPorts(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p PortEntry
 		var portStr string
-		if err := rows.Scan(&p.ID, &portStr, &p.Protocol, &p.Essential, &p.Service, &p.Source); err != nil {
+		if err := rows.Scan(&p.ID, &portStr, &p.Protocol, &p.Essential, &p.Service, &p.Source, &p.Scope); err != nil {
 			continue
 		}
 		p.Port, _ = strconv.Atoi(portStr)
+		p.Lockable = true // a firewall_entries port rides our allow-sets, so the scope toggle is effective
 		ports = append(ports, p)
 		portMap[fmt.Sprintf("%d-%s", p.Port, p.Protocol)] = true
 	}
 
-	// Add Docker exposed ports (mark as essential since they're required for containers)
+	// Add Docker exposed ports (mark as essential since they're required for containers). Their
+	// reachability is governed by Docker's DNAT path, not our input allow-sets, so the scope toggle
+	// would be a no-op — surface them as public + non-lockable so the UI shows a disabled lock.
 	dockerPorts := s.getDockerExposedPorts()
 	for _, dp := range dockerPorts {
 		key := fmt.Sprintf("%d-%s", dp.Port, dp.Protocol)
 		if !portMap[key] {
+			dp.Scope = "public"
+			dp.Lockable = false
 			ports = append(ports, dp)
 		}
 	}
@@ -113,6 +120,45 @@ func (s *Service) handleAddPort(w http.ResponseWriter, r *http.Request) {
 		"essential": isEssential,
 		"service":   req.Service,
 	})
+}
+
+// handleSetPortScope flips an allowed port between 'public' (reachable on the WAN) and 'private'
+// (VPN/LAN only). Essential ports are intentionally scopable — hiding admin UIs/DNS from the
+// internet is the whole point. Only affects firewall_entries ports; a Docker-published port isn't
+// in that table, so it matches 0 rows (its reachability is Docker's, not ours).
+func (s *Service) handleSetPortScope(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Port     int    `json:"port"`
+		Protocol string `json:"protocol"`
+		Scope    string `json:"scope"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	if req.Port < 1 || req.Port > 65535 {
+		router.JSONError(w, "invalid port number (must be 1-65535)", http.StatusBadRequest)
+		return
+	}
+	if req.Scope != "public" && req.Scope != "private" {
+		router.JSONError(w, "scope must be 'public' or 'private'", http.StatusBadRequest)
+		return
+	}
+	if req.Protocol == "" {
+		req.Protocol = nftables.ProtocolTCP
+	}
+	res, err := s.db.Exec(`UPDATE firewall_entries SET scope = ?
+		WHERE entry_type = 'port' AND action = 'allow' AND value = ? AND protocol = ?`,
+		req.Scope, strconv.Itoa(req.Port), req.Protocol)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		router.JSONError(w, "port not in the allow-list (a Docker-published port can't be scoped here)", http.StatusNotFound)
+		return
+	}
+	s.RequestApply()
+	router.JSON(w, map[string]interface{}{"port": req.Port, "protocol": req.Protocol, "scope": req.Scope})
 }
 
 // handleRemovePort removes an allowed port

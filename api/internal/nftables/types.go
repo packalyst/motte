@@ -117,4 +117,5 @@ type FirewallEntry struct {
 	Enabled   bool       `json:"enabled"`
 	HitCount  int        `json:"hitCount"`
 	CreatedAt time.Time  `json:"createdAt"`
+	Scope     string     `json:"scope"` // port reachability: "public" (default, incl. WAN) or "private" (VPN/LAN only)
 }

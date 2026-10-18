@@ -128,6 +128,26 @@ func segmentInputRules(ifaces []string) []string {
 	return rules
 }
 
+// privatePortRules emits the input accepts for ports scoped "private": the same allow-list sets as
+// the public ports, but reachable OFF the WAN only. With a known WAN NIC that's "every interface
+// except the WAN". When the WAN can't be detected we fail SAFE to loopback + the VPN interfaces
+// (never a physical NIC): a private port is then never exposed on the internet, yet the admin can
+// still reach it over WireGuard — so flipping a port private can't hard-lock the panel out.
+func privatePortRules(wanIface string) []string {
+	if w := SanitizeElement(wanIface); w != "" {
+		return []string{
+			"# Private ports: every interface EXCEPT the WAN (\"" + w + "\")",
+			"iifname != \"" + w + "\" tcp dport @allowed_tcp_ports_private accept",
+			"iifname != \"" + w + "\" udp dport @allowed_udp_ports_private accept",
+		}
+	}
+	return []string{
+		"# Private ports: WAN undetected — fail safe to VPN/loopback only",
+		`iifname { "lo", "wg0", "tailscale0" } tcp dport @allowed_tcp_ports_private accept`,
+		`iifname { "lo", "wg0", "tailscale0" } udp dport @allowed_udp_ports_private accept`,
+	}
+}
+
 // Build generates the nftables script
 func (t *FirewallTable) Build() (string, error) {
 	// Clean overlapping ranges first
@@ -146,6 +166,7 @@ func (t *FirewallTable) Build() (string, error) {
 	var blockedRangesIn, blockedRangesOut []string
 	var allowedIPs, allowedRanges []string // source allow-list (saddr accept)
 	var allowedTCPPorts, allowedUDPPorts []string
+	var allowedTCPPortsPrivate, allowedUDPPortsPrivate []string
 
 	for _, e := range entries {
 		if !e.Enabled {
@@ -189,14 +210,20 @@ func (t *FirewallTable) Build() (string, error) {
 				continue
 			}
 			if e.Action == ActionAllow {
+				// 'private' ports accept on VPN/LAN only (never the WAN); 'public' (default) on all
+				// NICs. Route each port to the matching set — enforcement differs in buildScript.
+				tcpDst, udpDst := &allowedTCPPorts, &allowedUDPPorts
+				if e.Scope == "private" {
+					tcpDst, udpDst = &allowedTCPPortsPrivate, &allowedUDPPortsPrivate
+				}
 				switch e.Protocol {
 				case ProtocolTCP:
-					allowedTCPPorts = append(allowedTCPPorts, e.Value)
+					*tcpDst = append(*tcpDst, e.Value)
 				case ProtocolUDP:
-					allowedUDPPorts = append(allowedUDPPorts, e.Value)
+					*udpDst = append(*udpDst, e.Value)
 				case ProtocolBoth:
-					allowedTCPPorts = append(allowedTCPPorts, e.Value)
-					allowedUDPPorts = append(allowedUDPPorts, e.Value)
+					*tcpDst = append(*tcpDst, e.Value)
+					*udpDst = append(*udpDst, e.Value)
 				}
 			}
 		case EntryTypeCountry:
@@ -252,6 +279,7 @@ func (t *FirewallTable) Build() (string, error) {
 		blockedIPsIn: blockedIPsIn, blockedIPsOut: blockedIPsOut,
 		blockedRangesIn: blockedRangesIn, blockedRangesOut: blockedRangesOut,
 		tcpPorts: allowedTCPPorts, udpPorts: allowedUDPPorts,
+		tcpPortsPrivate: allowedTCPPortsPrivate, udpPortsPrivate: allowedUDPPortsPrivate,
 		countryIn: countryRangesIn, countryOut: countryRangesOut,
 		asnIn: asnRangesIn, asnOut: asnRangesOut,
 		allowedIPs: allowedIPs, allowedRanges: allowedRanges,
@@ -264,7 +292,7 @@ func (t *FirewallTable) loadEntries() ([]FirewallEntry, error) {
 	rows, err := t.db.Query(`
 		SELECT id, entry_type, value, action, direction, protocol, source,
 		       COALESCE(reason, ''), COALESCE(name, ''), essential,
-		       expires_at, enabled, hit_count, created_at
+		       expires_at, enabled, hit_count, created_at, COALESCE(scope, 'public')
 		FROM firewall_entries
 		WHERE enabled = 1 AND (expires_at IS NULL OR expires_at > datetime('now'))
 		ORDER BY entry_type, created_at
@@ -281,7 +309,7 @@ func (t *FirewallTable) loadEntries() ([]FirewallEntry, error) {
 		err := rows.Scan(
 			&e.ID, &e.EntryType, &e.Value, &e.Action, &e.Direction, &e.Protocol,
 			&e.Source, &e.Reason, &e.Name, &e.Essential, &expiresAt, &e.Enabled,
-			&e.HitCount, &e.CreatedAt,
+			&e.HitCount, &e.CreatedAt, &e.Scope,
 		)
 		if err != nil {
 			log.Printf("nftables/firewall: scan error: %v", err)
@@ -390,6 +418,7 @@ type scriptParams struct {
 	blockedIPsIn, blockedIPsOut       []string
 	blockedRangesIn, blockedRangesOut []string
 	tcpPorts, udpPorts                []string
+	tcpPortsPrivate, udpPortsPrivate  []string // reachable from VPN/LAN only, never the WAN
 	countryIn, countryOut             []string
 	asnIn, asnOut                     []string
 	allowedIPs, allowedRanges         []string // source allow-list (saddr accept)
@@ -428,6 +457,7 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 	blockedIPsIn, blockedIPsOut := p.blockedIPsIn, p.blockedIPsOut
 	blockedRangesIn, blockedRangesOut := p.blockedRangesIn, p.blockedRangesOut
 	tcpPorts, udpPorts := p.tcpPorts, p.udpPorts
+	tcpPortsPrivate, udpPortsPrivate := p.tcpPortsPrivate, p.udpPortsPrivate
 	countryIn, countryOut := p.countryIn, p.countryOut
 	asnIn, asnOut := p.asnIn, p.asnOut
 	noInternetPeers, wanIface := p.noInternetPeers, p.wanIface
@@ -463,10 +493,15 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("allowed_asn", "ipv4_addr", []string{"interval", "auto-merge"}, p.allowedASN))
 	sb.WriteString("\n")
-	// Sets - ports
+	// Sets - ports (public: all NICs incl. WAN)
 	sb.WriteString(BuildSet("allowed_tcp_ports", "inet_service", nil, tcpPorts))
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("allowed_udp_ports", "inet_service", nil, udpPorts))
+	sb.WriteString("\n")
+	// Sets - ports (private: accepted only off the WAN — see the scoped accepts in the input chain)
+	sb.WriteString(BuildSet("allowed_tcp_ports_private", "inet_service", nil, tcpPortsPrivate))
+	sb.WriteString("\n")
+	sb.WriteString(BuildSet("allowed_udp_ports_private", "inet_service", nil, udpPortsPrivate))
 	sb.WriteString("\n")
 	// Set - per-peer WAN block (drop only when traffic egresses the WAN iface)
 	sb.WriteString(BuildSet("no_internet_peers", "ipv4_addr", nil, noInternetPeers))
@@ -533,9 +568,15 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 		"# IP/country/ASN gets no response at all)",
 		"ip protocol icmp accept",
 		"",
-		"# Allow specific ports",
+		"# Allow specific ports (public — reachable on all interfaces incl. the WAN)",
 		"tcp dport @allowed_tcp_ports accept",
 		"udp dport @allowed_udp_ports accept",
+	)
+	// Private ports: the same allow-list but reachable OFF the WAN only (VPN/LAN/loopback), so an
+	// admin UI or DNS flipped to "private" stops answering on the internet while staying usable
+	// internally. Must sit before the catch-all drop below.
+	inputRules = append(inputRules, privatePortRules(wanIface)...)
+	inputRules = append(inputRules,
 		"",
 		"# Log and drop everything else",
 		`limit rate 5/minute log prefix "FIREWALL_DROP: " drop`,

@@ -268,6 +268,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		// Legacy endpoints (ports, blocklists)
 		"GetPorts":      s.handleGetPorts,
 		"AddPort":       s.handleAddPort,
+		"SetPortScope":  s.handleSetPortScope,
 		"RemovePort":    s.handleRemovePort,
 		"GetBlocklists": s.handleGetBlocklists,
 

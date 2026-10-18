@@ -358,6 +358,14 @@
           "description": "Add allowed port"
         },
         {
+          "path": "/ports/scope",
+          "methods": [
+            "POST"
+          ],
+          "handler": "SetPortScope",
+          "description": "Set a port's scope (public/private)"
+        },
+        {
           "path": "/ports/{port}",
           "methods": [
             "DELETE"
