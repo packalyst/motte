@@ -26,3 +26,22 @@ MITM or a tampered mirror).
 - (−) The signing key is a critical secret kept out of the repo and off the panel; its loss means
   cutting a new key and re-trusting agents.
 - (−) Cert lifecycle (issue/revoke/rotate) is now something the panel must manage correctly.
+
+## Update (2026-10-18) — signed-update hardening
+
+The self-update path (`agent/selfupdate.go`) gained three defences, so a validly signed but
+malicious or stale release can no longer harm an agent:
+
+- **Anti-rollback.** After the staged binary passes signature + checksum verification, the agent
+  reads the binary's own (now-authenticated) version and refuses to activate anything older than
+  the highest version this host has ever run. That floor is persisted beside the binary
+  (`.wgscout.floor`), so a downgrade is refused even across a restart or reinstall — a compromised
+  panel cannot push a known-vulnerable old release.
+- **Selftest-before-swap.** A dependency-free `wgscout selftest` subcommand (ed25519 roundtrip +
+  self-locate) is run on the staged binary before the atomic swap, catching a wrong-arch or
+  broken-but-hash-matched build before it replaces the live one.
+- **Key rollover.** The baked-in `signPubKey` now accepts a *list* of public keys; a release
+  verifies if **any** key accepts it. A rotation bakes {retiring, new} together, re-signs with the
+  new key, and retires the old one in a later build — with no window where agents stop updating. A
+  present-but-unparseable key set still fails closed. Mirrored in panel + agent; the build
+  (`agent/Makefile`, `manage.sh`) comma-joins a multi-line `signing.pub`.

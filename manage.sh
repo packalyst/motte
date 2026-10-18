@@ -2959,11 +2959,13 @@ PANEL_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 export PANEL_BRANCH
 echo -e "${CYAN}Panel version:${NC} $PANEL_VERSION"
 
-# Bake the release-signing public key into the panel so it verifies agent-release signatures
+# Bake the release-signing public key(s) into the panel so it verifies agent-release signatures
 # (ed25519). Read from the committed signing.pub; when absent, the key is empty and signature
 # enforcement stays off (unsigned/legacy releases keep working). The PRIVATE key is never here.
+# signing.pub may hold several keys (one per line) during a key rollover; strip spaces, drop
+# blank lines, and comma-join so every key is baked in (a single-key file yields just that key).
 if [ -f signing.pub ]; then
-    PANEL_SIGN_PUBKEY=$(tr -d ' \t\r\n' < signing.pub)
+    PANEL_SIGN_PUBKEY=$(tr -d ' \t\r' < signing.pub | sed '/^$/d' | paste -sd, -)
     echo -e "${CYAN}Release signing:${NC} ${GREEN}ON${NC} (public key baked in — releases must be signed)"
 else
     PANEL_SIGN_PUBKEY=""
