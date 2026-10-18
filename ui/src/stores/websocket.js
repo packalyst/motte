@@ -57,9 +57,6 @@ const subRefs = new Map()
  * Connect to WebSocket server
  */
 export function connect() {
-  const token = localStorage.getItem('session_token')
-  if (!token) return
-
   // Clean up existing connection
   if (ws) {
     ws.close()
@@ -71,9 +68,10 @@ export function connect() {
   try {
     ws = new WebSocket(wsUrl)
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ action: 'auth', token }))
-    }
+    // The browser attaches the HttpOnly session cookie to the handshake, which the server
+    // authenticates — no token is sent over the socket. An unauthenticated handshake is
+    // closed by the server and handled by the reconnect/auth-failure logic below.
+    ws.onopen = () => {}
 
     ws.onmessage = (event) => {
       try {

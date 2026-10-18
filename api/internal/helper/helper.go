@@ -102,18 +102,19 @@ func ExtractIPPrefix(cidr string) string {
 	return ""
 }
 
-// ExtractBearerToken extracts the Bearer token from Authorization header or cookie
-func ExtractBearerToken(r *http.Request) string {
-	// Only accept the token from the Authorization header. We deliberately do
-	// NOT read it from a cookie: cookies are auto-attached by the browser on
-	// cross-site requests (CSRF), whereas a Bearer header is not. The UI sends
-	// the token from localStorage as a Bearer header, and the WebSocket
-	// authenticates via its first message, so no cookie path is needed.
+// SessionToken returns the caller's session token: from the HttpOnly session cookie (set
+// after login) when present, otherwise from an Authorization: Bearer header (for non-browser
+// API clients). The cookie path is CSRF-guarded by the router's same-origin check together
+// with the cookie's SameSite=Strict attribute; the Bearer path carries no ambient authority
+// and is therefore exempt from that check.
+func SessionToken(r *http.Request) string {
+	if v := sessionCookieValue(r); v != "" {
+		return v
+	}
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		return strings.TrimPrefix(auth, "Bearer ")
 	}
-
 	return ""
 }
 

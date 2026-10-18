@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -226,6 +227,10 @@ func (r *Router) applyMiddleware(handler http.Handler) http.Handler {
 	// Apply auth middleware (must be before logging to reject early)
 	h = r.authMiddleware(h)
 
+	// Apply CSRF origin check (wraps auth so a forged cross-origin cookie write is refused
+	// before the session is even validated).
+	h = r.csrfMiddleware(h)
+
 	// Apply rate limiting middleware
 	if r.config.Middleware.RateLimit.Enabled {
 		h = r.rateLimitMiddleware(h)
@@ -317,7 +322,7 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Extract token from Authorization header or cookie
-		token := helper.ExtractBearerToken(req)
+		token := helper.SessionToken(req)
 		if token == "" {
 			JSONError(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -331,6 +336,49 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, req)
 	})
+}
+
+// csrfMiddleware refuses state-changing requests that carry the ambient session cookie but
+// originate from another site. Moving the session into a cookie (HttpOnly, for XSS safety)
+// reintroduces CSRF exposure; SameSite=Strict on the cookie is the browser-side defense and
+// this is the server-side one. It applies ONLY to cookie-authenticated requests: a client
+// using an explicit Authorization header carries no ambient authority and is exempt (so
+// scripted/CLI access and the login/setup bootstrap keep working). A missing Origin/Referer
+// on a cookie-bearing write is treated as a refusal, not a pass.
+func (r *Router) csrfMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			// Safe methods never change state.
+		default:
+			if helper.HasSessionCookie(req) && !sameOrigin(req) {
+				JSONError(w, "cross-origin request refused", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
+// sameOrigin reports whether the request's Origin (or Referer fallback) host matches the host
+// the browser addressed. Behind Traefik the external host arrives in X-Forwarded-Host.
+func sameOrigin(req *http.Request) bool {
+	origin := req.Header.Get("Origin")
+	if origin == "" {
+		origin = req.Header.Get("Referer")
+	}
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := req.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = req.Host
+	}
+	return strings.EqualFold(u.Host, host)
 }
 
 // corsMiddleware adds CORS headers

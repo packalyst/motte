@@ -61,7 +61,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 
 // getUserID extracts and validates the user from the request token
 func getUserID(r *http.Request) (int64, error) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		return 0, auth.ErrInvalidSession
 	}

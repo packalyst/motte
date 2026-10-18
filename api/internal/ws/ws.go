@@ -120,13 +120,20 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Upgrade to WebSocket first; authentication happens via the first message.
 	// The token is never accepted in the URL query — that would leak it into
 	// proxy/access logs and browser history.
+	authSvc := auth.GetService()
+
+	// Prefer authenticating from the handshake itself: browsers attach the HttpOnly session
+	// cookie to the WebSocket upgrade (they cannot set an Authorization header on it), and
+	// non-browser clients may send Bearer. Only if neither is present/valid do we fall back
+	// to the legacy first-message token.
+	handshakeToken := helper.SessionToken(r)
+
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
 
-	authSvc := auth.GetService()
 	if authSvc == nil {
 		conn.WriteMessage(1, []byte(`{"type":"error","error":"Auth service unavailable"}`))
 		conn.Close()
@@ -134,31 +141,38 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user *auth.User
-
-	// Authenticate via the first message: {"action":"auth","token":"..."}.
-	conn.SetReadDeadline(time.Now().Add(helper.WebSocketReadTimeout))
-	_, msg, err := conn.ReadMessage()
-	if err != nil {
-		conn.Close()
-		return
-	}
-	conn.SetReadDeadline(time.Time{}) // Reset deadline
-
-	var authMsg struct {
-		Action string `json:"action"`
-		Token  string `json:"token"`
-	}
-	if err := json.Unmarshal(msg, &authMsg); err != nil || authMsg.Action != "auth" || authMsg.Token == "" {
-		conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid auth message"}`))
-		conn.Close()
-		return
+	if handshakeToken != "" {
+		if u, verr := authSvc.ValidateSession(handshakeToken); verr == nil {
+			user = u
+		}
 	}
 
-	user, err = authSvc.ValidateSession(authMsg.Token)
-	if err != nil {
-		conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid or expired token"}`))
-		conn.Close()
-		return
+	if user == nil {
+		// Fall back to first-message auth: {"action":"auth","token":"..."}.
+		conn.SetReadDeadline(time.Now().Add(helper.WebSocketReadTimeout))
+		_, msg, rerr := conn.ReadMessage()
+		if rerr != nil {
+			conn.Close()
+			return
+		}
+		conn.SetReadDeadline(time.Time{}) // Reset deadline
+
+		var authMsg struct {
+			Action string `json:"action"`
+			Token  string `json:"token"`
+		}
+		if jerr := json.Unmarshal(msg, &authMsg); jerr != nil || authMsg.Action != "auth" || authMsg.Token == "" {
+			conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid auth message"}`))
+			conn.Close()
+			return
+		}
+		u, verr := authSvc.ValidateSession(authMsg.Token)
+		if verr != nil {
+			conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid or expired token"}`))
+			conn.Close()
+			return
+		}
+		user = u
 	}
 
 	// Create client

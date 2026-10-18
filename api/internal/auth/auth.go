@@ -431,19 +431,27 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Clear failed attempts on successful login (refunds the reserved slot).
 	clearLoginAttempts(clientIP)
 
+	// Set the session as an HttpOnly, SameSite=Strict (Secure/__Host- over HTTPS) cookie so
+	// the browser never exposes it to JavaScript. The raw token is still returned in the body
+	// for non-browser API clients (Bearer); the UI ignores it and relies on the cookie.
+	if exp, perr := time.Parse(time.RFC3339, resp.ExpiresAt); perr == nil {
+		helper.SetSessionCookie(w, r, resp.Token, exp)
+	}
+
 	router.JSON(w, resp)
 }
 
 func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token != "" {
 		s.Logout(token)
 	}
+	helper.ClearSessionCookie(w, r)
 	router.JSON(w, map[string]string{"message": "Logged out"})
 }
 
 func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
@@ -463,7 +471,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	// requires STEP-UP re-authentication (the caller's current password) — a stolen
 	// session token alone must not be able to mint a new admin — and it is audit-logged.
 	// (There is no UI for this yet; the endpoint stays hardened for future multi-admin.)
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
