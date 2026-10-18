@@ -49,10 +49,8 @@
         throw new Error(data.error || data.message || 'Login failed')
       }
 
-      // Store session token
-      localStorage.setItem('session_token', data.token)
-      localStorage.setItem('session_expires', data.expiresAt)
-
+      // The session is set by the server as an HttpOnly cookie (not readable here); the
+      // browser sends it automatically on subsequent requests. Nothing to store client-side.
       toast('Login successful', 'success')
 
       // Notify parent component

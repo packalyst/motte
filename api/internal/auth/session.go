@@ -126,7 +126,7 @@ func (s *Service) ChangePassword(userID int64, currentPassword, newPassword stri
 // HTTP Handlers for session management
 
 func (s *Service) handleGetSessions(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
@@ -148,7 +148,7 @@ func (s *Service) handleGetSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
@@ -184,7 +184,7 @@ func (s *Service) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleRevokeOtherSessions(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
@@ -209,7 +209,7 @@ func (s *Service) handleRevokeOtherSessions(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return

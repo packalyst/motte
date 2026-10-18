@@ -28,7 +28,7 @@ type Disable2FARequest struct {
 
 // handleGet2FAStatus returns the 2FA status for current user
 func (s *Service) handleGet2FAStatus(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
@@ -52,7 +52,7 @@ func (s *Service) handleGet2FAStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleSetup2FA generates a new TOTP secret and returns QR code
 func (s *Service) handleSetup2FA(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
@@ -125,7 +125,7 @@ func (s *Service) handleSetup2FA(w http.ResponseWriter, r *http.Request) {
 
 // handleEnable2FA verifies the TOTP code and enables 2FA
 func (s *Service) handleEnable2FA(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return
@@ -201,7 +201,7 @@ func (s *Service) handleEnable2FA(w http.ResponseWriter, r *http.Request) {
 
 // handleDisable2FA disables 2FA after verifying password and TOTP code
 func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
-	token := helper.ExtractBearerToken(r)
+	token := helper.SessionToken(r)
 	if token == "" {
 		router.JSONError(w, "No token provided", http.StatusUnauthorized)
 		return

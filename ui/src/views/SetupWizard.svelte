@@ -185,8 +185,7 @@
           username: adminUsername,
           password: adminPassword
         })
-        localStorage.setItem('session_token', data.token)
-        localStorage.setItem('session_expires', data.expiresAt)
+        // Session is set as an HttpOnly cookie by the login handler; nothing to store here.
         if (onComplete) onComplete(data.user)
       } catch {
         // Setup done but login failed, user will need to login manually

@@ -197,12 +197,11 @@ export function setConfirmLoading(loading) {
   confirmModalStore.update(state => ({ ...state, loading }))
 }
 
-// Auth header helper (consolidated token retrieval)
+// Auth header helper. The session now lives in an HttpOnly, SameSite=Strict cookie that the
+// browser attaches automatically (same-origin), so JS neither reads nor sends the token —
+// this removes the XSS token-theft risk. Kept as a seam for callers that pass extra headers.
 function getAuthHeaders(extraHeaders = {}) {
-  const token = localStorage.getItem('session_token')
-  const headers = { ...extraHeaders }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  return headers
+  return { ...extraHeaders }
 }
 
 // Global logout handler - set by App.svelte to handle session expiration

@@ -74,15 +74,10 @@
     }
 
     // Setup is complete: validate any existing session via REST (the source of
-    // truth), independent of the WebSocket. apiGet clears the token and triggers
-    // logout automatically on a 401, so an invalid/expired token falls through
-    // to the login page; a valid one keeps us signed in across refreshes even if
-    // the WS is slow to connect.
-    const token = localStorage.getItem('session_token')
-    if (!token) {
-      checking = false
-      return
-    }
+    // truth), independent of the WebSocket. The session lives in an HttpOnly cookie the
+    // browser attaches automatically, so we simply ask the server who we are: a 200 keeps
+    // us signed in across refreshes, a 401 falls through to the login page (apiGet triggers
+    // the global logout on 401).
     try {
       user = await apiGet('/api/auth/me')
       // Apply the display timezone app-wide before views render (best-effort).
