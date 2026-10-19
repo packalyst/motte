@@ -255,6 +255,13 @@ export function setGlobalLogoutHandler(handler) {
   globalLogoutHandler = handler
 }
 
+// Idle-lock: the server returns 423 for a locked session on any non-exempt request. IdleLock
+// registers a handler so the lock overlay re-arms immediately instead of surfacing as an error.
+let globalLockHandler = null
+export function setGlobalLockHandler(handler) {
+  globalLockHandler = handler
+}
+
 // Clear session tokens
 export function clearSessionTokens() {
   localStorage.removeItem('session_token')
@@ -286,6 +293,16 @@ async function api(endpoint, options = {}) {
       }
     }
     throw new Error(error || 'Session expired')
+  }
+
+  // 423 Locked - the session is idle-locked server-side. Re-arm the lock overlay instead of
+  // treating it as a generic error (never logs out; unlocking restores access).
+  if (res.status === 423) {
+    if (globalLockHandler) globalLockHandler()
+    const error = await res.text().catch(() => 'Session locked')
+    const err = new Error(error || 'Session locked')
+    err.status = 423
+    throw err
   }
 
   const error = await res.text().catch(() => res.statusText)

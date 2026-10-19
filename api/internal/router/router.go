@@ -27,6 +27,18 @@ type Principal struct {
 	Role        string
 	ScopeKind   string
 	ScopeValues string
+	Locked      bool // session is idle-locked server-side; only unlock/logout/me/lock are allowed
+}
+
+// lockAllowedPath lists the only endpoints an idle-locked session may reach: enough to re-auth
+// (unlock), observe the locked state (me), lock again, or get out (logout). Everything else is
+// refused with 423 until the session is unlocked.
+func lockAllowedPath(p string) bool {
+	switch p {
+	case "/api/auth/unlock", "/api/auth/lock", "/api/auth/logout", "/api/auth/me":
+		return true
+	}
+	return false
 }
 
 // AuthResolver validates a session token and returns the principal it belongs to.
@@ -428,6 +440,15 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 		principal, ok := authResolver(token)
 		if !ok || principal == nil {
 			JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
+			return
+		}
+
+		// An idle-locked session is refused with 423 everywhere except the unlock/logout/me/lock
+		// endpoints. This is what makes the idle lock a real server boundary: a page refresh (or
+		// any direct API call) stays locked until the user re-authenticates, instead of the lock
+		// being a client-only overlay that F5 clears.
+		if principal.Locked && !lockAllowedPath(path) {
+			JSONError(w, "Session locked", http.StatusLocked)
 			return
 		}
 

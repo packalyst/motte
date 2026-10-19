@@ -135,6 +135,7 @@ func main() {
 					Role:        u.Role,
 					ScopeKind:   u.ScopeKind,
 					ScopeValues: u.ScopeValues,
+					Locked:      authSvc.IsSessionLocked(token),
 				}, true
 			})
 

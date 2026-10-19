@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -78,6 +79,46 @@ func (s *Service) RevokeOtherSessions(currentToken string, userID int64) (int64,
 // session — success just tells the client it may dismiss its lock overlay. The request also
 // refreshes the session's last-active time through the normal middleware. Any authenticated
 // user may unlock their own session; a wrong credential returns 428 (re-prompt), not 401.
+// LockSession marks the caller's session idle-locked server-side (sets locked_at). Idempotent.
+// This is what makes the idle lock survive a page refresh — the client lock overlay alone is
+// bypassable with F5, so the session carries the locked state until an unlock re-auths.
+func (s *Service) LockSession(token string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET locked_at = datetime('now') WHERE id = ?`, hashToken(token))
+	return err
+}
+
+// IsSessionLocked reports whether the session is currently idle-locked.
+func (s *Service) IsSessionLocked(token string) bool {
+	var locked sql.NullString
+	if err := s.db.QueryRow(`SELECT locked_at FROM sessions WHERE id = ?`, hashToken(token)).Scan(&locked); err != nil {
+		return false
+	}
+	return locked.Valid && locked.String != ""
+}
+
+// handleLock marks the current session idle-locked. The client calls it when it detects
+// inactivity; the lock then persists across refreshes (enforced in the router) until the user
+// re-authenticates via handleUnlock.
+func (s *Service) handleLock(w http.ResponseWriter, r *http.Request) {
+	token := helper.SessionToken(r)
+	if token == "" {
+		router.JSONError(w, "No token provided", http.StatusUnauthorized)
+		return
+	}
+	user, err := s.ValidateSession(token)
+	if err != nil {
+		router.JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
+		return
+	}
+	if err := s.LockSession(token); err != nil {
+		router.JSONError(w, "Failed to lock session", http.StatusInternalServerError)
+		return
+	}
+	events.Audit("auth", "session_locked", events.SeverityInfo, user.Username, helper.GetClientIP(r),
+		fmt.Sprintf("Idle session locked for %q", user.Username))
+	router.JSON(w, map[string]bool{"ok": true})
+}
+
 func (s *Service) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	token := helper.SessionToken(r)
 	if token == "" {
@@ -99,6 +140,8 @@ func (s *Service) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	if !s.stepUp(w, user.ID, req.CurrentPassword, req.TotpCode) {
 		return
 	}
+	// Clear the server-side lock so subsequent requests are allowed again.
+	s.db.Exec(`UPDATE sessions SET locked_at = NULL WHERE id = ?`, hashToken(token))
 	events.Audit("auth", "session_unlocked", events.SeverityInfo, user.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Idle session unlocked for %q", user.Username))
 	router.JSON(w, map[string]bool{"ok": true})
