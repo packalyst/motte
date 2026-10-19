@@ -381,8 +381,9 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 	publicPrefixes := []string{
 		"/api/setup/",
 		"/api/auth/login",
-		"/api/restart/", // public tunnel-rotation trigger (its own per-key secret)
-		"/api/hook/",    // public webhook trigger (its own per-webhook keys)
+		"/api/auth/passkeys/login/", // passwordless passkey login (begin/finish); no session yet
+		"/api/restart/",             // public tunnel-rotation trigger (its own per-key secret)
+		"/api/hook/",                // public webhook trigger (its own per-webhook keys)
 	}
 
 	// Exact public paths
