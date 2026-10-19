@@ -137,6 +137,12 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		// Idle-locked sessions get no live data either: refuse the upgrade, mirroring the
+		// router's 423 on HTTP (see router.authMiddleware / lockAllowedPath).
+		if authSvc.IsSessionLocked(handshakeToken) {
+			http.Error(w, "session locked", http.StatusLocked)
+			return
+		}
 		user = u
 	}
 
@@ -171,6 +177,11 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		u, verr := authSvc.ValidateSession(authMsg.Token)
 		if verr != nil {
 			conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid or expired token"}`))
+			conn.Close()
+			return
+		}
+		if authSvc.IsSessionLocked(authMsg.Token) {
+			conn.WriteMessage(1, []byte(`{"type":"error","error":"session locked"}`))
 			conn.Close()
 			return
 		}
