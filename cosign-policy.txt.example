@@ -1,0 +1,15 @@
+# cosign verification policy for `./manage.sh verify` (roadmap 12c).
+# Copy to cosign-policy.txt and uncomment the images you can actually verify. Only images that
+# publish cosign signatures can be checked — list those, leave the rest out. One image per line:
+#
+#   Keyless (Fulcio/Rekor):  image|certificate-identity-regexp|certificate-oidc-issuer
+#   Key-based:               image|key:/path/to/cosign.pub
+#
+# Examples (VERIFY the expected identity against the project's release docs before trusting them —
+# these are illustrative, not guaranteed current):
+#
+# tailscale/tailscale:latest|https://github.com/tailscale/tailscale/.*|https://token.actions.githubusercontent.com
+# traefik:v3.6|key:/etc/panel/traefik-cosign.pub
+#
+# Images with no published signatures (e.g. some community images) cannot be verified here — pin
+# them to a digest with `./manage.sh pin` instead, which makes the tag immutable.
