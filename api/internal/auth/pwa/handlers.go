@@ -56,6 +56,9 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"Locations":        s.handleLocations,
 		"StoreLocation":    s.handleStoreLocation,
 		"TestNotification": s.handleTestNotification,
+		"Channels":         s.handleChannels,
+		"TestChannels":     s.handleTestChannels,
+		"SMTP":             s.handleSMTP,
 	}
 }
 

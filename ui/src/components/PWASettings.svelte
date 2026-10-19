@@ -6,7 +6,7 @@
   import AlertRules from './AlertRules.svelte'
   import ContentBlock from './ContentBlock.svelte'
   import Badge from './Badge.svelte'
-  import { toast } from '../stores/app.js'
+  import { toast, apiGet, apiPut, apiPost } from '../stores/app.js'
   import { withTz } from '../lib/utils/format.js'
   import {
     platform,
@@ -64,7 +64,8 @@
     node_online: false,
     firewall_alert: true,
     login_new_device: true,
-    system_alert: true
+    system_alert: true,
+    resource_alert: true
   })
 
   // Track if preferences have changed
@@ -73,8 +74,59 @@
            prefs.node_online !== $notificationPreferences.node_online ||
            prefs.firewall_alert !== $notificationPreferences.firewall_alert ||
            prefs.login_new_device !== $notificationPreferences.login_new_device ||
-           prefs.system_alert !== $notificationPreferences.system_alert
+           prefs.system_alert !== $notificationPreferences.system_alert ||
+           prefs.resource_alert !== $notificationPreferences.resource_alert
   })
+
+  // Delivery channels (webhook/email) — shared by every notification type. Push is the panel above
+  // (subscription-based). Webhook URL is write-only.
+  const CH_REDACTED = '__stored__'
+  let channels = $state({ webhookEnabled: false, webhookUrl: '', emailEnabled: false, email: '' })
+  let webhookInput = $state('')
+  let hasStoredWebhook = $state(false)
+  let savingChannels = $state(false)
+  let testingChannels = $state(false)
+
+  async function loadChannels() {
+    try {
+      const c = await apiGet('/api/pwa/channels')
+      if (c) {
+        channels = { webhookEnabled: !!c.webhookEnabled, webhookUrl: '', emailEnabled: !!c.emailEnabled, email: c.email || '' }
+        hasStoredWebhook = c.webhookUrl === CH_REDACTED
+      }
+    } catch (_) { /* leave defaults */ }
+  }
+
+  function channelPayload() {
+    const url = webhookInput !== '' ? webhookInput : hasStoredWebhook ? CH_REDACTED : ''
+    return { webhookEnabled: channels.webhookEnabled, webhookUrl: url, emailEnabled: channels.emailEnabled, email: channels.email }
+  }
+
+  async function saveChannels() {
+    savingChannels = true
+    try {
+      const saved = await apiPut('/api/pwa/channels', channelPayload())
+      hasStoredWebhook = saved.webhookUrl === CH_REDACTED
+      webhookInput = ''
+      toast('Delivery channels saved', 'success')
+    } catch (e) {
+      toast(e.message || 'Save failed', 'error')
+    } finally {
+      savingChannels = false
+    }
+  }
+
+  async function testChannels() {
+    testingChannels = true
+    try {
+      const res = await apiPost('/api/pwa/test-channels', channelPayload())
+      toast('Test sent — ' + Object.entries(res).map(([k, v]) => `${k}: ${v}`).join(', '), 'success')
+    } catch (e) {
+      toast(e.message || 'Test failed', 'error')
+    } finally {
+      testingChannels = false
+    }
+  }
 
   // Sync local prefs with store
   $effect(() => {
@@ -305,6 +357,7 @@
     await refreshPushState()
     await refreshPreferences()
     await loadSubscriptions()
+    await loadChannels()
   })
 </script>
 
@@ -496,43 +549,67 @@
 </div>
 
 <!-- Notification Preferences -->
-<div class="kt-panel {!$pushEnabled ? 'opacity-50 pointer-events-none' : ''}">
+<div class="kt-panel">
   <div class="kt-panel-header">
     <h3 class="kt-panel-title">
       <Icon name="settings" size={16} />
       Notification Preferences
     </h3>
-    {#if !$pushEnabled}
-      <Badge variant="muted" size="xs">Enable push first</Badge>
-    {/if}
   </div>
-  <div class="kt-panel-body">
-    <p class="text-[10px] text-muted-foreground mb-3">
-      Choose which events trigger push notifications.
-    </p>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      <ContentBlock title="Node Offline" description="When a VPN node goes offline">
-        <Checkbox variant="switch" bind:checked={prefs.node_offline} disabled={!$pushEnabled} />
+  <div class="kt-panel-body space-y-4">
+    <!-- Deliver via: channels shared by every notification type. Push is the panel above. -->
+    <div class="space-y-2">
+      <p class="text-xs font-medium">Deliver via (besides push)</p>
+      <ContentBlock title="Webhook" description="Slack, Discord, ntfy, or your own endpoint">
+        <Checkbox variant="switch" bind:checked={channels.webhookEnabled} />
       </ContentBlock>
-      <ContentBlock title="Node Online" description="When a VPN node comes back online">
-        <Checkbox variant="switch" bind:checked={prefs.node_online} disabled={!$pushEnabled} />
+      {#if channels.webhookEnabled}
+        <input type="password" class="kt-input w-full" bind:value={webhookInput} autocomplete="off"
+          placeholder={hasStoredWebhook ? 'stored — leave blank to keep' : 'https://hooks.example.com/…'} />
+      {/if}
+      <ContentBlock title="Email" description="Needs SMTP configured by an admin in Settings">
+        <Checkbox variant="switch" bind:checked={channels.emailEnabled} />
       </ContentBlock>
-      <ContentBlock title="Firewall Alerts" description="Blocked connections and security events">
-        <Checkbox variant="switch" bind:checked={prefs.firewall_alert} disabled={!$pushEnabled} />
-      </ContentBlock>
-      <ContentBlock title="New Device Login" description="Login from a new device or location">
-        <Checkbox variant="switch" bind:checked={prefs.login_new_device} disabled={!$pushEnabled} />
-      </ContentBlock>
-      <ContentBlock title="System Alerts" description="Important system notifications">
-        <Checkbox variant="switch" bind:checked={prefs.system_alert} disabled={!$pushEnabled} />
-      </ContentBlock>
+      {#if channels.emailEnabled}
+        <input type="email" class="kt-input w-full" bind:value={channels.email} autocomplete="off" placeholder="you@example.com" />
+      {/if}
+      <div class="flex items-center gap-2">
+        <Button onclick={saveChannels} loading={savingChannels} size="sm" icon="device-floppy">Save channels</Button>
+        <Button onclick={testChannels} loading={testingChannels} size="sm" variant="outline" icon="bell">Send test</Button>
+      </div>
+    </div>
+
+    <div class="border-t border-border pt-3">
+      <p class="text-[10px] text-muted-foreground mb-3">
+        Choose which events notify you (on every channel you've enabled above).
+      </p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <ContentBlock title="Node Offline" description="When a VPN node goes offline">
+          <Checkbox variant="switch" bind:checked={prefs.node_offline} />
+        </ContentBlock>
+        <ContentBlock title="Node Online" description="When a VPN node comes back online">
+          <Checkbox variant="switch" bind:checked={prefs.node_online} />
+        </ContentBlock>
+        <ContentBlock title="Firewall Alerts" description="Blocked connections and security events">
+          <Checkbox variant="switch" bind:checked={prefs.firewall_alert} />
+        </ContentBlock>
+        <ContentBlock title="New Device Login" description="Login from a new device or location">
+          <Checkbox variant="switch" bind:checked={prefs.login_new_device} />
+        </ContentBlock>
+        <ContentBlock title="System Alerts" description="Important system notifications">
+          <Checkbox variant="switch" bind:checked={prefs.system_alert} />
+        </ContentBlock>
+        <ContentBlock title="Resource Alerts" description="Your CPU/memory/disk threshold rules below">
+          <Checkbox variant="switch" bind:checked={prefs.resource_alert} />
+        </ContentBlock>
+      </div>
     </div>
   </div>
   <div class="kt-panel-footer">
     <Button
       onclick={savePreferences}
       loading={savingPrefs}
-      disabled={!prefsChanged || !$pushEnabled}
+      disabled={!prefsChanged}
       size="sm"
       icon="device-floppy"
     >

@@ -46,23 +46,34 @@ func TestStepRuleZeroDurationFiresImmediately(t *testing.T) {
 	}
 }
 
-func TestValidateChannels(t *testing.T) {
-	if err := validateChannels(Channels{WebhookEnabled: true, WebhookURL: "ftp://x"}); err == nil {
-		t.Error("non-http webhook URL should fail")
+func TestScopeAllowsMachineRaw(t *testing.T) {
+	// owner/admin see everything regardless of scope.
+	if !scopeAllowsMachineRaw("owner", "host", "other", "m1", "") {
+		t.Error("owner should access any machine")
 	}
-	if err := validateChannels(Channels{EmailEnabled: true, Email: "not-an-email"}); err == nil {
-		t.Error("invalid email should fail")
+	// host scope: only listed ids.
+	if !scopeAllowsMachineRaw("operator", "host", "m1,m2", "m1", "") {
+		t.Error("host scope should allow a listed id")
 	}
-	if err := validateChannels(Channels{WebhookEnabled: true, WebhookURL: "https://hooks.example/x", EmailEnabled: true, Email: "a@b.co"}); err != nil {
-		t.Errorf("valid channels rejected: %v", err)
+	if scopeAllowsMachineRaw("operator", "host", "m2", "m1", "") {
+		t.Error("host scope should reject an unlisted id")
+	}
+	// tag scope: intersection of machine tags and scope values.
+	if !scopeAllowsMachineRaw("viewer", "tag", "prod", "m1", "prod,edge") {
+		t.Error("tag scope should allow when tags intersect")
+	}
+	if scopeAllowsMachineRaw("viewer", "tag", "prod", "m1", "dev") {
+		t.Error("tag scope should reject when tags do not intersect")
 	}
 }
 
-func TestMaskedWebhook(t *testing.T) {
-	if got := (Channels{WebhookURL: "https://hooks.example/secret-token"}).masked().WebhookURL; got != redacted {
-		t.Errorf("webhook URL not masked: %q", got)
+func TestParseMarshalTargets(t *testing.T) {
+	in := Targets{Host: true, MachineIDs: []string{"m1", "m2"}}
+	got := parseTargets(marshalTargets(in))
+	if !got.Host || len(got.MachineIDs) != 2 {
+		t.Errorf("round-trip lost data: %+v", got)
 	}
-	if got := (Channels{WebhookURL: ""}).masked().WebhookURL; got != "" {
-		t.Errorf("empty webhook URL should stay empty, got %q", got)
+	if z := parseTargets(""); z.Host || z.AllMachines || len(z.MachineIDs) != 0 {
+		t.Errorf("empty targets should be zero value, got %+v", z)
 	}
 }

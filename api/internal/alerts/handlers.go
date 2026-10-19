@@ -7,26 +7,19 @@ import (
 	"strconv"
 	"strings"
 
-	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
 )
 
-const redacted = "__stored__"
-
-// Handlers maps endpoint names (endpoints.json) to HTTP handlers.
+// Handlers maps endpoint names (endpoints.json) to HTTP handlers. Delivery channels + SMTP live in
+// the notifications (pwa) service now; this service owns only the per-user rules.
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"GetRules":     s.handleGetRules,
-		"CreateRule":   s.handleCreateRule,
-		"UpdateRule":   s.handleUpdateRule,
-		"DeleteRule":   s.handleDeleteRule,
-		"GetChannels":  s.handleGetChannels,
-		"SaveChannels": s.handleSaveChannels,
-		"Test":         s.handleTest,
-		"GetSMTP":      s.handleGetSMTP,
-		"SaveSMTP":     s.handleSaveSMTP,
+		"GetRules":   s.handleGetRules,
+		"CreateRule": s.handleCreateRule,
+		"UpdateRule": s.handleUpdateRule,
+		"DeleteRule": s.handleDeleteRule,
 	}
 }
 
@@ -36,8 +29,6 @@ func callerID(r *http.Request) (int64, string) {
 	}
 	return 0, ""
 }
-
-// ---- rules (per-user) ----
 
 func (s *Service) handleGetRules(w http.ResponseWriter, r *http.Request) {
 	uid, _ := callerID(r)
@@ -68,7 +59,7 @@ func (s *Service) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	events.Audit("alerts", "alert_rule_created", events.SeverityInfo, actor, helper.GetClientIP(r),
-		fmt.Sprintf("Alert rule %q (%s %s) created", out.Name, out.Metric, out.Scope))
+		fmt.Sprintf("Alert rule %q (%s) created", out.Name, out.Metric))
 	router.JSON(w, out)
 }
 
@@ -120,8 +111,8 @@ func (s *Service) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]bool{"ok": true})
 }
 
-// validateRule checks the shape and, for machine-scoped rules, that the caller may access the
-// machine (scope). Mirrors fleet/scope.go's scopeAllows for the machine case.
+// validateRule checks the shape and, for each specific machine target, that the caller may access
+// it (scope). AllMachines needs no up-front check — the evaluator filters to the owner's scope.
 func (s *Service) validateRule(r *http.Request, rule Rule) error {
 	if strings.TrimSpace(rule.Name) == "" {
 		return fmt.Errorf("name is required")
@@ -135,23 +126,19 @@ func (s *Service) validateRule(r *http.Request, rule Rule) error {
 	if rule.ForMin < 0 {
 		return fmt.Errorf("duration must be >= 0")
 	}
-	switch rule.Scope {
-	case "host":
-		return nil
-	case "machine":
-		if rule.MachineID == "" {
-			return fmt.Errorf("a machine must be selected")
-		}
-		if !s.machineExists(rule.MachineID) {
+	if !rule.Targets.Host && !rule.Targets.AllMachines && len(rule.Targets.MachineIDs) == 0 {
+		return fmt.Errorf("select at least one target")
+	}
+	p := router.CurrentUser(r)
+	for _, id := range rule.Targets.MachineIDs {
+		if !s.machineExists(id) {
 			return fmt.Errorf("unknown machine")
 		}
-		if !s.machineAccessible(router.CurrentUser(r), rule.MachineID) {
-			return fmt.Errorf("that machine is outside your scope")
+		if !s.machineAccessible(p, id) {
+			return fmt.Errorf("a selected machine is outside your scope")
 		}
-		return nil
-	default:
-		return fmt.Errorf("unknown scope %q", rule.Scope)
 	}
+	return nil
 }
 
 func (s *Service) machineExists(id string) bool {
@@ -160,38 +147,15 @@ func (s *Service) machineExists(id string) bool {
 	return n > 0
 }
 
-// machineAccessible replicates the fleet scope decision for a single machine (source of truth:
-// fleet/scope.go scopeAllows) without importing the fleet service.
+// machineAccessible checks a single machine against the caller's scope (source of truth:
+// fleet/scope.go), reading the machine's tags from the DB.
 func (s *Service) machineAccessible(p *router.Principal, machineID string) bool {
 	if p == nil {
 		return false
 	}
-	if auth.RoleAtLeast(p.Role, auth.RoleAdmin) || p.ScopeKind == "" || p.ScopeKind == auth.ScopeAll {
-		return true
-	}
-	switch p.ScopeKind {
-	case auth.ScopeHost:
-		for _, id := range splitCSV(p.ScopeValues) {
-			if id == machineID {
-				return true
-			}
-		}
-	case auth.ScopeTag:
-		var tagsCSV string
-		if err := s.db.QueryRow(`SELECT COALESCE(tags, '') FROM fleet_machines WHERE id = ?`, machineID).Scan(&tagsCSV); err != nil {
-			return false
-		}
-		have := map[string]bool{}
-		for _, t := range splitCSV(tagsCSV) {
-			have[t] = true
-		}
-		for _, want := range splitCSV(p.ScopeValues) {
-			if have[want] {
-				return true
-			}
-		}
-	}
-	return false
+	var tagsCSV string
+	s.db.QueryRow(`SELECT COALESCE(tags, '') FROM fleet_machines WHERE id = ?`, machineID).Scan(&tagsCSV)
+	return scopeAllowsMachineRaw(p.Role, p.ScopeKind, p.ScopeValues, machineID, tagsCSV)
 }
 
 func splitCSV(s string) []string {
@@ -202,113 +166,4 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
-}
-
-// ---- channels (per-user) ----
-
-func (s *Service) handleGetChannels(w http.ResponseWriter, r *http.Request) {
-	uid, _ := callerID(r)
-	ch, err := s.getChannels(uid)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	router.JSON(w, ch.masked())
-}
-
-func (s *Service) handleSaveChannels(w http.ResponseWriter, r *http.Request) {
-	uid, actor := callerID(r)
-	var in Channels
-	if !router.DecodeJSONOrError(w, r, &in) {
-		return
-	}
-	stored, err := s.getChannels(uid)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if in.WebhookURL == redacted { // write-only: keep the stored secret
-		in.WebhookURL = stored.WebhookURL
-	}
-	if err := validateChannels(in); err != nil {
-		router.JSONError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := s.saveChannels(uid, in); err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	events.Audit("alerts", "alert_channels_changed", events.SeverityInfo, actor, helper.GetClientIP(r), "Alert delivery channels updated")
-	router.JSON(w, in.masked())
-}
-
-func (c Channels) masked() Channels {
-	out := c
-	if c.WebhookURL != "" {
-		out.WebhookURL = redacted
-	}
-	return out
-}
-
-func validateChannels(c Channels) error {
-	if c.WebhookEnabled {
-		u := strings.TrimSpace(c.WebhookURL)
-		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
-			return fmt.Errorf("webhook URL must be an http(s) URL")
-		}
-	}
-	if c.EmailEnabled && !strings.Contains(c.Email, "@") {
-		return fmt.Errorf("a valid email address is required")
-	}
-	return nil
-}
-
-// handleTest delivers a synthetic alert to the caller via the posted channel settings (webhook
-// secret merged with the stored one) so the form can be tested before saving.
-func (s *Service) handleTest(w http.ResponseWriter, r *http.Request) {
-	uid, _ := callerID(r)
-	var in Channels
-	_ = router.DecodeJSON(r, &in)
-	stored, _ := s.getChannels(uid)
-	if in.WebhookURL == redacted || in.WebhookURL == "" {
-		in.WebhookURL = stored.WebhookURL
-	}
-	if in.Email == "" {
-		in.Email = stored.Email
-	}
-	if !in.PushEnabled && !in.WebhookEnabled && !in.EmailEnabled {
-		router.JSONError(w, "enable a channel to test", http.StatusBadRequest)
-		return
-	}
-	s.deliver(uid, in, "Test alert", "This is a test resource alert from your panel.", map[string]interface{}{
-		"type": "resource_alert", "rule": "Test alert", "metric": "cpu", "value": 99, "threshold": 90, "test": true,
-	})
-	router.JSON(w, map[string]bool{"ok": true})
-}
-
-// ---- SMTP (global, admin) ----
-
-func (s *Service) handleGetSMTP(w http.ResponseWriter, r *http.Request) {
-	c := loadSMTP()
-	if c.Pass != "" {
-		c.Pass = redacted // write-only
-	}
-	router.JSON(w, c)
-}
-
-func (s *Service) handleSaveSMTP(w http.ResponseWriter, r *http.Request) {
-	_, actor := callerID(r)
-	var in smtpConfig
-	if !router.DecodeJSONOrError(w, r, &in) {
-		return
-	}
-	if in.Pass == redacted {
-		in.Pass = "" // keep stored (saveSMTP leaves it untouched on empty)
-	}
-	if err := saveSMTP(in); err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	events.Audit("alerts", "smtp_config_changed", events.SeverityInfo, actor, helper.GetClientIP(r), "SMTP settings updated")
-	router.JSON(w, map[string]bool{"ok": true})
 }

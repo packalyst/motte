@@ -1,17 +1,20 @@
 // Package alerts fires notifications when a resource (CPU, memory, disk) stays above a threshold
-// for a sustained period. Rules and delivery channels are PER-USER (each admin owns their own,
-// see store.go) — delivered to that user's push devices, their own webhook, and/or email. A rule
-// is scoped to the panel host or to a specific fleet machine. The evaluator samples independently
-// of the dashboard WS so it works unattended.
+// for a sustained period. Rules are PER-USER (see store.go); each rule targets the panel host
+// and/or one or more fleet machines (and/or "all machines the owner can see"). Delivery is handled
+// by the notifications (pwa) package, which routes a resource_alert to the owner's push devices,
+// webhook and/or email according to their channels + preference. The evaluator samples
+// independently of the dashboard WS so it works unattended.
 package alerts
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync"
 	"time"
 
+	"api/internal/auth"
 	"api/internal/database"
 	"api/internal/routines"
 	"api/internal/serverstats"
@@ -19,26 +22,23 @@ import (
 
 const evalInterval = 60 * time.Second
 
+// Targets is which subjects a rule watches.
+type Targets struct {
+	Host        bool     `json:"host"`        // the panel host
+	AllMachines bool     `json:"allMachines"` // every fleet machine the owner can see
+	MachineIDs  []string `json:"machineIds"`  // specific fleet machines
+}
+
 // Rule is one per-user threshold condition.
 type Rule struct {
 	ID        int64   `json:"id"`
 	Name      string  `json:"name"`
-	Metric    string  `json:"metric"`    // "cpu" | "mem" | "disk"
-	Scope     string  `json:"scope"`     // "host" (the panel box) | "machine" (a fleet machine)
-	MachineID string  `json:"machineId"` // when scope == "machine"
+	Metric    string  `json:"metric"` // "cpu" | "mem" | "disk"
+	Targets   Targets `json:"targets"`
 	Threshold float64 `json:"threshold"` // percent (0-100)
 	ForMin    int     `json:"forMin"`    // sustained minutes above threshold before firing
 	Enabled   bool    `json:"enabled"`
 	UserID    int64   `json:"-"` // owner; never serialized to the client
-}
-
-// Channels is one user's delivery configuration.
-type Channels struct {
-	WebhookURL     string `json:"webhookUrl"` // sensitive → write-only to the UI
-	WebhookEnabled bool   `json:"webhookEnabled"`
-	Email          string `json:"email"`
-	EmailEnabled   bool   `json:"emailEnabled"`
-	PushEnabled    bool   `json:"pushEnabled"`
 }
 
 type ruleState struct {
@@ -75,11 +75,42 @@ func (s *Service) Start() {
 	}()
 }
 
-func ruleKey(id int64) string { return strconv.FormatInt(id, 10) }
+// target is one concrete subject a rule is evaluated against.
+type target struct {
+	kind  string // "host" | "machine"
+	id    string // machine id when kind=="machine"
+	label string // human label for the alert text
+}
 
-// evaluate samples each enabled rule's metric for its scope and tracks sustained breaches, firing
-// (once) when a rule has been over threshold for its full duration. Host metrics are sampled once;
-// machine metrics come from the latest fleet report.
+func (s *Service) expandTargets(r Rule) []target {
+	var out []target
+	seen := map[string]bool{}
+	add := func(t target) {
+		k := t.kind + ":" + t.id
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, t)
+		}
+	}
+	if r.Targets.Host {
+		add(target{kind: "host", id: "", label: "this panel"})
+	}
+	ids := append([]string{}, r.Targets.MachineIDs...)
+	if r.Targets.AllMachines {
+		ids = append(ids, s.accessibleMachineIDs(r.UserID)...)
+	}
+	for _, id := range ids {
+		add(target{kind: "machine", id: id, label: s.machineNameOr(id)})
+	}
+	return out
+}
+
+func stateKey(ruleID int64, t target) string {
+	return strconv.FormatInt(ruleID, 10) + ":" + t.kind + ":" + t.id
+}
+
+// evaluate samples each enabled rule's metric for each of its targets and tracks sustained
+// breaches, firing (once) when a (rule,target) has been over threshold for its full duration.
 func (s *Service) evaluate() {
 	rules, err := s.listRules(0) // all enabled rules across users
 	if err != nil || len(rules) == 0 {
@@ -94,30 +125,31 @@ func (s *Service) evaluate() {
 	defer s.mu.Unlock()
 	live := map[string]bool{}
 	for _, r := range rules {
-		var val float64
-		var ok bool
-		switch r.Scope {
-		case "machine":
-			val, ok = s.latestMachineMetric(r.MachineID, r.Metric)
-		default: // "host"
-			if !hostSampled {
-				cpu, mem, disk = serverstats.Snapshot()
-				hostSampled = true
+		for _, t := range s.expandTargets(r) {
+			var val float64
+			var ok bool
+			if t.kind == "machine" {
+				val, ok = s.latestMachineMetric(t.id, r.Metric)
+			} else {
+				if !hostSampled {
+					cpu, mem, disk = serverstats.Snapshot()
+					hostSampled = true
+				}
+				val, ok = metricValue(r.Metric, cpu, mem, disk)
 			}
-			val, ok = metricValue(r.Metric, cpu, mem, disk)
-		}
-		if !ok {
-			continue
-		}
-		key := ruleKey(r.ID)
-		live[key] = true
-		stt := s.st[key]
-		if stt == nil {
-			stt = &ruleState{}
-			s.st[key] = stt
-		}
-		if stepRule(stt, val, r.Threshold, r.ForMin, now) {
-			go s.fire(r, val) // network I/O off the lock
+			if !ok {
+				continue
+			}
+			key := stateKey(r.ID, t)
+			live[key] = true
+			stt := s.st[key]
+			if stt == nil {
+				stt = &ruleState{}
+				s.st[key] = stt
+			}
+			if stepRule(stt, val, r.Threshold, r.ForMin, now) {
+				go s.fire(r, t.label, val)
+			}
 		}
 	}
 	for k := range s.st {
@@ -128,8 +160,7 @@ func (s *Service) evaluate() {
 }
 
 // latestMachineMetric reads a fleet machine's most recent reported value for the metric. Reads the
-// fleet_metrics table directly (no fleet-package coupling); returns ok=false when the machine has
-// never reported.
+// fleet_metrics table directly (no fleet-package coupling); ok=false when it has never reported.
 func (s *Service) latestMachineMetric(machineID, metric string) (float64, bool) {
 	col := map[string]string{"cpu": "cpu_avg", "mem": "mem_avg", "disk": "disk_avg"}[metric]
 	if col == "" || machineID == "" {
@@ -145,10 +176,42 @@ func (s *Service) latestMachineMetric(machineID, metric string) (float64, bool) 
 	return v.Float64, true
 }
 
-// stepRule advances one rule's breach state for a single sample and reports whether to fire now.
-// It fires once when the value has stayed above threshold for the full duration, and stays quiet
-// until the value drops back under threshold (debounce) — so a sustained breach is one alert, not
-// a storm. Pure (no I/O) so the state machine is unit-testable.
+func (s *Service) machineNameOr(machineID string) string {
+	var name string
+	if err := s.db.QueryRow(`SELECT name FROM fleet_machines WHERE id = ?`, machineID).Scan(&name); err != nil || name == "" {
+		return machineID
+	}
+	return name
+}
+
+// accessibleMachineIDs returns the fleet machine IDs the rule owner may see (for AllMachines),
+// using the same scope rule as fleet/scope.go.
+func (s *Service) accessibleMachineIDs(userID int64) []string {
+	var role, kind, values string
+	if err := s.db.QueryRow(`SELECT role, scope_kind, scope_values FROM users WHERE id = ?`, userID).Scan(&role, &kind, &values); err != nil {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT id, COALESCE(tags, '') FROM fleet_machines WHERE revoked = 0`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id, tags string
+		if rows.Scan(&id, &tags) != nil {
+			continue
+		}
+		if scopeAllowsMachineRaw(role, kind, values, id, tags) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// stepRule advances one (rule,target) breach state for a single sample and reports whether to fire
+// now. Fires once when the value has stayed above threshold for the full duration, then stays quiet
+// until it drops back under (debounce). Pure (no I/O) so it is unit-testable.
 func stepRule(stt *ruleState, value, threshold float64, forMin int, now time.Time) bool {
 	if value <= threshold {
 		stt.breachStart = time.Time{}
@@ -181,29 +244,50 @@ func metricValue(metric string, cpu, mem, disk float64) (float64, bool) {
 
 var metricLabel = map[string]string{"cpu": "CPU", "mem": "Memory", "disk": "Disk"}
 
-// scopeTarget describes a rule's subject for the alert text.
-func (s *Service) scopeTarget(r Rule) string {
-	if r.Scope == "machine" {
-		if name := s.machineName(r.MachineID); name != "" {
-			return name
-		}
-		return r.MachineID
-	}
-	return "this panel"
-}
-
-func (s *Service) machineName(machineID string) string {
-	var name string
-	if err := s.db.QueryRow(`SELECT name FROM fleet_machines WHERE id = ?`, machineID).Scan(&name); err != nil {
-		return ""
-	}
-	return name
-}
-
-// alertText builds the title/body for a fired rule.
 func alertText(r Rule, target string, value float64) (title, body string) {
 	title = fmt.Sprintf("%s alert: %s", metricLabel[r.Metric], r.Name)
 	body = fmt.Sprintf("%s is at %.0f%% (threshold %.0f%% for %d min) on %s",
 		metricLabel[r.Metric], value, r.Threshold, r.ForMin, target)
 	return title, body
+}
+
+// scopeAllowsMachineRaw mirrors fleet/scope.go scopeAllows for a single machine, from raw columns
+// (so both the request path and the unattended evaluator can use it).
+func scopeAllowsMachineRaw(role, scopeKind, scopeValues, machineID, machineTagsCSV string) bool {
+	if auth.RoleAtLeast(role, auth.RoleAdmin) || scopeKind == "" || scopeKind == auth.ScopeAll {
+		return true
+	}
+	switch scopeKind {
+	case auth.ScopeHost:
+		for _, id := range splitCSV(scopeValues) {
+			if id == machineID {
+				return true
+			}
+		}
+	case auth.ScopeTag:
+		have := map[string]bool{}
+		for _, t := range splitCSV(machineTagsCSV) {
+			have[t] = true
+		}
+		for _, want := range splitCSV(scopeValues) {
+			if have[want] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// marshalTargets / parseTargets persist Targets as a JSON column.
+func marshalTargets(t Targets) string {
+	b, _ := json.Marshal(t)
+	return string(b)
+}
+
+func parseTargets(s string) Targets {
+	var t Targets
+	if s != "" {
+		json.Unmarshal([]byte(s), &t)
+	}
+	return t
 }

@@ -25,7 +25,7 @@
 
   onMount(async () => {
     try {
-      const c = await apiGet('/api/alerts/smtp')
+      const c = await apiGet('/api/pwa/smtp')
       if (c) {
         cfg = { ...cfg, ...c, pass: '' }
         hasStoredPass = c.pass === REDACTED
@@ -41,7 +41,7 @@
     saving = true
     try {
       const pass = passInput !== '' ? passInput : hasStoredPass ? REDACTED : ''
-      await apiPut('/api/alerts/smtp', { ...cfg, pass })
+      await apiPut('/api/pwa/smtp', { ...cfg, pass })
       hasStoredPass = hasStoredPass || passInput !== ''
       passInput = ''
       toast('SMTP settings saved', 'success')
