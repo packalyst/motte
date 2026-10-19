@@ -6,6 +6,7 @@
   // server boundary — the session's absolute expiry remains the hard limit — and always offers a
   // "Log out" escape so no one can get stuck.
   import { currentUser, apiPost, setGlobalLockHandler } from '../stores/app.js'
+  import { connect as wsConnect, disconnect as wsDisconnect, stopReconnect as wsStopReconnect } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
 
@@ -28,11 +29,19 @@
     if (!locked) lastActivity = Date.now()
   }
 
+  // Enter the locked state: show the overlay and cut the live WebSocket so stats don't keep
+  // streaming behind the blur (the server also refuses a locked session's WS handshake). No
+  // reconnect while locked; unlock() re-establishes it.
+  function suspendLiveData() {
+    try { wsStopReconnect(); wsDisconnect() } catch (_) { /* best-effort */ }
+  }
+
   // Arm the lock. Persists it server-side so a refresh (or any API call) stays locked until an
   // unlock — the lock is a real boundary, not just this overlay. Idempotent; network errors are
   // swallowed because the overlay is already up.
   async function armLock() {
     locked = true
+    suspendLiveData()
     try {
       await apiPost('/api/auth/lock')
     } catch (_) {
@@ -52,6 +61,8 @@
       lastActivity = Date.now()
       // Clear the store flag so the restore effect below doesn't immediately re-lock.
       currentUser.update((u) => (u ? { ...u, locked: false } : u))
+      // Bring the live WebSocket back now that the session is unlocked.
+      try { wsConnect() } catch (_) { /* store will connect on next use */ }
     } catch (e) {
       // A true 401 (session actually expired) already triggered the global logout inside api();
       // anything else (e.g. 428 wrong credential) just re-prompts here.
@@ -65,10 +76,18 @@
   // overlay comes straight back up (this is what defeats the F5 bypass). Also re-arm when any
   // request hits 423.
   $effect(() => {
-    if ($currentUser?.locked) locked = true
+    if ($currentUser?.locked && !locked) {
+      locked = true
+      suspendLiveData()
+    }
   })
   $effect(() => {
-    setGlobalLockHandler(() => { locked = true })
+    setGlobalLockHandler(() => {
+      if (!locked) {
+        locked = true
+        suspendLiveData()
+      }
+    })
     return () => setGlobalLockHandler(null)
   })
 
