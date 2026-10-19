@@ -324,6 +324,15 @@
           "handler": "Unlock",
           "description": "Re-authenticate to unlock an idle session",
           "min_role": "viewer"
+        },
+        {
+          "path": "/lock",
+          "methods": [
+            "POST"
+          ],
+          "handler": "Lock",
+          "description": "Mark the current session idle-locked",
+          "min_role": "viewer"
         }
       ]
     },

@@ -5,7 +5,7 @@
   // 2FA code when the user has 2FA) via POST /api/auth/unlock. It is walk-up protection, not a
   // server boundary — the session's absolute expiry remains the hard limit — and always offers a
   // "Log out" escape so no one can get stuck.
-  import { currentUser, apiPost } from '../stores/app.js'
+  import { currentUser, apiPost, setGlobalLockHandler } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
 
@@ -28,6 +28,18 @@
     if (!locked) lastActivity = Date.now()
   }
 
+  // Arm the lock. Persists it server-side so a refresh (or any API call) stays locked until an
+  // unlock — the lock is a real boundary, not just this overlay. Idempotent; network errors are
+  // swallowed because the overlay is already up.
+  async function armLock() {
+    locked = true
+    try {
+      await apiPost('/api/auth/lock')
+    } catch (_) {
+      /* already visually locked; server will also lock on next request's 423 path */
+    }
+  }
+
   async function unlock() {
     if (!canSubmit || busy) return
     error = ''
@@ -38,6 +50,8 @@
       totp = ''
       locked = false
       lastActivity = Date.now()
+      // Clear the store flag so the restore effect below doesn't immediately re-lock.
+      currentUser.update((u) => (u ? { ...u, locked: false } : u))
     } catch (e) {
       // A true 401 (session actually expired) already triggered the global logout inside api();
       // anything else (e.g. 428 wrong credential) just re-prompts here.
@@ -47,12 +61,23 @@
     }
   }
 
+  // Restore a server-side lock on load/refresh: if /api/auth/me reported the session locked, the
+  // overlay comes straight back up (this is what defeats the F5 bypass). Also re-arm when any
+  // request hits 423.
+  $effect(() => {
+    if ($currentUser?.locked) locked = true
+  })
+  $effect(() => {
+    setGlobalLockHandler(() => { locked = true })
+    return () => setGlobalLockHandler(null)
+  })
+
   $effect(() => {
     const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'wheel']
     events.forEach((ev) => window.addEventListener(ev, bump, { passive: true }))
     const iv = setInterval(() => {
       if (minutes > 0 && !locked && Date.now() - lastActivity >= minutes * 60000) {
-        locked = true
+        armLock()
       }
     }, 5000)
     return () => {

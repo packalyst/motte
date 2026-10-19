@@ -125,6 +125,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"Enable2FA":           s.handleEnable2FA,
 		"Disable2FA":          s.handleDisable2FA,
 		"Unlock":              s.handleUnlock,
+		"Lock":                s.handleLock,
 	}
 }
 
@@ -497,10 +498,12 @@ func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		*User
 		TOTPEnabled     bool `json:"totpEnabled"`
 		IdleLockMinutes int  `json:"idleLockMinutes"`
+		Locked          bool `json:"locked"`
 	}{
 		User:            user,
 		TOTPEnabled:     s.TOTPEnabled(user.ID),
 		IdleLockMinutes: settings.GetSettingInt("idle_lock_minutes", 0),
+		Locked:          s.IsSessionLocked(token),
 	}
 	router.JSON(w, resp)
 }

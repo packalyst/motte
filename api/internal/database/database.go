@@ -647,6 +647,14 @@ func runMigrations(db *sql.DB) {
 		}
 	}
 
+	// Idle-lock: a session can be marked locked server-side (locked_at set) so a browser refresh
+	// can't bypass the client-side lock overlay. NULL = not locked.
+	if err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'locked_at'`).Scan(&count); err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN locked_at TIMESTAMP`); err == nil {
+			log.Printf("Migration: added locked_at column to sessions")
+		}
+	}
+
 	// Add traffic columns to vpn_clients if missing
 	trafficCols := []string{"total_tx", "total_rx", "last_tx", "last_rx"}
 	for _, col := range trafficCols {
