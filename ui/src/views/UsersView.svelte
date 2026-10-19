@@ -1,5 +1,5 @@
 <script>
-  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, stepUpConfirm, setConfirmLoading } from '../stores/app.js'
   import { formatRelativeDate } from '$lib/utils/format.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import { filterByFields } from '$lib/utils/data.js'
@@ -134,23 +134,29 @@
       ? `This will also delete ${userNodeCount} node${userNodeCount > 1 ? 's' : ''}. This action cannot be undone.`
       : 'This action cannot be undone.'
 
-    const confirmed = await confirm({
+    // Deleting a user cascades into deleting their nodes, which are themselves step-up-gated.
+    // Collect the re-auth once and pass it to each delete. (Note: a 2FA user deleting someone who
+    // owns multiple nodes hits the single-use-code guard after the first node — rare, and the
+    // password case the panel uses today works fine.)
+    const su = await stepUpConfirm({
       title: 'Delete User',
       message: `Delete ${user.name}?`,
       description,
-      confirmText: 'Delete'
+      confirmText: 'Delete',
+      variant: 'destructive',
     })
-    if (!confirmed) return
+    if (!su?.confirmed || !su?.password) return
+    const body = { currentPassword: su.password, totpCode: su.totp || '' }
 
     setConfirmLoading(true)
     try {
       // First delete all nodes belonging to this user
       const userNodes = getUserNodes(user.name)
       for (const node of userNodes) {
-        await apiDelete(`/api/hs/nodes/${node.id}`)
+        await apiDelete(`/api/hs/nodes/${node.id}`, body)
       }
       // Then delete the user
-      await apiDelete(`/api/hs/users/${user.name}`)
+      await apiDelete(`/api/hs/users/${user.name}`, body)
       toast('User and nodes deleted', 'success')
       loader.reload()
     } catch (e) {

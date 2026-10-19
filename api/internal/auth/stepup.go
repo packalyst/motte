@@ -2,6 +2,7 @@ package auth
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -86,6 +87,37 @@ func (s *Service) stepUp(w http.ResponseWriter, callerID int64, password, totpCo
 		"totp":   s.TOTPEnabled(callerID),
 	}, http.StatusPreconditionRequired)
 	return false
+}
+
+// stepUpCreds is the re-auth envelope the UI sends in the body of a sensitive request.
+type stepUpCreds struct {
+	CurrentPassword string `json:"currentPassword"`
+	TotpCode        string `json:"totpCode"`
+}
+
+// StepUpRequest re-authenticates the caller of a session-authorized request for a sensitive
+// action. It reads {currentPassword, totpCode} from the JSON body and resolves the caller from the
+// router principal. On success it returns true; on ANY failure (no principal, or a bad/empty
+// credential) it writes the standard 428 step-up response — never 401 — and returns false, so the
+// UI prompts in place instead of logging out. Reusable by any package guarding a destructive
+// action: `if a := auth.GetService(); a != nil && !a.StepUpRequest(w, r) { return }`.
+func (s *Service) StepUpRequest(w http.ResponseWriter, r *http.Request) bool {
+	p := router.CurrentUser(r)
+	if p == nil || p.UserID == 0 {
+		router.JSONWithStatus(w, map[string]interface{}{
+			"error":  "step-up re-authentication required",
+			"stepup": true,
+			"totp":   false,
+		}, http.StatusPreconditionRequired)
+		return false
+	}
+	var creds stepUpCreds
+	if r.Body != nil {
+		// An absent/empty/garbled body leaves creds zero-valued, which stepUp turns into a 428
+		// prompt rather than an error.
+		_ = json.NewDecoder(r.Body).Decode(&creds)
+	}
+	return s.stepUp(w, p.UserID, creds.CurrentPassword, creds.TotpCode)
 }
 
 // TOTPEnabled reports whether the user has 2FA enabled. Used by handlers that surface to the UI

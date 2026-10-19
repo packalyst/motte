@@ -148,6 +148,10 @@ func (s *Service) handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleDeletePeer(w http.ResponseWriter, r *http.Request) {
+	// Destructive + irreversible: require step-up re-auth (password, +2FA when enabled).
+	if !router.StepUp(w, r) {
+		return
+	}
 	id := router.ExtractPathParam(r, "/api/wg/peers/")
 	peer := s.peerStore.Get(id) // capture name/IP before removal for the activity feed
 	s.peerStore.Delete(id)
