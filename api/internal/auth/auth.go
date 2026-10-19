@@ -108,24 +108,30 @@ func New() (*Service, error) {
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"Login":               s.handleLogin,
-		"Logout":              s.handleLogout,
-		"GetCurrentUser":      s.handleGetCurrentUser,
-		"CreateUser":          s.handleCreateUser,
-		"ListUsers":           s.handleListUsers,
-		"UpdateUserRole":      s.handleUpdateUserRole,
-		"UpdateUserScope":     s.handleUpdateUserScope,
-		"DeleteUser":          s.handleDeleteUser,
-		"GetSessions":         s.handleGetSessions,
-		"RevokeSession":       s.handleRevokeSession,
-		"RevokeOtherSessions": s.handleRevokeOtherSessions,
-		"ChangePassword":      s.handleChangePassword,
-		"Get2FAStatus":        s.handleGet2FAStatus,
-		"Setup2FA":            s.handleSetup2FA,
-		"Enable2FA":           s.handleEnable2FA,
-		"Disable2FA":          s.handleDisable2FA,
-		"Unlock":              s.handleUnlock,
-		"Lock":                s.handleLock,
+		"Login":                 s.handleLogin,
+		"Logout":                s.handleLogout,
+		"GetCurrentUser":        s.handleGetCurrentUser,
+		"CreateUser":            s.handleCreateUser,
+		"ListUsers":             s.handleListUsers,
+		"UpdateUserRole":        s.handleUpdateUserRole,
+		"UpdateUserScope":       s.handleUpdateUserScope,
+		"DeleteUser":            s.handleDeleteUser,
+		"GetSessions":           s.handleGetSessions,
+		"RevokeSession":         s.handleRevokeSession,
+		"RevokeOtherSessions":   s.handleRevokeOtherSessions,
+		"ChangePassword":        s.handleChangePassword,
+		"Get2FAStatus":          s.handleGet2FAStatus,
+		"Setup2FA":              s.handleSetup2FA,
+		"Enable2FA":             s.handleEnable2FA,
+		"Disable2FA":            s.handleDisable2FA,
+		"Unlock":                s.handleUnlock,
+		"Lock":                  s.handleLock,
+		"PasskeyRegisterBegin":  s.handlePasskeyRegisterBegin,
+		"PasskeyRegisterFinish": s.handlePasskeyRegisterFinish,
+		"PasskeyLoginBegin":     s.handlePasskeyLoginBegin,
+		"PasskeyLoginFinish":    s.handlePasskeyLoginFinish,
+		"ListPasskeys":          s.handleListPasskeys,
+		"DeletePasskey":         s.handleDeletePasskey,
 	}
 }
 
@@ -280,7 +286,14 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 		s.upgradeHash(user.ID, password)
 	}
 
-	// Create session with IP and user agent
+	// Password verified and 2FA (if any) satisfied — issue a session.
+	return s.createSession(user, ipAddress, userAgent)
+}
+
+// createSession issues a fresh session for an already-authenticated user and returns the login
+// response. Shared by every primary auth path (password login, passkey login) so session creation,
+// last-login bookkeeping and the new-device notification stay identical. Stores only the token hash.
+func (s *Service) createSession(user User, ipAddress, userAgent string) (*LoginResponse, error) {
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
@@ -288,26 +301,22 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 	sessionHours := settings.GetSettingInt("session_timeout", 24)
 	expiresAt := time.Now().Add(time.Duration(sessionHours) * time.Hour)
 
-	// Store only the hash of the token; the raw token is returned to the client below.
-	_, err = s.db.Exec(
+	if _, err := s.db.Exec(
 		"INSERT INTO sessions (id, user_id, expires_at, ip_address, user_agent, last_active) VALUES (?, ?, ?, ?, ?, ?)",
 		hashToken(sessionID), user.ID, expiresAt, ipAddress, userAgent, time.Now(),
-	)
-	if err != nil {
+	); err != nil {
 		return nil, fmt.Errorf("failed to create session: %v", err)
 	}
 
-	// Update last login
 	s.db.Exec("UPDATE users SET last_login = ? WHERE id = ?", time.Now(), user.ID)
 
-	// Send push notification for new login (async, don't block login)
+	// New-login notification (async, don't block the response).
 	go func() {
 		loginNotifyMu.RLock()
 		notifyFn := loginNotifyCallback
 		loginNotifyMu.RUnlock()
 		if notifyFn != nil {
-			deviceName := helper.ParseUserAgent(userAgent)
-			notifyFn(user.ID, ipAddress, deviceName, userAgent)
+			notifyFn(user.ID, ipAddress, helper.ParseUserAgent(userAgent), userAgent)
 		}
 	}()
 

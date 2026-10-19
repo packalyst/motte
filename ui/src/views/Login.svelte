@@ -1,5 +1,6 @@
 <script>
   import { theme, toast, apiPost } from '../stores/app.js'
+  import { passkeyLogin, passkeysSupported } from '../lib/webauthn.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
@@ -13,7 +14,26 @@
   let totpCode = $state('')
   let requires2FA = $state(false)
   let loading = $state(false)
+  let passkeyLoading = $state(false)
   let error = $state('')
+  const canPasskey = passkeysSupported()
+
+  async function handlePasskeyLogin() {
+    error = ''
+    passkeyLoading = true
+    try {
+      const data = await passkeyLogin()
+      toast('Login successful', 'success')
+      if (onLogin) onLogin(data.user)
+    } catch (e) {
+      // A user cancelling the browser prompt throws NotAllowedError — don't nag about that.
+      if (e?.name !== 'NotAllowedError' && e?.name !== 'AbortError') {
+        error = e.message || 'Passkey login failed'
+      }
+    } finally {
+      passkeyLoading = false
+    }
+  }
 
   function toggleTheme() {
     theme.update(t => t === 'dark' ? 'light' : 'dark')
@@ -273,6 +293,25 @@
                 {/if}
               </Button>
             </div>
+
+            {#if canPasskey}
+              <!-- Passwordless passkey login -->
+              <div class="flex items-center gap-3 pt-2">
+                <span class="h-px flex-1 bg-border"></span>
+                <span class="text-xs text-muted-foreground">or</span>
+                <span class="h-px flex-1 bg-border"></span>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                class="w-full"
+                icon="key"
+                loading={passkeyLoading}
+                onclick={handlePasskeyLogin}
+              >
+                Sign in with a passkey
+              </Button>
+            {/if}
           {/if}
         </form>
       </div>

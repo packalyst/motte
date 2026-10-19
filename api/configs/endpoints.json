@@ -333,6 +333,58 @@
           "handler": "Lock",
           "description": "Mark the current session idle-locked",
           "min_role": "viewer"
+        },
+        {
+          "path": "/passkeys/register/begin",
+          "methods": [
+            "POST"
+          ],
+          "handler": "PasskeyRegisterBegin",
+          "description": "Begin registering a passkey",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/passkeys/register/finish",
+          "methods": [
+            "POST"
+          ],
+          "handler": "PasskeyRegisterFinish",
+          "description": "Finish registering a passkey",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/passkeys/login/begin",
+          "methods": [
+            "POST"
+          ],
+          "handler": "PasskeyLoginBegin",
+          "description": "Begin passwordless passkey login"
+        },
+        {
+          "path": "/passkeys/login/finish",
+          "methods": [
+            "POST"
+          ],
+          "handler": "PasskeyLoginFinish",
+          "description": "Finish passwordless passkey login"
+        },
+        {
+          "path": "/passkeys",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ListPasskeys",
+          "description": "List my passkeys",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/passkeys/{id}",
+          "methods": [
+            "DELETE"
+          ],
+          "handler": "DeletePasskey",
+          "description": "Remove one of my passkeys",
+          "min_role": "viewer"
         }
       ]
     },
