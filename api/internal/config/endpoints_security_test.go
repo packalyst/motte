@@ -47,3 +47,26 @@ func TestSecretEndpointsRequireAdmin(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryServiceEnabled guards against a service block that omits "enabled": true. The field
+// defaults to Go's false, so a missing flag makes the router silently skip the whole service —
+// every one of its routes 404s with no error. (Found when alerts 404'd on 2026-10-19.)
+func TestEveryServiceEnabled(t *testing.T) {
+	raw, err := os.ReadFile("../../configs/endpoints.json")
+	if err != nil {
+		t.Fatalf("read endpoints.json: %v", err)
+	}
+	var doc struct {
+		Services map[string]struct {
+			Enabled bool `json:"enabled"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse endpoints.json: %v", err)
+	}
+	for name, svc := range doc.Services {
+		if !svc.Enabled {
+			t.Errorf("service %q is missing \"enabled\": true — the router will skip it and all its routes 404", name)
+		}
+	}
+}

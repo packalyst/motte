@@ -2037,6 +2037,7 @@
     },
     "alerts": {
       "prefix": "/api/alerts",
+      "enabled": true,
       "endpoints": [
         {
           "path": "/config",
