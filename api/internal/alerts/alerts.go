@@ -1,47 +1,43 @@
-// Package alerts fires notifications when a host resource (CPU, memory, disk) stays above a
-// configured threshold for a sustained period. Alerts go to an outbound webhook (admin-configured,
-// SSRF-guarded) and/or the existing PWA push channel. Rules + the webhook URL are stored encrypted
-// at rest; the evaluator samples independently of the dashboard WS so it works unattended.
+// Package alerts fires notifications when a resource (CPU, memory, disk) stays above a threshold
+// for a sustained period. Rules and delivery channels are PER-USER (each admin owns their own,
+// see store.go) — delivered to that user's push devices, their own webhook, and/or email. A rule
+// is scoped to the panel host or to a specific fleet machine. The evaluator samples independently
+// of the dashboard WS so it works unattended.
 package alerts
 
 import (
-	"bytes"
-	"context"
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"log"
-	"net/http"
-	"os"
+	"strconv"
 	"sync"
 	"time"
 
-	"api/internal/auth/pwa"
 	"api/internal/database"
-	"api/internal/events"
-	"api/internal/helper"
 	"api/internal/routines"
 	"api/internal/serverstats"
 )
 
 const evalInterval = 60 * time.Second
 
-// Rule is one threshold condition.
+// Rule is one per-user threshold condition.
 type Rule struct {
-	ID        string  `json:"id"`
+	ID        int64   `json:"id"`
 	Name      string  `json:"name"`
 	Metric    string  `json:"metric"`    // "cpu" | "mem" | "disk"
+	Scope     string  `json:"scope"`     // "host" (the panel box) | "machine" (a fleet machine)
+	MachineID string  `json:"machineId"` // when scope == "machine"
 	Threshold float64 `json:"threshold"` // percent (0-100)
 	ForMin    int     `json:"forMin"`    // sustained minutes above threshold before firing
 	Enabled   bool    `json:"enabled"`
+	UserID    int64   `json:"-"` // owner; never serialized to the client
 }
 
-// Config is the alerting policy, persisted as one encrypted JSON blob.
-type Config struct {
-	Rules          []Rule `json:"rules"`
-	WebhookURL     string `json:"webhookUrl"` // sensitive (often carries a token) → write-only to UI
+// Channels is one user's delivery configuration.
+type Channels struct {
+	WebhookURL     string `json:"webhookUrl"` // sensitive → write-only to the UI
 	WebhookEnabled bool   `json:"webhookEnabled"`
+	Email          string `json:"email"`
+	EmailEnabled   bool   `json:"emailEnabled"`
 	PushEnabled    bool   `json:"pushEnabled"`
 }
 
@@ -51,11 +47,11 @@ type ruleState struct {
 	lastFired   time.Time
 }
 
-// Service owns the config, the evaluator loop, and per-rule breach state.
+// Service owns the evaluator loop and per-(rule,target) breach state.
 type Service struct {
 	db      *database.DB
 	mu      sync.Mutex
-	st      map[string]*ruleState // ruleID -> state
+	st      map[string]*ruleState // stateKey -> state
 	cfgOnce sync.Once
 }
 
@@ -67,54 +63,9 @@ func New() (*Service, error) {
 	return &Service{db: db, st: map[string]*ruleState{}}, nil
 }
 
-func (s *Service) ensureTable() {
-	s.cfgOnce.Do(func() {
-		s.db.Exec(`CREATE TABLE IF NOT EXISTS alert_config (
-			id         INTEGER PRIMARY KEY CHECK (id = 1),
-			config_enc TEXT NOT NULL
-		)`)
-	})
-}
-
-func (s *Service) load() (Config, error) {
-	s.ensureTable()
-	var enc string
-	err := s.db.QueryRow("SELECT config_enc FROM alert_config WHERE id = 1").Scan(&enc)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Config{}, nil
-	}
-	if err != nil {
-		return Config{}, err
-	}
-	plain, err := helper.Decrypt(enc)
-	if err != nil {
-		return Config{}, err
-	}
-	var c Config
-	if err := json.Unmarshal([]byte(plain), &c); err != nil {
-		return Config{}, err
-	}
-	return c, nil
-}
-
-func (s *Service) save(c Config) error {
-	s.ensureTable()
-	raw, err := json.Marshal(c)
-	if err != nil {
-		return err
-	}
-	enc, err := helper.Encrypt(string(raw))
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`INSERT INTO alert_config (id, config_enc) VALUES (1, ?)
-		ON CONFLICT(id) DO UPDATE SET config_enc = excluded.config_enc`, enc)
-	return err
-}
-
 // Start runs the evaluator loop.
 func (s *Service) Start() {
-	routines.RegisterDaemon("alerts-evaluator", "Resource alerts: checks CPU/memory/disk thresholds and fires webhooks/push")
+	routines.RegisterDaemon("alerts-evaluator", "Resource alerts: checks CPU/memory/disk thresholds (host + fleet) and notifies the owning user")
 	go func() {
 		t := time.NewTicker(evalInterval)
 		defer t.Stop()
@@ -124,55 +75,74 @@ func (s *Service) Start() {
 	}()
 }
 
-// evaluate samples the host once and checks every enabled rule, tracking sustained breaches and
-// firing (once) when a rule has been over threshold for its full duration. A rule that drops back
-// under threshold resets, so the next breach can fire again.
+func ruleKey(id int64) string { return strconv.FormatInt(id, 10) }
+
+// evaluate samples each enabled rule's metric for its scope and tracks sustained breaches, firing
+// (once) when a rule has been over threshold for its full duration. Host metrics are sampled once;
+// machine metrics come from the latest fleet report.
 func (s *Service) evaluate() {
-	cfg, err := s.load()
-	if err != nil {
-		return
-	}
-	var hasEnabled bool
-	for _, r := range cfg.Rules {
-		if r.Enabled {
-			hasEnabled = true
-			break
-		}
-	}
-	if !hasEnabled {
+	rules, err := s.listRules(0) // all enabled rules across users
+	if err != nil || len(rules) == 0 {
 		return
 	}
 
-	cpu, mem, disk := serverstats.Snapshot()
+	var cpu, mem, disk float64
+	var hostSampled bool
 	now := time.Now()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	live := map[string]bool{}
-	for _, r := range cfg.Rules {
-		if !r.Enabled {
-			continue
+	for _, r := range rules {
+		var val float64
+		var ok bool
+		switch r.Scope {
+		case "machine":
+			val, ok = s.latestMachineMetric(r.MachineID, r.Metric)
+		default: // "host"
+			if !hostSampled {
+				cpu, mem, disk = serverstats.Snapshot()
+				hostSampled = true
+			}
+			val, ok = metricValue(r.Metric, cpu, mem, disk)
 		}
-		live[r.ID] = true
-		val, ok := metricValue(r.Metric, cpu, mem, disk)
 		if !ok {
 			continue
 		}
-		stt := s.st[r.ID]
+		key := ruleKey(r.ID)
+		live[key] = true
+		stt := s.st[key]
 		if stt == nil {
 			stt = &ruleState{}
-			s.st[r.ID] = stt
+			s.st[key] = stt
 		}
 		if stepRule(stt, val, r.Threshold, r.ForMin, now) {
-			go s.fire(cfg, r, val) // network I/O off the lock
+			go s.fire(r, val) // network I/O off the lock
 		}
 	}
-	// Drop state for rules that no longer exist.
-	for id := range s.st {
-		if !live[id] {
-			delete(s.st, id)
+	for k := range s.st {
+		if !live[k] {
+			delete(s.st, k)
 		}
 	}
+}
+
+// latestMachineMetric reads a fleet machine's most recent reported value for the metric. Reads the
+// fleet_metrics table directly (no fleet-package coupling); returns ok=false when the machine has
+// never reported.
+func (s *Service) latestMachineMetric(machineID, metric string) (float64, bool) {
+	col := map[string]string{"cpu": "cpu_avg", "mem": "mem_avg", "disk": "disk_avg"}[metric]
+	if col == "" || machineID == "" {
+		return 0, false
+	}
+	var v sql.NullFloat64
+	err := s.db.QueryRow(
+		`SELECT `+col+` FROM fleet_metrics WHERE machine_id = ? ORDER BY bucket DESC LIMIT 1`, machineID,
+	).Scan(&v)
+	if err != nil || !v.Valid {
+		return 0, false
+	}
+	return v.Float64, true
 }
 
 // stepRule advances one rule's breach state for a single sample and reports whether to fire now.
@@ -211,45 +181,29 @@ func metricValue(metric string, cpu, mem, disk float64) (float64, bool) {
 
 var metricLabel = map[string]string{"cpu": "CPU", "mem": "Memory", "disk": "Disk"}
 
-// fire delivers one alert to the configured channels.
-func (s *Service) fire(cfg Config, r Rule, value float64) {
-	host, _ := os.Hostname()
-	title := fmt.Sprintf("%s alert: %s", metricLabel[r.Metric], r.Name)
-	body := fmt.Sprintf("%s is at %.0f%% (threshold %.0f%% for %d min) on %s", metricLabel[r.Metric], value, r.Threshold, r.ForMin, host)
-
-	if cfg.WebhookEnabled && cfg.WebhookURL != "" {
-		if err := postWebhook(cfg.WebhookURL, map[string]interface{}{
-			"type": "resource_alert", "rule": r.Name, "metric": r.Metric,
-			"value": value, "threshold": r.Threshold, "host": host,
-			"time": time.Now().UTC().Format(time.RFC3339),
-		}); err != nil {
-			log.Printf("alerts: webhook failed: %v", err)
+// scopeTarget describes a rule's subject for the alert text.
+func (s *Service) scopeTarget(r Rule) string {
+	if r.Scope == "machine" {
+		if name := s.machineName(r.MachineID); name != "" {
+			return name
 		}
+		return r.MachineID
 	}
-	if cfg.PushEnabled {
-		if p := pwa.Get(); p != nil {
-			p.NotifySystemAlert(title, body)
-		}
-	}
-	events.Audit("alerts", "alert_fired", events.SeverityWarning, "", "", body)
+	return "this panel"
 }
 
-// postWebhook POSTs JSON through the SSRF-guarded client (admin-configured URL may be internal,
-// but can never be steered to cloud-metadata/link-local).
-func postWebhook(url string, payload interface{}) error {
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
+func (s *Service) machineName(machineID string) string {
+	var name string
+	if err := s.db.QueryRow(`SELECT name FROM fleet_machines WHERE id = ?`, machineID).Scan(&name); err != nil {
+		return ""
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := helper.SafeInternalHTTPClient(15 * time.Second).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("webhook returned %d", resp.StatusCode)
-	}
-	return nil
+	return name
+}
+
+// alertText builds the title/body for a fired rule.
+func alertText(r Rule, target string, value float64) (title, body string) {
+	title = fmt.Sprintf("%s alert: %s", metricLabel[r.Metric], r.Name)
+	body = fmt.Sprintf("%s is at %.0f%% (threshold %.0f%% for %d min) on %s",
+		metricLabel[r.Metric], value, r.Threshold, r.ForMin, target)
+	return title, body
 }

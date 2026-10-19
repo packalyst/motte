@@ -14,7 +14,7 @@
   import Checkbox from '../components/Checkbox.svelte'
   import Modal from '../components/Modal.svelte'
   import OffhostBackup from '../components/OffhostBackup.svelte'
-  import AlertRules from '../components/AlertRules.svelte'
+  import SmtpSettings from '../components/SmtpSettings.svelte'
 
   let { loading = $bindable(true) } = $props()
   let savingAdguard = $state(false)
@@ -2094,9 +2094,9 @@
       <OffhostBackup />
     </div>
 
-    <!-- Resource alerts - Full width -->
+    <!-- Email (SMTP) for alerts - Full width. Per-user alert RULES live in Profile → Notifications. -->
     <div class="mt-4">
-      <AlertRules />
+      <SmtpSettings />
     </div>
 
     <!-- About - Full width -->

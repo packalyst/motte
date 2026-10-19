@@ -46,26 +46,23 @@ func TestStepRuleZeroDurationFiresImmediately(t *testing.T) {
 	}
 }
 
-func TestValidate(t *testing.T) {
-	if err := validate(Config{WebhookEnabled: true, WebhookURL: "ftp://x"}); err == nil {
+func TestValidateChannels(t *testing.T) {
+	if err := validateChannels(Channels{WebhookEnabled: true, WebhookURL: "ftp://x"}); err == nil {
 		t.Error("non-http webhook URL should fail")
 	}
-	if err := validate(Config{Rules: []Rule{{Metric: "gpu", Threshold: 50}}}); err == nil {
-		t.Error("unknown metric should fail")
+	if err := validateChannels(Channels{EmailEnabled: true, Email: "not-an-email"}); err == nil {
+		t.Error("invalid email should fail")
 	}
-	if err := validate(Config{Rules: []Rule{{Metric: "cpu", Threshold: 150}}}); err == nil {
-		t.Error("out-of-range threshold should fail")
-	}
-	if err := validate(Config{Rules: []Rule{{Metric: "disk", Threshold: 80, ForMin: 5}}, WebhookEnabled: true, WebhookURL: "https://hooks.example/x"}); err != nil {
-		t.Errorf("valid config rejected: %v", err)
+	if err := validateChannels(Channels{WebhookEnabled: true, WebhookURL: "https://hooks.example/x", EmailEnabled: true, Email: "a@b.co"}); err != nil {
+		t.Errorf("valid channels rejected: %v", err)
 	}
 }
 
 func TestMaskedWebhook(t *testing.T) {
-	if got := (Config{WebhookURL: "https://hooks.example/secret-token"}).masked().WebhookURL; got != redacted {
+	if got := (Channels{WebhookURL: "https://hooks.example/secret-token"}).masked().WebhookURL; got != redacted {
 		t.Errorf("webhook URL not masked: %q", got)
 	}
-	if got := (Config{WebhookURL: ""}).masked().WebhookURL; got != "" {
+	if got := (Channels{WebhookURL: ""}).masked().WebhookURL; got != "" {
 		t.Errorf("empty webhook URL should stay empty, got %q", got)
 	}
 }

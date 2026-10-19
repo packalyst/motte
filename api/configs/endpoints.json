@@ -2049,22 +2049,58 @@
       "enabled": true,
       "endpoints": [
         {
-          "path": "/config",
+          "path": "/rules",
           "methods": [
             "GET"
           ],
-          "handler": "GetConfig",
-          "description": "Get alert rules",
-          "min_role": "admin"
+          "handler": "GetRules",
+          "description": "List my alert rules",
+          "min_role": "viewer"
         },
         {
-          "path": "/config",
+          "path": "/rules",
+          "methods": [
+            "POST"
+          ],
+          "handler": "CreateRule",
+          "description": "Create an alert rule",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/rules/{id}",
           "methods": [
             "PUT"
           ],
-          "handler": "SaveConfig",
-          "description": "Save alert rules",
-          "min_role": "admin"
+          "handler": "UpdateRule",
+          "description": "Update one of my alert rules",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/rules/{id}",
+          "methods": [
+            "DELETE"
+          ],
+          "handler": "DeleteRule",
+          "description": "Delete one of my alert rules",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/channels",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetChannels",
+          "description": "Get my alert delivery channels",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/channels",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "SaveChannels",
+          "description": "Save my alert delivery channels",
+          "min_role": "viewer"
         },
         {
           "path": "/test",
@@ -2072,7 +2108,25 @@
             "POST"
           ],
           "handler": "Test",
-          "description": "Send a test alert",
+          "description": "Send a test alert to myself",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/smtp",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetSMTP",
+          "description": "Get SMTP settings (global)",
+          "min_role": "admin"
+        },
+        {
+          "path": "/smtp",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "SaveSMTP",
+          "description": "Save SMTP settings (global)",
           "min_role": "admin"
         }
       ]
