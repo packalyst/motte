@@ -1,4 +1,4 @@
-package alerts
+package pwa
 
 import (
 	"crypto/tls"
@@ -13,7 +13,7 @@ import (
 
 // SMTP is global (one mail server for the panel); recipients are per-user (Channels.Email). Stored
 // in the settings key-value store; the password is encrypted at rest and write-only to the UI.
-type smtpConfig struct {
+type SMTPConfig struct {
 	Host string `json:"host"`
 	Port string `json:"port"`
 	User string `json:"user"`
@@ -22,7 +22,7 @@ type smtpConfig struct {
 	TLS  string `json:"tls"` // "starttls" (587) | "tls" (465, implicit) | "none"
 }
 
-func loadSMTP() smtpConfig {
+func LoadSMTP() SMTPConfig {
 	host, _ := settings.GetSetting("smtp_host")
 	port, _ := settings.GetSetting("smtp_port")
 	user, _ := settings.GetSetting("smtp_user")
@@ -35,10 +35,10 @@ func loadSMTP() smtpConfig {
 	if mode == "" {
 		mode = "starttls"
 	}
-	return smtpConfig{Host: host, Port: port, User: user, Pass: pass, From: from, TLS: mode}
+	return SMTPConfig{Host: host, Port: port, User: user, Pass: pass, From: from, TLS: mode}
 }
 
-func saveSMTP(c smtpConfig) error {
+func SaveSMTP(c SMTPConfig) error {
 	if err := settings.SetSetting("smtp_host", strings.TrimSpace(c.Host)); err != nil {
 		return err
 	}
@@ -52,12 +52,12 @@ func saveSMTP(c smtpConfig) error {
 	return nil
 }
 
-func (c smtpConfig) configured() bool { return c.Host != "" && c.From != "" }
+func (c SMTPConfig) configured() bool { return c.Host != "" && c.From != "" }
 
 // sendEmail delivers one plain-text message with bounded timeouts. Supports STARTTLS (587),
 // implicit TLS (465) and plaintext ("none").
 func sendEmail(to, subject, body string) error {
-	c := loadSMTP()
+	c := LoadSMTP()
 	if !c.configured() {
 		return fmt.Errorf("SMTP is not configured")
 	}

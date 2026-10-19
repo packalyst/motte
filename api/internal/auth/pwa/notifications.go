@@ -11,22 +11,14 @@ const MaxPushWorkers = 10
 // SendNotification sends a push notification to all subscriptions of a notification type
 // Runs concurrently with a worker pool for efficiency
 func (s *Service) SendNotification(notifType NotificationType, notif *Notification) error {
-	subs, err := s.GetAllSubscriptionsForNotificationType(notifType)
-	if err != nil {
-		return err
+	// Push: existing subscription path (pref-gated), unchanged.
+	if subs, err := s.GetAllSubscriptionsForNotificationType(notifType); err == nil && len(subs) > 0 {
+		if payload, perr := json.Marshal(notif); perr == nil {
+			s.sendToSubscriptions(subs, payload) // worker pool, max 10 concurrent
+		}
 	}
-
-	if len(subs) == 0 {
-		return nil
-	}
-
-	payload, err := json.Marshal(notif)
-	if err != nil {
-		return err
-	}
-
-	// Send concurrently with worker pool (max 10 concurrent)
-	s.sendToSubscriptions(subs, payload)
+	// Webhook/email: deliver to every user who has one enabled and this event's preference on.
+	s.fanoutChannels(notifType, notif)
 	return nil
 }
 
@@ -165,6 +157,11 @@ func (s *Service) NotifyNewLogin(userID int64, ip, device, currentUserAgent stri
 	}
 
 	s.sendToSubscriptions(subs, payload)
+
+	// Also deliver to the user's non-push channels (webhook/email) when they want login alerts.
+	if s.prefEnabled(userID, NotifyLoginNewDevice) {
+		s.deliverChannels(userID, NotifyLoginNewDevice, notif)
+	}
 }
 
 // NotifySystemAlert sends a system-wide notification to all users

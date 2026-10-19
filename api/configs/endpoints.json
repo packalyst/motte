@@ -1732,6 +1732,35 @@
           "min_role": "viewer"
         },
         {
+          "path": "/channels",
+          "methods": [
+            "GET",
+            "PUT"
+          ],
+          "handler": "Channels",
+          "description": "Get or update my notification delivery channels (webhook/email)",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/test-channels",
+          "methods": [
+            "POST"
+          ],
+          "handler": "TestChannels",
+          "description": "Send a test notification to my channels",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/smtp",
+          "methods": [
+            "GET",
+            "PUT"
+          ],
+          "handler": "SMTP",
+          "description": "Get or update global SMTP settings",
+          "min_role": "admin"
+        },
+        {
           "path": "/locations",
           "methods": [
             "GET",
@@ -2083,51 +2112,6 @@
           "handler": "DeleteRule",
           "description": "Delete one of my alert rules",
           "min_role": "viewer"
-        },
-        {
-          "path": "/channels",
-          "methods": [
-            "GET"
-          ],
-          "handler": "GetChannels",
-          "description": "Get my alert delivery channels",
-          "min_role": "viewer"
-        },
-        {
-          "path": "/channels",
-          "methods": [
-            "PUT"
-          ],
-          "handler": "SaveChannels",
-          "description": "Save my alert delivery channels",
-          "min_role": "viewer"
-        },
-        {
-          "path": "/test",
-          "methods": [
-            "POST"
-          ],
-          "handler": "Test",
-          "description": "Send a test alert to myself",
-          "min_role": "viewer"
-        },
-        {
-          "path": "/smtp",
-          "methods": [
-            "GET"
-          ],
-          "handler": "GetSMTP",
-          "description": "Get SMTP settings (global)",
-          "min_role": "admin"
-        },
-        {
-          "path": "/smtp",
-          "methods": [
-            "PUT"
-          ],
-          "handler": "SaveSMTP",
-          "description": "Save SMTP settings (global)",
-          "min_role": "admin"
         }
       ]
     }

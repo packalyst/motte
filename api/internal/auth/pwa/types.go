@@ -80,6 +80,7 @@ const (
 	NotifyFirewallAlert  NotificationType = "firewall_alert"
 	NotifyLoginNewDevice NotificationType = "login_new_device"
 	NotifySystemAlert    NotificationType = "system_alert"
+	NotifyResourceAlert  NotificationType = "resource_alert"
 )
 
 // DefaultNotificationIcon is the icon used for all push notifications
@@ -93,6 +94,7 @@ var PreferenceDefaults = map[NotificationType]bool{
 	NotifyFirewallAlert:  true,  // ON - security alerts
 	NotifyLoginNewDevice: true,  // ON - security alerts
 	NotifySystemAlert:    true,  // ON - important system notifications
+	NotifyResourceAlert:  true,  // ON - resource threshold alerts (rules in Profile → Notifications)
 }
 
 // AllNotificationTypes returns all available notification types (for UI)
@@ -103,6 +105,7 @@ func AllNotificationTypes() []NotificationType {
 		NotifyFirewallAlert,
 		NotifyLoginNewDevice,
 		NotifySystemAlert,
+		NotifyResourceAlert,
 	}
 }
 
