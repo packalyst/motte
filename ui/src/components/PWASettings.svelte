@@ -87,6 +87,10 @@
   let savingChannels = $state(false)
   let testingChannels = $state(false)
 
+  // At least one delivery channel exists → preferences are meaningful. With none, the preference
+  // card is disabled (as it was before, when it gated on push alone).
+  const anyChannel = $derived($pushEnabled || channels.webhookEnabled || channels.emailEnabled)
+
   async function loadChannels() {
     try {
       const c = await apiGet('/api/pwa/channels')
@@ -376,6 +380,28 @@
     {/if}
   </div>
   <div class="kt-panel-body">
+    <!-- Deliver via: the channels every notification uses. Push is set up below. -->
+    <div class="space-y-2 mb-4">
+      <p class="text-xs font-medium">Deliver via</p>
+      <ContentBlock title="Webhook" description="Slack, Discord, ntfy, or your own endpoint">
+        <Checkbox variant="switch" bind:checked={channels.webhookEnabled} />
+      </ContentBlock>
+      {#if channels.webhookEnabled}
+        <input type="password" class="kt-input w-full" bind:value={webhookInput} autocomplete="off"
+          placeholder={hasStoredWebhook ? 'stored — leave blank to keep' : 'https://hooks.example.com/…'} />
+      {/if}
+      <ContentBlock title="Email" description="Needs SMTP configured by an admin in Settings">
+        <Checkbox variant="switch" bind:checked={channels.emailEnabled} />
+      </ContentBlock>
+      {#if channels.emailEnabled}
+        <input type="email" class="kt-input w-full" bind:value={channels.email} autocomplete="off" placeholder="you@example.com" />
+      {/if}
+      <div class="flex items-center gap-2">
+        <Button onclick={saveChannels} loading={savingChannels} size="sm" icon="device-floppy">Save channels</Button>
+        <Button onclick={testChannels} loading={testingChannels} size="sm" variant="outline" icon="bell">Send test</Button>
+      </div>
+    </div>
+
     <!-- Platform & Installation Status -->
     <div class="grid grid-cols-2 gap-3 mb-4">
       <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
@@ -549,78 +575,49 @@
 </div>
 
 <!-- Notification Preferences -->
-<div class="kt-panel">
+<div class="kt-panel {!anyChannel ? 'opacity-50 pointer-events-none' : ''}">
   <div class="kt-panel-header">
     <h3 class="kt-panel-title">
       <Icon name="settings" size={16} />
       Notification Preferences
     </h3>
+    {#if !anyChannel}
+      <Badge variant="muted" size="xs">Enable a channel first</Badge>
+    {/if}
   </div>
   <div class="kt-panel-body space-y-4">
-    <!-- Deliver via: channels shared by every notification type. Push is the panel above. -->
-    <div class="space-y-2">
-      <p class="text-xs font-medium">Deliver via (besides push)</p>
-      <ContentBlock title="Webhook" description="Slack, Discord, ntfy, or your own endpoint">
-        <Checkbox variant="switch" bind:checked={channels.webhookEnabled} />
+    <p class="text-[10px] text-muted-foreground">
+      Choose which events notify you — on every channel you've enabled (push, plus anything under “Deliver via” above).
+    </p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <ContentBlock title="Node Offline" description="When a VPN node goes offline">
+        <Checkbox variant="switch" bind:checked={prefs.node_offline} />
       </ContentBlock>
-      {#if channels.webhookEnabled}
-        <input type="password" class="kt-input w-full" bind:value={webhookInput} autocomplete="off"
-          placeholder={hasStoredWebhook ? 'stored — leave blank to keep' : 'https://hooks.example.com/…'} />
-      {/if}
-      <ContentBlock title="Email" description="Needs SMTP configured by an admin in Settings">
-        <Checkbox variant="switch" bind:checked={channels.emailEnabled} />
+      <ContentBlock title="Node Online" description="When a VPN node comes back online">
+        <Checkbox variant="switch" bind:checked={prefs.node_online} />
       </ContentBlock>
-      {#if channels.emailEnabled}
-        <input type="email" class="kt-input w-full" bind:value={channels.email} autocomplete="off" placeholder="you@example.com" />
-      {/if}
-      <div class="flex items-center gap-2">
-        <Button onclick={saveChannels} loading={savingChannels} size="sm" icon="device-floppy">Save channels</Button>
-        <Button onclick={testChannels} loading={testingChannels} size="sm" variant="outline" icon="bell">Send test</Button>
-      </div>
+      <ContentBlock title="Firewall Alerts" description="Blocked connections and security events">
+        <Checkbox variant="switch" bind:checked={prefs.firewall_alert} />
+      </ContentBlock>
+      <ContentBlock title="New Device Login" description="Login from a new device or location">
+        <Checkbox variant="switch" bind:checked={prefs.login_new_device} />
+      </ContentBlock>
+      <ContentBlock title="System Alerts" description="Important system notifications">
+        <Checkbox variant="switch" bind:checked={prefs.system_alert} />
+      </ContentBlock>
+      <ContentBlock title="Resource Alerts" description="CPU/memory/disk threshold rules (below)">
+        <Checkbox variant="switch" bind:checked={prefs.resource_alert} />
+      </ContentBlock>
+    </div>
+    <div>
+      <Button onclick={savePreferences} loading={savingPrefs} disabled={!prefsChanged} size="sm" icon="device-floppy">Save Preferences</Button>
     </div>
 
-    <div class="border-t border-border pt-3">
-      <p class="text-[10px] text-muted-foreground mb-3">
-        Choose which events notify you (on every channel you've enabled above).
-      </p>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <ContentBlock title="Node Offline" description="When a VPN node goes offline">
-          <Checkbox variant="switch" bind:checked={prefs.node_offline} />
-        </ContentBlock>
-        <ContentBlock title="Node Online" description="When a VPN node comes back online">
-          <Checkbox variant="switch" bind:checked={prefs.node_online} />
-        </ContentBlock>
-        <ContentBlock title="Firewall Alerts" description="Blocked connections and security events">
-          <Checkbox variant="switch" bind:checked={prefs.firewall_alert} />
-        </ContentBlock>
-        <ContentBlock title="New Device Login" description="Login from a new device or location">
-          <Checkbox variant="switch" bind:checked={prefs.login_new_device} />
-        </ContentBlock>
-        <ContentBlock title="System Alerts" description="Important system notifications">
-          <Checkbox variant="switch" bind:checked={prefs.system_alert} />
-        </ContentBlock>
-        <ContentBlock title="Resource Alerts" description="Your CPU/memory/disk threshold rules below">
-          <Checkbox variant="switch" bind:checked={prefs.resource_alert} />
-        </ContentBlock>
-      </div>
+    <!-- Resource alert rules — same card, below the event preferences -->
+    <div class="border-t border-border pt-4">
+      <AlertRules />
     </div>
   </div>
-  <div class="kt-panel-footer">
-    <Button
-      onclick={savePreferences}
-      loading={savingPrefs}
-      disabled={!prefsChanged}
-      size="sm"
-      icon="device-floppy"
-    >
-      Save Preferences
-    </Button>
-  </div>
-</div>
-
-<!-- Resource alerts: per-user threshold rules + their delivery channels -->
-<div class="mt-4">
-  <AlertRules />
 </div>
 
 <!-- Location Map Modal -->

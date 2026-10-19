@@ -91,19 +91,16 @@
   }
 </script>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title"><Icon name="bell-ringing" size={16} /> Resource alerts</h3>
+<div class="space-y-3">
+  <div class="flex items-center justify-between">
+    <h4 class="text-sm font-medium flex items-center gap-1.5"><Icon name="bell-ringing" size={14} /> Resource alert rules</h4>
+    <Button variant="outline" size="xs" icon="plus" onclick={addRule}>Add rule</Button>
   </div>
-  <div class="kt-panel-body space-y-3">
-    <div class="flex items-center justify-between">
-      <p class="text-xs text-muted-foreground">
-        Fire when CPU, memory or disk stays over a threshold — on this panel and/or fleet machines. Delivered via your channels above.
-      </p>
-      <Button variant="outline" size="xs" icon="plus" onclick={addRule}>Add rule</Button>
-    </div>
+  <p class="text-xs text-muted-foreground">
+    Fire when CPU, memory or disk stays over a threshold — on this panel and/or fleet machines. Uses the channels above.
+  </p>
 
-    {#if loading}
+  {#if loading}
       <div class="text-sm text-muted-foreground">Loading…</div>
     {:else if rules.length === 0}
       <p class="text-xs text-muted-foreground">No rules yet — add one to start alerting.</p>
@@ -141,5 +138,4 @@
         </div>
       {/each}
     {/if}
-  </div>
 </div>
