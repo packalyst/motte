@@ -69,6 +69,12 @@ case "${1:-}" in
         fi
         echo "  help       Show this help"
         echo ""
+        echo "  Supply-chain hardening (opt-in — the normal update flow is unchanged):"
+        echo "  pin          Pin external images to immutable @sha256 digests"
+        echo "  verify       cosign-verify images listed in cosign-policy.txt"
+        echo "  health       Probe /health; exit 0 only when healthy"
+        echo "  safe-rebuild Health-gated rebuild with automatic image rollback"
+        echo ""
         exit 0
         ;;
     start)
@@ -106,6 +112,12 @@ case "${1:-}" in
         ;;
     service-down)
         RUN_SERVICE_DOWN=true
+        ;;
+    pin|verify|health|safe-rebuild)
+        # Opt-in supply-chain hardening (roadmap 12c). Terminal passthroughs — they do not
+        # touch the normal update/rebuild flow. See scripts/supply-chain.sh for details.
+        bash "$SCRIPT_DIR/scripts/supply-chain.sh" "$@"
+        exit $?
         ;;
 esac
 

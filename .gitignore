@@ -56,3 +56,9 @@ agent/
 # Release signing PRIVATE key — release-machine only, never committed/deployed/backed up.
 # The matching public key (signing.pub) IS committed and baked into the builds.
 signing.key
+
+# Supply-chain hardening (roadmap 12c) — host-generated at `./manage.sh pin` time and the
+# operator's active cosign policy. Regenerate per host; the .example policy IS committed.
+docker-compose.pinned.yml
+images.lock
+cosign-policy.txt
