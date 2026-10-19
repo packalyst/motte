@@ -14,6 +14,7 @@
   import OtpInput from '../components/OtpInput.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
   import PWASettings from '../components/PWASettings.svelte'
+  import Passkeys from '../components/Passkeys.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -294,6 +295,9 @@
           </ContentBlock>
         </div>
       </div>
+
+      <!-- Passkeys -->
+      <Passkeys />
 
       <!-- Push Notifications -->
       <PWASettings />
