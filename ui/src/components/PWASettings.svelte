@@ -3,6 +3,7 @@
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Checkbox from './Checkbox.svelte'
+  import AlertRules from './AlertRules.svelte'
   import ContentBlock from './ContentBlock.svelte'
   import Badge from './Badge.svelte'
   import { toast } from '../stores/app.js'
@@ -538,6 +539,11 @@
       Save Preferences
     </Button>
   </div>
+</div>
+
+<!-- Resource alerts: per-user threshold rules + their delivery channels -->
+<div class="mt-4">
+  <AlertRules />
 </div>
 
 <!-- Location Map Modal -->
