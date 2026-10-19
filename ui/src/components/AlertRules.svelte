@@ -120,18 +120,25 @@
               <Button variant="ghost" size="xs" icon="trash" iconOnly onclick={() => removeRule(r)} />
             </div>
           </div>
-          <!-- Targets -->
-          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 pl-1 text-sm">
-            <span class="text-xs font-medium text-muted-foreground">Watch:</span>
-            <label class="flex items-center gap-1.5"><Checkbox checked={r.targets.host} onchange={(e) => (r.targets.host = e.target.checked)} /> This panel</label>
-            <label class="flex items-center gap-1.5"><Checkbox checked={r.targets.allMachines} onchange={(e) => (r.targets.allMachines = e.target.checked)} /> All machines</label>
-            {#if !r.targets.allMachines && machines.length > 0}
-              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                {#each machines as m (m.id)}
-                  <label class="flex items-center gap-1.5 text-xs">
-                    <Checkbox checked={r.targets.machineIds.includes(m.id)} onchange={() => toggleMachine(r, m.id)} /> {m.name || m.id}
-                  </label>
-                {/each}
+          <!-- Targets: the panel host and/or all machines and/or a multi-select of specific ones -->
+          <div class="space-y-1.5 pl-1">
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span class="text-xs font-medium text-muted-foreground">Watch:</span>
+              <label class="flex items-center gap-1.5"><Checkbox checked={r.targets.host} onchange={(e) => (r.targets.host = e.target.checked)} /> This panel</label>
+              <label class="flex items-center gap-1.5"><Checkbox checked={r.targets.allMachines} onchange={(e) => (r.targets.allMachines = e.target.checked)} /> All machines</label>
+            </div>
+            {#if !r.targets.allMachines}
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pl-6">
+                <span class="text-xs font-medium text-muted-foreground">Machines:</span>
+                {#if machines.length > 0}
+                  {#each machines as m (m.id)}
+                    <label class="flex items-center gap-1.5 text-xs">
+                      <Checkbox checked={r.targets.machineIds.includes(m.id)} onchange={() => toggleMachine(r, m.id)} /> {m.name || m.id}
+                    </label>
+                  {/each}
+                {:else}
+                  <span class="text-xs italic text-muted-foreground">no machines enrolled yet</span>
+                {/if}
               </div>
             {/if}
           </div>
