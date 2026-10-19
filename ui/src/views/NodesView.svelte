@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob, stepUpConfirm } from '../stores/app.js'
   import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
@@ -566,12 +566,21 @@
 
   async function deleteNode() {
     if (!selectedNode) return
+    // Destructive + irreversible → step-up re-auth (password, +2FA when enabled), verified server-side.
+    const su = await stepUpConfirm({
+      title: 'Delete node',
+      message: `Delete ${selectedNode._displayName}? This cannot be undone.`,
+      confirmText: 'Delete',
+      variant: 'destructive',
+    })
+    if (!su?.confirmed || !su?.password) return
+    const body = { currentPassword: su.password, totpCode: su.totp || '' }
     actionLoading = true
     try {
       if (selectedNode._type === 'wireguard') {
-        await apiDelete(`/api/wg/peers/${selectedNode._wgId}`)
+        await apiDelete(`/api/wg/peers/${selectedNode._wgId}`, body)
       } else {
-        await apiDelete(`/api/hs/nodes/${selectedNode.id}`)
+        await apiDelete(`/api/hs/nodes/${selectedNode.id}`, body)
       }
       toast('Node deleted', 'success')
       closeModal()
@@ -1395,34 +1404,7 @@
 
         {:else if activeTab === 'actions' || activeTab === 'security'}
           <!-- Actions Tab -->
-          {#if confirmAction === 'delete'}
-            <!-- Delete Confirmation -->
-            <div class="space-y-4">
-              <div class="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
-                <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-destructive/15 text-destructive shrink-0">
-                    <Icon name="alert-triangle" size={20} />
-                  </div>
-                  <div>
-                    <p class="font-medium text-foreground">Delete {selectedNode._displayName}?</p>
-                    <p class="text-sm text-muted-foreground mt-0.5">This action cannot be undone. The node will be permanently removed.</p>
-                  </div>
-                </div>
-              </div>
-              <div class="flex justify-between">
-                <Button onclick={() => confirmAction = null} variant="secondary" disabled={actionLoading}>
-                  Cancel
-                </Button>
-                <Button onclick={deleteNode} variant="destructive" disabled={actionLoading} icon={actionLoading ? undefined : "trash"}>
-                  {#if actionLoading}
-                    <span class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  {:else}
-                    Delete
-                  {/if}
-                </Button>
-              </div>
-            </div>
-          {:else if confirmAction === 'expire'}
+          {#if confirmAction === 'expire'}
             <!-- Expire Confirmation -->
             <div class="space-y-4">
               <div class="p-4 bg-warning/10 border border-warning/20 rounded-lg">
@@ -1528,7 +1510,7 @@
               {:else}
                 <OptionCard icon="clock" title="Expire Key" description="Force re-authentication" color="warning" size="lg" iconBox onclick={() => confirmAction = 'expire'} />
               {/if}
-              <OptionCard icon="trash" title="Delete" description="Remove permanently" color="destructive" size="lg" iconBox onclick={() => confirmAction = 'delete'} />
+              <OptionCard icon="trash" title="Delete" description="Remove permanently" color="destructive" size="lg" iconBox onclick={deleteNode} />
             </div>
           {/if}
         {/if}

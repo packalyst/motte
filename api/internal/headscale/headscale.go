@@ -392,6 +392,10 @@ func (s *Service) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "invalid node id", http.StatusBadRequest)
 		return
 	}
+	// Destructive + irreversible: require step-up re-auth (password, +2FA when enabled).
+	if !router.StepUp(w, r) {
+		return
+	}
 
 	// Auto-delete from vpn_clients for unified view
 	if db, err := database.GetDB(); err == nil {

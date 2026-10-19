@@ -138,6 +138,10 @@ func main() {
 				}, true
 			})
 
+			// Register step-up re-auth so packages that can't import auth (wireguard, headscale)
+			// can gate destructive actions via router.StepUp.
+			router.SetStepUpFunc(authSvc.StepUpRequest)
+
 			log.Println("Auth service registered")
 		}
 	}

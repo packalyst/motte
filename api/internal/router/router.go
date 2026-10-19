@@ -294,6 +294,28 @@ func SetAuthResolver(resolver AuthResolver) {
 	authResolver = resolver
 }
 
+// StepUpFunc re-authenticates the caller of a sensitive, session-authorized request for a
+// destructive action. It returns true when step-up passed; on failure it writes a 428 response and
+// returns false. Registered by the auth service (SetStepUpFunc) so packages like wireguard and
+// headscale can gate deletes without importing auth, which would create an import cycle.
+type StepUpFunc func(w http.ResponseWriter, r *http.Request) bool
+
+var stepUpFn StepUpFunc
+
+// SetStepUpFunc registers the step-up re-auth check used by StepUp.
+func SetStepUpFunc(fn StepUpFunc) {
+	stepUpFn = fn
+}
+
+// StepUp runs the registered step-up check. When none is registered it allows the action
+// (fail-open to pre-step-up behavior) so a mis-wired build never hard-locks a destructive action.
+func StepUp(w http.ResponseWriter, r *http.Request) bool {
+	if stepUpFn == nil {
+		return true
+	}
+	return stepUpFn(w, r)
+}
+
 // applyMiddleware wraps the handler with configured middleware
 func (r *Router) applyMiddleware(handler http.Handler) http.Handler {
 	h := handler
