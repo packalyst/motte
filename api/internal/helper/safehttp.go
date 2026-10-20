@@ -83,6 +83,11 @@ func SafeInternalHTTPClient(timeout time.Duration) *http.Client {
 			ip.IsUnspecified() || ip.IsMulticast() {
 			return fmt.Errorf("refusing to connect to %s (SSRF guard: link-local/metadata)", ip)
 		}
+		// The IPv6 cloud-metadata endpoint is a ULA (fd00:ec2::254), so it isn't link-local; block it
+		// explicitly without blocking all unique-local addresses (legit internal overlay lives there).
+		if ip.Equal(net.ParseIP("fd00:ec2::254")) {
+			return fmt.Errorf("refusing to connect to %s (SSRF guard: IPv6 metadata)", ip)
+		}
 		return nil // private / loopback / overlay / public are all legitimate internal targets
 	}
 	return &http.Client{

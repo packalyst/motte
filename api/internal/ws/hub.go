@@ -133,6 +133,29 @@ func (h *Hub) Broadcast(channel string, payload interface{}) {
 	}
 }
 
+// BroadcastFiltered sends to channel subscribers for whom allow() returns true — used to
+// scope-filter fleet events so a subscriber never receives data for a machine outside its scope.
+func (h *Hub) BroadcastFiltered(channel string, payload interface{}, allow func(userID int64, role, scopeKind, scopeValues string) bool) {
+	msg := &Message{Type: channel, Payload: payload}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("Error marshaling filtered broadcast message: %v", err)
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for client := range h.subscriptions[channel] {
+		if allow != nil && !allow(client.UserID, client.Role, client.ScopeKind, client.ScopeValues) {
+			continue
+		}
+		select {
+		case client.send <- data:
+		default:
+			// Client buffer full, skip
+		}
+	}
+}
+
 // BroadcastToAll sends a message to all connected clients
 func (h *Hub) BroadcastToAll(channel string, payload interface{}) {
 	msg := &Message{

@@ -189,7 +189,7 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create client
-	client := NewClient(s.hub, conn, user.ID, user.Username)
+	client := NewClient(s.hub, conn, user.ID, user.Username, user.Role, user.ScopeKind, user.ScopeValues)
 
 	// Register client
 	s.hub.register <- client
@@ -214,6 +214,13 @@ func Broadcast(channel string, payload interface{}) {
 func BroadcastAll(channel string, payload interface{}) {
 	if serviceInstance != nil && serviceInstance.hub != nil {
 		serviceInstance.hub.BroadcastToAll(channel, payload)
+	}
+}
+
+// BroadcastFiltered sends a channel message only to subscribers for whom allow() returns true.
+func BroadcastFiltered(channel string, payload interface{}, allow func(userID int64, role, scopeKind, scopeValues string) bool) {
+	if serviceInstance != nil && serviceInstance.hub != nil {
+		serviceInstance.hub.BroadcastFiltered(channel, payload, allow)
 	}
 }
 

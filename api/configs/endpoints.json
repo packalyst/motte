@@ -1791,11 +1791,19 @@
         {
           "path": "/channels",
           "methods": [
-            "GET",
+            "GET"
+          ],
+          "handler": "Channels",
+          "description": "Get notification delivery channels (webhook/email)",
+          "min_role": "viewer"
+        },
+        {
+          "path": "/channels",
+          "methods": [
             "PUT"
           ],
           "handler": "Channels",
-          "description": "Get or update notification delivery channels (webhook/email)",
+          "description": "Update notification delivery channels — server fetches the webhook URL, so admin-only (SSRF)",
           "min_role": "admin"
         },
         {

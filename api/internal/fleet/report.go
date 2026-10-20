@@ -38,7 +38,7 @@ func (s *Service) HandleReport(w http.ResponseWriter, r *http.Request) {
 	// instead of polling. The command log rides its own event-driven broadcasts
 	// (enqueue / deliver / ack), so we don't query it on every idle check-in here.
 	if s.broadcast != nil {
-		s.broadcast("fleet", map[string]any{"machine_id": m.ID, "report": json.RawMessage(body)})
+		s.scopedBroadcast(m.ID, "fleet", map[string]any{"machine_id": m.ID, "report": json.RawMessage(body)})
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

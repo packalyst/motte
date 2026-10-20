@@ -199,6 +199,14 @@ func (s *Service) ApplyScript(script string) error {
 	}
 	tmpFile.Close()
 
+	// Check the script with `nft -c` before applying it live, so a malformed ruleset is rejected
+	// up front rather than touching the live table. (A script that deletes a not-yet-existing table
+	// fails here too — that's the expected first-apply case the caller handles by retrying without
+	// the delete prefix.)
+	if out, err := s.Exec("-c", "-f", tmpPath); err != nil {
+		return fmt.Errorf("nft check: %v - %s", err, string(out))
+	}
+
 	out, err := s.Exec("-f", tmpPath)
 	if err != nil {
 		return fmt.Errorf("nft: %v - %s", err, string(out))

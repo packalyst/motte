@@ -55,6 +55,11 @@ type Client struct {
 	// User info from auth
 	UserID   int64
 	Username string
+	// Principal scope — lets channel broadcasts be filtered per-subscriber (fleet events for a
+	// machine must not reach an operator scoped away from it).
+	Role        string
+	ScopeKind   string
+	ScopeValues string
 
 	// Log streaming state
 	logStreamStop chan struct{}
@@ -62,14 +67,17 @@ type Client struct {
 }
 
 // NewClient creates a new client
-func NewClient(hub *Hub, conn *websocket.Conn, userID int64, username string) *Client {
+func NewClient(hub *Hub, conn *websocket.Conn, userID int64, username, role, scopeKind, scopeValues string) *Client {
 	return &Client{
-		hub:      hub,
-		conn:     conn,
-		send:     make(chan []byte, sendBufferSize),
-		done:     make(chan struct{}),
-		UserID:   userID,
-		Username: username,
+		hub:         hub,
+		conn:        conn,
+		send:        make(chan []byte, sendBufferSize),
+		done:        make(chan struct{}),
+		UserID:      userID,
+		Username:    username,
+		Role:        role,
+		ScopeKind:   scopeKind,
+		ScopeValues: scopeValues,
 	}
 }
 
