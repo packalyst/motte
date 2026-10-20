@@ -2,7 +2,7 @@
   // Passkeys (WebAuthn) — passwordless sign-in. Register device-bound credentials and manage them.
   // Additive: password + 2FA still work; a passkey is just a faster, phishing-resistant way in.
   import { onMount } from 'svelte'
-  import { apiGet, apiDelete, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiDelete, toast, confirm, stepUpConfirm } from '../stores/app.js'
   import { passkeyRegister, passkeysSupported } from '../lib/webauthn.js'
   import { formatDate } from '../lib/utils/format.js'
   import Icon from './Icon.svelte'
@@ -29,9 +29,11 @@
   }
 
   async function register() {
+    const su = await stepUpConfirm({ title: 'Add passkey', description: 'Adding a passkey is a sensitive change. Re-authenticate to continue.' })
+    if (!su?.confirmed) return
     registering = true
     try {
-      await passkeyRegister(newName.trim() || 'Passkey')
+      await passkeyRegister(newName.trim() || 'Passkey', { currentPassword: su.password, totpCode: su.totp })
       newName = ''
       toast('Passkey added', 'success')
       await load()

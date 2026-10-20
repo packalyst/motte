@@ -329,11 +329,14 @@ func SetStepUpFunc(fn StepUpFunc) {
 	stepUpFn = fn
 }
 
-// StepUp runs the registered step-up check. When none is registered it allows the action
-// (fail-open to pre-step-up behavior) so a mis-wired build never hard-locks a destructive action.
+// StepUp runs the registered step-up check. When none is registered it fails CLOSED (428) rather
+// than letting a destructive action through un-reauthenticated — the auth resolver and step-up func
+// are wired together, so a build missing step-up is already 503-ing protected paths, not serving
+// them unguarded.
 func StepUp(w http.ResponseWriter, r *http.Request) bool {
 	if stepUpFn == nil {
-		return true
+		JSONWithStatus(w, map[string]any{"error": "step-up re-authentication unavailable"}, http.StatusPreconditionRequired)
+		return false
 	}
 	return stepUpFn(w, r)
 }
@@ -390,7 +393,6 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 	// Public path prefixes (any path starting with these is public)
 	publicPrefixes := []string{
 		"/api/setup/",
-		"/api/auth/login",
 		"/api/auth/passkeys/login/", // passwordless passkey login (begin/finish); no session yet
 		"/api/restart/",             // public tunnel-rotation trigger (its own per-key secret)
 		"/api/hook/",                // public webhook trigger (its own per-webhook keys)
@@ -402,6 +404,7 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 		"/api",
 		"/api/",
 		"/api/manifest.json",
+		"/api/auth/login", // exact: a prefix would also make /api/auth/loginfoo public
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -222,12 +223,37 @@ func (s *Service) currentUser(r *http.Request) (*User, error) {
 
 // --- handlers -------------------------------------------------------------------------------------
 
-// handlePasskeyRegisterBegin (authed) returns creation options for adding a passkey.
+// stepUpGate re-authenticates the user (password + fresh TOTP when enabled) for a sensitive
+// account-management action. Adding a credential (passkey/2FA) is exactly as sensitive as changing
+// the password — otherwise a merely-stolen session becomes a permanent, password-surviving backdoor
+// — so these actions require step-up too, not just a live session. Writes 428 and returns false on
+// failure.
+func (s *Service) stepUpGate(w http.ResponseWriter, userID int64, currentPassword, totpCode string) bool {
+	if err := s.VerifyStepUp(userID, currentPassword, totpCode); err != nil {
+		msg := err.Error()
+		if errors.Is(err, ErrStepUpTOTPRequired) {
+			msg = "two-factor authentication code required"
+		}
+		router.JSONWithStatus(w, map[string]any{"error": msg, "stepup": true, "totp": s.TOTPEnabled(userID)}, http.StatusPreconditionRequired)
+		return false
+	}
+	return true
+}
+
+// handlePasskeyRegisterBegin (authed + step-up) returns creation options for adding a passkey.
 func (s *Service) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	s.ensureWebAuthnTables()
 	u, err := s.currentUser(r)
 	if err != nil {
 		router.JSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var creds struct {
+		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&creds)
+	if !s.stepUpGate(w, u.ID, creds.CurrentPassword, creds.TotpCode) {
 		return
 	}
 	wa, _, err := s.newWebAuthn(r)
