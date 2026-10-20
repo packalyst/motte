@@ -62,10 +62,8 @@
       tabs = [...tabs, tab]
       activeId = session
       await tick() // let the terminal container mount
-      // Re-fetch from the reactive array: bind:this set `el` on Svelte's proxied copy, not on the
-      // local `tab` reference, so open the terminal into the proxied object.
       const mounted = tabs.find((t) => t.id === session)
-      startTerminal(mounted, g)
+      startTerminal(mounted, g, session)
     } catch (e) {
       if (e?.message !== 'cancelled') error = e.message || 'could not open console'
     } finally {
@@ -73,11 +71,15 @@
     }
   }
 
-  function startTerminal(tab, g) {
-    if (!tab?.el) {
+  function startTerminal(tab, g, session) {
+    // Look the container up directly from the DOM (don't rely on Svelte's proxy write-back of
+    // bind:this, which can leave the local `el` null) — this is the mount node xterm needs.
+    const el = tab?.el || document.getElementById('wt-' + session)
+    if (!el) {
       error = 'terminal container failed to mount'
       return
     }
+    if (tab) tab.el = el
     const term = new Terminal({
       cursorBlink: true, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       fontSize: 13, theme: termTheme, scrollback: 5000, allowProposedApi: true,
@@ -87,7 +89,7 @@
     term.loadAddon(fit)
     term.loadAddon(search)
     term.loadAddon(new WebLinksAddon())
-    term.open(tab.el)
+    term.open(el)
     fit.fit()
     tab.term = term
     tab.fit = fit
@@ -247,7 +249,7 @@
   <!-- Terminal area: one container per tab, only the active one shown -->
   <div class="flex-1 relative overflow-hidden">
     {#each tabs as tab (tab.id)}
-      <div bind:this={tab.el} class="absolute inset-0 p-1.5" style:display={activeId === tab.id ? 'block' : 'none'}></div>
+      <div id={'wt-' + tab.id} bind:this={tab.el} class="absolute inset-0 p-1.5" style:display={activeId === tab.id ? 'block' : 'none'}></div>
     {/each}
     {#if tabs.length === 0}
       <div class="absolute inset-0 flex items-center justify-center text-white/40 text-sm">
