@@ -14,17 +14,19 @@ import (
 
 // Machine is one enrolled agent.
 type Machine struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	MachineHash string          `json:"machine_hash"`
-	CertFP      string          `json:"cert_fp"`
-	WGPubkey    string          `json:"wg_pubkey,omitempty"`
-	Status      string          `json:"status"`
-	EnrolledAt  time.Time       `json:"enrolled_at"`
-	LastSeen    *time.Time      `json:"last_seen,omitempty"`
-	Revoked     bool            `json:"revoked"`
-	Tags        []string        `json:"tags"`
-	Summary     *MachineSummary `json:"summary,omitempty"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	MachineHash    string          `json:"machine_hash"`
+	CertFP         string          `json:"cert_fp"`
+	WGPubkey       string          `json:"wg_pubkey,omitempty"`
+	Status         string          `json:"status"`
+	EnrolledAt     time.Time       `json:"enrolled_at"`
+	LastSeen       *time.Time      `json:"last_seen,omitempty"`
+	Revoked        bool            `json:"revoked"`
+	Tags           []string        `json:"tags"`
+	ConsoleEnabled bool            `json:"console_enabled"`
+	ConsoleRecord  bool            `json:"console_record"`
+	Summary        *MachineSummary `json:"summary,omitempty"`
 }
 
 // splitTags parses the stored CSV tag list into a trimmed, non-empty slice.
@@ -197,7 +199,7 @@ func (s *Service) registerMachine(m Machine) error {
 // ListMachines returns all enrolled machines, newest first, each with an at-a-glance
 // summary parsed from its latest report (for the fleet card grid).
 func (s *Service) ListMachines() ([]Machine, error) {
-	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report, COALESCE(tags, '')
+	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report, COALESCE(tags, ''), COALESCE(console_enabled, 0), COALESCE(console_record, 0)
 		FROM fleet_machines ORDER BY enrolled_at DESC`)
 	if err != nil {
 		return nil, err
@@ -207,11 +209,14 @@ func (s *Service) ListMachines() ([]Machine, error) {
 	for rows.Next() {
 		var m Machine
 		var enrolled, lastSeen, wg, report, tags sql.NullString
-		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report, &tags); err != nil {
+		var consoleEnabled, consoleRecord int
+		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report, &tags, &consoleEnabled, &consoleRecord); err != nil {
 			return nil, err
 		}
 		m.WGPubkey = wg.String
 		m.Tags = splitTags(tags.String)
+		m.ConsoleEnabled = consoleEnabled == 1
+		m.ConsoleRecord = consoleRecord == 1
 		m.Summary = summarize(report.String)
 		if enrolled.Valid {
 			m.EnrolledAt, _ = time.Parse(time.RFC3339, enrolled.String)
@@ -243,6 +248,41 @@ func (s *Service) machineByCertFP(fp string) (*Machine, error) {
 		m.EnrolledAt, _ = time.Parse(time.RFC3339, enrolled.String)
 	}
 	return &m, nil
+}
+
+// machineByID loads one non-revoked machine with the fields the console path needs (tags for
+// scope, console flags). Returns nil if unknown or revoked.
+func (s *Service) machineByID(id string) (*Machine, error) {
+	var m Machine
+	var tags sql.NullString
+	var consoleEnabled, consoleRecord int
+	err := s.db.QueryRow(
+		`SELECT id, name, COALESCE(tags, ''), COALESCE(console_enabled, 0), COALESCE(console_record, 0) FROM fleet_machines WHERE id = ? AND revoked = 0`, id,
+	).Scan(&m.ID, &m.Name, &tags, &consoleEnabled, &consoleRecord)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.Tags = splitTags(tags.String)
+	m.ConsoleEnabled = consoleEnabled == 1
+	m.ConsoleRecord = consoleRecord == 1
+	return &m, nil
+}
+
+// setConsoleEnabled flips a machine's console gate (and optionally recording).
+func (s *Service) setConsoleEnabled(id string, enabled, record bool) error {
+	_, err := s.db.Exec(`UPDATE fleet_machines SET console_enabled = ?, console_record = ? WHERE id = ?`,
+		b2i(enabled), b2i(record), id)
+	return err
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // fingerprintFromCert returns "sha256:<hex>" for a parsed certificate.

@@ -39,6 +39,9 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"FixPackages":     s.handleFixPackages,
 		"MachineCommands": s.handleMachineCommands,
 		"FIM":             s.handleFIM,
+		"ConsoleGrant":    s.handleConsoleGrant,
+		"ConsoleToggle":   s.handleConsoleToggle,
+		"ConsoleSessions": s.handleConsoleSessions,
 	}
 }
 
