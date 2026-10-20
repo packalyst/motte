@@ -143,7 +143,11 @@ func (s *Service) DeleteMachine(id string) error {
 		_ = tx.Rollback()
 		return sql.ErrNoRows
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	consoleTeardown(id) // kill any live console channel/sessions for the deleted machine
+	return nil
 }
 
 // MarkUninstalled flags a machine as uninstalled — its agent deregistered on the way
@@ -155,6 +159,7 @@ func (s *Service) MarkUninstalled(id string) error {
 	// TTL or a manual delete. Re-installing enrolls a fresh row, so this doesn't block return.
 	_, err := s.db.Exec(`UPDATE fleet_machines SET status='uninstalled', revoked=1, last_seen=? WHERE id=?`,
 		time.Now().UTC().Format(time.RFC3339), id)
+	consoleTeardown(id) // drop any live console channel/sessions the moment the machine is revoked
 	return err
 }
 
