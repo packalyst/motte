@@ -1871,7 +1871,8 @@
             "GET"
           ],
           "handler": "ListEvents",
-          "description": "Recent cross-subsystem activity feed"
+          "min_role": "admin",
+          "description": "Recent cross-subsystem activity feed (security audit trail: admin-only)"
         }
       ]
     },
