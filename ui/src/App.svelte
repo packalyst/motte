@@ -10,6 +10,14 @@
   import IdleLock from './components/IdleLock.svelte'
   import InstallPrompt from './components/InstallPrompt.svelte'
   import OfflineOverlay from './components/OfflineOverlay.svelte'
+  import Console from './components/Console.svelte'
+
+  // Read-only console share links: #fconsole=<machine>|<session>|<grant>
+  let shareConsole = $state(null)
+  function parseShareHash() {
+    const m = location.hash.match(/fconsole=([^|]+)\|([^|]+)\|(.+)$/)
+    shareConsole = m ? { id: decodeURIComponent(m[1]), session: decodeURIComponent(m[2]), grant: decodeURIComponent(m[3]) } : null
+  }
 
   let user = $state(null)
   let checking = $state(true)
@@ -59,6 +67,8 @@
   }
 
   onMount(async () => {
+    parseShareHash()
+    window.addEventListener('hashchange', parseShareHash)
     // First check if setup is complete
     try {
       const setupStatus = await apiGet('/api/setup/status')
@@ -153,6 +163,16 @@
 <!-- Idle lock: self-arms only when the admin has set idle_lock_minutes > 0 -->
 {#if user}
   <IdleLock onLogout={handleLogout} />
+{/if}
+
+<!-- Read-only shared console (opened from a #fconsole= link) -->
+{#if user && shareConsole}
+  <Console
+    machine={{ id: shareConsole.id, name: shareConsole.id }}
+    shareGrant={shareConsole.grant}
+    shareSession={shareConsole.session}
+    onclose={() => { shareConsole = null; location.hash = '' }}
+  />
 {/if}
 
 <!-- PWA install prompt -->

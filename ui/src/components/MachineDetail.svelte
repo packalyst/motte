@@ -7,7 +7,8 @@
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, toast, confirm, stepUpConfirm } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser } from '../stores/app.js'
+  import Console from './Console.svelte'
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
@@ -20,6 +21,51 @@
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
   let { machine, latestAgent = null, onback, ondeleted, onviewcves } = $props()
+
+  // --- Browser console (point 7) ---
+  const ROLE_RANK = { viewer: 1, operator: 2, admin: 3, owner: 4 }
+  const canOpenConsole = $derived((ROLE_RANK[$currentUser?.role] || 0) >= ROLE_RANK.operator)
+  const canManageConsole = $derived((ROLE_RANK[$currentUser?.role] || 0) >= ROLE_RANK.admin)
+  let consoleEnabled = $state(machine.console_enabled)
+  let consoleRecord = $state(machine.console_record)
+  let consoleBusy = $state(false)
+  let showConsole = $state(false)
+
+  function openConsole() {
+    if (!consoleEnabled) {
+      toast('Console is disabled for this machine', 'error')
+      return
+    }
+    showConsole = true
+  }
+
+  async function setConsole(enabled) {
+    let password = '', totp = ''
+    if (enabled) {
+      const r = await stepUpConfirm({
+        title: 'Enable console',
+        description: `A remote interactive shell on ${machine.name} is powerful. Re-authenticate to enable it.`,
+      })
+      if (!r?.confirmed) return
+      password = r.password
+      totp = r.totp
+    } else if (!(await confirm({ title: 'Disable console', message: `Disable the console on ${machine.name}? Any live sessions are closed.`, variant: 'primary', confirmText: 'Disable' }))) {
+      return
+    }
+    consoleBusy = true
+    try {
+      const res = await apiPost('/api/fleet/console/toggle', {
+        machine_id: machine.id, enabled, record: consoleRecord, currentPassword: password, totpCode: totp,
+      })
+      consoleEnabled = res.enabled
+      consoleRecord = res.record
+      toast(enabled ? 'Console enabled' : 'Console disabled', 'success')
+    } catch (e) {
+      toast(e.message || 'Could not update console', 'error')
+    } finally {
+      consoleBusy = false
+    }
+  }
 
   // Machine tags — drive operator/viewer scoping. Editing is admin+ (backend-enforced).
   let tags = $state([...(machine.tags || [])])
@@ -402,6 +448,11 @@
       <button onclick={refresh} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
         <Icon name="refresh" size={14} />Refresh
       </button>
+      {#if canOpenConsole && consoleEnabled}
+        <button onclick={openConsole} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-primary hover:bg-primary/10 transition cursor-pointer">
+          <Icon name="terminal-2" size={14} />Console
+        </button>
+      {/if}
       <button onclick={del} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
         <Icon name="trash" size={14} />Delete
       </button>
@@ -524,6 +575,16 @@
                   <Button variant="outline" size="xs" icon="file-text" onclick={() => setLogLevel('debug')}>Debug logs</Button>
                 {/if}
                 <Button variant="destructive" size="xs" icon="power" onclick={rebootHost}>Reboot host</Button>
+                {#if canManageConsole}
+                  <Button variant={consoleEnabled ? 'outline' : 'primary'} size="xs" icon="terminal-2" loading={consoleBusy} onclick={() => setConsole(!consoleEnabled)}>
+                    {consoleEnabled ? 'Disable console' : 'Enable console'}
+                  </Button>
+                  {#if !consoleEnabled}
+                    <label class="flex items-center gap-1 text-[11px] text-muted-foreground" title="Record sessions to an asciinema cast for audit">
+                      <input type="checkbox" bind:checked={consoleRecord} /> record
+                    </label>
+                  {/if}
+                {/if}
               </div>
             </div>
           </div>
@@ -837,3 +898,7 @@
     <div class="p-8 text-center text-success flex items-center justify-center gap-2 text-sm"><Icon name="circle-check" size={16} />No file-integrity changes recorded.</div>
   {/if}
 </Modal>
+
+{#if showConsole}
+  <Console machine={{ id: machine.id, name: machine.name, console_record: consoleRecord }} onclose={() => (showConsole = false)} />
+{/if}
