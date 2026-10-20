@@ -22,9 +22,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,11 +79,13 @@ func consoleSameOrigin(r *http.Request) bool {
 	if o == "" {
 		return true // non-browser client; the session+grant is the real gate
 	}
-	host := r.Header.Get("X-Forwarded-Host")
-	if host == "" {
-		host = r.Host
+	// Exact host match against the request's own Host (do NOT trust client-set X-Forwarded-Host).
+	// Parse the Origin URL so "https://evilpanel.io" cannot suffix-match host "panel.io".
+	u, err := url.Parse(o)
+	if err != nil || u.Host == "" {
+		return false
 	}
-	return len(o) > len(host) && o[len(o)-len(host):] == host
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 // ---- agent channel registry ---------------------------------------------------------------------
@@ -105,6 +109,27 @@ type agentConn struct {
 	writeMu sync.Mutex
 	mu      sync.Mutex
 	bridges map[string][]*consoleBridge // session id → viewers
+	owners  map[string]int64            // session id → user who opened it (interactive attach is owner-only)
+}
+
+// claimOwner records the opener of a freshly-opened session; returns false if the session already
+// has a different owner (someone is trying to attach interactively to another operator's shell).
+func (a *agentConn) claimOwner(session string, userID int64, first bool) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if first || a.owners[session] == 0 {
+		a.owners[session] = userID
+		return true
+	}
+	return a.owners[session] == userID
+}
+
+func (a *agentConn) clearOwner(session string) {
+	a.mu.Lock()
+	if len(a.bridges[session]) == 0 {
+		delete(a.owners, session)
+	}
+	a.mu.Unlock()
 }
 
 func (a *agentConn) writeToAgent(f consoleFrame) {
@@ -225,7 +250,8 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	a := &agentConn{conn: conn, bridges: map[string][]*consoleBridge{}}
+	conn.SetReadLimit(8 << 20) // 8 MiB/frame cap (file-get chunks can be large but still bounded)
+	a := &agentConn{conn: conn, bridges: map[string][]*consoleBridge{}, owners: map[string]int64{}}
 	regSet(m.ID, a)
 	defer func() {
 		regDel(m.ID, a)
@@ -252,6 +278,13 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// The WS is mounted directly on the mux (bypassing REST RBAC), so enforce the operator+ floor
+	// here — matching the grant endpoint. A viewer must never reach an interactive shell, even with
+	// a shared grant.
+	if !auth.RoleAtLeast(p.Role, auth.RoleOperator) {
+		http.Error(w, "insufficient role", http.StatusForbidden)
+		return
+	}
 	q := r.URL.Query()
 	machineID := q.Get("machine")
 	grantID := q.Get("grant")
@@ -260,7 +293,7 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "machine, grant and session are required", http.StatusBadRequest)
 		return
 	}
-	g, ok := takeGrant(grantID, machineID, p.UserID)
+	g, ok := takeGrant(grantID, machineID, session, p.UserID)
 	if !ok {
 		http.Error(w, "invalid or expired console grant", http.StatusForbidden)
 		return
@@ -289,6 +322,7 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(1 << 20) // 1 MiB/frame cap — a hostile browser can't force an unbounded alloc
 
 	cols := clampDim(q.Get("cols"), 80)
 	rows := clampDim(q.Get("rows"), 24)
@@ -300,15 +334,26 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	b := &consoleBridge{browser: conn, session: session, readonly: readonly, rec: rec}
 	first := a.addBridge(session, b)
+	// Interactive (non-read-only) attach is owner-only: a client-chosen session id must not let one
+	// operator attach to — and inject keystrokes into — another operator's live shell. Read-only
+	// viewers may watch a session (their input is dropped below, and the share grant is session-bound).
+	if !readonly && !a.claimOwner(session, p.UserID, first) {
+		a.removeBridge(session, b)
+		a.clearOwner(session)
+		conn.WriteJSON(consoleFrame{T: "error", Msg: "session belongs to another operator"})
+		return
+	}
 	events.Audit("fleet", "console_open", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console opened on %q (session %s%s)", m.Name, session, roSuffix(readonly)))
-	// The first viewer opens/attaches the shell; later viewers just watch the same session.
-	if first {
+	// The first viewer opens/attaches the shell; later viewers just watch. A read-only viewer never
+	// causes an agent-side open (it can only ever watch an already-running session).
+	if first && !readonly {
 		a.writeToAgent(consoleFrame{T: "open", Session: session, Cols: cols, Rows: rows})
 	}
 
 	defer func() {
 		last := a.removeBridge(session, b)
+		a.clearOwner(session)
 		if rec != nil {
 			rec.close()
 		}
@@ -324,9 +369,12 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		if err := conn.ReadJSON(&f); err != nil {
 			return
 		}
+		if readonly {
+			continue // view-only: drop EVERY browser frame (data, file-put, file-get, resize, close…)
+		}
 		f.Session = session // never let a browser target another session
-		if readonly && (f.T == "data" || f.T == "file-put") {
-			continue // view-only: drop input
+		if f.T == "resize" {
+			f.Cols, f.Rows = clampResize(f.Cols), clampResize(f.Rows) // bound every resize, not just open
 		}
 		a.writeToAgent(f)
 	}
@@ -344,6 +392,7 @@ func roSuffix(ro bool) string {
 type consoleGrant struct {
 	userID    int64
 	machineID string
+	session   string // for read-only share grants: binds the grant to a single session
 	readonly  bool
 	expires   time.Time
 	uses      int
@@ -354,7 +403,7 @@ var (
 	grants  = map[string]*consoleGrant{}
 )
 
-func mintGrant(userID int64, machineID string, readonly bool, ttl time.Duration, uses int) string {
+func mintGrant(userID int64, machineID, session string, readonly bool, ttl time.Duration, uses int) string {
 	buf := make([]byte, 24)
 	rand.Read(buf)
 	id := hex.EncodeToString(buf)
@@ -365,14 +414,15 @@ func mintGrant(userID int64, machineID string, readonly bool, ttl time.Duration,
 			delete(grants, k)
 		}
 	}
-	grants[id] = &consoleGrant{userID: userID, machineID: machineID, readonly: readonly, expires: now.Add(ttl), uses: uses}
+	grants[id] = &consoleGrant{userID: userID, machineID: machineID, session: session, readonly: readonly, expires: now.Add(ttl), uses: uses}
 	grantMu.Unlock()
 	return id
 }
 
-// takeGrant validates a grant for the machine and consumes one use. A read-only (share) grant is
-// usable by any logged-in operator in scope; a normal grant is bound to the user who minted it.
-func takeGrant(id, machineID string, userID int64) (*consoleGrant, bool) {
+// takeGrant validates a grant for the machine (and, for a share grant, the exact session) and
+// consumes one use. A read-only (share) grant is usable by another logged-in operator in scope but
+// only for the single session it was minted for; a normal grant is bound to the user who minted it.
+func takeGrant(id, machineID, session string, userID int64) (*consoleGrant, bool) {
 	grantMu.Lock()
 	defer grantMu.Unlock()
 	g := grants[id]
@@ -381,6 +431,9 @@ func takeGrant(id, machineID string, userID int64) (*consoleGrant, bool) {
 	}
 	if !g.readonly && g.userID != userID {
 		return nil, false
+	}
+	if g.readonly && g.session != "" && g.session != session {
+		return nil, false // a share grant opens only the session it was created for
 	}
 	g.uses--
 	if g.uses <= 0 {
@@ -458,6 +511,7 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 	readonly := r.URL.Query().Get("readonly") == "true"
 	var req struct {
 		MachineID       string `json:"machine_id"`
+		Session         string `json:"session"` // set when minting a read-only share grant for a live session
 		CurrentPassword string `json:"currentPassword"`
 		TOTPCode        string `json:"totpCode"`
 	}
@@ -485,10 +539,12 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 	// A normal grant is multi-use within a short window so one step-up covers opening several
 	// tabs + reconnects; a read-only (share) grant lives longer for handing to another operator.
 	ttl, uses := 5*time.Minute, 50
+	session := ""
 	if readonly {
 		ttl, uses = 30*time.Minute, 200
+		session = req.Session // bind the share grant to this one session
 	}
-	id := mintGrant(p.UserID, m.ID, readonly, ttl, uses)
+	id := mintGrant(p.UserID, m.ID, session, readonly, ttl, uses)
 	events.Audit("fleet", "console_grant", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console grant issued for %q%s", m.Name, roSuffix(readonly)))
 	router.JSON(w, map[string]any{"grant": id, "readonly": readonly, "expiresInSec": int(ttl.Seconds())})
@@ -549,13 +605,19 @@ func (s *Service) handleConsoleSessions(w http.ResponseWriter, r *http.Request) 
 		router.JSONError(w, "machine out of scope", http.StatusForbidden)
 		return
 	}
+	if !m.ConsoleEnabled {
+		router.JSONError(w, "console is not enabled for this machine", http.StatusForbidden)
+		return
+	}
 	sessions := []string{}
 	online := false
 	if a := regGet(machineID); a != nil {
 		online = true
 		a.mu.Lock()
-		for id := range a.bridges {
-			sessions = append(sessions, id)
+		for id := range a.bridges { // only the caller's own sessions — don't disclose other operators'
+			if a.owners[id] == p.UserID {
+				sessions = append(sessions, id)
+			}
 		}
 		a.mu.Unlock()
 	}
@@ -596,6 +658,17 @@ func clampDim(s string, def int) uint16 {
 		return 1000
 	}
 	return uint16(n) // here 1 <= n <= 1000, so the conversion cannot overflow
+}
+
+// clampResize bounds a resize frame's dimension to [1,1000].
+func clampResize(v uint16) uint16 {
+	if v < 1 {
+		return 1
+	}
+	if v > 1000 {
+		return 1000
+	}
+	return v
 }
 
 func sanitize(s string) string {

@@ -177,7 +177,7 @@
       const r = await stepUpConfirm({ title: 'Share read-only console', description: 'Re-authenticate to create a view-only link.' })
       if (!r?.confirmed) return
       const res = await apiPost('/api/fleet/console/grant?readonly=true', {
-        machine_id: machine.id, currentPassword: r.password, totpCode: r.totp,
+        machine_id: machine.id, session: tab.id, currentPassword: r.password, totpCode: r.totp,
       })
       const link = `${location.origin}/#fconsole=${encodeURIComponent(machine.id)}|${encodeURIComponent(tab.id)}|${encodeURIComponent(res.grant)}`
       await navigator.clipboard.writeText(link)
