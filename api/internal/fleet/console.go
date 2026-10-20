@@ -482,9 +482,11 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), status)
 		return
 	}
-	ttl, uses := 60*time.Second, 1
+	// A normal grant is multi-use within a short window so one step-up covers opening several
+	// tabs + reconnects; a read-only (share) grant lives longer for handing to another operator.
+	ttl, uses := 5*time.Minute, 50
 	if readonly {
-		ttl, uses = 10*time.Minute, 100 // shareable view-only link
+		ttl, uses = 30*time.Minute, 200
 	}
 	id := mintGrant(p.UserID, m.ID, readonly, ttl, uses)
 	events.Audit("fleet", "console_grant", events.SeverityWarning, p.Username, helper.GetClientIP(r),
