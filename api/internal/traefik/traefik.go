@@ -48,6 +48,13 @@ var (
 // fwBlockRouters are the panel's own routers that carry the block middleware (HTTP+HTTPS).
 var fwBlockRouters = []string{"ui", "ui-secure", "unified-api", "unified-api-secure"}
 
+// vpnOnlyRouters are the routers the VPN-only gate is applied to. It MUST include the API routers,
+// not just the UI: the SPA (ui) and the API it calls (unified-api) are one admin surface, and the
+// only off-VPN caller of admin-domain /api/* would be an attacker. Agents use the separate mTLS
+// listener + /agent route (not /api/*), and the public triggers live on the proxy domain, so none
+// of them are affected. Kept in sync with fwBlockRouters (same four routers).
+var vpnOnlyRouters = []string{"ui", "ui-secure", "unified-api", "unified-api-secure"}
+
 // Sentinel middleware names - used throughout the codebase
 const (
 	MiddlewareSentinelVPN       = "sentinel_vpn"
@@ -604,8 +611,8 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Routers to update (HTTP and HTTPS)
-	routers := []string{"ui", "ui-secure"}
+	// Routers to update (HTTP and HTTPS) — UI *and* API, so /api/* is gated too.
+	routers := vpnOnlyRouters
 
 	// Remove both middlewares from all routers first
 	for _, rtr := range routers {
@@ -675,28 +682,32 @@ func (s *Service) RestoreVPNOnlyMode() {
 		return
 	}
 
-	// Current on-disk state — may already match (bind-mounted yaml survived
-	// a plain container restart), in which case there's nothing to do.
-	if s.GetVPNOnlyMode() == stored {
-		return
-	}
-
 	middleware := MiddlewareSentinelVPN
 	if stored == "silent" {
 		middleware = MiddlewareSentinelVPNSilent
 	}
 
-	for _, routerName := range []string{"ui", "ui-secure"} {
+	// Skip only when the mode is ALREADY applied to BOTH the UI and the API routers. (Checking the
+	// UI alone would wrongly short-circuit on an older build that gated only the UI, leaving the API
+	// publicly reachable — the very bug this closes.)
+	if data, err := os.ReadFile(s.configPath); err == nil {
+		c := string(data)
+		if routerHasMiddleware(c, "ui", middleware) && routerHasMiddleware(c, "unified-api", middleware) {
+			return
+		}
+	}
+
+	for _, routerName := range vpnOnlyRouters {
 		// Clear both middlewares first so we don't stack duplicates.
 		s.removeMiddlewareFromRouter(routerName, MiddlewareSentinelVPN)
 		s.removeMiddlewareFromRouter(routerName, MiddlewareSentinelVPNSilent)
 		if err := s.addMiddlewareToRouter(routerName, middleware); err != nil {
 			// Router may not exist (e.g. ui-secure when SSL is disabled) — log
-			// but continue. The other router still gets the middleware.
+			// but continue. The other routers still get the middleware.
 			log.Printf("vpn-only restore: router %s: %v", routerName, err)
 		}
 	}
-	log.Printf("vpn-only: restored mode %q to ui/ui-secure routers", stored)
+	log.Printf("vpn-only: restored mode %q to ui + api routers", stored)
 }
 
 // syncPanelDomainRewrite adds or removes an AdGuard DNS rewrite for the panel's
