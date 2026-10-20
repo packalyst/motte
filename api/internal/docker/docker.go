@@ -271,7 +271,41 @@ func (s *Service) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A container inspect must never hand out credentials. The raw Docker payload carries
+	// Config.Env verbatim (e.g. CF_DNS_API_TOKEN), so redact secret-looking env vars before
+	// returning — defense in depth on top of the admin-only route.
+	redactContainerEnv(container)
 	router.JSON(w, container)
+}
+
+// secretEnvKey matches env var NAMES that carry credentials. Over-redacting a benign name is a
+// safe failure; leaking a token is not.
+var secretEnvKey = regexp.MustCompile(`(?i)(token|secret|pass|key|cred|auth|private)`)
+
+// redactContainerEnv masks the values of secret-looking env vars in a Docker inspect payload,
+// leaving the names visible so the UI can still show that a var is set.
+func redactContainerEnv(c map[string]interface{}) {
+	cfg, ok := c["Config"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	env, ok := cfg["Env"].([]interface{})
+	if !ok {
+		return
+	}
+	for i, e := range env {
+		s, ok := e.(string)
+		if !ok {
+			continue
+		}
+		eq := strings.IndexByte(s, '=')
+		if eq <= 0 {
+			continue
+		}
+		if secretEnvKey.MatchString(s[:eq]) {
+			env[i] = s[:eq] + "=***redacted***"
+		}
+	}
 }
 
 // LogEntry represents a single log line
