@@ -730,6 +730,13 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/api/ws", http.HandlerFunc(wsSvc.HandleWebSocket))
 
+	// Fleet browser console WebSocket (point 7). Mounted directly so the WS upgrade bypasses the
+	// REST auth middleware; the handler authenticates the session itself and validates a one-time
+	// step-up grant + per-host enable + scope before bridging to the machine's agent channel.
+	if flSvc != nil {
+		mux.Handle("/api/fleet/console/ws", http.HandlerFunc(flSvc.HandleBrowserConsole))
+	}
+
 	// Internal-only block-list feed for the Traefik sentinel plugin (fetched container-to-
 	// container over the Docker network, never routed by Traefik). Registered on the mux
 	// directly so it bypasses the auth middleware; the handler refuses proxied requests.

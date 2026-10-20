@@ -2122,6 +2122,33 @@
           "handler": "BulkCommand",
           "description": "Queue a command across multiple machines",
           "min_role": "operator"
+        },
+        {
+          "path": "/console/grant",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ConsoleGrant",
+          "description": "Mint a step-up grant to open a machine console",
+          "min_role": "operator"
+        },
+        {
+          "path": "/console/toggle",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ConsoleToggle",
+          "description": "Enable/disable the browser console for a machine",
+          "min_role": "admin"
+        },
+        {
+          "path": "/console/sessions",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ConsoleSessions",
+          "description": "List live console sessions for a machine (?machine_id=)",
+          "min_role": "operator"
         }
       ]
     },

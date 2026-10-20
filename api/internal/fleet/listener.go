@@ -43,6 +43,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("GET /commands", s.requireClientCert(s.HandleCommands))
 	mux.HandleFunc("POST /commands/ack", s.requireClientCert(s.HandleCommandAck))
 	mux.HandleFunc("POST /deregister", s.requireClientCert(s.HandleDeregister))
+	mux.HandleFunc("GET /console", s.requireClientCert(s.HandleConsoleChannel)) // persistent console channel (point 7)
 	// Agent self-update: enrolled agents pull their own binary from the panel over this
 	// mTLS channel (verifying the release signature themselves), instead of the forge.
 	mux.HandleFunc("GET /update", s.requireClientCert(s.HandleAgentUpdateInfo))

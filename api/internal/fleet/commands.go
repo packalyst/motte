@@ -34,6 +34,7 @@ var allowedCommands = map[string]bool{
 	"update-agent":   true, // self-update the wgscout binary to the latest verified release
 	"set-log-level":  true, // flip agent+sub-agent verbosity live (quiet|debug)
 	"set-panel-port": true, // tell the agent the panel's mTLS port changed (reconnect)
+	"set-console":    true, // enable/disable the interactive console channel (point 7)
 }
 
 // confirmCommands are the destructive / security-impacting actions the panel will only

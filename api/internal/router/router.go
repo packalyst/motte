@@ -306,6 +306,16 @@ func SetAuthResolver(resolver AuthResolver) {
 	authResolver = resolver
 }
 
+// ResolvePrincipal resolves a session token to its principal via the registered resolver. For
+// handlers that authenticate outside the normal middleware (e.g. WebSocket upgrades mounted
+// directly on the mux). Returns (nil, false) when there is no resolver or the token is invalid.
+func ResolvePrincipal(token string) (*Principal, bool) {
+	if authResolver == nil || token == "" {
+		return nil, false
+	}
+	return authResolver(token)
+}
+
 // StepUpFunc re-authenticates the caller of a sensitive, session-authorized request for a
 // destructive action. It returns true when step-up passed; on failure it writes a 428 response and
 // returns false. Registered by the auth service (SetStepUpFunc) so packages like wireguard and
