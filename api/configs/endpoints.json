@@ -43,6 +43,7 @@
             "POST"
           ],
           "handler": "Export",
+          "min_role": "owner",
           "description": "Build a passphrase-encrypted backup of the panel config"
         },
         {
@@ -51,6 +52,7 @@
             "POST"
           ],
           "handler": "Preview",
+          "min_role": "owner",
           "description": "Decrypt a backup and report what an import would replace"
         },
         {
@@ -59,6 +61,7 @@
             "POST"
           ],
           "handler": "Import",
+          "min_role": "owner",
           "description": "Apply a backup (faithful replace) then reconcile live state"
         },
         {
@@ -515,7 +518,7 @@
           ],
           "handler": "DeleteBySource",
           "description": "Delete all entries from source",
-          "min_role": "operator"
+          "min_role": "admin"
         },
         {
           "path": "/entries/all",
@@ -524,7 +527,7 @@
           ],
           "handler": "DeleteAll",
           "description": "Delete all non-essential entries",
-          "min_role": "operator"
+          "min_role": "admin"
         },
         {
           "path": "/ports",
@@ -1026,7 +1029,8 @@
             "GET"
           ],
           "handler": "GetAPIKeys",
-          "description": "List API keys"
+          "description": "List API keys",
+          "min_role": "admin"
         },
         {
           "path": "/apikeys",
@@ -1034,7 +1038,8 @@
             "POST"
           ],
           "handler": "CreateAPIKey",
-          "description": "Create API key"
+          "description": "Create API key",
+          "min_role": "admin"
         },
         {
           "path": "/apikeys/{id}",
@@ -1790,8 +1795,8 @@
             "PUT"
           ],
           "handler": "Channels",
-          "description": "Get or update my notification delivery channels (webhook/email)",
-          "min_role": "viewer"
+          "description": "Get or update notification delivery channels (webhook/email)",
+          "min_role": "admin"
         },
         {
           "path": "/test-channels",
@@ -1799,8 +1804,8 @@
             "POST"
           ],
           "handler": "TestChannels",
-          "description": "Send a test notification to my channels",
-          "min_role": "viewer"
+          "description": "Send a test notification to the channels (server fetches the webhook URL — admin-only to prevent SSRF)",
+          "min_role": "admin"
         },
         {
           "path": "/smtp",
