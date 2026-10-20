@@ -61,9 +61,12 @@ func sendEmail(to, subject, body string) error {
 	if !c.configured() {
 		return fmt.Errorf("SMTP is not configured")
 	}
-	to = headerValue(to) // reject CR/LF in the envelope recipient too (SMTP command injection)
-	if to == "" {
-		return fmt.Errorf("empty recipient")
+	// Reject header/SMTP injection outright: no CR or LF may appear in any header value
+	// (envelope recipient, subject, or the configured From).
+	to = strings.TrimSpace(to)
+	if to == "" || strings.ContainsAny(to, "\r\n") ||
+		strings.ContainsAny(subject, "\r\n") || strings.ContainsAny(c.From, "\r\n") {
+		return fmt.Errorf("invalid characters in email headers")
 	}
 	addr := net.JoinHostPort(c.Host, c.Port)
 
@@ -117,14 +120,9 @@ func sendEmail(to, subject, body string) error {
 	return client.Quit()
 }
 
-// headerValue strips CR/LF (and surrounding space) so a crafted recipient address or notification
-// title cannot inject extra SMTP headers or a second message (email / header injection).
-func headerValue(v string) string {
-	return strings.TrimSpace(strings.NewReplacer("\r", "", "\n", "").Replace(v))
-}
-
+// buildMessage assembles the RFC 822 message. Header values (from/to/subject) are guaranteed
+// CR/LF-free by the caller (sendEmail rejects any that aren't), so they cannot inject headers.
 func buildMessage(from, to, subject, body string) string {
-	from, to, subject = headerValue(from), headerValue(to), headerValue(subject)
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + to + "\r\n")
