@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"image/png"
 	"log"
@@ -74,6 +75,17 @@ func (s *Service) handleSetup2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	if totpEnabled == 1 {
 		router.JSONError(w, "2FA is already enabled", http.StatusBadRequest)
+		return
+	}
+
+	// Step-up (password) before provisioning 2FA: otherwise a stolen session could bind the
+	// attacker's authenticator and lock the real owner out (disable needs password+code).
+	var creds struct {
+		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&creds)
+	if !s.stepUpGate(w, user.ID, creds.CurrentPassword, creds.TotpCode) {
 		return
 	}
 

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, confirm } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, confirm, stepUpConfirm } from '../stores/app.js'
   import { lookupIPs } from '../stores/geo.js'
   import { formatDate } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
@@ -163,9 +163,11 @@
 
   // 2FA functions
   async function start2FASetup() {
+    const su = await stepUpConfirm({ title: 'Set up two-factor', description: 'Re-enter your password to provision 2FA on this account.' })
+    if (!su?.confirmed) return
     settingUp2FA = true
     try {
-      const data = await apiPost('/api/auth/2fa/setup')
+      const data = await apiPost('/api/auth/2fa/setup', { currentPassword: su.password, totpCode: su.totp })
       twoFASetup = { qrCode: data.qrCode, secret: data.secret }
       twoFAVerifyCode = ''
       show2FASetupModal = true

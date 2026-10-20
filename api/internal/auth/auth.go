@@ -278,6 +278,10 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 
 			// Clear TOTP attempts on success (refunds the reserved slot).
 			clearTOTPAttempts(user.ID)
+		} else {
+			// 2FA is marked enabled but the secret is missing/empty — fail CLOSED rather than
+			// silently skipping the second factor (matches VerifyStepUp's behaviour).
+			return nil, errors.New("2FA is misconfigured for this account; contact an administrator")
 		}
 	}
 
