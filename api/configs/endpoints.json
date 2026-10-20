@@ -1115,6 +1115,7 @@
             "GET"
           ],
           "handler": "GetContainers",
+          "min_role": "admin",
           "description": "List containers"
         },
         {
@@ -1123,6 +1124,7 @@
             "GET"
           ],
           "handler": "GetContainer",
+          "min_role": "admin",
           "description": "Get container details"
         },
         {
@@ -1155,6 +1157,7 @@
             "GET"
           ],
           "handler": "AnalyzeImage",
+          "min_role": "admin",
           "description": "Analyze image layers and sizes"
         }
       ]
