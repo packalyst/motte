@@ -62,7 +62,10 @@
       tabs = [...tabs, tab]
       activeId = session
       await tick() // let the terminal container mount
-      startTerminal(tab, g)
+      // Re-fetch from the reactive array: bind:this set `el` on Svelte's proxied copy, not on the
+      // local `tab` reference, so open the terminal into the proxied object.
+      const mounted = tabs.find((t) => t.id === session)
+      startTerminal(mounted, g)
     } catch (e) {
       if (e?.message !== 'cancelled') error = e.message || 'could not open console'
     } finally {
@@ -71,6 +74,10 @@
   }
 
   function startTerminal(tab, g) {
+    if (!tab?.el) {
+      error = 'terminal container failed to mount'
+      return
+    }
     const term = new Terminal({
       cursorBlink: true, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       fontSize: 13, theme: termTheme, scrollback: 5000, allowProposedApi: true,
