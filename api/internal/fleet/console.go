@@ -7,7 +7,7 @@ package fleet
 //
 // The agent dials a persistent console channel (HandleConsoleChannel, client-cert authed) that
 // multiplexes many sessions by id. A browser opens a console WS (HandleBrowserConsole) carrying a
-// one-time step-up grant; the panel registers it as a viewer of a session and relays frames to the
+// short-lived step-up grant; the panel registers it as a viewer of a session and relays frames to the
 // machine's agent channel. Read-only viewers receive output but their input is dropped. Output can
 // be tee'd to an asciinema recording when the host has it enabled. Every open/close is audited.
 //
@@ -269,7 +269,7 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 
 // ---- browser console handler (main API, mounted directly on the mux) ----------------------------
 
-// HandleBrowserConsole authenticates the operator (session cookie/Bearer), validates the one-time
+// HandleBrowserConsole authenticates the operator (session cookie/Bearer), validates the short-lived
 // step-up grant + scope + per-host enable, then bridges the browser to the machine's agent channel.
 func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	token := helper.SessionToken(r)
@@ -503,7 +503,7 @@ func (c *consoleRecorder) close() {
 
 // ---- HTTP handlers (main API, via the router) ---------------------------------------------------
 
-// handleConsoleGrant mints a one-time step-up grant to open a console on a machine. Operator+ and
+// handleConsoleGrant mints a short-lived, multi-use step-up grant to open a console on a machine. Operator+ and
 // in-scope; step-up (428) required. ?readonly=true mints a longer-lived, shareable view-only grant.
 // POST /api/fleet/console/grant  {"machine_id":"..."}
 func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
