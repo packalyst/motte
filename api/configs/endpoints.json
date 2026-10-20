@@ -1406,6 +1406,7 @@
             "GET"
           ],
           "handler": "GetStatus",
+          "min_role": "admin",
           "description": "Get turbotunnels container status + configured tunnels"
         },
         {
@@ -1414,6 +1415,7 @@
             "GET"
           ],
           "handler": "GetStats",
+          "min_role": "admin",
           "description": "Get proxy usage stats (overall + per tunnel)"
         },
         {
@@ -1422,6 +1424,7 @@
             "GET"
           ],
           "handler": "GetOverview",
+          "min_role": "admin",
           "description": "Combined status + stats in one call (for periodic polling)"
         },
         {
