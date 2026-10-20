@@ -61,6 +61,10 @@ func sendEmail(to, subject, body string) error {
 	if !c.configured() {
 		return fmt.Errorf("SMTP is not configured")
 	}
+	to = headerValue(to) // reject CR/LF in the envelope recipient too (SMTP command injection)
+	if to == "" {
+		return fmt.Errorf("empty recipient")
+	}
 	addr := net.JoinHostPort(c.Host, c.Port)
 
 	var conn net.Conn
@@ -113,7 +117,14 @@ func sendEmail(to, subject, body string) error {
 	return client.Quit()
 }
 
+// headerValue strips CR/LF (and surrounding space) so a crafted recipient address or notification
+// title cannot inject extra SMTP headers or a second message (email / header injection).
+func headerValue(v string) string {
+	return strings.TrimSpace(strings.NewReplacer("\r", "", "\n", "").Replace(v))
+}
+
 func buildMessage(from, to, subject, body string) string {
+	from, to, subject = headerValue(from), headerValue(to), headerValue(subject)
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + to + "\r\n")

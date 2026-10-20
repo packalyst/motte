@@ -290,8 +290,8 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	cols := uint16(parseIntDefault(q.Get("cols"), 80))
-	rows := uint16(parseIntDefault(q.Get("rows"), 24))
+	cols := clampDim(q.Get("cols"), 80)
+	rows := clampDim(q.Get("rows"), 24)
 	readonly := g.readonly
 
 	var rec *consoleRecorder
@@ -583,6 +583,19 @@ func parseIntDefault(s string, def int) int {
 		return n
 	}
 	return def
+}
+
+// clampDim parses a terminal dimension from the query and bounds it to [1,1000] before the uint16
+// conversion, so an oversized/negative value can never overflow or truncate.
+func clampDim(s string, def int) uint16 {
+	n := parseIntDefault(s, def)
+	if n < 1 {
+		n = 1
+	}
+	if n > 1000 {
+		n = 1000
+	}
+	return uint16(n)
 }
 
 func sanitize(s string) string {
