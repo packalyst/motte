@@ -37,3 +37,4 @@ in the same change (see [CONTRIBUTING](../../CONTRIBUTING.md)).
 | [0011](0011-drop-docker-exec.md) | Remove docker-exec (`EXEC=1`) by moving Headscale ops off the CLI | Proposed |
 | [0012](0012-fleet-hardening-and-capability-roadmap.md) | Fleet hardening + capability roadmap (12 points) | Proposed |
 | [0013](0013-supply-chain-gates-opt-in.md) | Supply-chain gates (digest pinning, cosign, health-gated rollback), opt-in | Accepted |
+| [0014](0014-fleet-browser-console.md) | Fleet browser console (interactive shell): dial-out mTLS WS, tmux-resumable, per-host + step-up + audit | Accepted |
