@@ -112,23 +112,31 @@ type agentConn struct {
 	owners  map[string]int64            // session id → user who opened it (interactive attach is owner-only)
 }
 
-// claimOwner records the opener of a freshly-opened session; returns false if the session already
-// has a different owner (someone is trying to attach interactively to another operator's shell).
-func (a *agentConn) claimOwner(session string, userID int64, first bool) bool {
+// claimOwner records the opener of a session. It returns false if the session already has a
+// DIFFERENT owner — ownership persists across a detach (the tmux session lives on for resume), so a
+// second operator can't reattach a shell the first opened. Idempotent for the same user.
+func (a *agentConn) claimOwner(session string, userID int64) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if first || a.owners[session] == 0 {
-		a.owners[session] = userID
-		return true
+	if ex, ok := a.owners[session]; ok {
+		return ex == userID
 	}
+	a.owners[session] = userID
+	return true
+}
+
+// isOwner reports whether userID currently owns the session (used to gate minting a share link).
+func (a *agentConn) isOwner(session string, userID int64) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	return a.owners[session] == userID
 }
 
+// clearOwner drops ownership — only when the shell actually ends (session-exit) or on teardown,
+// NOT on a mere browser detach, so the owner keeps exclusive claim on a resumable session.
 func (a *agentConn) clearOwner(session string) {
 	a.mu.Lock()
-	if len(a.bridges[session]) == 0 {
-		delete(a.owners, session)
-	}
+	delete(a.owners, session)
 	a.mu.Unlock()
 }
 
@@ -178,6 +186,7 @@ func (a *agentConn) routeToBrowsers(f consoleFrame) {
 	if f.T == "session-exit" {
 		a.mu.Lock()
 		delete(a.bridges, f.Session)
+		delete(a.owners, f.Session) // the shell ended — free the session id
 		a.mu.Unlock()
 	}
 }
@@ -316,6 +325,16 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the machine's console agent is offline", http.StatusConflict)
 		return
 	}
+	readonly := g.readonly
+
+	// Interactive sessions are namespaced by the opener's user id, so an operator can only ever
+	// address (open/resume/record) their OWN sessions — a client-chosen id can't collide with or
+	// reattach another operator's shell. A read-only share opens the owner's namespaced session,
+	// which the grant carries verbatim (takeGrant already matched it).
+	effSession := session
+	if !readonly {
+		effSession = nsSession(p.UserID, session)
+	}
 
 	conn, err := browserUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -326,42 +345,36 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 
 	cols := clampDim(q.Get("cols"), 80)
 	rows := clampDim(q.Get("rows"), 24)
-	readonly := g.readonly
 
 	var rec *consoleRecorder
 	if m.ConsoleRecord && !readonly {
-		rec = newConsoleRecorder(m, session, int(cols), int(rows))
+		rec = newConsoleRecorder(m, effSession, int(cols), int(rows))
 	}
-	b := &consoleBridge{browser: conn, session: session, readonly: readonly, rec: rec}
-	first := a.addBridge(session, b)
-	// Interactive (non-read-only) attach is owner-only: a client-chosen session id must not let one
-	// operator attach to — and inject keystrokes into — another operator's live shell. Read-only
-	// viewers may watch a session (their input is dropped below, and the share grant is session-bound).
-	if !readonly && !a.claimOwner(session, p.UserID, first) {
-		a.removeBridge(session, b)
-		a.clearOwner(session)
+	// Owner-only interactive attach (ownership persists across detach for resume).
+	if !readonly && !a.claimOwner(effSession, p.UserID) {
 		conn.WriteJSON(consoleFrame{T: "error", Msg: "session belongs to another operator"})
 		return
 	}
+	b := &consoleBridge{browser: conn, session: effSession, readonly: readonly, rec: rec}
+	first := a.addBridge(effSession, b)
 	events.Audit("fleet", "console_open", events.SeverityWarning, p.Username, helper.GetClientIP(r),
-		fmt.Sprintf("Console opened on %q (session %s%s)", m.Name, session, roSuffix(readonly)))
+		fmt.Sprintf("Console opened on %q (session %s%s)", m.Name, effSession, roSuffix(readonly)))
 	// The first viewer opens/attaches the shell; later viewers just watch. A read-only viewer never
 	// causes an agent-side open (it can only ever watch an already-running session).
 	if first && !readonly {
-		a.writeToAgent(consoleFrame{T: "open", Session: session, Cols: cols, Rows: rows})
+		a.writeToAgent(consoleFrame{T: "open", Session: effSession, Cols: cols, Rows: rows})
 	}
 
 	defer func() {
-		last := a.removeBridge(session, b)
-		a.clearOwner(session)
+		last := a.removeBridge(effSession, b)
 		if rec != nil {
 			rec.close()
 		}
 		if last {
-			a.writeToAgent(consoleFrame{T: "close", Session: session}) // detach (tmux keeps it)
+			a.writeToAgent(consoleFrame{T: "close", Session: effSession}) // detach (tmux keeps it; owner retained)
 		}
 		events.Audit("fleet", "console_close", events.SeverityInfo, p.Username, helper.GetClientIP(r),
-			fmt.Sprintf("Console closed on %q (session %s)", m.Name, session))
+			fmt.Sprintf("Console closed on %q (session %s)", m.Name, effSession))
 	}()
 
 	for {
@@ -372,12 +385,18 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		if readonly {
 			continue // view-only: drop EVERY browser frame (data, file-put, file-get, resize, close…)
 		}
-		f.Session = session // never let a browser target another session
+		f.Session = effSession // never let a browser target another session
 		if f.T == "resize" {
 			f.Cols, f.Rows = clampResize(f.Cols), clampResize(f.Rows) // bound every resize, not just open
 		}
 		a.writeToAgent(f)
 	}
+}
+
+// nsSession namespaces a client-chosen session id by the owner's user id, so interactive sessions
+// are private to their opener (no cross-operator reattach or id collision).
+func nsSession(userID int64, s string) string {
+	return strconv.FormatInt(userID, 10) + "_" + s
 }
 
 func roSuffix(ro bool) string {
@@ -432,8 +451,8 @@ func takeGrant(id, machineID, session string, userID int64) (*consoleGrant, bool
 	if !g.readonly && g.userID != userID {
 		return nil, false
 	}
-	if g.readonly && g.session != "" && g.session != session {
-		return nil, false // a share grant opens only the session it was created for
+	if g.readonly && g.session != session {
+		return nil, false // a share grant opens only the exact session it was created for
 	}
 	g.uses--
 	if g.uses <= 0 {
@@ -542,12 +561,23 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 	session := ""
 	if readonly {
 		ttl, uses = 30*time.Minute, 200
-		session = req.Session // bind the share grant to this one session
+		// A share link may only be minted by the operator who currently OWNS the session, and it is
+		// bound to that owner's namespaced session id — so one operator can't share (or even address)
+		// another operator's shell.
+		if req.Session == "" {
+			router.JSONError(w, "a session is required to create a share link", http.StatusBadRequest)
+			return
+		}
+		session = nsSession(p.UserID, req.Session)
+		if a := regGet(m.ID); a == nil || !a.isOwner(session, p.UserID) {
+			router.JSONError(w, "you can only share a console session you currently own", http.StatusForbidden)
+			return
+		}
 	}
 	id := mintGrant(p.UserID, m.ID, session, readonly, ttl, uses)
 	events.Audit("fleet", "console_grant", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console grant issued for %q%s", m.Name, roSuffix(readonly)))
-	router.JSON(w, map[string]any{"grant": id, "readonly": readonly, "expiresInSec": int(ttl.Seconds())})
+	router.JSON(w, map[string]any{"grant": id, "readonly": readonly, "session": session, "expiresInSec": int(ttl.Seconds())})
 }
 
 // handleConsoleToggle enables/disables the console for a machine (admin). Enabling requires step-up.

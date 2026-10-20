@@ -33,7 +33,9 @@
   let fileInput
 
   function randSession() {
-    return 's' + Math.random().toString(36).slice(2, 8)
+    const b = new Uint8Array(16)
+    crypto.getRandomValues(b) // CSPRNG, not Math.random — the id gates session access
+    return 's' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
   }
 
   // ensureGrant mints (or reuses) a console grant. Normal grants need a step-up; the first call
@@ -181,7 +183,8 @@
       const res = await apiPost('/api/fleet/console/grant?readonly=true', {
         machine_id: machine.id, session: tab.id, currentPassword: r.password, totpCode: r.totp,
       })
-      const link = `${location.origin}/#fconsole=${encodeURIComponent(machine.id)}|${encodeURIComponent(tab.id)}|${encodeURIComponent(res.grant)}`
+      // res.session is the owner's namespaced session the grant is bound to — the viewer must open that.
+      const link = `${location.origin}/#fconsole=${encodeURIComponent(machine.id)}|${encodeURIComponent(res.session)}|${encodeURIComponent(res.grant)}`
       await navigator.clipboard.writeText(link)
       toast('Read-only link copied (valid ~30 min)', 'success')
     } catch (e) {
