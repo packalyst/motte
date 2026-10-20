@@ -590,12 +590,12 @@ func parseIntDefault(s string, def int) int {
 func clampDim(s string, def int) uint16 {
 	n := parseIntDefault(s, def)
 	if n < 1 {
-		n = 1
+		return 1
 	}
 	if n > 1000 {
-		n = 1000
+		return 1000
 	}
-	return uint16(n)
+	return uint16(n) // here 1 <= n <= 1000, so the conversion cannot overflow
 }
 
 func sanitize(s string) string {
