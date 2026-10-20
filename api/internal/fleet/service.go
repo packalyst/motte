@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"api/internal/router"
 )
 
 var errBadPort = errors.New("invalid port")
@@ -46,6 +48,11 @@ type Service struct {
 	// updates live instead of polling.
 	broadcast func(channel string, payload any)
 
+	// broadcastFiltered is the scope-aware variant (set to ws.BroadcastFiltered in main): it
+	// delivers a fleet event only to subscribers whose principal scope allows the machine, so a
+	// scoped operator never receives data for machines outside its scope.
+	broadcastFiltered func(channel string, payload any, allow func(userID int64, role, scopeKind, scopeValues string) bool)
+
 	mu      sync.Mutex
 	enabled bool
 	port    int
@@ -69,6 +76,30 @@ type Service struct {
 
 // SetBroadcast wires the WS broadcast fn so report ingests push live to the UI.
 func (s *Service) SetBroadcast(fn func(channel string, payload any)) { s.broadcast = fn }
+
+// SetBroadcastFiltered wires the scope-aware WS broadcast fn (ws.BroadcastFiltered).
+func (s *Service) SetBroadcastFiltered(fn func(channel string, payload any, allow func(userID int64, role, scopeKind, scopeValues string) bool)) {
+	s.broadcastFiltered = fn
+}
+
+// scopedBroadcast pushes a fleet event for one machine only to subscribers whose scope allows it.
+// Falls back to the unfiltered broadcast only if the filtered fn isn't wired (shouldn't happen).
+func (s *Service) scopedBroadcast(machineID, channel string, payload any) {
+	if s.broadcastFiltered == nil {
+		if s.broadcast != nil {
+			s.broadcast(channel, payload)
+		}
+		return
+	}
+	m, err := s.machineByID(machineID)
+	if err != nil || m == nil {
+		return // unknown machine → tell no one (fail closed)
+	}
+	mm := *m
+	s.broadcastFiltered(channel, payload, func(userID int64, role, scopeKind, scopeValues string) bool {
+		return scopeAllows(&router.Principal{UserID: userID, Role: role, ScopeKind: scopeKind, ScopeValues: scopeValues}, mm)
+	})
+}
 
 // New initializes the schema + CA. The listener is NOT started here — call
 // ReloadFromSettings() once the firewall callbacks are wired. openPort/closePort

@@ -513,7 +513,8 @@ func main() {
 				flSvc = nil
 			} else {
 				r.RegisterService("fleet", flSvc.Handlers())
-				flSvc.SetBroadcast(ws.Broadcast) // push machine reports to the UI live over WS
+				flSvc.SetBroadcast(ws.Broadcast)                 // push machine reports to the UI live over WS
+				flSvc.SetBroadcastFiltered(ws.BroadcastFiltered) // ...scope-filtered so out-of-scope users don't see them
 				// Let the FWBlock toggle re-render the /agent route too (like domain routes).
 				if traefikSvc != nil {
 					traefik.RegenerateFleetRoute = flSvc.ApplyInstallRoute

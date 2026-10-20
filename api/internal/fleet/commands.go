@@ -209,7 +209,7 @@ func (s *Service) broadcastCommands(machineID string) {
 		return
 	}
 	if cmds, err := s.ListMachineCommands(machineID, 20); err == nil {
-		s.broadcast("fleet", map[string]any{"machine_id": machineID, "commands": cmds})
+		s.scopedBroadcast(machineID, "fleet", map[string]any{"machine_id": machineID, "commands": cmds})
 	}
 }
 
