@@ -66,9 +66,11 @@
   }
 
   async function save() {
+    const su = await stepUpConfirm({ title: 'Save off-host backup config', description: 'This sets the passphrase + destination a scheduled full export uses. Re-authenticate to save.' })
+    if (!su?.confirmed) return
     saving = true
     try {
-      const saved = await apiPut('/api/backup/offhost/config', payload())
+      const saved = await apiPut('/api/backup/offhost/config', { ...payload(), currentPassword: su.password, totpCode: su.totp })
       hasStoredPass = isRedacted(saved.passphrase)
       passphrase = ''
       cfg.destinations = saved.destinations || []
@@ -91,9 +93,11 @@
   }
 
   async function runNow() {
+    const su = await stepUpConfirm({ title: 'Run off-host backup now', description: 'This exports decrypted secrets to the destination. Re-authenticate to run.' })
+    if (!su?.confirmed) return
     running = true
     try {
-      await apiPost('/api/backup/offhost/run')
+      await apiPost('/api/backup/offhost/run', { currentPassword: su.password, totpCode: su.totp })
       toast('Backup started — this runs in the background', 'success')
       // Poll status a few times so the card reflects completion.
       for (let i = 0; i < 10; i++) {

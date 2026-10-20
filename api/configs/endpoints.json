@@ -79,8 +79,8 @@
             "PUT"
           ],
           "handler": "OffhostSaveConfig",
-          "description": "Save off-host backup config",
-          "min_role": "admin"
+          "description": "Save off-host backup config (sets the passphrase + destination a scheduled full export uses)",
+          "min_role": "owner"
         },
         {
           "path": "/offhost/test",
@@ -97,8 +97,8 @@
             "POST"
           ],
           "handler": "OffhostRun",
-          "description": "Run an off-host backup now",
-          "min_role": "admin"
+          "description": "Run an off-host backup now (full export of decrypted secrets to the destination)",
+          "min_role": "owner"
         },
         {
           "path": "/offhost/list",
@@ -124,8 +124,8 @@
             "POST"
           ],
           "handler": "OffhostRestore",
-          "description": "Restore from an off-host backup",
-          "min_role": "admin"
+          "description": "Restore from an off-host backup (replaces the users table)",
+          "min_role": "owner"
         }
       ]
     },

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -22,10 +23,20 @@ func (s *Service) handleOffhostGetConfig(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Service) handleOffhostSaveConfig(w http.ResponseWriter, r *http.Request) {
-	var incoming OffhostConfig
-	if !router.DecodeJSONOrError(w, r, &incoming) {
+	var body struct {
+		OffhostConfig
+		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
+	}
+	if !router.DecodeJSONOrError(w, r, &body) {
 		return
 	}
+	// Owner + step-up: this config sets the passphrase, destination and include-users that a
+	// scheduled full export (decrypted secrets) will use.
+	if _, ok := requireStepUp(w, r, body.CurrentPassword, body.TotpCode); !ok {
+		return
+	}
+	incoming := body.OffhostConfig
 	stored, err := s.loadOffhostConfig()
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
@@ -89,6 +100,15 @@ func (s *Service) handleOffhostTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleOffhostRunNow(w http.ResponseWriter, r *http.Request) {
+	// Owner + step-up: a run is a full export of decrypted secrets to the destination.
+	var creds struct {
+		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&creds)
+	if _, ok := requireStepUp(w, r, creds.CurrentPassword, creds.TotpCode); !ok {
+		return
+	}
 	if s.Status().Running {
 		router.JSONError(w, "a backup is already running", http.StatusConflict)
 		return
