@@ -10,7 +10,7 @@ services:
   # Filters which Docker operations are allowed
   # ============================================
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy:v0.5.0
     container_name: docker-socket-proxy
     restart: unless-stopped
     logging: *default-logging
@@ -63,7 +63,7 @@ services:
   # TRAEFIK - Reverse Proxy with API & Dashboard
   # ============================================
   traefik:
-    image: traefik:v3.6
+    image: traefik:v3.7.16
     container_name: traefik
     restart: unless-stopped
     logging: *default-logging
@@ -182,7 +182,7 @@ services:
       - HTTPS_PORT=${HTTPS_PORT}
       # VPN Router settings
       - VPN_ROUTER_NAME=${VPN_ROUTER_NAME:-vpn-router}
-      - VPN_ROUTER_IMAGE=${VPN_ROUTER_IMAGE:-tailscale/tailscale:latest}
+      - VPN_ROUTER_IMAGE=${VPN_ROUTER_IMAGE:-tailscale/tailscale:v1.104.1}
       - VPN_ROUTER_DATA=${VPN_ROUTER_DATA:-/var/lib/tailscale-vpn-router}
       - HEADSCALE_ACL_PATH=${HEADSCALE_ACL_PATH:-/headscale/config/acl.json}
       - NFTABLES_ACL_PATH=${NFTABLES_ACL_PATH:-/etc/nftables.d/vpn-acl.nft}
@@ -211,7 +211,7 @@ services:
   # ADGUARD HOME - DNS Server with Query Logging
   # ============================================
   adguard:
-    image: adguard/adguardhome:latest
+    image: adguard/adguardhome:v0.107.79
     container_name: adguard
     restart: unless-stopped
     logging: *default-logging
@@ -268,7 +268,7 @@ services:
   # Enables cross-network communication via subnet routing
   # ============================================
   vpn-router:
-    image: tailscale/tailscale:latest
+    image: tailscale/tailscale:v1.104.1
     container_name: vpn-router
     hostname: vpn-router
     restart: unless-stopped
