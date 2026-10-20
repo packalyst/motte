@@ -3,7 +3,9 @@ package pwa
 import (
 	"crypto/tls"
 	"fmt"
+	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -61,17 +63,20 @@ func sendEmail(to, subject, body string) error {
 	if !c.configured() {
 		return fmt.Errorf("SMTP is not configured")
 	}
-	// Reject header/SMTP injection outright: no CR or LF may appear in any header value
-	// (envelope recipient, subject, or the configured From).
-	to = strings.TrimSpace(to)
-	if to == "" || strings.ContainsAny(to, "\r\n") ||
-		strings.ContainsAny(subject, "\r\n") || strings.ContainsAny(c.From, "\r\n") {
-		return fmt.Errorf("invalid characters in email headers")
+	// Parse the addresses and MIME-encode the subject so no CR/LF can inject extra headers or a
+	// second message (email/SMTP injection). mail.ParseAddress rejects embedded newlines outright.
+	toAddr, err := mail.ParseAddress(strings.TrimSpace(to))
+	if err != nil {
+		return fmt.Errorf("invalid recipient address: %w", err)
 	}
+	fromAddr, err := mail.ParseAddress(strings.TrimSpace(c.From))
+	if err != nil {
+		return fmt.Errorf("invalid From address: %w", err)
+	}
+	subject = mime.QEncoding.Encode("utf-8", subject)
 	addr := net.JoinHostPort(c.Host, c.Port)
 
 	var conn net.Conn
-	var err error
 	if c.TLS == "tls" {
 		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, &tls.Config{ServerName: c.Host})
 	} else {
@@ -101,17 +106,17 @@ func sendEmail(to, subject, body string) error {
 			return err
 		}
 	}
-	if err := client.Mail(c.From); err != nil {
+	if err := client.Mail(fromAddr.Address); err != nil {
 		return err
 	}
-	if err := client.Rcpt(to); err != nil {
+	if err := client.Rcpt(toAddr.Address); err != nil {
 		return err
 	}
 	wc, err := client.Data()
 	if err != nil {
 		return err
 	}
-	if _, err := wc.Write([]byte(buildMessage(c.From, to, subject, body))); err != nil {
+	if _, err := wc.Write([]byte(buildMessage(fromAddr.Address, toAddr.Address, subject, body))); err != nil {
 		return err
 	}
 	if err := wc.Close(); err != nil {
