@@ -80,6 +80,9 @@ type consoleFrame struct {
 	// git / docker tool panels (relayed verbatim): Action selects the operation (docker ps/logs/
 	// start/stop/restart); Path carries the container id/name for a per-container action.
 	Action string `json:"action,omitempty"`
+	// port-forward streams (fwd-open/data/close): Fwd is the stream id, Path+Port the remote target.
+	Fwd  string `json:"fwd,omitempty"`
+	Port int    `json:"port,omitempty"`
 }
 
 var (
@@ -131,6 +134,9 @@ type agentConn struct {
 
 	sessWaiters []chan struct{}          // woken when the next sessions-list arrives (live-query)
 	snapWaiters map[string][]chan string // session id → waiters for a snapshot-result (preview)
+
+	fwdMu      sync.Mutex
+	fwdStreams map[string]*fwdConn // port-forward stream id → tunnel conn (bytes relayed as net.Conn)
 }
 
 // ensureLabel assigns a stable, per-machine "Session N" number to a session the first time it is
@@ -468,6 +474,7 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		conn: conn, bridges: map[string][]*consoleBridge{}, owners: map[string]int64{},
 		opened: map[string]time.Time{}, seen: map[string]time.Time{},
 		labels: map[string]int{}, snapWaiters: map[string][]chan string{},
+		fwdStreams: map[string]*fwdConn{},
 	}
 	regSet(m.ID, a)
 	// Reaper: sweep this channel's sessions for idle / over-max every minute, for the life of the
@@ -502,6 +509,10 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		}
 		if f.T == "snapshot-result" {
 			a.deliverSnapshot(f.Session, f.Data) // one-shot screen capture for a preview card
+			continue
+		}
+		if f.T == "fwd-data" || f.T == "fwd-close" {
+			a.fwdRoute(f) // port-forward tunnel bytes → the waiting net.Conn
 			continue
 		}
 		if f.T == "data" {

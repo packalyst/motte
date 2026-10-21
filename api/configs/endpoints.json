@@ -2196,6 +2196,15 @@
           "handler": "ConsoleKill",
           "description": "Kill one of the caller's own console sessions",
           "min_role": "operator"
+        },
+        {
+          "path": "/console/forward",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ConsoleForward",
+          "description": "Open a port-forward to a host:port reachable by the machine",
+          "min_role": "operator"
         }
       ]
     },

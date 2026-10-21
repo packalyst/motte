@@ -45,6 +45,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"ConsoleSessions": s.handleConsoleSessions,
 		"ConsoleSnapshot": s.handleConsoleSnapshot,
 		"ConsoleKill":     s.handleConsoleKill,
+		"ConsoleForward":  s.handleConsoleForward,
 	}
 }
 

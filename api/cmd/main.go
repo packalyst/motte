@@ -738,6 +738,8 @@ func main() {
 		mux.Handle("/api/fleet/console/ws", http.HandlerFunc(flSvc.HandleBrowserConsole))
 		// Console-events WS: pushes the global session list + serves snapshots/kills (no polling).
 		mux.Handle("/api/fleet/console/events", http.HandlerFunc(flSvc.HandleConsoleEvents))
+		// Port-forward reverse proxy (wildcard path + streaming): tunnels to a host:port via the agent.
+		mux.Handle("/api/fleet/console/fwd/", http.HandlerFunc(flSvc.HandleConsoleForwardProxy))
 	}
 
 	// Internal-only block-list feed for the Traefik sentinel plugin (fetched container-to-
