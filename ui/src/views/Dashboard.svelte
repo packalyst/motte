@@ -17,6 +17,7 @@
     firewall: () => import('./FirewallView.svelte'),
     server: () => import('./ServerView.svelte'),
     fleet: () => import('./MachinesView.svelte'),
+    console: () => import('./ConsoleView.svelte'),
     iplookup: () => import('./IpLookupView.svelte'),
     routes: () => import('./RoutesView.svelte'),
     authkeys: () => import('./AuthKeysView.svelte'),
@@ -57,7 +58,7 @@
   // Submenu groups → their child view ids. Drives auto-expand + collapse so the
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
-    'grp-clients': ['nodes', 'fleet', 'networks'],
+    'grp-clients': ['nodes', 'fleet', 'console', 'networks'],
     'grp-monitoring': ['analytics', 'logs', 'activity', 'routines'],
     'grp-web': ['traefik', 'domains', 'tunnels'],
     'grp-services': ['adguard', 'docker'],
@@ -138,6 +139,7 @@
       children: [
         { id: 'nodes', label: 'Nodes', icon: 'server' },
         { id: 'fleet', label: 'Machines', icon: 'device-desktop' },
+        { id: 'console', label: 'Console', icon: 'terminal-2' },
         { id: 'networks', label: 'Networks', icon: 'router' },
       ]
     },

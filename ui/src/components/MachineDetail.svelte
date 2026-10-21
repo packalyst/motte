@@ -1100,7 +1100,7 @@
 </Modal>
 
 {#if showConsole}
-  <Console machine={{ id: machine.id, name: machine.name, console_record: consoleRecord }}
+  <Console initialMachine={{ id: machine.id, name: machine.name, console_record: consoleRecord }}
     initialSession={consoleSession}
     startFiles={consoleStartFiles}
     onclose={() => { showConsole = false; consoleSession = null; consoleStartFiles = false; loadSessions() }} />
