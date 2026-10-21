@@ -51,6 +51,8 @@ let handlingPopstate = false
 // target the console page opens on arrival (set by a machine's session card before navigating).
 export const previousView = writable(null)
 export const consoleTarget = writable(null)
+// Where the console's close button returns to: { view, hash? } captured when navigating in.
+export const consoleReturn = writable(null)
 let _lastView = urlView || savedView || 'overview'
 
 currentView.subscribe(value => {

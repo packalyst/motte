@@ -73,6 +73,10 @@ type consoleFrame struct {
 	// sessions-list (agent → panel on connect): the live panel-* tmux session ids, used to rebuild
 	// the owner map so resume survives a panel restart.
 	Sessions []string `json:"sessions,omitempty"`
+	// ping/pong (browser ↔ agent, relayed verbatim): Ts echoes the browser clock for a latency
+	// measurement; Cwd carries the session's current working directory for the status bar.
+	Ts  int64  `json:"ts,omitempty"`
+	Cwd string `json:"cwd,omitempty"`
 }
 
 var (
@@ -812,6 +816,44 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 	events.Audit("fleet", "console_grant", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console grant issued for %q%s", m.Name, roSuffix(readonly)))
 	router.JSON(w, map[string]any{"grant": id, "readonly": readonly, "session": session, "expiresInSec": int(ttl.Seconds())})
+}
+
+// handleConsoleGrantAll mints console grants for several machines after a SINGLE step-up, so the
+// global console can attach every live session at once without prompting once per machine. Each
+// grant is the same short-lived, multi-use kind as a normal grant. Only in-scope, console-enabled
+// machines get one; others are silently skipped.
+// POST /api/fleet/console/grant-all {"machine_ids":[...],"currentPassword","totpCode"} → {"grants":{machineID:grant}}
+func (s *Service) handleConsoleGrantAll(w http.ResponseWriter, r *http.Request) {
+	p := router.CurrentUser(r)
+	var req struct {
+		MachineIDs      []string `json:"machine_ids"`
+		CurrentPassword string   `json:"currentPassword"`
+		TOTPCode        string   `json:"totpCode"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	if p == nil {
+		router.JSONError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Step-up re-auth once, before handing out any console access.
+	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TOTPCode); err != nil {
+		router.JSONError(w, err.Error(), status)
+		return
+	}
+	ttl, uses := 5*time.Minute, 50
+	grants := map[string]string{}
+	for _, mid := range req.MachineIDs {
+		m, err := s.machineByID(mid)
+		if err != nil || m == nil || !scopeAllows(p, *m) || !m.ConsoleEnabled {
+			continue
+		}
+		grants[m.ID] = mintGrant(p.UserID, m.ID, "", false, ttl, uses)
+	}
+	events.Audit("fleet", "console_grant", events.SeverityWarning, p.Username, helper.GetClientIP(r),
+		fmt.Sprintf("Console grants issued for %d machine(s)", len(grants)))
+	router.JSON(w, map[string]any{"grants": grants})
 }
 
 // handleConsoleToggle enables/disables the console for a machine (admin). Enabling requires step-up.

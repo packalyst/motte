@@ -53,7 +53,17 @@ export class ConsoleSocket {
       case 'file-list-result':
         this.opts.onFileList?.(f.path, f.items || [])
         break
+      case 'pong': {
+        const latency = f.ts ? Math.max(0, Date.now() - f.ts) : null
+        this.opts.onPong?.(latency, f.cwd || '')
+        break
+      }
     }
+  }
+
+  // ping measures round-trip latency and fetches the session's cwd (reply via onPong).
+  ping() {
+    this._send({ t: 'ping', session: this.opts.session, ts: Date.now() })
   }
 
   _onFileChunk(f) {
