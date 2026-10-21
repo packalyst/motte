@@ -87,12 +87,28 @@
           // Always label the point with date + time, so every chart (server, machines,
           // analytics) reads consistently instead of a bare intraday time.
           const label = dt.toLocaleString([], withTz({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))
-          let h = `<div class="uchart-tip-t">${label}</div>`
+          // Build the tooltip with DOM nodes + textContent (never innerHTML) so a series
+          // label can't inject markup — defuses stored XSS if a label ever carries a
+          // user-controlled name (peer/host/machine).
+          tip.textContent = ''
+          const tEl = document.createElement('div')
+          tEl.className = 'uchart-tip-t'
+          tEl.textContent = label
+          tip.appendChild(tEl)
           for (let s = 1; s < up.series.length; s++) {
             const v = up.data[s][i]
-            h += `<div class="uchart-tip-r"><span class="uchart-tip-sw" style="background:${strokes[s - 1]}"></span>${up.series[s].label} <b>${v == null ? '—' : fmtY(+v.toFixed(1))}</b></div>`
+            const row = document.createElement('div')
+            row.className = 'uchart-tip-r'
+            const sw = document.createElement('span')
+            sw.className = 'uchart-tip-sw'
+            sw.style.background = strokes[s - 1]
+            row.appendChild(sw)
+            row.appendChild(document.createTextNode((up.series[s].label ?? '') + ' '))
+            const b = document.createElement('b')
+            b.textContent = v == null ? '—' : fmtY(+v.toFixed(1))
+            row.appendChild(b)
+            tip.appendChild(row)
           }
-          tip.innerHTML = h
           tip.style.display = 'block'
           // Viewport-relative placement; flip/clamp so it never spills off-screen.
           const rect = up.over.getBoundingClientRect()
