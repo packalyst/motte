@@ -345,7 +345,7 @@
       onDocker: (action, data) => { if (tab.id === activeId) handleDocker(action, data) },
       onDiag: (_action, text) => { if (tab.id === activeId) { diagOut = text || '(no output)'; diagBusy = false } },
       onCommand: (c) => { tab.commands = [c, ...tab.commands].slice(0, 100); tabs = [...tabs] },
-      onFileChunk: (path, parts) => handleFileChunk(path, parts),
+      onFileChunk: (path, parts, msg) => handleFileChunk(path, parts, msg),
       onFileList: (path, items) => handleFileList(tab.id, path, items),
     })
     socket.connect()
@@ -470,8 +470,11 @@
       if (n) activeSocket()?.mkdir(joinPath(filesCwd, n))
     } })
   }
-  // Route a delivered file: into the editor if we requested it for editing, else download it.
-  function handleFileChunk(path, parts) {
+  // Route a finished file transfer. The agent ends an UPLOAD (or an editor save) with the same EOF
+  // frame type as a download, tagged "upload complete" — that must update the upload queue, never
+  // trigger a browser download. Otherwise: into the editor if requested for editing, else download.
+  function handleFileChunk(path, parts, msg) {
+    if (msg === 'upload complete') { onUploadDone(path); return }
     if (editPending.has(path)) {
       editPending.delete(path)
       new Blob(parts).text().then((t) => { editContent = t; editLoading = false })
@@ -493,20 +496,47 @@
   async function saveEdit() {
     const s = activeSocket()
     if (!s || editPath == null) return
-    await s.putFile(editPath, new Blob([editContent]))
-    toast('Saving ' + editPath + '…', 'info')
+    await s.putFile(editPath, new Blob([editContent])) // "Saved …" toast arrives on the agent's confirm
     editPath = null
   }
-  async function uploadHere(e) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
+  // --- upload queue (file picker or drag-and-drop; sequential, per-file status) ---
+  const MAX_UPLOAD = 64 * 1024 * 1024 // mirrors the agent's per-file cap, so we refuse up front
+  let uploads = $state([]) // [{ path, name, status: 'sending' | 'done' | 'error', note }]
+  let dropActive = $state(false)
+  // Upload under the basename only — a crafted name with path parts must not escape the cwd.
+  const safeName = (n) => (n.split(/[\\/]/).pop() || 'upload').replace(/\.{2,}/g, '.')
+  async function uploadFiles(list) {
     const s = activeSocket()
-    if (!s) return
-    // Upload under the basename only — a crafted name with path parts must not escape the cwd.
-    const base = (file.name.split(/[\\/]/).pop() || 'upload').replace(/\.{2,}/g, '.')
-    await s.putFile(joinPath(filesCwd, base), file)
-    toast('Uploading ' + base + '…', 'info')
+    if (!s || !list?.length) return
+    for (const file of list) {
+      const name = safeName(file.name)
+      const item = { path: joinPath(filesCwd, name), name, status: 'sending', note: '' }
+      if (file.size > MAX_UPLOAD) { item.status = 'error'; item.note = 'over 64 MB' }
+      uploads = [...uploads, item]
+      if (item.status === 'error') continue
+      try { await s.putFile(item.path, file) } catch { item.status = 'error'; item.note = 'failed'; uploads = [...uploads] }
+    }
+  }
+  function onUploadDone(path) {
+    const item = uploads.find((u) => u.path === path && u.status === 'sending')
+    if (item) {
+      item.status = 'done'
+      uploads = [...uploads]
+      setTimeout(() => { uploads = uploads.filter((u) => u !== item) }, 3000) // fade finished rows
+      listFiles(filesCwd) // show the new file
+    } else {
+      toast('Saved ' + path.split('/').pop(), 'success') // an editor save
+    }
+  }
+  function uploadHere(e) {
+    const files = [...(e.target.files || [])]
+    e.target.value = ''
+    uploadFiles(files)
+  }
+  function onDrop(e) {
+    e.preventDefault()
+    dropActive = false
+    uploadFiles([...(e.dataTransfer?.files || [])])
   }
   const enterDir = (name) => listFiles(joinPath(filesCwd, name))
   const upDir = () => listFiles(parentPath(filesCwd))
@@ -851,7 +881,13 @@
 
   <!-- File browser panel -->
   {#if filesVisible}
-    <aside class="absolute inset-y-0 right-0 z-30 w-full sm:w-96 lg:static lg:w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
+    <aside class="absolute inset-y-0 right-0 z-30 w-full sm:w-96 lg:relative lg:w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col"
+      ondragover={(e) => { e.preventDefault(); dropActive = true }} ondragleave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) dropActive = false }} ondrop={onDrop}>
+      {#if dropActive}
+        <div class="absolute inset-0 z-10 m-2 rounded-lg border-2 border-dashed border-[#58a6ff] bg-[#58a6ff]/10 grid place-items-center pointer-events-none">
+          <span class="text-sm text-[#58a6ff]">Drop to upload to {filesCwd}</span>
+        </div>
+      {/if}
       <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
         <Icon name="folder" size={14} class="text-[#58a6ff]" />
         <span class="font-medium text-sm">Files</span>
@@ -862,7 +898,7 @@
         <button onclick={upDir} title="Up a directory" class="p-1 text-white/60 hover:text-white"><Icon name="arrow-up" size={13} /></button>
         <span class="font-mono text-[11px] text-white/70 truncate flex-1" title={filesCwd}>{filesCwd}</span>
         <button onclick={newFolder} title="New folder" class="p-1 text-white/60 hover:text-white"><Icon name="folder-plus" size={14} /></button>
-        <button onclick={() => filesUploadInput?.click()} title="Upload to this directory" class="p-1 text-white/60 hover:text-white"><Icon name="upload" size={13} /></button>
+        <button onclick={() => filesUploadInput?.click()} title="Upload files here (or drag & drop onto this panel)" class="p-1 text-white/60 hover:text-white"><Icon name="upload" size={13} /></button>
         <button onclick={() => (showHidden = !showHidden)} title="Show hidden files" class="px-1 text-[11px] font-mono {showHidden ? 'text-[#58a6ff]' : 'text-white/50 hover:text-white'}">.*</button>
       </div>
       <div class="px-2 py-1.5 border-b border-white/10">
@@ -900,6 +936,18 @@
           <div class="p-3 text-xs text-white/40">{fileFilter ? 'No match.' : 'Empty directory.'}</div>
         {/if}
       </div>
+      {#if uploads.length}
+        <div class="border-t border-white/10 max-h-32 overflow-y-auto">
+          {#each uploads as u (u.path + u.status)}
+            <div class="flex items-center gap-2 px-3 py-1 text-[11px]">
+              <Icon name={u.status === 'done' ? 'check' : u.status === 'error' ? 'alert-circle' : 'upload'} size={12}
+                class="shrink-0 {u.status === 'done' ? 'text-green-400' : u.status === 'error' ? 'text-red-300' : 'text-[#58a6ff] animate-pulse'}" />
+              <span class="truncate flex-1 text-white/70" title={u.path}>{u.name}</span>
+              <span class="shrink-0 {u.status === 'error' ? 'text-red-300' : 'text-white/40'}">{u.status === 'sending' ? 'uploading…' : u.status === 'done' ? 'done' : u.note}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
       {#if fileSel.size}
         <div class="flex items-center gap-3 px-3 py-2 border-t border-white/10 bg-[#0f1419] text-xs">
           <span class="text-white/50">{fileSel.size} selected</span>
@@ -913,7 +961,7 @@
 
   <!-- Tool panel: snippets / git / docker (one at a time). Same responsive dock/overlay as Files. -->
   {#if tool}
-    <aside class="absolute inset-y-0 right-0 z-30 w-full sm:w-96 lg:static lg:w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
+    <aside class="absolute inset-y-0 right-0 z-30 w-full sm:w-96 lg:relative lg:w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
         <Icon name={toolMeta[tool]?.icon} size={14} class="text-[#58a6ff]" />
         <span class="font-medium text-sm">{toolMeta[tool]?.title}</span>
@@ -1052,7 +1100,7 @@
     </div>
   {/if}
 
-  <input type="file" bind:this={filesUploadInput} onchange={uploadHere} class="hidden" />
+  <input type="file" multiple bind:this={filesUploadInput} onchange={uploadHere} class="hidden" />
 
   <!-- In-console text prompt (rename, new file/folder…) — a modal, not window.prompt -->
   {#if promptState}
