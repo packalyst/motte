@@ -946,6 +946,46 @@ func (s *Service) handleAllSessions(w http.ResponseWriter, r *http.Request, p *r
 	router.JSON(w, map[string]any{"sessions": sessions})
 }
 
+// handleConsoleKill destroys one of the caller's own sessions (the "close session" button).
+// It sends the agent a kill frame; the agent tears down the tmux session and replies session-exit,
+// which frees the owner. Owner-scoped. POST /api/fleet/console/kill {"machine_id","session"}
+func (s *Service) handleConsoleKill(w http.ResponseWriter, r *http.Request) {
+	p := router.CurrentUser(r)
+	var req struct {
+		MachineID string `json:"machine_id"`
+		Session   string `json:"session"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	m, err := s.machineByID(req.MachineID)
+	if err != nil || m == nil {
+		router.JSONError(w, "unknown machine", http.StatusNotFound)
+		return
+	}
+	if p == nil || !scopeAllows(p, *m) {
+		router.JSONError(w, "machine out of scope", http.StatusForbidden)
+		return
+	}
+	a := regGet(req.MachineID)
+	if a == nil {
+		router.JSONError(w, "the machine's console agent is offline", http.StatusConflict)
+		return
+	}
+	eff := nsSession(p.UserID, req.Session) // only ever kill your OWN session
+	a.mu.Lock()
+	owner := a.owners[eff]
+	a.mu.Unlock()
+	if owner != p.UserID {
+		router.JSONError(w, "session out of scope", http.StatusForbidden)
+		return
+	}
+	a.writeToAgent(consoleFrame{T: "kill", Session: eff})
+	events.Audit("fleet", "console_kill", events.SeverityInfo, p.Username, helper.GetClientIP(r),
+		fmt.Sprintf("Console session killed on %q (session %s)", m.Name, eff))
+	router.JSON(w, map[string]bool{"ok": true})
+}
+
 // handleConsoleSnapshot captures a session's current screen (one-shot, for a preview card).
 // GET /api/fleet/console/snapshot?machine_id=&session=  → {"data": "<base64 screen>"}
 func (s *Service) handleConsoleSnapshot(w http.ResponseWriter, r *http.Request) {
