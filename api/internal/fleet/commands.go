@@ -58,6 +58,33 @@ var confirmCommands = map[string]bool{
 // requiresStepUp reports whether ctype is a confirm-tier command.
 func requiresStepUp(ctype string) bool { return confirmCommands[ctype] }
 
+// panelInternalCommands are agent-management actions the panel issues through its own
+// admin/system flows (the panel-port watcher, the console toggle, push-blocks, log-level).
+// On the generic operator command endpoint they are gated to admin+: an operator could
+// otherwise e.g. set-panel-port to a dead port and strand the agent, or push an arbitrary
+// sync-blocks payload. The dedicated flows call s.Enqueue/enqueueGuarded directly and bypass
+// this gate.
+var panelInternalCommands = map[string]bool{
+	"set-panel-port": true,
+	"set-console":    true,
+	"set-log-level":  true,
+	"sync-blocks":    true,
+}
+
+// gatePanelInternalCommand blocks a panel-internal command type on the generic operator
+// endpoint unless the caller is admin or owner. Returns false (and writes 403) when blocked.
+func gatePanelInternalCommand(w http.ResponseWriter, r *http.Request, ctype string) bool {
+	if !panelInternalCommands[ctype] {
+		return true
+	}
+	p := router.CurrentUser(r)
+	if p == nil || (p.Role != "admin" && p.Role != "owner") {
+		router.JSONError(w, "only admins may issue agent-management commands", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 // actingAdmin resolves the operator behind an authenticated panel request (for audit
 // attribution and step-up verification) from the principal the router injected. Returns
 // ("", 0) when there is none; callers that require step-up treat that as a failure.

@@ -377,6 +377,9 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
+	if !gatePanelInternalCommand(w, r, req.Type) {
+		return
+	}
 	id, status, err := s.enqueueGuarded(r, req.MachineID, req.Type, req.CurrentPassword, req.TotpCode, req.Payload)
 	if err != nil {
 		router.JSONError(w, err.Error(), status)
@@ -409,6 +412,9 @@ func (s *Service) handleBulkCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.MachineIDs) > 500 {
 		router.JSONError(w, "too many machines in one request", http.StatusBadRequest)
+		return
+	}
+	if !gatePanelInternalCommand(w, r, req.Type) {
 		return
 	}
 	// Verify step-up once for the whole batch (428 → the UI prompts and retries).
