@@ -684,7 +684,11 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		if readonly {
 			continue // view-only: drop EVERY browser frame (data, file-put, file-get, resize, close…)
 		}
+		if !browserFrameTypes[f.T] {
+			continue // panel-only control/tunnel frames (fwd-*, open, …) never come from a browser
+		}
 		f.Session = effSession // never let a browser target another session
+		f.Fwd, f.Port = "", 0  // tunnel fields are panel-owned
 		if f.T == "resize" {
 			f.Cols, f.Rows = clampResize(f.Cols), clampResize(f.Rows) // bound every resize, not just open
 		} else if f.T == "data" {
@@ -692,6 +696,16 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		}
 		a.writeToAgent(f)
 	}
+}
+
+// browserFrameTypes is everything an interactive browser may send to its own session on the agent.
+// Anything else is dropped — notably the fwd-open/fwd-data/fwd-close tunnel frames, which only the
+// panel's audited, owner-bound forward proxy may emit, and the open/sessions/snapshot control frames
+// the panel issues itself. Keep in sync with ui/src/lib/console.js.
+var browserFrameTypes = map[string]bool{
+	"data": true, "resize": true, "close": true,
+	"file-put": true, "file-get": true, "file-list": true, "file-delete": true, "file-mkdir": true,
+	"ping": true, "git": true, "docker": true, "diag": true,
 }
 
 // nsSession namespaces a client-chosen session id by the owner's user id, so interactive sessions

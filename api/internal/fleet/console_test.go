@@ -105,3 +105,18 @@ func TestSyncSessionsKeepsBridgedButUnreported(t *testing.T) {
 		t.Error("a session with a live viewer must not be pruned even if unreported")
 	}
 }
+
+// A browser may only send its own-session frame types; the forward tunnel and panel control frames
+// must never be relayable from a browser (they'd bypass the forward's audit + owner binding).
+func TestBrowserFrameAllowlist(t *testing.T) {
+	for _, ok := range []string{"data", "resize", "close", "file-put", "file-get", "file-list", "file-delete", "file-mkdir", "ping", "git", "docker", "diag"} {
+		if !browserFrameTypes[ok] {
+			t.Errorf("browser frame %q should be allowed", ok)
+		}
+	}
+	for _, bad := range []string{"fwd-open", "fwd-data", "fwd-close", "open", "sessions", "snapshot", ""} {
+		if browserFrameTypes[bad] {
+			t.Errorf("browser frame %q must be dropped", bad)
+		}
+	}
+}
