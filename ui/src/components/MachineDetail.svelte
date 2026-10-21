@@ -19,6 +19,7 @@
   import EmptyState from './EmptyState.svelte'
   import Modal from './Modal.svelte'
   import Gauge from './Gauge.svelte'
+  import SessionCard from './SessionCard.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
@@ -59,6 +60,22 @@
       const res = await apiGet('/api/fleet/console/sessions?machine_id=' + encodeURIComponent(machine.id))
       liveSessions = res?.sessions || []
     } catch { liveSessions = [] } finally { sessionsLoading = false }
+  }
+  async function killSession(s) {
+    const ok = await confirm({
+      title: 'Close session',
+      message: `Close Session ${s.label || ''} on ${machine.name}? Anything running in it is terminated.`,
+      variant: 'destructive', confirmText: 'Close',
+    })
+    if (!ok) return
+    try {
+      await apiPost('/api/fleet/console/kill', { machine_id: machine.id, session: s.id })
+      toast('Session closed', 'success')
+      liveSessions = liveSessions.filter((x) => x.id !== s.id)
+      loadSessions()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    }
   }
 
   async function setConsole(enabled) {
@@ -696,18 +713,16 @@
           <!-- Resumable sessions: a shell survives a browser drop (tmux), so reattach after a reload. -->
           {#if consoleEnabled && canOpenConsole}
             <div class="mt-3 pt-3 border-t border-border">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Your live sessions</div>
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Your live sessions</div>
               {#if sessionsLoading && !liveSessions.length}
                 <div class="text-xs text-muted-foreground py-1">Checking…</div>
               {:else if liveSessions.length}
-                {#each liveSessions as s}
-                  <div class="flex items-center gap-2 py-1.5 border-t border-border first:border-t-0 text-sm">
-                    <Icon name="terminal" size={14} class="text-primary shrink-0" />
-                    <span class="font-mono text-xs truncate flex-1">{s.id}</span>
-                    {#if s.attached}<Badge variant="info" size="sm">attached</Badge>{/if}
-                    <Button size="xs" variant="outline" icon="plug-connected" onclick={() => openConsole(s.id)}>Reattach</Button>
-                  </div>
-                {/each}
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {#each liveSessions as s (s.id)}
+                    <SessionCard session={s} machine={{ id: machine.id, name: machine.name }}
+                      onresume={(x) => openConsole(x.id)} onkill={killSession} />
+                  {/each}
+                </div>
               {:else}
                 <div class="text-xs text-muted-foreground py-1">No resumable sessions yet. Start one — it survives a disconnect, so you can reattach after a reload or dropped connection.</div>
               {/if}
