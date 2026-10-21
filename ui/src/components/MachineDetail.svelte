@@ -1,10 +1,11 @@
 <script>
   /**
-   * MachineDetail — the per-machine hub, laid out as a WebTerm-style tabbed page: a sticky
-   * header (status, live CPU/MEM/load, primary actions) over a sub-nav of capability tabs
-   * (Overview / Sessions / Services / Network / Security / Maintenance / Host). All state,
-   * handlers and the live WS subscription live once in this container; tabs only re-home the
-   * existing cards — no gate, handler or data path changes. Pulls the full report + polls it.
+   * MachineDetail — the per-machine hub, laid out WebTerm-style: a header (status, live
+   * CPU/MEM/load, primary actions) beside a left sub-nav rail of capabilities (Overview /
+   * Sessions / Files / Docker / Diagnostics / Forwards / Services / Network / Security /
+   * Maintenance / Host / AI). The open sub-page is kept in the URL hash (#m=<id>&s=<sub>) so a
+   * refresh returns to it. All state, handlers and the live WS subscription live once in this
+   * container; panels only re-home the existing cards — no gate, handler or data path changes.
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
@@ -17,7 +18,6 @@
   import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
   import Modal from './Modal.svelte'
-  import Tabs from './Tabs.svelte'
   import Gauge from './Gauge.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
@@ -121,19 +121,46 @@
   const intr = $derived(report?.intrusion || null)
   const facts = $derived(report?.facts || null)
 
-  // --- Tabbed layout (WebTerm-style per-machine hub) ---
-  let activeTab = $state('overview')
-  // Badge the Security tab with the count that actually needs action now (critical+high CVEs).
+  // --- Sub-nav (WebTerm-style left rail; horizontal scroller on mobile) ---
+  // Badge the Security item with the count that actually needs action now (critical+high CVEs).
   const secBadge = $derived(((cves?.counts?.CRITICAL || 0) + (cves?.counts?.HIGH || 0)) || undefined)
-  const tabList = $derived([
+  // `soon` items are capabilities not yet wired (Files) or that need the next agent release
+  // (Docker / Diagnostics / Forwards / AI). They're shown so the full per-machine IA is visible,
+  // each with an honest placeholder — no fake data, no backend call — until the real panel lands.
+  const navList = $derived([
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'sessions', label: 'Sessions', icon: 'terminal-2' },
+    { id: 'files', label: 'Files', icon: 'folder', soon: true },
+    { id: 'docker', label: 'Docker', icon: 'brand-docker', soon: true },
+    { id: 'diagnostics', label: 'Diagnostics', icon: 'stethoscope', soon: true },
+    { id: 'forwards', label: 'Forwards', icon: 'arrows-exchange', soon: true },
     { id: 'services', label: 'Services', icon: 'stack-2' },
     { id: 'network', label: 'Network', icon: 'network' },
     { id: 'security', label: 'Security', icon: 'shield-lock', badge: secBadge },
     { id: 'maintenance', label: 'Maintenance', icon: 'tool' },
     { id: 'host', label: 'Host', icon: 'server' },
+    { id: 'ai', label: 'AI tools', icon: 'sparkles', soon: true },
   ])
+  const navIds = ['overview', 'sessions', 'files', 'docker', 'diagnostics', 'forwards', 'services', 'network', 'security', 'maintenance', 'host', 'ai']
+
+  // Remember the open sub-page in the URL hash (#m=<id>&s=<sub>) so a refresh lands back on it.
+  // We only touch the `s` param (MachinesView owns `m`) and use replaceState so switching
+  // sub-pages doesn't fire hashchange — that would re-run the parent's hash reconciler.
+  function readSub() {
+    if (typeof window === 'undefined') return 'overview'
+    const s = new URLSearchParams(window.location.hash.slice(1)).get('s')
+    return s && navIds.includes(s) ? s : 'overview'
+  }
+  let activeTab = $state(readSub())
+  function go(id) {
+    activeTab = id
+    if (typeof window === 'undefined') return
+    const p = new URLSearchParams(window.location.hash.slice(1))
+    if (id && id !== 'overview') p.set('s', id)
+    else p.delete('s')
+    const q = p.toString()
+    history.replaceState(history.state, '', window.location.pathname + (q ? '#' + q : ''))
+  }
 
   // kernel-maintenance job status (absent unless a kernel update has run). Each phase
   // maps to a dot color + human label so a long, reboot-spanning job is legible.
@@ -438,6 +465,16 @@
   <div class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border">{text}</div>
 {/snippet}
 
+<!-- placeholder for a capability that isn't wired yet — honest "what this will do", no fake data -->
+{#snippet soon(icon, title, desc)}
+  <div class="bg-card border border-border rounded-xl p-8">
+    <EmptyState {icon} {title} description={desc} />
+    <div class="mt-4 flex justify-center">
+      <span class="text-[10px] uppercase tracking-wide text-muted-foreground border border-dashed border-border rounded px-2 py-1">Coming soon</span>
+    </div>
+  </div>
+{/snippet}
+
 <div class="space-y-4">
   <!-- Header: status · name · live chips · primary actions -->
   <div class="flex items-start gap-3 flex-wrap">
@@ -490,8 +527,21 @@
         description="This machine hasn't checked in with a report. It appears once the agent's first metrics/scan cycle completes." />
     </div>
   {:else}
-    <Tabs tabs={tabList} bind:activeTab size="sm" />
+    <div class="flex flex-col lg:flex-row gap-4">
+      <!-- sub-nav: horizontal scroller on mobile, vertical rail on desktop -->
+      <nav class="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible lg:w-52 shrink-0 pb-2 lg:pb-0 border-b lg:border-b-0 lg:border-r border-border lg:pr-3">
+        {#each navList as item}
+          <button type="button" onclick={() => go(item.id)}
+            class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm whitespace-nowrap shrink-0 transition cursor-pointer {activeTab === item.id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}">
+            <Icon name={item.icon} size={16} class="shrink-0" />
+            <span>{item.label}</span>
+            {#if item.badge !== undefined}<span class="lg:ml-auto"><Badge variant="destructive" size="sm">{item.badge}</Badge></span>{/if}
+            {#if item.soon}<span class="lg:ml-auto text-[9px] uppercase tracking-wide text-muted-foreground/70 border border-border rounded px-1 py-0.5">soon</span>{/if}
+          </button>
+        {/each}
+      </nav>
 
+      <div class="min-w-0 flex-1 space-y-4">
     {#if activeTab === 'overview'}
       <!-- Gauges -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -519,7 +569,7 @@
       </div>
 
       <!-- Security glance → Security tab -->
-      <button type="button" onclick={() => (activeTab = 'security')}
+      <button type="button" onclick={() => go('security')}
         class="w-full bg-card border border-border rounded-xl p-3 flex items-center gap-3 text-left hover:bg-muted/30 transition cursor-pointer">
         <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 {secBadge || feed.length || fimCount ? 'text-warning' : 'text-success'}"><Icon name="shield-lock" size={17} /></span>
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1 flex-1 min-w-0 text-sm">
@@ -913,6 +963,24 @@
         {@render note('Tags scope operator/viewer access — an operator can be limited to machines carrying a given tag. Editing tags is admin-only (enforced on the panel).')}
       </div>
     {/if}
+
+    {#if activeTab === 'files'}
+      {@render soon('folder', 'File browser', 'Browse, upload and download files on this host over the encrypted agent channel — a full tree with inline editing. Wiring up next.')}
+    {/if}
+    {#if activeTab === 'docker'}
+      {@render soon('brand-docker', 'Docker', 'List containers, read their logs and start / stop / restart them on this host. Ships with the next agent release.')}
+    {/if}
+    {#if activeTab === 'diagnostics'}
+      {@render soon('stethoscope', 'Diagnostics', 'Run ping, traceroute, DNS and route checks from this host — reachability and DNS debugging for the VPN/network. Ships with the next agent release.')}
+    {/if}
+    {#if activeTab === 'forwards'}
+      {@render soon('arrows-exchange', 'Port forwards', 'Tunnel a port on this host back to your browser through the agent channel — reach a localhost-only or non-VPN service. Ships with the next agent release.')}
+    {/if}
+    {#if activeTab === 'ai'}
+      {@render soon('sparkles', 'AI tools', 'Explain command output and suggest commands. Opt-in — it sends only the text you choose to an AI provider, so it stays off by default.')}
+    {/if}
+      </div>
+    </div>
   {/if}
 </div>
 
