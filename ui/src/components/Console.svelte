@@ -606,7 +606,9 @@
         <span class="w-px h-4 bg-white/10 mx-0.5"></span>
         <button onclick={() => startRename(activeTab)} title="Rename" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="pencil" size={14} /></button>
         <button onclick={share} title="Share read-only link" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="share" size={14} /></button>
-        <button onclick={() => toggleMaximize(activeTab)} title="Maximize" class="p-1.5 rounded hover:bg-white/5 {maximizedId ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="arrows-maximize" size={14} /></button>
+        <!-- Maximize lives only on each split pane's own header (where it means "collapse the grid to
+             this one"). In single view there's nothing to maximize, and showing it here spawned a
+             confusing second header, so it's intentionally omitted from the main toolbar. -->
         {#if activeMachine?.console_record}<span class="flex items-center gap-1 text-[10px] text-red-300 px-1.5"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>rec</span>{/if}
       </div>
     </div>
