@@ -182,6 +182,20 @@ func validateEntryEnums(action, direction, protocol string) error {
 	return nil
 }
 
+// opensFirewall reports whether an entry of this action/type widens access rather than
+// restricting it: an `allow` entry emits `ip saddr @allowed_* accept` ahead of the block
+// sets, and a `port` entry opens a port. Both are admin-grade — operators may manage blocks
+// only (the sanctioned way to open a port is the admin-only /fw/ports endpoint).
+func opensFirewall(action, entryType string) bool {
+	return action == nftables.ActionAllow || entryType == nftables.EntryTypePort
+}
+
+// callerIsAdmin reports whether the request principal is admin or owner.
+func callerIsAdmin(r *http.Request) bool {
+	p := router.CurrentUser(r)
+	return p != nil && (p.Role == "admin" || p.Role == "owner")
+}
+
 // handleCreateEntry creates a new firewall entry
 func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -227,6 +241,19 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	// canonical constants — so it silently never enters any set: a false sense of blocking.
 	if err := validateEntryEnums(req.Action, req.Direction, req.Protocol); err != nil {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Authz: creating an allow-rule or opening a port widens access and is admin-grade.
+	// The route is gated at operator so operators can manage blocks, but opening the gate
+	// must not be reachable below admin.
+	if opensFirewall(req.Action, req.Type) && !callerIsAdmin(r) {
+		router.JSONError(w, "only admins can create allow-rules or open ports", http.StatusForbidden)
+		return
+	}
+	// A blanket allow defeats the default-drop firewall entirely — refuse it for everyone.
+	if req.Action == nftables.ActionAllow && req.Type == nftables.EntryTypeRange && normalizedValue == "0.0.0.0/0" {
+		router.JSONError(w, "refusing to allow 0.0.0.0/0 (would disable the firewall)", http.StatusBadRequest)
 		return
 	}
 
@@ -386,6 +413,21 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 		if len(req.Entries) == 0 {
 			router.JSONError(w, "no entries provided", http.StatusBadRequest)
 			return
+		}
+
+		// Same admin-grade gate as the single-entry path: operators may bulk-manage blocks
+		// only, never allow-rules or port openings (which would widen access).
+		if !callerIsAdmin(r) {
+			for _, e := range req.Entries {
+				act := e.Action
+				if act == "" {
+					act = nftables.ActionBlock
+				}
+				if opensFirewall(act, e.Type) {
+					router.JSONError(w, "only admins can create allow-rules or open ports", http.StatusForbidden)
+					return
+				}
+			}
 		}
 
 		created := 0
