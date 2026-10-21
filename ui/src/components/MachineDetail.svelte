@@ -181,9 +181,14 @@
     history.replaceState(history.state, '', window.location.pathname + (q ? '#' + q : ''))
   }
 
-  // Refresh the resumable-session list whenever the Sessions tab is shown (console on + allowed).
+  // Keep the resumable-session list fresh while the Sessions tab is open: fetch immediately, then
+  // poll, so a session the agent reports after a reconnect (e.g. just after a panel redeploy) shows
+  // up on its own instead of needing a manual refresh / console re-enable.
   $effect(() => {
-    if (activeTab === 'sessions' && consoleEnabled && canOpenConsole) loadSessions()
+    if (activeTab !== 'sessions' || !consoleEnabled || !canOpenConsole) return
+    loadSessions()
+    const t = setInterval(loadSessions, 4000)
+    return () => clearInterval(t)
   })
 
   // kernel-maintenance job status (absent unless a kernel update has run). Each phase

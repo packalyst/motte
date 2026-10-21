@@ -145,12 +145,14 @@ func (a *agentConn) touch(session string) {
 // ADDS missing entries — it never overrides a session the panel is already tracking.
 func (a *agentConn) syncSessions(ids []string) {
 	now := time.Now()
+	live := make(map[string]bool, len(ids))
 	a.mu.Lock()
 	for _, id := range ids {
 		uid := ownerFromSession(id)
 		if uid == 0 {
 			continue
 		}
+		live[id] = true
 		if _, ok := a.owners[id]; !ok {
 			a.owners[id] = uid
 		}
@@ -159,6 +161,16 @@ func (a *agentConn) syncSessions(ids []string) {
 		}
 		if _, ok := a.seen[id]; !ok {
 			a.seen[id] = now
+		}
+	}
+	// Prune ghosts: an owner the agent did NOT report is a session that has died on the host. Skip
+	// any that still has a live viewer — a session opened just after the report was taken hasn't been
+	// reported yet but is clearly alive (its bridge is connected), so we must not drop it.
+	for id := range a.owners {
+		if !live[id] && len(a.bridges[id]) == 0 {
+			delete(a.owners, id)
+			delete(a.opened, id)
+			delete(a.seen, id)
 		}
 	}
 	a.mu.Unlock()
