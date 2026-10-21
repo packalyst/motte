@@ -85,7 +85,7 @@ func (s *Service) handleSetup2FA(w http.ResponseWriter, r *http.Request) {
 		TotpCode        string `json:"totpCode"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&creds)
-	if !s.stepUpGate(w, user.ID, creds.CurrentPassword, creds.TotpCode) {
+	if !s.stepUp(w, user.ID, creds.CurrentPassword, creds.TotpCode) {
 		return
 	}
 

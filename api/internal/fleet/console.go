@@ -57,45 +57,53 @@ func (s *Service) consoleStepUp(r *http.Request, currentPassword, currentTOTP st
 	return 0, nil
 }
 
-// consoleStepUpGrace is how long a single successful console re-auth is honoured without prompting
-// again. The window SLIDES on every pass, so an operator working continuously is never interrupted;
-// it only lapses after this much idle time. Console-only and short — opening a remote shell is still
-// behind an operator role, machine scope and the per-host enable flag.
-const consoleStepUpGrace = 10 * time.Minute
+// fleetStepUpGrace is how long a single successful fleet re-auth is honoured without prompting
+// again. One operator action that re-authenticates — opening a console OR running a confirm-tier
+// fleet command — opens the window; while it is open the SAME operator isn't re-prompted for either.
+// The window SLIDES on every pass, so continuous administration is never interrupted; it only lapses
+// after this much idle time. Short, and it only waives the password RE-ENTRY: the operator role,
+// machine scope and per-host enable flag are still checked on every request, and an idle-locked
+// session never reaches here (the request 423s in auth middleware first), so grace can't bypass the
+// lock. A console is already a root shell, so sharing the window with lesser fleet commands adds no
+// authority. Not used by the enable toggle, which is rarer/higher-impact and always re-authenticates.
+const fleetStepUpGrace = 10 * time.Minute
 
 var (
 	stepUpGraceMu sync.Mutex
-	stepUpGraceAt = map[int64]time.Time{} // userID → console step-up valid-until (sliding)
+	stepUpGraceAt = map[int64]time.Time{} // userID → fleet step-up valid-until (sliding)
 )
 
-// consoleStepUpGraced is consoleStepUp with the grace window: within the window it passes WITHOUT a
-// password (and slides the window); otherwise it re-authenticates as usual and, on success, opens
-// the window. Used by the open-console grant endpoints — NOT by the enable toggle, which is a
-// rarer, higher-impact action that always re-authenticates. An idle-locked session never reaches
-// here (the request 423s in auth middleware first), so grace cannot bypass the lock.
+// recentFleetStepUp reports whether the user is still inside the grace window.
+func recentFleetStepUp(userID int64) bool {
+	stepUpGraceMu.Lock()
+	until, ok := stepUpGraceAt[userID]
+	stepUpGraceMu.Unlock()
+	return ok && time.Now().Before(until)
+}
+
+func touchStepUpGrace(userID int64) {
+	stepUpGraceMu.Lock()
+	stepUpGraceAt[userID] = time.Now().Add(fleetStepUpGrace)
+	stepUpGraceMu.Unlock()
+}
+
+// consoleStepUpGraced is consoleStepUp with the shared fleet grace window: within the window it
+// passes WITHOUT a password (and slides the window); otherwise it re-authenticates as usual and, on
+// success, opens the window. Used by the open-console grant endpoints.
 func (s *Service) consoleStepUpGraced(r *http.Request, currentPassword, currentTOTP string) (int, error) {
 	_, userID := s.actingAdmin(r)
 	if userID == 0 {
 		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
 	}
-	stepUpGraceMu.Lock()
-	until, ok := stepUpGraceAt[userID]
-	stepUpGraceMu.Unlock()
-	if ok && time.Now().Before(until) {
-		s.touchStepUpGrace(userID)
+	if recentFleetStepUp(userID) {
+		touchStepUpGrace(userID)
 		return 0, nil
 	}
 	if status, err := s.consoleStepUp(r, currentPassword, currentTOTP); err != nil {
 		return status, err
 	}
-	s.touchStepUpGrace(userID)
+	touchStepUpGrace(userID)
 	return 0, nil
-}
-
-func (s *Service) touchStepUpGrace(userID int64) {
-	stepUpGraceMu.Lock()
-	stepUpGraceAt[userID] = time.Now().Add(consoleStepUpGrace)
-	stepUpGraceMu.Unlock()
 }
 
 // consoleFrame mirrors the agent's wire protocol (JSON; binary is base64 in Data).
