@@ -252,10 +252,13 @@ func (s *Service) handleAddVirtualIP(w http.ResponseWriter, r *http.Request) {
 	port := 0
 	if target != "" {
 		ip := net.ParseIP(target)
-		if ip == nil || ip.To4() == nil {
+		if ip == nil || ip.To4() == nil || strings.Contains(target, ":") {
 			router.JSONError(w, "device IP must be a valid IPv4 address", http.StatusBadRequest)
 			return
 		}
+		// Canonicalize to dotted-quad so an IPv4-mapped form (::ffff:a.b.c.d) can't be stored
+		// and later emitted verbatim into an nft rule, wedging the vpn_acl reload.
+		target = ip.To4().String()
 		if err := s.validateVIPTarget(ip); err != nil {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
