@@ -32,8 +32,20 @@
   let searchQuery = $state('')
   let splitView = $state(false) // false = one session shown (tabs); true = all sessions in a grid
 
+  // --- File browser (slide-in panel over the active session) ---
+  let filesVisible = $state(false)
+  let filesCwd = $state('/root')
+  let filesList = $state([])
+  let filesLoading = $state(false)
+  // Inline editor (textarea); opened from the browser, saved back via putFile.
+  let editPath = $state(null)
+  let editContent = $state('')
+  let editLoading = $state(false)
+  const editPending = new Set() // paths fetched for EDITING (vs downloading) — routes file-chunk
+
   let grant = shareGrant // reused across tabs/reconnects until it stops working
   let fileInput
+  let filesUploadInput
 
   function randSession() {
     const b = new Uint8Array(16)
@@ -108,7 +120,8 @@
       onExit: () => { tab.exited = true; term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n'); tabs = [...tabs] },
       onError: (m) => { error = m; if (/grant/i.test(m)) grant = null },
       onClose: () => { if (!tab.exited) term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n') },
-      onFileChunk: (path, parts) => deliverDownload(path, parts),
+      onFileChunk: (path, parts) => handleFileChunk(path, parts),
+      onFileList: (path, items) => handleFileList(tab.id, path, items),
     })
     socket.connect()
     tab.socket = socket
@@ -146,8 +159,8 @@
   }
   // Square-ish grid for the panes (2 → 1×2, 3-4 → 2×2, …).
   const splitCols = $derived(Math.ceil(Math.sqrt(Math.max(1, tabs.length))))
-  // Re-fit whenever the layout or the number of panes changes (switch to split, open/close a tab).
-  $effect(() => { splitView; tabs.length; fitAll() })
+  // Re-fit whenever the layout, pane count, or the files panel (which narrows the terminal) changes.
+  $effect(() => { splitView; tabs.length; filesVisible; fitAll() })
 
   // --- toolbar actions ---
   function runSearch(dir) {
@@ -184,6 +197,82 @@
     a.download = path.split('/').pop() || 'download'
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  // --- file browser ---
+  function activeSocket() {
+    return tabs.find((t) => t.id === activeId)?.socket
+  }
+  function joinPath(base, name) {
+    return base.endsWith('/') ? base + name : base + '/' + name
+  }
+  function parentPath(p) {
+    if (!p || p === '/') return '/'
+    const parts = p.replace(/\/+$/, '').split('/')
+    parts.pop()
+    return parts.join('/') || '/'
+  }
+  function listFiles(path) {
+    const s = activeSocket()
+    if (!s) return toast('Open a session first', 'error')
+    filesLoading = true
+    s.listDir(path)
+  }
+  function openFiles() {
+    filesVisible = true
+    listFiles(filesCwd)
+  }
+  // Agent reply for a listing (only the active session's).
+  function handleFileList(session, path, items) {
+    if (session !== activeId) return
+    filesCwd = path
+    filesList = items
+    filesLoading = false
+  }
+  // Route a delivered file: into the editor if we requested it for editing, else download it.
+  function handleFileChunk(path, parts) {
+    if (editPending.has(path)) {
+      editPending.delete(path)
+      new Blob(parts).text().then((t) => { editContent = t; editLoading = false })
+      return
+    }
+    deliverDownload(path, parts)
+  }
+  function downloadFromBrowser(name) {
+    activeSocket()?.getFile(joinPath(filesCwd, name))
+  }
+  function editFromBrowser(name) {
+    const p = joinPath(filesCwd, name)
+    editPending.add(p)
+    editPath = p
+    editContent = ''
+    editLoading = true
+    activeSocket()?.getFile(p)
+  }
+  async function saveEdit() {
+    const s = activeSocket()
+    if (!s || editPath == null) return
+    await s.putFile(editPath, new Blob([editContent]))
+    toast('Saving ' + editPath + '…', 'info')
+    editPath = null
+  }
+  async function uploadHere(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const s = activeSocket()
+    if (!s) return
+    await s.putFile(joinPath(filesCwd, file.name), file)
+    toast('Uploading ' + file.name + '…', 'info')
+  }
+  const enterDir = (name) => listFiles(joinPath(filesCwd, name))
+  const upDir = () => listFiles(parentPath(filesCwd))
+  function fmtSize(n) {
+    if (!n) return ''
+    const u = ['B', 'K', 'M', 'G']
+    let v = n, i = 0
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
+    return (i === 0 ? v : v.toFixed(1)) + u[i]
   }
 
   async function share() {
@@ -246,8 +335,9 @@
       {/if}
       <button onclick={() => (searchVisible = !searchVisible)} title="Search" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="search" size={14} /></button>
       {#if !readonly}
-        <button onclick={upload} title="Upload file" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="upload" size={14} /></button>
-        <button onclick={download} title="Download file" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="download" size={14} /></button>
+        <button onclick={openFiles} title="File browser" class="p-1.5 rounded hover:bg-white/5 {filesVisible ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="folder" size={14} /></button>
+        <button onclick={upload} title="Quick upload" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="upload" size={14} /></button>
+        <button onclick={download} title="Quick download" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="download" size={14} /></button>
         <button onclick={share} title="Share read-only" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="share" size={14} /></button>
       {/if}
       <button onclick={closeAll} title="Close console" class="p-1.5 rounded text-white/60 hover:bg-red-500/20 hover:text-red-300"><Icon name="x" size={16} /></button>
@@ -267,6 +357,8 @@
     <div class="px-3 py-1.5 text-xs bg-red-500/15 text-red-300 border-b border-red-500/20">{error}</div>
   {/if}
 
+  <!-- Body: terminal area + optional file-browser panel, side by side -->
+  <div class="flex-1 min-h-0 flex">
   <!-- Terminal area: one container per session. Tab view stacks them (only the active one shown);
        split view lays them in a grid. The mount nodes stay stable across the switch so xterm is not
        re-created. -->
@@ -287,5 +379,65 @@
     {/if}
   </div>
 
+  <!-- File browser panel -->
+  {#if filesVisible}
+    <aside class="w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
+        <Icon name="folder" size={14} class="text-[#58a6ff]" />
+        <span class="font-medium text-sm">Files</span>
+        <button onclick={() => listFiles(filesCwd)} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>
+        <button onclick={() => (filesVisible = false)} title="Close" class="p-1 text-white/60 hover:text-white"><Icon name="x" size={14} /></button>
+      </div>
+      <div class="flex items-center gap-1 px-2 py-1.5 border-b border-white/10">
+        <button onclick={upDir} title="Up a directory" class="p-1 text-white/60 hover:text-white"><Icon name="arrow-up" size={13} /></button>
+        <span class="font-mono text-[11px] text-white/70 truncate flex-1" title={filesCwd}>{filesCwd}</span>
+        <button onclick={() => filesUploadInput?.click()} title="Upload to this directory" class="p-1 text-white/60 hover:text-white"><Icon name="upload" size={13} /></button>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        {#if filesLoading}
+          <div class="p-3 text-xs text-white/40">Loading…</div>
+        {:else if filesList.length}
+          {#each filesList as it}
+            <div class="group flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 text-xs">
+              <Icon name={it.dir ? 'folder' : 'file'} size={14} class={it.dir ? 'text-[#58a6ff] shrink-0' : 'text-white/50 shrink-0'} />
+              {#if it.dir}
+                <button onclick={() => enterDir(it.name)} class="flex-1 text-left truncate hover:text-white">{it.name}/</button>
+              {:else}
+                <span class="flex-1 truncate" title={it.name}>{it.name}</span>
+                <span class="text-white/30 tabular-nums shrink-0">{fmtSize(it.size)}</span>
+                <button onclick={() => editFromBrowser(it.name)} title="Edit" class="opacity-0 group-hover:opacity-100 p-0.5 text-white/60 hover:text-white shrink-0"><Icon name="pencil" size={12} /></button>
+                <button onclick={() => downloadFromBrowser(it.name)} title="Download" class="opacity-0 group-hover:opacity-100 p-0.5 text-white/60 hover:text-white shrink-0"><Icon name="download" size={12} /></button>
+              {/if}
+            </div>
+          {/each}
+        {:else}
+          <div class="p-3 text-xs text-white/40">Empty directory.</div>
+        {/if}
+      </div>
+    </aside>
+  {/if}
+  </div>
+
+  <!-- Inline file editor -->
+  {#if editPath != null}
+    <div class="absolute inset-0 z-20 bg-black/50 flex items-center justify-center p-4">
+      <div class="w-full max-w-4xl h-[80%] bg-[#12161d] border border-white/10 rounded-lg flex flex-col overflow-hidden">
+        <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
+          <Icon name="pencil" size={14} class="text-[#58a6ff]" />
+          <span class="font-mono text-xs truncate flex-1" title={editPath}>{editPath}</span>
+          <Button size="xs" variant="primary" icon="device-floppy" onclick={saveEdit}>Save</Button>
+          <button onclick={() => (editPath = null)} class="p-1 text-white/60 hover:text-white"><Icon name="x" size={16} /></button>
+        </div>
+        {#if editLoading}
+          <div class="flex-1 grid place-items-center text-white/40 text-sm">Loading…</div>
+        {:else}
+          <textarea bind:value={editContent} spellcheck="false"
+            class="flex-1 w-full resize-none bg-[#0f1419] text-[#d7dce2] font-mono text-xs p-3 outline-none"></textarea>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <input type="file" bind:this={fileInput} onchange={onFilePicked} class="hidden" />
+  <input type="file" bind:this={filesUploadInput} onchange={uploadHere} class="hidden" />
 </div>
