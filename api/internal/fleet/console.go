@@ -118,6 +118,8 @@ type agentConn struct {
 	owners  map[string]int64            // session id → user who opened it (interactive attach is owner-only)
 	opened  map[string]time.Time        // session id → first open (max-duration reaper)
 	seen    map[string]time.Time        // session id → last activity (idle reaper)
+
+	sessWaiters []chan struct{} // woken when the next sessions-list arrives (live-query the agent)
 }
 
 // A resumable shell lives on until it exits — so cap how long one can stay open (max-duration) or
@@ -173,7 +175,31 @@ func (a *agentConn) syncSessions(ids []string) {
 			delete(a.seen, id)
 		}
 	}
+	// Wake anyone blocked in requestSessions — a fresh, reconciled list is now in place.
+	for _, ch := range a.sessWaiters {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	a.sessWaiters = nil
 	a.mu.Unlock()
+}
+
+// requestSessions live-queries the agent: it asks for a fresh session list and blocks (up to
+// timeout) until the reply lands and reconciles the owner map, so the caller then reads an
+// up-to-the-moment list instead of a possibly-stale cache. Falls through on timeout (agent slow /
+// old agent that doesn't answer) — the caller still gets the last known map.
+func (a *agentConn) requestSessions(timeout time.Duration) {
+	ch := make(chan struct{}, 1)
+	a.mu.Lock()
+	a.sessWaiters = append(a.sessWaiters, ch)
+	a.mu.Unlock()
+	a.writeToAgent(consoleFrame{T: "list-sessions"})
+	select {
+	case <-ch:
+	case <-time.After(timeout):
+	}
 }
 
 // ownerFromSession extracts the user id a namespaced session belongs to ("<userID>_..." → userID).
@@ -783,6 +809,9 @@ func (s *Service) handleConsoleSessions(w http.ResponseWriter, r *http.Request) 
 	online := false
 	if a := regGet(machineID); a != nil {
 		online = true
+		// Live query: ask the agent what's actually running right now and wait for the reconciled
+		// reply, so the list reflects real tmux state (no stale ghosts) rather than a cached map.
+		a.requestSessions(1500 * time.Millisecond)
 		// owners keys are the SERVER-namespaced ids (nsSession: "<userID>_<client id>"). Return the
 		// client-facing id (prefix stripped) so a reattach re-namespaces to the SAME session instead
 		// of opening a doubly-prefixed new one.
