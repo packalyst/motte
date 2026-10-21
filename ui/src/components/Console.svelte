@@ -97,6 +97,13 @@
   function setFont(d) { fontSize = Math.min(24, Math.max(9, fontSize + d)); applyTermOpts() }
   function toggleTheme() { termLight = !termLight; applyTermOpts() }
   function tabTitle(tab) { return tab.name || ('Session ' + (tab.label ?? '•')) }
+  // Per-session accent colour (stable hash of the id), mirrored on the tab + split pane like WebTerm,
+  // so each session is recognisable at a glance across tabs and the grid.
+  function sessionColor(id) {
+    let h = 0
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+    return `hsl(${h % 360} 68% 60%)`
+  }
 
   // A small in-console text-input modal (replaces window.prompt), reusable for rename / new file etc.
   let promptState = $state(null) // { title, value, placeholder, onok }
@@ -522,9 +529,9 @@
   <div class="flex items-center gap-2 px-2 py-1.5 border-b border-white/10 bg-[#12161d]">
     <div class="flex items-center gap-1 overflow-x-auto flex-1 min-w-0">
       {#each tabs as tab (tab.id)}
-        <button onclick={() => activate(tab.id)}
-          class="group flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded border-l-2 whitespace-nowrap shrink-0 {activeId === tab.id ? 'bg-white/10 border-[#58a6ff]' : 'border-transparent hover:bg-white/5'}">
-          <span class="w-1.5 h-1.5 rounded-full {tab.exited ? 'bg-white/30' : 'bg-green-400'}"></span>
+        <button onclick={() => activate(tab.id)} style:border-left-color={sessionColor(tab.id)}
+          class="group flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded border-l-2 whitespace-nowrap shrink-0 {activeId === tab.id ? 'bg-white/10' : 'hover:bg-white/5'}">
+          <span class="w-1.5 h-1.5 rounded-full {tab.exited ? 'opacity-40' : ''}" style:background-color={sessionColor(tab.id)}></span>
           <span class="flex flex-col items-start leading-tight text-left">
             <span class="text-xs {activeId === tab.id ? 'text-white' : 'text-white/70'}">{tabTitle(tab)}{tab.exited ? ' (ended)' : ''}</span>
             <span class="text-[9px] text-white/40 truncate max-w-[110px]">{tab.machine.name || tab.machine.id}</span>
@@ -627,8 +634,9 @@
     <div class="px-3 py-1.5 text-xs bg-red-500/15 text-red-300 border-b border-red-500/20">{error}</div>
   {/if}
 
-  <!-- Body: terminal area + optional file-browser panel, side by side -->
-  <div class="flex-1 min-h-0 flex">
+  <!-- Body: terminal area + optional file/tool panel. On desktop the panel docks on the right (lg:static);
+       on mobile it becomes a full overlay INSIDE this container (absolute) so it never squishes the terminal. -->
+  <div class="flex-1 min-h-0 flex relative">
   <!-- Terminal panes. Single view shows the active pane full; split lays them in a grid, each with
        its own header + bottom status bar. Mount nodes (wt-<id>) stay stable so xterm isn't recreated. -->
   <div class="flex-1 min-h-0 relative overflow-hidden {inSplit ? 'grid gap-1 p-1' : ''}"
@@ -636,11 +644,12 @@
     {#each tabs as tab (tab.id)}
       {@const shown = maximizedId ? maximizedId === tab.id : splitView || activeId === tab.id}
       <div onclick={() => activate(tab.id)}
-        class="flex flex-col min-h-0 {inSplit ? 'rounded border overflow-hidden ' + (activeId === tab.id ? 'border-[#58a6ff]' : 'border-white/10') : 'absolute inset-0'}"
+        style:border-color={inSplit ? (activeId === tab.id ? sessionColor(tab.id) : 'rgba(255,255,255,0.1)') : undefined}
+        class="flex flex-col min-h-0 {inSplit ? 'rounded border-2 overflow-hidden' : 'absolute inset-0'}"
         style:display={shown ? 'flex' : 'none'}>
         {#if inSplit || maximizedId === tab.id}
-          <div class="flex items-center gap-2 px-2 py-1 text-[11px] border-b border-white/10 bg-[#12161d] shrink-0">
-            <Icon name="grip-vertical" size={12} class="text-white/30" />
+          <div class="flex items-center gap-2 px-2 py-1 text-[11px] border-b border-white/10 bg-[#12161d] shrink-0" style:border-left={'3px solid ' + sessionColor(tab.id)}>
+            <Icon name="grip-vertical" size={12} style="color:{sessionColor(tab.id)}" />
             <span class="text-white/70 truncate">{tabTitle(tab)}</span>
             <span class="text-white/40 truncate">· {tab.machine.name || tab.machine.id}</span>
             <div class="ml-auto flex items-center gap-1.5">
@@ -662,7 +671,7 @@
 
   <!-- File browser panel -->
   {#if filesVisible}
-    <aside class="w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
+    <aside class="absolute inset-y-0 right-0 z-30 w-full sm:w-96 lg:static lg:w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
         <Icon name="folder" size={14} class="text-[#58a6ff]" />
         <span class="font-medium text-sm">Files</span>
@@ -698,9 +707,9 @@
     </aside>
   {/if}
 
-  <!-- Tool panel: snippets / git / docker (one at a time) -->
+  <!-- Tool panel: snippets / git / docker (one at a time). Same responsive dock/overlay as Files. -->
   {#if tool}
-    <aside class="w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
+    <aside class="absolute inset-y-0 right-0 z-30 w-full sm:w-96 lg:static lg:w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
         <Icon name={tool === 'git' ? 'git-branch' : tool === 'docker' ? 'brand-docker' : tool === 'forwards' ? 'arrows-exchange' : tool === 'commands' ? 'list-details' : 'bolt'} size={14} class="text-[#58a6ff]" />
         <span class="font-medium text-sm capitalize">{tool}</span>
