@@ -111,15 +111,16 @@ func (b *consoleBridge) write(f consoleFrame) {
 }
 
 type agentConn struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
-	mu      sync.Mutex
-	bridges map[string][]*consoleBridge // session id → viewers
-	owners  map[string]int64            // session id → user who opened it (interactive attach is owner-only)
-	opened  map[string]time.Time        // session id → first open (max-duration reaper)
-	seen    map[string]time.Time        // session id → last activity (idle reaper)
-	labels  map[string]int              // session id → friendly per-machine number ("Session N")
-	nextNum int                         // next label number to hand out for this machine
+	conn      *websocket.Conn
+	machineID string // which machine this channel belongs to (for push notifications)
+	writeMu   sync.Mutex
+	mu        sync.Mutex
+	bridges   map[string][]*consoleBridge // session id → viewers
+	owners    map[string]int64            // session id → user who opened it (interactive attach is owner-only)
+	opened    map[string]time.Time        // session id → first open (max-duration reaper)
+	seen      map[string]time.Time        // session id → last activity (idle reaper)
+	labels    map[string]int              // session id → friendly per-machine number ("Session N")
+	nextNum   int                         // next label number to hand out for this machine
 
 	sessWaiters []chan struct{}          // woken when the next sessions-list arrives (live-query)
 	snapWaiters map[string][]chan string // session id → waiters for a snapshot-result (preview)
@@ -164,6 +165,7 @@ func (a *agentConn) touch(session string) {
 func (a *agentConn) syncSessions(ids []string) {
 	now := time.Now()
 	live := make(map[string]bool, len(ids))
+	changed := false
 	a.mu.Lock()
 	for _, id := range ids {
 		uid := ownerFromSession(id)
@@ -173,6 +175,7 @@ func (a *agentConn) syncSessions(ids []string) {
 		live[id] = true
 		if _, ok := a.owners[id]; !ok {
 			a.owners[id] = uid
+			changed = true
 		}
 		if _, ok := a.opened[id]; !ok {
 			a.opened[id] = now // real open time is unknown after a restart; start the reaper clock now
@@ -191,6 +194,7 @@ func (a *agentConn) syncSessions(ids []string) {
 			delete(a.opened, id)
 			delete(a.seen, id)
 			delete(a.labels, id)
+			changed = true
 		}
 	}
 	// Wake anyone blocked in requestSessions — a fresh, reconciled list is now in place.
@@ -202,6 +206,9 @@ func (a *agentConn) syncSessions(ids []string) {
 	}
 	a.sessWaiters = nil
 	a.mu.Unlock()
+	if changed {
+		notifySessionsChanged(a.machineID) // push the new list to console-events subscribers
+	}
 }
 
 // requestSessions live-queries the agent: it asks for a fresh session list and blocks (up to
@@ -365,6 +372,7 @@ func (a *agentConn) routeToBrowsers(f consoleFrame) {
 		delete(a.seen, f.Session)
 		delete(a.labels, f.Session)
 		a.mu.Unlock()
+		notifySessionsChanged(a.machineID) // a session ended — refresh subscribers
 	}
 }
 
@@ -387,6 +395,7 @@ var (
 )
 
 func regSet(machineID string, a *agentConn) {
+	a.machineID = machineID
 	regMu.Lock()
 	if old := agents[machineID]; old != nil {
 		old.conn.Close()
@@ -585,6 +594,7 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	// causes an agent-side open (it can only ever watch an already-running session).
 	if first && !readonly {
 		a.writeToAgent(consoleFrame{T: "open", Session: effSession, Cols: cols, Rows: rows})
+		notifySessionsChanged(machineID) // a new session appeared — push it to subscribers at once
 	}
 
 	defer func() {
@@ -920,6 +930,17 @@ func collectSessions(a *agentConn, userID int64, machineID, machineName string) 
 // machine (for the global console + the dashboard "resume" strip). It live-queries each agent in
 // parallel so the combined list reflects real tmux state. GET /api/fleet/console/sessions (no id).
 func (s *Service) handleAllSessions(w http.ResponseWriter, r *http.Request, p *router.Principal) {
+	router.JSON(w, map[string]any{"sessions": s.globalSessions(p, true)})
+}
+
+// globalSessions returns the caller's sessions across every accessible, console-enabled machine.
+// When live is true it first live-queries each agent in parallel (fresh, for the HTTP endpoint and
+// the initial WS push); when false it reads the already-reconciled owner maps (cheap, for the push
+// that fires on a session change — the change itself just reconciled the relevant agent).
+func (s *Service) globalSessions(p *router.Principal, live bool) []sessInfo {
+	if p == nil {
+		return []sessInfo{}
+	}
 	type entry struct {
 		a    *agentConn
 		id   string
@@ -928,22 +949,24 @@ func (s *Service) handleAllSessions(w http.ResponseWriter, r *http.Request, p *r
 	var accessible []entry
 	for mid, a := range regAll() {
 		m, err := s.machineByID(mid)
-		if err != nil || m == nil || p == nil || !scopeAllows(p, *m) || !m.ConsoleEnabled {
+		if err != nil || m == nil || !scopeAllows(p, *m) || !m.ConsoleEnabled {
 			continue
 		}
 		accessible = append(accessible, entry{a, m.ID, m.Name})
 	}
-	var wg sync.WaitGroup
-	for _, e := range accessible {
-		wg.Add(1)
-		go func(a *agentConn) { defer wg.Done(); a.requestSessions(1200 * time.Millisecond) }(e.a)
+	if live {
+		var wg sync.WaitGroup
+		for _, e := range accessible {
+			wg.Add(1)
+			go func(a *agentConn) { defer wg.Done(); a.requestSessions(1200 * time.Millisecond) }(e.a)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
 	sessions := []sessInfo{}
 	for _, e := range accessible {
 		sessions = append(sessions, collectSessions(e.a, p.UserID, e.id, e.name)...)
 	}
-	router.JSON(w, map[string]any{"sessions": sessions})
+	return sessions
 }
 
 // handleConsoleKill destroys one of the caller's own sessions (the "close session" button).

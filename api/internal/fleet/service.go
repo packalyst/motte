@@ -121,7 +121,7 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 	if err != nil {
 		return nil, err
 	}
-	return &Service{
+	svc := &Service{
 		db:             db,
 		ca:             ca,
 		sslDomain:      sslDomain,
@@ -131,7 +131,9 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 		fwBlockEnabled: fwBlockEnabled,
 		agentCache:     newAgentCache(),
 		clientCertTTL:  90 * 24 * time.Hour,
-	}, nil
+	}
+	consoleEventService = svc // lets the session-change hooks push live updates to console-events subscribers
+	return svc, nil
 }
 
 // CA exposes the certificate authority (fingerprint / cert PEM for install commands).
