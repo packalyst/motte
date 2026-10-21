@@ -3,7 +3,6 @@ package headscale
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -14,7 +13,9 @@ import (
 // TestURL checks if headscale is reachable at the given public URL
 func TestURL(publicURL string) error {
 	baseURL := strings.TrimSuffix(publicURL, "/")
-	client := &http.Client{Timeout: 10 * time.Second}
+	// SSRF-guard: the URL is admin-supplied; block link-local/cloud-metadata on every hop
+	// (RFC1918/loopback stay reachable — headscale is typically internal).
+	client := helper.SafeInternalHTTPClient(10 * time.Second)
 
 	// Try /key endpoint (public, returns noise key)
 	resp, err := client.Get(baseURL + "/key")

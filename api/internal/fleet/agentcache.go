@@ -62,7 +62,9 @@ func newAgentCache() *agentCache {
 	return &agentCache{
 		dir:   helper.GetEnvOptional("FLEET_AGENT_CACHE", "/data/fleet-agent"),
 		forge: forge,
-		http:  &http.Client{Timeout: 90 * time.Second},
+		// SSRF-guard release/asset fetches: block link-local/cloud-metadata on every hop
+		// (redirects still followed so GitHub asset→CDN downloads work; internal forges allowed).
+		http:  helper.SafeInternalHTTPClient(90 * time.Second),
 		ttl:   5 * time.Minute,
 	}
 }
