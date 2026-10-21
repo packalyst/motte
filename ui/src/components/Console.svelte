@@ -130,7 +130,50 @@
       onok: (name) => { tab.name = (name || '').trim() || null; tabs = [...tabs] },
     })
   }
-  function toggleMaximize(tab) { maximizedId = maximizedId === tab.id ? null : tab.id; fitAll() }
+  function toggleMaximize(tab) { maximizedId = maximizedId === tab.id ? null : tab.id; activate(tab.id); fitAll() }
+
+  // --- session toolbar model: defined once, rendered full (wide single view) or compact (split panes,
+  // narrow/mobile screens) where the `more` items fold into a "…" menu, like WebTerm. ---
+  let innerWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1280)
+  const compactBar = $derived(innerWidth < 1024)
+  let overflowFor = $state(null) // tab id whose "…" menu is open
+  let rootEl
+  // Run a toolbar action against a specific tab: focus it first, so actions that read the active
+  // session (files, tools, paste…) target the pane whose toolbar was clicked.
+  function act(tab, fn) {
+    if (activeId !== tab.id) activate(tab.id)
+    overflowFor = null
+    fn()
+  }
+  function copySelection(tab) {
+    const sel = tab.term?.getSelection() || ''
+    if (!sel) return toast('Select text in the terminal first', 'info')
+    navigator.clipboard?.writeText(sel).then(() => toast('Copied', 'success')).catch(() => {})
+  }
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen?.()
+    else rootEl?.requestFullscreen?.().catch(() => {})
+    fitAll()
+  }
+  function toolItems(tab) {
+    const mine = activeId === tab.id
+    return [
+      { icon: 'search', title: 'Search scrollback', on: searchVisible && mine, fn: () => (searchVisible = !searchVisible) },
+      { icon: 'file', title: 'Files', on: filesVisible && mine, fn: toggleFiles },
+      { icon: 'git-branch', title: 'Git status', on: tool === 'git' && mine, fn: () => openTool('git') },
+      { icon: 'arrows-exchange', title: 'Port forwards', on: tool === 'forwards' && mine, fn: () => openTool('forwards') },
+      { icon: 'brand-docker', title: 'Docker', on: tool === 'docker' && mine, fn: () => openTool('docker') },
+      { icon: 'terminal-2', title: 'Snippets', on: tool === 'snippets' && mine, fn: () => openTool('snippets') },
+      { icon: 'clipboard', title: 'Paste clipboard', fn: () => pasteInto(tab) },
+      { icon: termLight ? 'moon' : 'sun', title: 'Terminal theme', more: true, fn: toggleTheme },
+      { icon: 'copy', title: 'Copy selection', more: true, fn: () => copySelection(tab) },
+      { icon: 'pencil', title: 'Rename session', more: true, fn: () => startRename(tab) },
+      { text: 'A−', title: 'Smaller text', more: true, fn: () => setFont(-1) },
+      { text: 'A+', title: 'Larger text', more: true, fn: () => setFont(1) },
+      { icon: 'share', title: 'Share read-only link', more: true, fn: share },
+      { icon: 'arrows-maximize', title: 'Fullscreen', more: true, fn: toggleFullscreen },
+    ]
+  }
   function pasteInto(tab) {
     navigator.clipboard?.readText?.().then((t) => { if (t && tab?.socket) tab.socket.sendInput(t) }).catch(() => {})
   }
@@ -347,9 +390,11 @@
     s.listDir(path)
   }
   function openFiles() {
+    tool = null // one panel at a time
     filesVisible = true
     listFiles(filesCwd)
   }
+  function toggleFiles() { if (filesVisible) filesVisible = false; else openFiles() }
   // Agent reply for a listing (only the active session's).
   function handleFileList(session, path, items) {
     if (session !== activeId) return
@@ -542,7 +587,56 @@
   onDestroy(() => { for (const t of tabs) { clearInterval(t.pinger); t.socket?.close(); t.term?.dispose() } })
 </script>
 
-<svelte:window on:resize={onResize} />
+<svelte:window on:resize={onResize} bind:innerWidth />
+
+<!-- Live indicator (WebTerm's ring, first toolbar icon): colour = latency health, spins while connecting. -->
+{#snippet activity(tab)}
+  {@const c = tab.exited ? 'rgba(255,255,255,0.25)' : tab.latency == null ? '#8b949e' : tab.latency < 100 ? '#3fb950' : tab.latency < 300 ? '#d29922' : '#f85149'}
+  <span class="p-1.5 shrink-0" title={tab.exited ? 'Session ended' : tab.latency == null ? 'Connecting…' : `Live · ${tab.latency} ms`}>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class={!tab.exited && tab.latency == null ? 'animate-spin' : ''}>
+      <circle cx="8" cy="8" r="6" stroke={c} stroke-opacity="0.3" stroke-width="2" />
+      <path d="M8 2a6 6 0 0 1 6 6" stroke={c} stroke-width="2" stroke-linecap="round" />
+    </svg>
+  </span>
+{/snippet}
+
+<!-- Session toolbar (one definition). Full in wide single view; compact in split panes and on narrow
+     screens, where the `more` items fold into a "…" menu. Every action targets THIS tab (see act). -->
+{#snippet toolbar(tab, compact)}
+  {@const items = toolItems(tab)}
+  <div class="relative flex items-center gap-1 px-2 py-1 border-b border-white/10 bg-[#0f1419] shrink-0 min-w-0">
+    <span class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 min-w-0">
+      <span class="w-1.5 h-1.5 rounded-full shrink-0" style:background-color={sessionColor(tab.id)}></span>
+      <span class="text-white/80 font-mono text-[11px] truncate">root@{tab.machine.name || tab.machine.id}</span>
+    </span>
+    {#if !compact}
+      <button onclick={() => act(tab, () => startRename(tab))} title="Rename session" class="text-sm text-white/80 px-1 shrink-0 hover:text-white truncate max-w-[160px]">{tabTitle(tab)}</button>
+    {/if}
+    <div class="ml-auto flex items-center gap-0.5 shrink-0">
+      {@render activity(tab)}
+      <button onclick={() => act(tab, () => openTool('commands'))} title="Command history"
+        class="px-1.5 py-1 rounded text-[11px] font-mono hover:bg-white/5 {tool === 'commands' && activeId === tab.id ? 'bg-[#58a6ff]/15 text-[#58a6ff]' : 'text-white/60'}">&gt;{tab.commands.length || ''}</button>
+      {#each items.filter((it) => !compact || !it.more) as it (it.title)}
+        <button onclick={() => act(tab, it.fn)} title={it.title} class="p-1.5 rounded hover:bg-white/5 {it.on ? 'text-[#58a6ff]' : 'text-white/60'}">
+          {#if it.text}<span class="text-[11px] font-medium px-0.5">{it.text}</span>{:else}<Icon name={it.icon} size={14} />{/if}
+        </button>
+      {/each}
+      {#if compact}
+        <button onclick={() => (overflowFor = overflowFor === tab.id ? null : tab.id)} title="More" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="dots" size={14} /></button>
+        {#if overflowFor === tab.id}
+          <div class="absolute right-2 top-full mt-1 z-50 w-48 bg-[#1a1f29] border border-white/10 rounded-lg shadow-xl py-1">
+            {#each items.filter((it) => it.more) as it (it.title)}
+              <button onclick={() => act(tab, it.fn)} class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-white/70 hover:bg-white/5 text-left">
+                {#if it.text}<span class="w-[14px] text-center text-[11px]">{it.text}</span>{:else}<Icon name={it.icon} size={14} />{/if}{it.title}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      {/if}
+      {#if tab.machine.console_record}<span class="flex items-center gap-1 text-[10px] text-red-300 px-1.5" title="This session is being recorded"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>rec</span>{/if}
+    </div>
+  </div>
+{/snippet}
 
 <!-- Per-session bottom status bar (reused in single + split): live status, start, duration, clock. -->
 {#snippet statusBar(tab)}
@@ -561,7 +655,7 @@
 
 <!-- Overlay mode: inset past the app sidebar on desktop so it stays visible (a page, not a modal).
      Embedded mode (global console): fill the page column the parent lays out beside its rail. -->
-<div class={embedded
+<div bind:this={rootEl} class={embedded
     ? 'relative flex-1 min-w-0 flex flex-col bg-[#0f1419] text-[#d7dce2]'
     : 'fixed inset-0 lg:left-60 z-50 flex flex-col bg-[#0f1419] text-[#d7dce2]'}>
   <!-- TOP BAR: tabs on the left (can span machines); session controls on the right. -->
@@ -623,41 +717,13 @@
   </div>
 
   <!-- Backdrop that dismisses the dropdowns -->
-  {#if newMenuOpen || allMenuOpen}
-    <button aria-label="Close menu" class="fixed inset-0 z-40 cursor-default" onclick={() => { newMenuOpen = false; allMenuOpen = false }}></button>
+  {#if newMenuOpen || allMenuOpen || overflowFor}
+    <button aria-label="Close menu" class="fixed inset-0 z-40 cursor-default" onclick={() => { newMenuOpen = false; allMenuOpen = false; overflowFor = null }}></button>
   {/if}
 
-  <!-- SESSION TOOLBAR (acts on the active session) -->
-  {#if activeTab && !readonly}
-    <div class="flex items-center gap-1 px-3 py-1.5 border-b border-white/10 bg-[#0f1419] overflow-x-auto">
-      <span class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 shrink-0">
-        <span class="w-1.5 h-1.5 rounded-full {activeTab.exited ? 'bg-white/30' : 'bg-green-400'}"></span>
-        <span class="text-white/80 font-mono text-[11px]">root@{activeMachine?.name || activeMachine?.id}</span>
-      </span>
-      <button onclick={() => startRename(activeTab)} title="Rename session" class="text-sm text-white/80 px-1 shrink-0 hover:text-white truncate max-w-[160px]">{tabTitle(activeTab)}</button>
-      <div class="ml-auto flex items-center gap-0.5 shrink-0">
-        <button onclick={() => (searchVisible = !searchVisible)} title="Search scrollback" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="search" size={14} /></button>
-        <button onclick={openFiles} title="File manager" class="p-1.5 rounded hover:bg-white/5 {filesVisible ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="folder" size={14} /></button>
-        <button onclick={() => openTool('snippets')} title="Snippets" class="p-1.5 rounded hover:bg-white/5 {tool === 'snippets' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="bolt" size={14} /></button>
-        <button onclick={() => openTool('git')} title="Git status" class="p-1.5 rounded hover:bg-white/5 {tool === 'git' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="git-branch" size={14} /></button>
-        <button onclick={() => openTool('docker')} title="Docker" class="p-1.5 rounded hover:bg-white/5 {tool === 'docker' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="brand-docker" size={14} /></button>
-        <button onclick={() => openTool('forwards')} title="Port forwards" class="p-1.5 rounded hover:bg-white/5 {tool === 'forwards' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="arrows-exchange" size={14} /></button>
-        <button onclick={() => openTool('commands')} title="Command history" class="p-1.5 rounded hover:bg-white/5 {tool === 'commands' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="list-details" size={14} /></button>
-        <button onclick={() => pasteInto(activeTab)} title="Paste clipboard" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="clipboard" size={14} /></button>
-        <button onclick={toggleTheme} title="Terminal theme" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name={termLight ? 'moon' : 'sun'} size={14} /></button>
-        <span class="w-px h-4 bg-white/10 mx-0.5"></span>
-        <button onclick={() => setFont(-1)} title="Smaller text" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="minus" size={14} /></button>
-        <span class="text-[10px] text-white/40 tabular-nums w-4 text-center">{fontSize}</span>
-        <button onclick={() => setFont(1)} title="Larger text" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="plus" size={14} /></button>
-        <span class="w-px h-4 bg-white/10 mx-0.5"></span>
-        <button onclick={() => startRename(activeTab)} title="Rename" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="pencil" size={14} /></button>
-        <button onclick={share} title="Share read-only link" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="share" size={14} /></button>
-        <!-- Maximize lives only on each split pane's own header (where it means "collapse the grid to
-             this one"). In single view there's nothing to maximize, and showing it here spawned a
-             confusing second header, so it's intentionally omitted from the main toolbar. -->
-        {#if activeMachine?.console_record}<span class="flex items-center gap-1 text-[10px] text-red-300 px-1.5"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>rec</span>{/if}
-      </div>
-    </div>
+  <!-- SESSION TOOLBAR — single view only; in split view every pane renders its own (below). -->
+  {#if activeTab && !readonly && !splitView}
+    {@render toolbar(activeTab, compactBar)}
   {/if}
 
   {#if searchVisible}
@@ -684,7 +750,7 @@
       {@const shown = maximizedId ? maximizedId === tab.id : splitView || activeId === tab.id}
       <div onclick={() => activate(tab.id)}
         style:border-color={inSplit ? (activeId === tab.id ? sessionColor(tab.id) : 'rgba(255,255,255,0.1)') : undefined}
-        class="flex flex-col min-h-0 {inSplit ? 'rounded border-2 overflow-hidden' : 'absolute inset-0'}"
+        class="flex flex-col min-h-0 {inSplit ? 'rounded border-2' : 'absolute inset-0'}"
         style:display={shown ? 'flex' : 'none'}>
         {#if inSplit || maximizedId === tab.id}
           <div class="flex items-center gap-2 px-2 py-1 text-[11px] border-b border-white/10 bg-[#12161d] shrink-0" style:border-left={'3px solid ' + sessionColor(tab.id)}>
@@ -696,8 +762,11 @@
               {#if !readonly}<button onclick={(e) => { e.stopPropagation(); killTab(tab) }} title="Close session" class="text-white/50 hover:text-red-300"><Icon name="x" size={12} /></button>{/if}
             </div>
           </div>
+          <!-- Each split pane carries its own full toolbar (compact, tail in "…"), like WebTerm. -->
+          {#if !readonly}{@render toolbar(tab, true)}{/if}
         {/if}
-        <div id={'wt-' + tab.id} bind:this={tab.el} class="flex-1 min-h-0 p-1.5"></div>
+        <!-- overflow-hidden lives here (not on the pane) so the toolbar's "…" menu isn't clipped. -->
+        <div id={'wt-' + tab.id} bind:this={tab.el} class="flex-1 min-h-0 p-1.5 overflow-hidden"></div>
         {@render statusBar(tab)}
       </div>
     {/each}
