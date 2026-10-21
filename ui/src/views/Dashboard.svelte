@@ -58,7 +58,7 @@
   // Submenu groups → their child view ids. Drives auto-expand + collapse so the
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
-    'grp-clients': ['nodes', 'fleet', 'console', 'networks'],
+    'grp-clients': ['nodes', 'fleet', 'networks'],
     'grp-monitoring': ['analytics', 'logs', 'activity', 'routines'],
     'grp-web': ['traefik', 'domains', 'tunnels'],
     'grp-services': ['adguard', 'docker'],
@@ -139,7 +139,6 @@
       children: [
         { id: 'nodes', label: 'Nodes', icon: 'server' },
         { id: 'fleet', label: 'Machines', icon: 'device-desktop' },
-        { id: 'console', label: 'Console', icon: 'terminal-2' },
         { id: 'networks', label: 'Networks', icon: 'router' },
       ]
     },
@@ -222,6 +221,7 @@
   function getViewLabel(viewId) {
     if (viewId === 'profile') return 'Profile'
     // Topbar-only views (not in the sidebar nav):
+    if (viewId === 'console') return 'Console'
     if (viewId === 'iplookup') return 'IP Lookup'
     if (viewId === 'settings') return 'Settings'
     if (viewId === 'team') return 'Panel Users'

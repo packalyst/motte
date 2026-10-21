@@ -168,7 +168,7 @@
     busy = true
     try {
       const g = await ensureGrant(machine)
-      const tab = { id: session, machine, label, name: null, startedAt: Date.now(), el: null, term: null, fit: null, search: null, socket: null, exited: false }
+      const tab = { id: session, machine, label, name: null, startedAt: Date.now(), latency: null, cwd: '', pinger: null, el: null, term: null, fit: null, search: null, socket: null, exited: false }
       tabs = [...tabs, tab]
       activeId = session
       await tick() // let the terminal container mount
@@ -181,10 +181,17 @@
     }
   }
 
-  // Driven by the parent (the global console's rail / session cards).
+  // Driven by the parent (the global console page).
   export function openNew(machine) { openTab(machine) }
   export function openSession(s) { openTab({ id: s.machine_id, name: s.machine_name }, s.id, s.label) }
   export function hasTabs() { return tabs.length > 0 }
+  // Pre-seed per-machine grants (from one bulk step-up) so auto-opening every session doesn't prompt.
+  export function seedGrants(obj) { for (const [mid, g] of Object.entries(obj || {})) if (g) grants.set(mid, g) }
+  // Focus an already-open session's tab (the one the user clicked "resume" on).
+  export function focus(machineId, session) {
+    const t = tabs.find((x) => x.id === session && x.machine.id === machineId)
+    if (t) activate(t.id)
+  }
 
   function startTerminal(tab, g, session) {
     // Look the container up directly from the DOM (don't rely on Svelte's proxy write-back of
@@ -212,11 +219,18 @@
 
     const socket = new ConsoleSocket({
       machine: tab.machine.id, grant: g, session: tab.id, cols: term.cols, rows: term.rows,
-      onOpen: () => { if (!readonly) term.focus(); if (filesVisible && tab.id === activeId) listFiles(filesCwd) },
+      onOpen: () => {
+        if (!readonly) term.focus()
+        if (filesVisible && tab.id === activeId) listFiles(filesCwd)
+        socket.ping() // first latency/cwd probe, then keep it fresh
+        clearInterval(tab.pinger)
+        tab.pinger = setInterval(() => socket.ping(), 5000)
+      },
       onData: (bytes) => term.write(bytes),
-      onExit: () => { tab.exited = true; term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n'); tabs = [...tabs] },
-      onError: (m) => { error = m; if (/grant/i.test(m)) grant = null },
+      onExit: () => { tab.exited = true; clearInterval(tab.pinger); term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n'); tabs = [...tabs] },
+      onError: (m) => { error = m; if (/grant/i.test(m)) grants.delete(tab.machine.id) },
       onClose: () => { if (!tab.exited) term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n') },
+      onPong: (latency, cwd) => { tab.latency = latency; tab.cwd = cwd; tabs = [...tabs] },
       onFileChunk: (path, parts) => handleFileChunk(path, parts),
       onFileList: (path, items) => handleFileList(tab.id, path, items),
     })
@@ -233,15 +247,17 @@
   }
 
   function closeTab(tab) {
+    clearInterval(tab.pinger)
     tab.socket?.close()
     tab.term?.dispose()
     tabs = tabs.filter((t) => t.id !== tab.id)
+    if (maximizedId === tab.id) maximizedId = null
     if (activeId === tab.id) activeId = tabs[tabs.length - 1]?.id || null
     if (tabs.length === 0) onclose?.()
   }
 
   function closeAll() {
-    for (const t of tabs) { t.socket?.close(); t.term?.dispose() }
+    for (const t of tabs) { clearInterval(t.pinger); t.socket?.close(); t.term?.dispose() }
     tabs = []
     onclose?.()
   }
@@ -402,7 +418,7 @@
   // Report the open tabs to the parent (to mirror into the URL hash for refresh/deep-link).
   $effect(() => { ontabs?.(tabs.map((t) => ({ machine_id: t.machine.id, machine_name: t.machine.name, session: t.id, label: t.label }))) })
 
-  onDestroy(() => { for (const t of tabs) { t.socket?.close(); t.term?.dispose() } })
+  onDestroy(() => { for (const t of tabs) { clearInterval(t.pinger); t.socket?.close(); t.term?.dispose() } })
 </script>
 
 <svelte:window on:resize={onResize} />
@@ -416,6 +432,8 @@
     <span class="shrink-0">start {fmtStart(tab.startedAt)}</span>
     <span class="shrink-0">duration {fmtDuration(now - tab.startedAt)}</span>
     <span class="flex items-center gap-1 shrink-0"><Icon name="clock" size={10} />{fmtClock(now)}</span>
+    {#if tab.cwd}<span class="flex items-center gap-1 shrink-0" title={tab.cwd}><Icon name="folder" size={10} />{tab.cwd}</span>{/if}
+    {#if tab.latency != null}<span class="flex items-center gap-1 shrink-0"><Icon name="activity" size={10} />{tab.latency} ms</span>{/if}
     <span class="shrink-0 text-white/30 ml-auto">{tab.machine.name || tab.machine.id}</span>
   </div>
 {/snippet}

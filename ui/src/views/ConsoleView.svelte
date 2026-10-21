@@ -1,12 +1,13 @@
 <script>
-  // The standalone GLOBAL console page. No left rail (the app sidebar already is the menu): the
-  // console chrome (tabs, all-sessions menu, new-session picker, split, close) lives in Console
-  // itself. This view just supplies the machine list, drives the one-shot open target from a
-  // machine's session card, mirrors open tabs into the URL hash (refresh/deep-link), and sends the
-  // close button back to the page you came from. Live data arrives over the console-events WS.
+  // The standalone GLOBAL console page. Not in the sidebar — you reach it by resuming a session (or
+  // starting one) from a machine. On arrival it opens EVERY live session across all your machines as
+  // tabs (one step-up covers them all via grant-all), focuses the one you resumed, and tabs/split can
+  // span hosts. Close returns to exactly where you came from. Live data is pushed over the WS.
   import { onMount, onDestroy, tick } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, currentView, previousView, consoleTarget, currentUser } from '../stores/app.js'
+  import {
+    apiGet, apiPost, stepUpConfirm, currentView, previousView, consoleTarget, consoleReturn, currentUser,
+  } from '../stores/app.js'
   import { consoleSessions, openConsoleEvents } from '../lib/consoleEvents.js'
   import Console from '../components/Console.svelte'
 
@@ -18,7 +19,6 @@
   let consoleRef = $state(null)
   let machines = $state([])
   let release
-  let restored = false
 
   async function loadMachines() {
     try {
@@ -29,14 +29,33 @@
     }
   }
 
-  // URL hash <-> open tabs, so a refresh reopens (reattaches) them. Format: #t=machineId|session,…
+  // Resolve with the live session list: use it if already pushed, else wait briefly for the first push.
+  function firstSessions() {
+    const cur = get(consoleSessions)
+    if (cur.length) return Promise.resolve(cur)
+    return new Promise((resolve) => {
+      let settled = false
+      const done = (v) => { if (!settled) { settled = true; resolve(v || []) } }
+      const unsub = consoleSessions.subscribe((v) => { if (v && v.length) { unsub(); done(v) } })
+      setTimeout(() => { try { unsub() } catch { /* noop */ } done(get(consoleSessions)) }, 1500)
+    })
+  }
+
+  // One step-up mints grants for every machine we're about to attach, so auto-opening all sessions
+  // never prompts per machine. Returns the {machineId: grant} map, or null if the user cancelled.
+  async function bulkGrants(machineIds) {
+    if (!machineIds.length) return {}
+    const r = await stepUpConfirm({ title: 'Open console', description: 'Re-authenticate to open your sessions.' })
+    if (!r?.confirmed) return null
+    const res = await apiPost('/api/fleet/console/grant-all', { machine_ids: machineIds, currentPassword: r.password, totpCode: r.totp })
+    return res?.grants || {}
+  }
+
+  // URL hash <-> open tabs so a refresh reopens (reattaches) them. Format: #t=machineId|session,…
   function readHashTabs() {
     const h = new URLSearchParams(location.hash.slice(1)).get('t')
     if (!h) return []
-    return h
-      .split(',')
-      .map((x) => { const [machine_id, session] = x.split('|'); return { machine_id, session } })
-      .filter((x) => x.machine_id && x.session)
+    return h.split(',').map((x) => { const [machine_id, session] = x.split('|'); return { machine_id, session } }).filter((x) => x.machine_id && x.session)
   }
   function onTabs(list) {
     const h = list.map((t) => `${t.machine_id}|${t.session}`).join(',')
@@ -46,8 +65,32 @@
   }
 
   function goBack() {
-    const prev = get(previousView)
-    currentView.set(prev && prev !== 'console' ? prev : 'fleet')
+    const ret = get(consoleReturn)
+    consoleReturn.set(null)
+    const view = ret?.view || get(previousView) || 'fleet'
+    currentView.set(view === 'console' ? 'fleet' : view)
+    if (ret?.hash) location.hash = ret.hash // let the target view restore its own deep-link (e.g. the machine)
+  }
+
+  async function enter() {
+    const sessions = await firstSessions()
+    const target = get(consoleTarget)
+    consoleTarget.set(null)
+    const hashWanted = readHashTabs()
+
+    // Which machines to grant: everything with a live session + the target (and any hash entries).
+    const ids = new Set(sessions.map((s) => s.machine_id))
+    if (target?.machine_id) ids.add(target.machine_id)
+    for (const w of hashWanted) ids.add(w.machine_id)
+    const grants = await bulkGrants([...ids])
+    if (grants === null) { goBack(); return } // cancelled the step-up → leave
+    consoleRef?.seedGrants(grants)
+
+    // Open every live session as a tab (the target one LAST so it ends up active).
+    const targetS = target?.session ? sessions.find((s) => s.machine_id === target.machine_id && s.id === target.session) : null
+    for (const s of sessions) { if (s !== targetS) consoleRef?.openSession(s) }
+    if (target?.fresh && target.machine_id) consoleRef?.openNew({ id: target.machine_id, name: target.machine_name })
+    if (targetS) consoleRef?.openSession(targetS)
   }
 
   onMount(async () => {
@@ -56,33 +99,9 @@
     release = openConsoleEvents()
     await loadMachines()
     await tick()
-    // A machine's session card set a one-shot target before navigating here — honor it.
-    const target = get(consoleTarget)
-    if (target) {
-      consoleTarget.set(null)
-      restored = true // the target replaces any hash restore
-      if (target.session) {
-        consoleRef?.openSession({ id: target.session, machine_id: target.machine_id, machine_name: target.machine_name, label: target.label })
-      } else {
-        consoleRef?.openNew({ id: target.machine_id, name: target.machine_name })
-      }
-    }
+    await enter()
   })
   onDestroy(() => release?.())
-
-  // Restore tabs from the URL hash once the live list is known (to recover each session's label).
-  $effect(() => {
-    if (restored || !consoleRef) return
-    const want = readHashTabs()
-    if (!want.length) { restored = true; return }
-    const list = $consoleSessions
-    if (!list.length) return // wait for the first push
-    restored = true
-    for (const w of want) {
-      const s = list.find((x) => x.machine_id === w.machine_id && x.id === w.session)
-      if (s) consoleRef.openSession(s)
-    }
-  })
 </script>
 
 {#if !canOpen}

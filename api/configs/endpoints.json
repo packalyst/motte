@@ -2153,6 +2153,15 @@
           "min_role": "operator"
         },
         {
+          "path": "/console/grant-all",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ConsoleGrantAll",
+          "description": "Mint console grants for several machines after one step-up",
+          "min_role": "operator"
+        },
+        {
           "path": "/console/toggle",
           "methods": [
             "POST"

@@ -40,6 +40,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"MachineCommands": s.handleMachineCommands,
 		"FIM":             s.handleFIM,
 		"ConsoleGrant":    s.handleConsoleGrant,
+		"ConsoleGrantAll": s.handleConsoleGrantAll,
 		"ConsoleToggle":   s.handleConsoleToggle,
 		"ConsoleSessions": s.handleConsoleSessions,
 		"ConsoleSnapshot": s.handleConsoleSnapshot,

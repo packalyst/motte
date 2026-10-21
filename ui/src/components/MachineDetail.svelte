@@ -9,7 +9,7 @@
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser, currentView, consoleTarget } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser, currentView, consoleTarget, consoleReturn } from '../stores/app.js'
   import { consoleSessions, openConsoleEvents, refreshSessions } from '../lib/consoleEvents.js'
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
@@ -46,7 +46,9 @@
       machine_name: machine.name,
       session,
       label: session ? liveSessions.find((s) => s.id === session)?.label : null,
+      fresh: !session,
     })
+    consoleReturn.set({ view: 'fleet', hash: 'm=' + machine.id }) // close → back to this machine's page
     currentView.set('console')
   }
 
