@@ -70,6 +70,9 @@ type consoleFrame struct {
 	// Relayed verbatim (file-list-result directory entries). The panel is a pure relay for this —
 	// it never inspects the contents, so RawMessage round-trips whatever the agent produced.
 	Items json.RawMessage `json:"items,omitempty"`
+	// sessions-list (agent → panel on connect): the live panel-* tmux session ids, used to rebuild
+	// the owner map so resume survives a panel restart.
+	Sessions []string `json:"sessions,omitempty"`
 }
 
 var (
@@ -134,6 +137,45 @@ func (a *agentConn) touch(session string) {
 	}
 	a.seen[session] = now
 	a.mu.Unlock()
+}
+
+// syncSessions rebuilds the owner map from the agent's authoritative list of live tmux sessions
+// (their names embed the owner: "<userID>_<client id>"). This restores resume after a panel restart
+// or agent reconnect, when the in-memory owners map was lost but the tmux sessions survived. It only
+// ADDS missing entries — it never overrides a session the panel is already tracking.
+func (a *agentConn) syncSessions(ids []string) {
+	now := time.Now()
+	a.mu.Lock()
+	for _, id := range ids {
+		uid := ownerFromSession(id)
+		if uid == 0 {
+			continue
+		}
+		if _, ok := a.owners[id]; !ok {
+			a.owners[id] = uid
+		}
+		if _, ok := a.opened[id]; !ok {
+			a.opened[id] = now // real open time is unknown after a restart; start the reaper clock now
+		}
+		if _, ok := a.seen[id]; !ok {
+			a.seen[id] = now
+		}
+	}
+	a.mu.Unlock()
+}
+
+// ownerFromSession extracts the user id a namespaced session belongs to ("<userID>_..." → userID).
+// Returns 0 (ignored) if the id isn't in that form.
+func ownerFromSession(id string) int64 {
+	i := strings.IndexByte(id, '_')
+	if i <= 0 {
+		return 0
+	}
+	uid, err := strconv.ParseInt(id[:i], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return uid
 }
 
 // reapExpired kills sessions past the idle or max-duration limit. It only signals the agent
@@ -336,6 +378,10 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		var f consoleFrame
 		if err := conn.ReadJSON(&f); err != nil {
 			return
+		}
+		if f.T == "sessions-list" {
+			a.syncSessions(f.Sessions) // rebuild resume after a panel restart (tmux outlived the panel)
+			continue
 		}
 		if f.T == "data" {
 			a.touch(f.Session) // agent→browser output counts as activity (a long-running command isn't idle)
