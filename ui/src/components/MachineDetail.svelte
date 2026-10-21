@@ -36,7 +36,8 @@
   // openConsole navigates to the standalone console page (not an overlay), opening the given session
   // as a tab there — or a fresh session when none is passed. The target is a one-shot the console
   // page consumes on arrival.
-  function openConsole(session = null) {
+  // `panel` (files | docker | diag | forwards) opens that console panel on arrival.
+  function openConsole(session = null, panel = null) {
     if (!consoleEnabled) {
       toast('Console is disabled for this machine', 'error')
       return
@@ -47,6 +48,7 @@
       session,
       label: session ? liveSessions.find((s) => s.id === session)?.label : null,
       fresh: !session,
+      panel,
     })
     consoleReturn.set({ view: 'fleet', hash: 'm=' + encodeURIComponent(machine.id) }) // close → back to this machine
     currentView.set('console')
@@ -153,16 +155,15 @@
   // --- Sub-nav (WebTerm-style left rail; horizontal scroller on mobile) ---
   // Badge the Security item with the count that actually needs action now (critical+high CVEs).
   const secBadge = $derived(((cves?.counts?.CRITICAL || 0) + (cves?.counts?.HIGH || 0)) || undefined)
-  // `soon` items are capabilities not yet wired (Files) or that need the next agent release
-  // (Docker / Diagnostics / Forwards / AI). They're shown so the full per-machine IA is visible,
-  // each with an honest placeholder — no fake data, no backend call — until the real panel lands.
+  // `soon` items are capabilities not built yet (AI), shown with an honest placeholder — no fake
+  // data, no backend call. Files / Docker / Diagnostics / Forwards are live console panels.
   const navList = $derived([
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'sessions', label: 'Sessions', icon: 'terminal-2' },
     { id: 'files', label: 'Files', icon: 'folder' },
-    { id: 'docker', label: 'Docker', icon: 'brand-docker', soon: true },
-    { id: 'diagnostics', label: 'Diagnostics', icon: 'stethoscope', soon: true },
-    { id: 'forwards', label: 'Forwards', icon: 'arrows-exchange', soon: true },
+    { id: 'docker', label: 'Docker', icon: 'brand-docker' },
+    { id: 'diagnostics', label: 'Diagnostics', icon: 'stethoscope' },
+    { id: 'forwards', label: 'Forwards', icon: 'arrows-exchange' },
     { id: 'services', label: 'Services', icon: 'stack-2' },
     { id: 'network', label: 'Network', icon: 'network' },
     { id: 'security', label: 'Security', icon: 'shield-lock', badge: secBadge },
@@ -501,6 +502,26 @@
 <!-- persistent plain-language note (mockup's dashed footer) -->
 {#snippet note(text)}
   <div class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border">{text}</div>
+{/snippet}
+
+<!-- A capability that runs as a console panel: explain it, then open the console straight onto that
+     panel — resuming your live session on this host if there is one, else a fresh shell. Same gates
+     as the console itself (enabled + operator+), with the matching explanation when they're not met. -->
+{#snippet consoleTool(icon, title, sub, desc, panel, label)}
+  <div class="bg-card border border-border rounded-xl p-4">
+    {@render head(icon, title, sub, 'text-primary')}
+    {#if canOpenConsole && consoleEnabled}
+      <p class="text-sm text-muted-foreground mb-3">{desc}</p>
+      <Button variant="primary" size="sm" {icon} onclick={() => openConsole(liveSessions[0]?.id ?? null, panel)}>{label}</Button>
+    {:else if canManageConsole && !consoleEnabled}
+      <p class="text-sm text-muted-foreground">Enable the console (on the Sessions tab) first — this runs over the same gated channel.</p>
+    {:else if !consoleEnabled}
+      <p class="text-sm text-muted-foreground">The console is disabled for this machine, so this is off.</p>
+    {:else}
+      <p class="text-sm text-muted-foreground">You don't have permission to use the console on this machine.</p>
+    {/if}
+    {@render note('Runs over the console channel, so it needs the console enabled and the operator+ role — the same gates. Read-only shares cannot use it.')}
+  </div>
 {/snippet}
 
 <!-- placeholder for a capability that isn't wired yet — honest "what this will do", no fake data -->
@@ -1021,29 +1042,20 @@
     {/if}
 
     {#if activeTab === 'files'}
-      <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('folder', 'File browser', 'browse · upload · download · edit', 'text-primary')}
-        {#if canOpenConsole && consoleEnabled}
-          <p class="text-sm text-muted-foreground mb-3">Browse, upload, download and edit files on this host over the encrypted agent channel. It opens in the console (the browser rides the same session).</p>
-          <Button variant="primary" size="sm" icon="folder" onclick={() => openConsole()}>Open console</Button>
-        {:else if canManageConsole && !consoleEnabled}
-          <p class="text-sm text-muted-foreground">Enable the console (on the Sessions tab) to browse files — the file browser uses the same gated channel.</p>
-        {:else if !consoleEnabled}
-          <p class="text-sm text-muted-foreground">The console is disabled for this machine, so file access is off.</p>
-        {:else}
-          <p class="text-sm text-muted-foreground">You don't have permission to browse files on this machine.</p>
-        {/if}
-        {@render note('The file browser rides the console channel, so it needs the console enabled and the operator+ role — the same gates. Read-only shares cannot browse or read files.')}
-      </div>
+      {@render consoleTool('folder', 'File browser', 'browse · upload · download · edit · delete',
+        'Browse, select, upload, download, edit and delete files on this host over the encrypted agent channel.', 'files', 'Open files')}
     {/if}
     {#if activeTab === 'docker'}
-      {@render soon('brand-docker', 'Docker', 'List containers, read their logs and start / stop / restart them on this host. Ships with the next agent release.')}
+      {@render consoleTool('brand-docker', 'Docker', 'containers · logs · start / stop / restart',
+        'List this host’s containers, read their logs and start, stop or restart them.', 'docker', 'Open Docker')}
     {/if}
     {#if activeTab === 'diagnostics'}
-      {@render soon('stethoscope', 'Diagnostics', 'Run ping, traceroute, DNS and route checks from this host — reachability and DNS debugging for the VPN/network. Ships with the next agent release.')}
+      {@render consoleTool('stethoscope', 'Diagnostics', 'ping · traceroute · DNS',
+        'Check reachability and name resolution from this host’s point of view — useful when a peer or service “can’t be reached”.', 'diag', 'Open diagnostics')}
     {/if}
     {#if activeTab === 'forwards'}
-      {@render soon('arrows-exchange', 'Port forwards', 'Tunnel a port on this host back to your browser through the agent channel — reach a localhost-only or non-VPN service. Ships with the next agent release.')}
+      {@render consoleTool('arrows-exchange', 'Port forwards', 'reach a service this host can see',
+        'Open a web service that only this host can reach (e.g. localhost:8080) in your browser, tunneled through the agent. Forwards are private to you and expire after 2 hours.', 'forwards', 'Open forwards')}
     {/if}
     {#if activeTab === 'ai'}
       {@render soon('sparkles', 'AI tools', 'Explain command output and suggest commands. Opt-in — it sends only the text you choose to an AI provider, so it stays off by default.')}
