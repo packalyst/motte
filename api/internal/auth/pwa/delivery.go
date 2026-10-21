@@ -121,7 +121,11 @@ func postWebhook(url string, payload interface{}) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := helper.SafeInternalHTTPClient(15 * time.Second).Do(req)
+	// Refuse redirects so a user's webhook host can't 3xx-pivot the request onto an
+	// unintended internal target (link-local/metadata are already blocked at dial time).
+	client := helper.SafeInternalHTTPClient(15 * time.Second)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
