@@ -17,6 +17,13 @@ func validateIPOrCIDR(input string) (string, bool, error) {
 		return "", false, fmt.Errorf("empty input")
 	}
 
+	// Reject any IPv6 form up front, including IPv4-mapped IPv6 (::ffff:1.2.3.4 / mapped CIDRs):
+	// they pass To4() but serialize with the ::ffff: prefix, which nft rejects and wedges the
+	// atomic reload. No legitimate IPv4 value contains a colon.
+	if strings.Contains(input, ":") {
+		return "", false, fmt.Errorf("IPv6 is not supported (this panel is IPv4-only; external IPv6 is dropped at the firewall)")
+	}
+
 	// Check if it's a CIDR range
 	if strings.Contains(input, "/") {
 		_, ipNet, err := net.ParseCIDR(input)

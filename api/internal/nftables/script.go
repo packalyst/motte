@@ -34,6 +34,12 @@ func ValidateIPv4OrCIDR(s string) bool {
 	if s == "" {
 		return false
 	}
+	// Reject IPv6 forms — including IPv4-mapped IPv6 like ::ffff:1.2.3.4, which passes To4()
+	// but serializes with the ::ffff: prefix and would be emitted verbatim, which nft rejects
+	// and wedges the atomic reload. No legitimate IPv4 value contains a colon.
+	if strings.Contains(s, ":") {
+		return false
+	}
 	if ip, _, err := net.ParseCIDR(s); err == nil {
 		return ip.To4() != nil
 	}
