@@ -784,10 +784,13 @@ type consoleRecorder struct {
 	mu    sync.Mutex
 }
 
+// recordDir is where session recordings are written. The default lives under DATA_DIR (the api's
+// persistent volume) — a relative path resolved against the container's /app and was silently lost
+// on every update/recreate.
 func recordDir() string {
 	d, _ := settings.GetSetting("console_record_dir")
 	if d == "" {
-		d = "data/console-recordings"
+		d = filepath.Join(helper.GetEnvOptional("DATA_DIR", "/data"), "console-recordings")
 	}
 	return d
 }
