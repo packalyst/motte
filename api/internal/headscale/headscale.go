@@ -497,6 +497,10 @@ func (s *Service) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 // --- PreAuth Keys ---
 
 func (s *Service) handleGetPreAuthKeys(w http.ResponseWriter, r *http.Request) {
+	// Step-up: preauth keys are tailnet-join secrets.
+	if !router.StepUp(w, r) {
+		return
+	}
 	user := r.URL.Query().Get("user")
 	if user == "" {
 		router.JSONError(w, "user parameter required", http.StatusBadRequest)
@@ -510,6 +514,10 @@ func (s *Service) handleGetPreAuthKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleCreatePreAuthKey(w http.ResponseWriter, r *http.Request) {
+	// Step-up: minting a preauth key hands out a tailnet-join secret.
+	if !router.StepUp(w, r) {
+		return
+	}
 	var req struct {
 		User       string `json:"user"`
 		Reusable   bool   `json:"reusable"`
@@ -539,10 +547,18 @@ func (s *Service) handleExpirePreAuthKey(w http.ResponseWriter, r *http.Request)
 // --- API Keys ---
 
 func (s *Service) handleGetAPIKeys(w http.ResponseWriter, r *http.Request) {
+	// Step-up: API keys are headscale control-plane credentials.
+	if !router.StepUp(w, r) {
+		return
+	}
 	s.proxyGet(w, "/apikey")
 }
 
 func (s *Service) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
+	// Step-up: minting an API key issues a headscale control-plane credential.
+	if !router.StepUp(w, r) {
+		return
+	}
 	var req struct {
 		Expiration string `json:"expiration"`
 	}
