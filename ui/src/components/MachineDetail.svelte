@@ -48,7 +48,7 @@
       label: session ? liveSessions.find((s) => s.id === session)?.label : null,
       fresh: !session,
     })
-    consoleReturn.set({ view: 'fleet', hash: 'm=' + machine.id }) // close → back to this machine's page
+    consoleReturn.set({ view: 'fleet', hash: 'm=' + encodeURIComponent(machine.id) }) // close → back to this machine
     currentView.set('console')
   }
 

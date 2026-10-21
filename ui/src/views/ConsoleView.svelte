@@ -67,9 +67,11 @@
   function goBack() {
     const ret = get(consoleReturn)
     consoleReturn.set(null)
-    const view = ret?.view || get(previousView) || 'fleet'
-    currentView.set(view === 'console' ? 'fleet' : view)
-    if (ret?.hash) location.hash = ret.hash // let the target view restore its own deep-link (e.g. the machine)
+    const view = ret?.view && ret.view !== 'console' ? ret.view : get(previousView) || 'fleet'
+    currentView.set(view)
+    // Apply the deep-link hash on a macrotask: closing clears the tabs, which fires Console's
+    // hash-writer with an empty list during teardown — doing it now would let that wipe this one.
+    if (ret?.hash) setTimeout(() => { location.hash = ret.hash }, 0)
   }
 
   async function enter() {

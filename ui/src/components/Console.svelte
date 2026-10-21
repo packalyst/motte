@@ -67,7 +67,6 @@
   // One grant per machine, reused across that machine's tabs/reconnects until the server rejects it.
   const grants = new Map()
   if (shareGrant && shareMachine) grants.set(shareMachine.id, shareGrant)
-  let fileInput
   let filesUploadInput
 
   // The machine whose name/badges the header shows and the + button opens onto.
@@ -98,9 +97,25 @@
   function setFont(d) { fontSize = Math.min(24, Math.max(9, fontSize + d)); applyTermOpts() }
   function toggleTheme() { termLight = !termLight; applyTermOpts() }
   function tabTitle(tab) { return tab.name || ('Session ' + (tab.label ?? '•')) }
+
+  // A small in-console text-input modal (replaces window.prompt), reusable for rename / new file etc.
+  let promptState = $state(null) // { title, value, placeholder, onok }
+  function openPrompt(opts) { promptState = { value: '', placeholder: '', ...opts } }
+  function submitPrompt() {
+    const cb = promptState?.onok
+    const v = promptState?.value ?? ''
+    promptState = null
+    cb?.(v)
+  }
+  const autofocus = (node) => { node.focus(); node.select?.() }
+
   function startRename(tab) {
-    const name = window.prompt('Rename session', tabTitle(tab))
-    if (name != null) { tab.name = name.trim() || null; tabs = [...tabs] }
+    openPrompt({
+      title: 'Rename session',
+      value: tabTitle(tab),
+      placeholder: 'Session name',
+      onok: (name) => { tab.name = (name || '').trim() || null; tabs = [...tabs] },
+    })
   }
   function toggleMaximize(tab) { maximizedId = maximizedId === tab.id ? null : tab.id; fitAll() }
   function pasteInto(tab) {
@@ -283,26 +298,6 @@
     dir === 'prev' ? tab.search.findPrevious(searchQuery) : tab.search.findNext(searchQuery)
   }
 
-  function upload() {
-    fileInput?.click()
-  }
-  async function onFilePicked(e) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    const tab = tabs.find((t) => t.id === activeId)
-    if (!tab) return
-    const path = window.prompt('Upload to path on the machine:', '/root/' + file.name)
-    if (!path) return
-    await tab.socket.putFile(path, file)
-    toast('Uploading ' + file.name + '…', 'info')
-  }
-  function download() {
-    const tab = tabs.find((t) => t.id === activeId)
-    if (!tab) return
-    const path = window.prompt('Download file from the machine (absolute path):', '/root/')
-    if (path) tab.socket.getFile(path)
-  }
   function deliverDownload(path, parts) {
     const blob = new Blob(parts)
     const url = URL.createObjectURL(blob)
@@ -516,9 +511,7 @@
       <button onclick={() => startRename(activeTab)} title="Rename session" class="text-sm text-white/80 px-1 shrink-0 hover:text-white truncate max-w-[160px]">{tabTitle(activeTab)}</button>
       <div class="ml-auto flex items-center gap-0.5 shrink-0">
         <button onclick={() => (searchVisible = !searchVisible)} title="Search scrollback" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="search" size={14} /></button>
-        <button onclick={openFiles} title="File browser" class="p-1.5 rounded hover:bg-white/5 {filesVisible ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="folder" size={14} /></button>
-        <button onclick={upload} title="Quick upload" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="upload" size={14} /></button>
-        <button onclick={download} title="Quick download" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="download" size={14} /></button>
+        <button onclick={openFiles} title="File manager" class="p-1.5 rounded hover:bg-white/5 {filesVisible ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="folder" size={14} /></button>
         <button onclick={() => pasteInto(activeTab)} title="Paste clipboard" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="clipboard" size={14} /></button>
         <button onclick={toggleTheme} title="Terminal theme" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name={termLight ? 'moon' : 'sun'} size={14} /></button>
         <span class="w-px h-4 bg-white/10 mx-0.5"></span>
@@ -639,6 +632,22 @@
     </div>
   {/if}
 
-  <input type="file" bind:this={fileInput} onchange={onFilePicked} class="hidden" />
   <input type="file" bind:this={filesUploadInput} onchange={uploadHere} class="hidden" />
+
+  <!-- In-console text prompt (rename, new file/folder…) — a modal, not window.prompt -->
+  {#if promptState}
+    <button aria-label="Cancel" class="absolute inset-0 z-[60] bg-black/50 cursor-default" onclick={() => (promptState = null)}></button>
+    <div class="absolute inset-0 z-[61] flex items-center justify-center p-4 pointer-events-none">
+      <div class="w-full max-w-sm bg-[#1a1f29] border border-white/10 rounded-lg p-4 pointer-events-auto shadow-xl">
+        <div class="text-sm font-medium text-white mb-2">{promptState.title}</div>
+        <input use:autofocus bind:value={promptState.value} placeholder={promptState.placeholder}
+          onkeydown={(e) => { if (e.key === 'Enter') submitPrompt(); if (e.key === 'Escape') promptState = null }}
+          class="w-full bg-black/30 border border-white/10 rounded px-2 py-1.5 text-sm text-white outline-none focus:border-[#58a6ff]" />
+        <div class="flex justify-end gap-2 mt-3">
+          <button onclick={() => (promptState = null)} class="px-3 py-1.5 text-xs rounded text-white/60 hover:text-white">Cancel</button>
+          <button onclick={submitPrompt} class="px-3 py-1.5 text-xs rounded bg-[#58a6ff] text-white hover:bg-[#4d96ef]">Save</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
