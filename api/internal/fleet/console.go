@@ -57,6 +57,47 @@ func (s *Service) consoleStepUp(r *http.Request, currentPassword, currentTOTP st
 	return 0, nil
 }
 
+// consoleStepUpGrace is how long a single successful console re-auth is honoured without prompting
+// again. The window SLIDES on every pass, so an operator working continuously is never interrupted;
+// it only lapses after this much idle time. Console-only and short — opening a remote shell is still
+// behind an operator role, machine scope and the per-host enable flag.
+const consoleStepUpGrace = 10 * time.Minute
+
+var (
+	stepUpGraceMu sync.Mutex
+	stepUpGraceAt = map[int64]time.Time{} // userID → console step-up valid-until (sliding)
+)
+
+// consoleStepUpGraced is consoleStepUp with the grace window: within the window it passes WITHOUT a
+// password (and slides the window); otherwise it re-authenticates as usual and, on success, opens
+// the window. Used by the open-console grant endpoints — NOT by the enable toggle, which is a
+// rarer, higher-impact action that always re-authenticates. An idle-locked session never reaches
+// here (the request 423s in auth middleware first), so grace cannot bypass the lock.
+func (s *Service) consoleStepUpGraced(r *http.Request, currentPassword, currentTOTP string) (int, error) {
+	_, userID := s.actingAdmin(r)
+	if userID == 0 {
+		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
+	}
+	stepUpGraceMu.Lock()
+	until, ok := stepUpGraceAt[userID]
+	stepUpGraceMu.Unlock()
+	if ok && time.Now().Before(until) {
+		s.touchStepUpGrace(userID)
+		return 0, nil
+	}
+	if status, err := s.consoleStepUp(r, currentPassword, currentTOTP); err != nil {
+		return status, err
+	}
+	s.touchStepUpGrace(userID)
+	return 0, nil
+}
+
+func (s *Service) touchStepUpGrace(userID int64) {
+	stepUpGraceMu.Lock()
+	stepUpGraceAt[userID] = time.Now().Add(consoleStepUpGrace)
+	stepUpGraceMu.Unlock()
+}
+
 // consoleFrame mirrors the agent's wire protocol (JSON; binary is base64 in Data).
 type consoleFrame struct {
 	T       string `json:"t"`
@@ -802,8 +843,9 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "console is not enabled for this machine", http.StatusForbidden)
 		return
 	}
-	// Step-up re-auth before handing out console access.
-	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TOTPCode); err != nil {
+	// Step-up re-auth before handing out console access (honours the grace window — see
+	// consoleStepUpGraced — so an operator isn't re-prompted on every console open).
+	if status, err := s.consoleStepUpGraced(r, req.CurrentPassword, req.TOTPCode); err != nil {
 		router.JSONError(w, err.Error(), status)
 		return
 	}
@@ -851,8 +893,9 @@ func (s *Service) handleConsoleGrantAll(w http.ResponseWriter, r *http.Request) 
 		router.JSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// Step-up re-auth once, before handing out any console access.
-	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TOTPCode); err != nil {
+	// Step-up re-auth once, before handing out any console access (honours the grace window, so
+	// re-entering the console within it doesn't prompt again).
+	if status, err := s.consoleStepUpGraced(r, req.CurrentPassword, req.TOTPCode); err != nil {
 		router.JSONError(w, err.Error(), status)
 		return
 	}

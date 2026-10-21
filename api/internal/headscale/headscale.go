@@ -497,10 +497,8 @@ func (s *Service) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 // --- PreAuth Keys ---
 
 func (s *Service) handleGetPreAuthKeys(w http.ResponseWriter, r *http.Request) {
-	// Step-up: preauth keys are tailnet-join secrets.
-	if !router.StepUp(w, r) {
-		return
-	}
+	// Admin-gated read (no step-up): a page-load GET carries no re-auth creds. Step-up guards the
+	// mint action (handleCreatePreAuthKey), which is where a new join secret is actually handed out.
 	user := r.URL.Query().Get("user")
 	if user == "" {
 		router.JSONError(w, "user parameter required", http.StatusBadRequest)
@@ -547,10 +545,8 @@ func (s *Service) handleExpirePreAuthKey(w http.ResponseWriter, r *http.Request)
 // --- API Keys ---
 
 func (s *Service) handleGetAPIKeys(w http.ResponseWriter, r *http.Request) {
-	// Step-up: API keys are headscale control-plane credentials.
-	if !router.StepUp(w, r) {
-		return
-	}
+	// Admin-gated read (no step-up): a page-load GET carries no re-auth creds, and the list returns
+	// only key prefixes, not secrets. Step-up guards the mint action (handleCreateAPIKey).
 	s.proxyGet(w, "/apikey")
 }
 
