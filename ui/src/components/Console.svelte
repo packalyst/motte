@@ -134,6 +134,9 @@
 
   // --- session toolbar model: defined once, rendered full (wide single view) or compact (split panes,
   // narrow/mobile screens) where the `more` items fold into a "…" menu, like WebTerm. ---
+  // Sessions whose recording is being written right now (pushed live by the console-events socket),
+  // so the "rec" badge is the actual state, not just the machine's policy.
+  const recordingNow = $derived(new Set($consoleSessions.filter((s) => s.recording).map((s) => s.machine_id + '|' + s.id)))
   let innerWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1280)
   const compactBar = $derived(innerWidth < 1024)
   let overflowFor = $state(null) // tab id whose "…" menu is open
@@ -735,7 +738,10 @@
           </div>
         {/if}
       {/if}
-      {#if tab.machine.console_record}<span class="flex items-center gap-1 text-[10px] text-red-300 px-1.5" title="This session is being recorded"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>rec</span>{/if}
+      {#if recordingNow.has(tab.machine.id + '|' + tab.id)}<span class="flex items-center gap-1 text-[10px] text-red-300 px-1.5" title="This session is being recorded"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>rec</span>{/if}
+      <!-- Stop session — last, like WebTerm: confirms, then terminates the shell (its recording stays). -->
+      <button onclick={() => act(tab, () => killTab(tab))} title="Stop session (processes stop, recording stays)"
+        class="p-1.5 rounded text-white/60 hover:text-red-300 hover:bg-red-500/10"><Icon name="player-stop" size={14} /></button>
     </div>
   </div>
 {/snippet}

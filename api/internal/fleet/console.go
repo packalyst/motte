@@ -16,15 +16,12 @@ package fleet
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,7 +31,6 @@ import (
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
-	"api/internal/settings"
 
 	"github.com/gorilla/websocket"
 )
@@ -160,7 +156,6 @@ type consoleBridge struct {
 	writeMu  sync.Mutex
 	session  string
 	readonly bool
-	rec      *consoleRecorder
 }
 
 func (b *consoleBridge) write(f consoleFrame) {
@@ -186,6 +181,8 @@ type agentConn struct {
 
 	fwdMu      sync.Mutex
 	fwdStreams map[string]*fwdConn // port-forward stream id → tunnel conn (bytes relayed as net.Conn)
+
+	recs map[string]*consoleRecorder // session id → its open recording (guarded by mu)
 }
 
 // ensureLabel assigns a stable, per-machine "Session N" number to a session the first time it is
@@ -414,19 +411,18 @@ func (a *agentConn) removeBridge(session string, b *consoleBridge) (last bool) {
 	return false
 }
 
-// routeToBrowsers forwards one agent frame to every viewer of its session (teeing output to the
-// recorder), and tears the session down on session-exit.
+// routeToBrowsers forwards one agent frame to every viewer of its session (teeing output + command
+// markers into the session's recording, once per frame), and tears the session down on session-exit.
 func (a *agentConn) routeToBrowsers(f consoleFrame) {
+	a.recordFrame(f)
 	a.mu.Lock()
 	viewers := append([]*consoleBridge(nil), a.bridges[f.Session]...)
 	a.mu.Unlock()
 	for _, b := range viewers {
 		b.write(f)
-		if f.T == "data" && b.rec != nil {
-			b.rec.writeOutput(f.Data)
-		}
 	}
 	if f.T == "session-exit" {
+		a.closeRecorder(f.Session) // the shell ended — finalize its recording
 		a.mu.Lock()
 		delete(a.bridges, f.Session)
 		delete(a.owners, f.Session) // the shell ended — free the session id
@@ -442,7 +438,12 @@ func (a *agentConn) closeAll() {
 	a.mu.Lock()
 	all := a.bridges
 	a.bridges = map[string][]*consoleBridge{}
+	recs := a.recs
+	a.recs = map[string]*consoleRecorder{}
 	a.mu.Unlock()
+	for _, r := range recs {
+		r.close() // channel gone — flush every open recording
+	}
 	for _, viewers := range all {
 		for _, b := range viewers {
 			b.write(consoleFrame{T: "session-exit", Msg: "agent disconnected"})
@@ -523,7 +524,7 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		conn: conn, bridges: map[string][]*consoleBridge{}, owners: map[string]int64{},
 		opened: map[string]time.Time{}, seen: map[string]time.Time{},
 		labels: map[string]int{}, snapWaiters: map[string][]chan string{},
-		fwdStreams: map[string]*fwdConn{},
+		fwdStreams: map[string]*fwdConn{}, recs: map[string]*consoleRecorder{},
 	}
 	regSet(m.ID, a)
 	// Reaper: sweep this channel's sessions for idle / over-max every minute, for the life of the
@@ -641,10 +642,6 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	cols := clampDim(q.Get("cols"), 80)
 	rows := clampDim(q.Get("rows"), 24)
 
-	var rec *consoleRecorder
-	if m.ConsoleRecord && !readonly {
-		rec = newConsoleRecorder(m, effSession, int(cols), int(rows))
-	}
 	// Owner-only interactive attach (ownership persists across detach for resume).
 	if !readonly && !a.claimOwner(effSession, p.UserID) {
 		conn.WriteJSON(consoleFrame{T: "error", Msg: "session belongs to another operator"})
@@ -653,7 +650,13 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	if !readonly {
 		a.touch(effSession) // start/refresh the session's activity clock for the reaper
 	}
-	b := &consoleBridge{browser: conn, session: effSession, readonly: readonly, rec: rec}
+	// Recording machines record EVERY interactive session — one continuous file per session, resumed
+	// on reattach (see console_record.go). Read-only viewers add nothing: they can't produce input.
+	recording := m.ConsoleRecord && !readonly
+	if recording {
+		a.attachRecorder(m, effSession, int(cols), int(rows), p)
+	}
+	b := &consoleBridge{browser: conn, session: effSession, readonly: readonly}
 	first := a.addBridge(effSession, b)
 	events.Audit("fleet", "console_open", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console opened on %q (session %s%s)", m.Name, effSession, roSuffix(readonly)))
@@ -661,17 +664,19 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	// causes an agent-side open (it can only ever watch an already-running session).
 	if first && !readonly {
 		a.writeToAgent(consoleFrame{T: "open", Session: effSession, Cols: cols, Rows: rows})
-		notifySessionsChanged(machineID) // a new session appeared — push it to subscribers at once
 	}
+	// Any viewer joining changes what the session lists show (attached / viewers / recording) — push.
+	notifySessionsChanged(machineID)
 
 	defer func() {
 		last := a.removeBridge(effSession, b)
-		if rec != nil {
-			rec.close()
+		if recording {
+			a.detachRecorder(effSession)
 		}
 		if last {
 			a.writeToAgent(consoleFrame{T: "close", Session: effSession}) // detach (tmux keeps it; owner retained)
 		}
+		notifySessionsChanged(machineID) // …and so does one leaving (detached, viewer count, recording off)
 		events.Audit("fleet", "console_close", events.SeverityInfo, p.Username, helper.GetClientIP(r),
 			fmt.Sprintf("Console closed on %q (session %s)", m.Name, effSession))
 	}()
@@ -778,65 +783,7 @@ func takeGrant(id, machineID, session string, userID int64) (*consoleGrant, bool
 
 // ---- recording (asciinema v2 .cast) -------------------------------------------------------------
 
-type consoleRecorder struct {
-	f     *os.File
-	start time.Time
-	mu    sync.Mutex
-}
-
-// recordDir is where session recordings are written. The default lives under DATA_DIR (the api's
-// persistent volume) — a relative path resolved against the container's /app and was silently lost
-// on every update/recreate.
-func recordDir() string {
-	d, _ := settings.GetSetting("console_record_dir")
-	if d == "" {
-		d = filepath.Join(helper.GetEnvOptional("DATA_DIR", "/data"), "console-recordings")
-	}
-	return d
-}
-
-func newConsoleRecorder(m *Machine, session string, cols, rows int) *consoleRecorder {
-	dir := recordDir()
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return nil
-	}
-	name := fmt.Sprintf("%s-%s-%d.cast", sanitize(m.ID), sanitize(session), time.Now().Unix())
-	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
-	if err != nil {
-		return nil
-	}
-	hdr := map[string]any{"version": 2, "width": cols, "height": rows, "timestamp": time.Now().Unix()}
-	b, _ := json.Marshal(hdr)
-	f.Write(append(b, '\n'))
-	events.Audit("fleet", "console_record", events.SeverityInfo, "", "",
-		fmt.Sprintf("Recording console session %s for %q → %s", session, m.Name, name))
-	return &consoleRecorder{f: f, start: time.Now()}
-}
-
-func (c *consoleRecorder) writeOutput(b64 string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// asciinema event: [elapsed, "o", decoded-output]. We store the base64 output as a string —
-	// decode so the cast replays correctly.
-	data, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		return
-	}
-	ev, _ := json.Marshal([]any{time.Since(c.start).Seconds(), "o", string(data)})
-	c.f.Write(append(ev, '\n'))
-}
-
-func (c *consoleRecorder) close() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.f.Close()
-}
+// (Session recording lives in console_record.go.)
 
 // ---- HTTP handlers (main API, via the router) ---------------------------------------------------
 
@@ -1019,6 +966,7 @@ type sessInfo struct {
 	Label       int    `json:"label"`                  // friendly per-machine "Session N"
 	Attached    bool   `json:"attached"`               // at least one viewer connected
 	Viewers     int    `json:"viewers"`                // live viewer count
+	Recording   bool   `json:"recording"`              // a recording is being written right now
 	MachineID   string `json:"machine_id,omitempty"`   // set on the global list
 	MachineName string `json:"machine_name,omitempty"` // set on the global list
 }
@@ -1041,6 +989,7 @@ func collectSessions(a *agentConn, userID int64, machineID, machineName string) 
 			Label:       a.labels[id],
 			Attached:    len(a.bridges[id]) > 0,
 			Viewers:     len(a.bridges[id]),
+			Recording:   a.recs[id] != nil,
 			MachineID:   machineID,
 			MachineName: machineName,
 		}
