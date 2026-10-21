@@ -59,6 +59,7 @@ func SanitizeElement(s string) string {
 	s = strings.ReplaceAll(s, "{", "")
 	s = strings.ReplaceAll(s, "}", "")
 	s = strings.ReplaceAll(s, "#", "")
+	s = strings.ReplaceAll(s, "\"", "") // quotes: elements are emitted inside "..." for iface names
 	return s
 }
 
