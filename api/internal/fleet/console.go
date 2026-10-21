@@ -118,8 +118,24 @@ type agentConn struct {
 	owners  map[string]int64            // session id → user who opened it (interactive attach is owner-only)
 	opened  map[string]time.Time        // session id → first open (max-duration reaper)
 	seen    map[string]time.Time        // session id → last activity (idle reaper)
+	labels  map[string]int              // session id → friendly per-machine number ("Session N")
+	nextNum int                         // next label number to hand out for this machine
 
-	sessWaiters []chan struct{} // woken when the next sessions-list arrives (live-query the agent)
+	sessWaiters []chan struct{}          // woken when the next sessions-list arrives (live-query)
+	snapWaiters map[string][]chan string // session id → waiters for a snapshot-result (preview)
+}
+
+// ensureLabel assigns a stable, per-machine "Session N" number to a session the first time it is
+// seen. Numbers only go up (closed sessions leave gaps, matching the reference UI); they may
+// renumber after a panel restart, which is fine — the label is cosmetic. Caller holds a.mu.
+func (a *agentConn) ensureLabel(session string) {
+	if a.labels == nil {
+		a.labels = map[string]int{}
+	}
+	if _, ok := a.labels[session]; !ok {
+		a.nextNum++
+		a.labels[session] = a.nextNum
+	}
 }
 
 // A resumable shell lives on until it exits — so cap how long one can stay open (max-duration) or
@@ -164,6 +180,7 @@ func (a *agentConn) syncSessions(ids []string) {
 		if _, ok := a.seen[id]; !ok {
 			a.seen[id] = now
 		}
+		a.ensureLabel(id)
 	}
 	// Prune ghosts: an owner the agent did NOT report is a session that has died on the host. Skip
 	// any that still has a live viewer — a session opened just after the report was taken hasn't been
@@ -173,6 +190,7 @@ func (a *agentConn) syncSessions(ids []string) {
 			delete(a.owners, id)
 			delete(a.opened, id)
 			delete(a.seen, id)
+			delete(a.labels, id)
 		}
 	}
 	// Wake anyone blocked in requestSessions — a fresh, reconciled list is now in place.
@@ -199,6 +217,37 @@ func (a *agentConn) requestSessions(timeout time.Duration) {
 	select {
 	case <-ch:
 	case <-time.After(timeout):
+	}
+}
+
+// requestSnapshot asks the agent for a one-shot capture of a session's current screen (for the
+// preview cards) and waits up to timeout for the reply. Returns the base64 screen text and whether
+// it arrived. Owner-scoped by the caller.
+func (a *agentConn) requestSnapshot(session string, timeout time.Duration) (string, bool) {
+	ch := make(chan string, 1)
+	a.mu.Lock()
+	a.snapWaiters[session] = append(a.snapWaiters[session], ch)
+	a.mu.Unlock()
+	a.writeToAgent(consoleFrame{T: "snapshot", Session: session})
+	select {
+	case data := <-ch:
+		return data, true
+	case <-time.After(timeout):
+		return "", false
+	}
+}
+
+// deliverSnapshot hands a snapshot-result to everyone waiting on that session.
+func (a *agentConn) deliverSnapshot(session, data string) {
+	a.mu.Lock()
+	waiters := a.snapWaiters[session]
+	delete(a.snapWaiters, session)
+	a.mu.Unlock()
+	for _, ch := range waiters {
+		select {
+		case ch <- data:
+		default:
+		}
 	}
 }
 
@@ -246,6 +295,7 @@ func (a *agentConn) claimOwner(session string, userID int64) bool {
 		return ex == userID
 	}
 	a.owners[session] = userID
+	a.ensureLabel(session)
 	return true
 }
 
@@ -313,6 +363,7 @@ func (a *agentConn) routeToBrowsers(f consoleFrame) {
 		delete(a.owners, f.Session) // the shell ended — free the session id
 		delete(a.opened, f.Session)
 		delete(a.seen, f.Session)
+		delete(a.labels, f.Session)
 		a.mu.Unlock()
 	}
 }
@@ -348,6 +399,17 @@ func regGet(machineID string) *agentConn {
 	regMu.Lock()
 	defer regMu.Unlock()
 	return agents[machineID]
+}
+
+// regAll returns a snapshot of the machineID→agent registry (for the global session list).
+func regAll() map[string]*agentConn {
+	regMu.Lock()
+	defer regMu.Unlock()
+	out := make(map[string]*agentConn, len(agents))
+	for k, v := range agents {
+		out[k] = v
+	}
+	return out
 }
 
 func regDel(machineID string, a *agentConn) {
@@ -389,6 +451,7 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 	a := &agentConn{
 		conn: conn, bridges: map[string][]*consoleBridge{}, owners: map[string]int64{},
 		opened: map[string]time.Time{}, seen: map[string]time.Time{},
+		labels: map[string]int{}, snapWaiters: map[string][]chan string{},
 	}
 	regSet(m.ID, a)
 	// Reaper: sweep this channel's sessions for idle / over-max every minute, for the life of the
@@ -419,6 +482,10 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		}
 		if f.T == "sessions-list" {
 			a.syncSessions(f.Sessions) // rebuild resume after a panel restart (tmux outlived the panel)
+			continue
+		}
+		if f.T == "snapshot-result" {
+			a.deliverSnapshot(f.Session, f.Data) // one-shot screen capture for a preview card
 			continue
 		}
 		if f.T == "data" {
@@ -783,6 +850,10 @@ func (s *Service) handleConsoleToggle(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleConsoleSessions(w http.ResponseWriter, r *http.Request) {
 	p := router.CurrentUser(r)
 	machineID := r.URL.Query().Get("machine_id")
+	if machineID == "" { // no machine → the global list (all accessible machines)
+		s.handleAllSessions(w, r, p)
+		return
+	}
 	m, err := s.machineByID(machineID)
 	if err != nil || m == nil {
 		router.JSONError(w, "unknown machine", http.StatusNotFound)
@@ -796,15 +867,6 @@ func (s *Service) handleConsoleSessions(w http.ResponseWriter, r *http.Request) 
 		router.JSONError(w, "console is not enabled for this machine", http.StatusForbidden)
 		return
 	}
-	// List the caller's own resumable sessions. Ownership (a.owners) persists across a browser
-	// detach — the tmux shell lives on the agent for resume — so we list by owner, NOT by live
-	// bridge (a.bridges is cleared on disconnect). `attached` flags a session still open in
-	// another tab/viewer, so the UI can show reattach vs. switch-to. Still owner-scoped: we never
-	// disclose another operator's sessions.
-	type sessInfo struct {
-		ID       string `json:"id"`
-		Attached bool   `json:"attached"`
-	}
 	sessions := []sessInfo{}
 	online := false
 	if a := regGet(machineID); a != nil {
@@ -812,19 +874,112 @@ func (s *Service) handleConsoleSessions(w http.ResponseWriter, r *http.Request) 
 		// Live query: ask the agent what's actually running right now and wait for the reconciled
 		// reply, so the list reflects real tmux state (no stale ghosts) rather than a cached map.
 		a.requestSessions(1500 * time.Millisecond)
-		// owners keys are the SERVER-namespaced ids (nsSession: "<userID>_<client id>"). Return the
-		// client-facing id (prefix stripped) so a reattach re-namespaces to the SAME session instead
-		// of opening a doubly-prefixed new one.
-		prefix := strconv.FormatInt(p.UserID, 10) + "_"
-		a.mu.Lock()
-		for id, uid := range a.owners {
-			if uid == p.UserID {
-				sessions = append(sessions, sessInfo{ID: strings.TrimPrefix(id, prefix), Attached: len(a.bridges[id]) > 0})
-			}
-		}
-		a.mu.Unlock()
+		sessions = collectSessions(a, p.UserID, "", "")
 	}
 	router.JSON(w, map[string]any{"online": online, "sessions": sessions})
+}
+
+// sessInfo is one resumable session as shown to the UI (per-machine list, global list, cards).
+type sessInfo struct {
+	ID          string `json:"id"`                     // client-facing id (no nsSession prefix)
+	Label       int    `json:"label"`                  // friendly per-machine "Session N"
+	Attached    bool   `json:"attached"`               // at least one viewer connected
+	Viewers     int    `json:"viewers"`                // live viewer count
+	MachineID   string `json:"machine_id,omitempty"`   // set on the global list
+	MachineName string `json:"machine_name,omitempty"` // set on the global list
+}
+
+// collectSessions returns the caller's own sessions on one agent. Ownership (a.owners) persists
+// across a browser detach — the tmux shell lives on for resume — so we list by owner, not by live
+// bridge. Owner-scoped: never discloses another operator's sessions. The owners key is the
+// SERVER-namespaced id ("<userID>_<client id>"); we return the client-facing id (prefix stripped)
+// so a reattach re-namespaces to the SAME session. machineID/Name are set only for the global list.
+func collectSessions(a *agentConn, userID int64, machineID, machineName string) []sessInfo {
+	out := []sessInfo{}
+	prefix := strconv.FormatInt(userID, 10) + "_"
+	a.mu.Lock()
+	for id, uid := range a.owners {
+		if uid != userID {
+			continue
+		}
+		si := sessInfo{
+			ID:          strings.TrimPrefix(id, prefix),
+			Label:       a.labels[id],
+			Attached:    len(a.bridges[id]) > 0,
+			Viewers:     len(a.bridges[id]),
+			MachineID:   machineID,
+			MachineName: machineName,
+		}
+		out = append(out, si)
+	}
+	a.mu.Unlock()
+	return out
+}
+
+// handleAllSessions aggregates the caller's sessions across EVERY accessible, console-enabled
+// machine (for the global console + the dashboard "resume" strip). It live-queries each agent in
+// parallel so the combined list reflects real tmux state. GET /api/fleet/console/sessions (no id).
+func (s *Service) handleAllSessions(w http.ResponseWriter, r *http.Request, p *router.Principal) {
+	type entry struct {
+		a    *agentConn
+		id   string
+		name string
+	}
+	var accessible []entry
+	for mid, a := range regAll() {
+		m, err := s.machineByID(mid)
+		if err != nil || m == nil || p == nil || !scopeAllows(p, *m) || !m.ConsoleEnabled {
+			continue
+		}
+		accessible = append(accessible, entry{a, m.ID, m.Name})
+	}
+	var wg sync.WaitGroup
+	for _, e := range accessible {
+		wg.Add(1)
+		go func(a *agentConn) { defer wg.Done(); a.requestSessions(1200 * time.Millisecond) }(e.a)
+	}
+	wg.Wait()
+	sessions := []sessInfo{}
+	for _, e := range accessible {
+		sessions = append(sessions, collectSessions(e.a, p.UserID, e.id, e.name)...)
+	}
+	router.JSON(w, map[string]any{"sessions": sessions})
+}
+
+// handleConsoleSnapshot captures a session's current screen (one-shot, for a preview card).
+// GET /api/fleet/console/snapshot?machine_id=&session=  → {"data": "<base64 screen>"}
+func (s *Service) handleConsoleSnapshot(w http.ResponseWriter, r *http.Request) {
+	p := router.CurrentUser(r)
+	machineID := r.URL.Query().Get("machine_id")
+	clientSession := r.URL.Query().Get("session")
+	m, err := s.machineByID(machineID)
+	if err != nil || m == nil {
+		router.JSONError(w, "unknown machine", http.StatusNotFound)
+		return
+	}
+	if p == nil || !scopeAllows(p, *m) {
+		router.JSONError(w, "machine out of scope", http.StatusForbidden)
+		return
+	}
+	if !m.ConsoleEnabled {
+		router.JSONError(w, "console is not enabled for this machine", http.StatusForbidden)
+		return
+	}
+	a := regGet(machineID)
+	if a == nil {
+		router.JSONError(w, "the machine's console agent is offline", http.StatusConflict)
+		return
+	}
+	eff := nsSession(p.UserID, clientSession) // only ever snapshot your OWN session
+	a.mu.Lock()
+	owner := a.owners[eff]
+	a.mu.Unlock()
+	if owner != p.UserID {
+		router.JSONError(w, "session out of scope", http.StatusForbidden)
+		return
+	}
+	data, _ := a.requestSnapshot(eff, 2*time.Second) // empty on timeout — the card just shows no preview
+	router.JSON(w, map[string]any{"data": data})
 }
 
 func principalName(p *router.Principal) string {
