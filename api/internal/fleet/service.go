@@ -133,6 +133,7 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 		clientCertTTL:  90 * 24 * time.Hour,
 	}
 	consoleEventService = svc // lets the session-change hooks push live updates to console-events subscribers
+	startRecordJanitor()      // console recordings: delete past console_record_days (now + every 6h)
 	return svc, nil
 }
 

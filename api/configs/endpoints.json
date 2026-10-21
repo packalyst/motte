@@ -2205,6 +2205,24 @@
           "handler": "ConsoleForward",
           "description": "Open a port-forward to a host:port reachable by the machine",
           "min_role": "operator"
+        },
+        {
+          "path": "/console/recordings",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ConsoleRecordings",
+          "description": "List a machine's session recordings (own; admins see all)",
+          "min_role": "operator"
+        },
+        {
+          "path": "/console/recording",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ConsoleRecording",
+          "description": "Fetch one session recording for playback/download (audited)",
+          "min_role": "operator"
         }
       ]
     },

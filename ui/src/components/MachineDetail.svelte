@@ -20,6 +20,7 @@
   import Modal from './Modal.svelte'
   import Gauge from './Gauge.svelte'
   import SessionCard from './SessionCard.svelte'
+  import RecordingPlayer from './RecordingPlayer.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
@@ -86,19 +87,65 @@
     } else if (!(await confirm({ title: 'Disable console', message: `Disable the console on ${machine.name}? Any live sessions are closed.`, variant: 'primary', confirmText: 'Disable' }))) {
       return
     }
+    await applyConsole(enabled, consoleRecord, password, totp, enabled ? 'Console enabled' : 'Console disabled')
+  }
+
+  // Recording policy (WebTerm model): Off, or Always — every session on this machine recorded, with
+  // no per-session switch. Changing it while the console is on re-authenticates (turning it OFF
+  // weakens the audit trail); it applies to sessions opened from now on.
+  async function setRecording(next) {
+    if (next === consoleRecord) return
+    let password = ''
+    let totp = ''
+    if (consoleEnabled) {
+      const r = await stepUpConfirm({
+        title: next ? 'Record all sessions' : 'Stop recording sessions',
+        description: next
+          ? `Every console session on ${machine.name} will be recorded from now on. Re-authenticate to confirm.`
+          : `New console sessions on ${machine.name} will no longer be recorded. Re-authenticate to confirm.`,
+      })
+      if (!r?.confirmed) return
+      password = r.password
+      totp = r.totp
+    }
+    await applyConsole(consoleEnabled, next, password, totp, next ? 'Recording all sessions' : 'Recording off')
+  }
+
+  async function applyConsole(enabled, record, password, totp, okMsg) {
     consoleBusy = true
     try {
       const res = await apiPost('/api/fleet/console/toggle', {
-        machine_id: machine.id, enabled, record: consoleRecord, currentPassword: password, totpCode: totp,
+        machine_id: machine.id, enabled, record, currentPassword: password, totpCode: totp,
       })
       consoleEnabled = res.enabled
       consoleRecord = res.record
-      toast(enabled ? 'Console enabled' : 'Console disabled', 'success')
+      toast(okMsg, 'success')
     } catch (e) {
       toast(e.message || 'Could not update console', 'error')
     } finally {
       consoleBusy = false
     }
+  }
+
+  // Session recordings on this machine (own; admins see everyone's). Reloaded when the Sessions tab
+  // opens and whenever the live-session set changes (a session ending finalizes its recording).
+  let recordings = $state([])
+  let retentionDays = $state(30)
+  let playingRec = $state(null)
+  async function loadRecordings() {
+    try {
+      const res = await apiGet('/api/fleet/console/recordings?machine_id=' + encodeURIComponent(machine.id))
+      recordings = res.recordings || []
+      retentionDays = res.retentionDays || retentionDays
+    } catch {
+      recordings = []
+    }
+  }
+  function downloadRecording(rec) {
+    const a = document.createElement('a') // same-origin GET: the session cookie authenticates it
+    a.href = `/api/fleet/console/recording?machine_id=${encodeURIComponent(machine.id)}&name=${encodeURIComponent(rec.name)}`
+    a.download = rec.name
+    a.click()
   }
 
   // Machine tags — drive operator/viewer scoping. Editing is admin+ (backend-enforced).
@@ -199,6 +246,14 @@
     const release = openConsoleEvents()
     refreshSessions()
     return release
+  })
+  // Recordings: load when the Sessions tab opens, and again whenever the live-session set changes —
+  // a session starting or ending flips its recording's "live" state / finalizes it. (Recordings stay
+  // listable after the console is disabled, so this doesn't require consoleEnabled.)
+  $effect(() => {
+    if (activeTab !== 'sessions' || !canOpenConsole) return
+    liveSessions.length
+    loadRecordings()
   })
 
   // kernel-maintenance job status (absent unless a kernel update has run). Each phase
@@ -712,11 +767,18 @@
               <Button variant={consoleEnabled ? 'outline' : 'primary'} size="sm" icon="power" loading={consoleBusy} onclick={() => setConsole(!consoleEnabled)}>
                 {consoleEnabled ? 'Disable console' : 'Enable console'}
               </Button>
-              {#if !consoleEnabled}
-                <label class="flex items-center gap-1 text-[11px] text-muted-foreground" title="Record sessions to an asciinema cast for audit">
-                  <input type="checkbox" bind:checked={consoleRecord} /> record sessions
-                </label>
-              {/if}
+              <!-- Recording policy: Off / Always (every session on this machine), never per session. -->
+              <div class="flex items-center gap-1.5 ml-auto text-[11px] text-muted-foreground">
+                <span>Recording</span>
+                <div class="inline-flex rounded-lg border border-border overflow-hidden">
+                  {#each [[false, 'Off'], [true, 'Always']] as [val, label] (label)}
+                    <button type="button" disabled={consoleBusy} onclick={() => setRecording(val)}
+                      class="px-2.5 py-1 cursor-pointer transition {consoleRecord === val ? (val ? 'bg-destructive/15 text-destructive font-medium' : 'bg-muted text-foreground font-medium') : 'hover:bg-muted/60'}">
+                      {#if val}<span class="inline-block w-1.5 h-1.5 rounded-full bg-destructive mr-1 align-middle"></span>{/if}{label}
+                    </button>
+                  {/each}
+                </div>
+              </div>
             {/if}
             {#if !consoleEnabled && !canManageConsole}
               <span class="text-sm text-muted-foreground">Console is disabled for this machine.</span>
@@ -739,11 +801,50 @@
               {/if}
             </div>
           {/if}
+
+          <!-- Recorded sessions (one continuous recording per session; own, or everyone's for admins). -->
+          {#if canOpenConsole && (consoleRecord || recordings.length)}
+            <div class="mt-3 pt-3 border-t border-border">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Recordings</span>
+                <span class="text-[10px] text-muted-foreground/70">· kept {retentionDays} days · output only, keystrokes are never recorded</span>
+                <button type="button" onclick={loadRecordings} title="Refresh" class="ml-auto p-1 rounded text-muted-foreground hover:text-foreground cursor-pointer"><Icon name="refresh" size={13} /></button>
+              </div>
+              {#if recordings.length}
+                <div class="divide-y divide-border border border-border rounded-lg overflow-hidden">
+                  {#each recordings as rec (rec.name)}
+                    <div class="flex items-center gap-3 px-3 py-2 text-sm">
+                      <Icon name="player-play" size={14} class="text-muted-foreground shrink-0" />
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2">
+                          <span class="font-medium truncate">{rec.title}</span>
+                          {#if rec.live}<Badge variant="danger" size="sm">● recording</Badge>{/if}
+                          {#if rec.capped}<Badge variant="warning" size="sm">size limit reached</Badge>{/if}
+                        </div>
+                        <div class="text-[11px] text-muted-foreground truncate">
+                          {rec.user} · {new Date(rec.started * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          · {fmtUptime(Math.max(0, rec.ended - rec.started))} · {formatBytes(rec.size)}
+                        </div>
+                      </div>
+                      <Button variant="ghost" size="xs" icon="player-play" onclick={() => (playingRec = rec)}>Play</Button>
+                      <button type="button" onclick={() => downloadRecording(rec)} title="Download .cast"
+                        class="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"><Icon name="download" size={14} /></button>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="text-xs text-muted-foreground py-1">No recordings yet. With recording on, every session on this machine is recorded from the moment it opens.</div>
+              {/if}
+            </div>
+          {/if}
         {:else}
           <div class="text-sm text-muted-foreground">You don't have permission to use the console.</div>
         {/if}
-        {@render note('A remote interactive shell is gated: enable per-machine (admin, re-authenticate), then open (operator+). Sessions resume server-side (tmux) — reattach from the list above after a reload — and can be recorded to an audit cast. File browser, editor and split view are coming.')}
+        {@render note('A remote interactive shell is gated: enable per-machine (admin, re-authenticate), then open (operator+). Sessions resume server-side (tmux) — reattach from the list above after a reload. With recording set to Always, every session is recorded (output only) for audit; operators see their own recordings, admins see everyone’s, and each playback is logged.')}
       </div>
+    {/if}
+    {#if playingRec}
+      <RecordingPlayer machineId={machine.id} rec={playingRec} onclose={() => (playingRec = null)} />
     {/if}
 
     {#if activeTab === 'services'}
