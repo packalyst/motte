@@ -145,6 +145,40 @@
     overflowFor = null
     fn()
   }
+  // --- mobile key bar (touch devices): keys phone keyboards lack. Ctrl/Alt are sticky modifiers
+  // applied to the NEXT keystroke, whether it comes from the bar or the on-screen keyboard. ---
+  const isTouch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches
+  let ctrlArmed = $state(false)
+  let altArmed = $state(false)
+  function applyMods(d) {
+    if (!ctrlArmed && !altArmed) return d
+    let out = d
+    if (ctrlArmed && d.length === 1) {
+      const c = d.toUpperCase().charCodeAt(0)
+      if (c >= 64 && c <= 95) out = String.fromCharCode(c - 64) // Ctrl+A..Z, @ [ \ ] ^ _
+      else if (d === ' ') out = '\x00'
+    }
+    if (altArmed) out = '\x1b' + out
+    ctrlArmed = altArmed = false
+    return out
+  }
+  function sendKey(seq) {
+    activeSocket()?.sendInput(applyMods(seq))
+    activeTab?.term?.focus()
+  }
+  const keyRows = [
+    [{ l: 'Ctrl', mod: 'ctrl' }, { l: 'Alt', mod: 'alt' }, { l: 'Esc', s: '\x1b' }, { l: 'Tab', s: '\t' },
+      { l: '↑', s: '\x1b[A' }, { l: '↓', s: '\x1b[B' }, { l: '←', s: '\x1b[D' }, { l: '→', s: '\x1b[C' }],
+    [{ l: '⌨', kbd: true }, { l: '^C', s: '\x03' }, { l: '^D', s: '\x04' }, { l: 'PgUp', s: '\x1b[5~' },
+      { l: 'PgDn', s: '\x1b[6~' }, { l: '|', s: '|' }, { l: '/', s: '/' }, { l: '-', s: '-' }],
+  ]
+  function pressKey(k) {
+    if (k.mod === 'ctrl') ctrlArmed = !ctrlArmed
+    else if (k.mod === 'alt') altArmed = !altArmed
+    else if (k.kbd) { const t = activeTab?.term; if (document.activeElement?.closest?.('.xterm')) t?.blur(); else t?.focus() }
+    else sendKey(k.s)
+  }
+
   function copySelection(tab) {
     const sel = tab.term?.getSelection() || ''
     if (!sel) return toast('Select text in the terminal first', 'info')
@@ -313,7 +347,7 @@
     })
     socket.connect()
     tab.socket = socket
-    if (!readonly) term.onData((d) => socket.sendInput(d))
+    if (!readonly) term.onData((d) => socket.sendInput(applyMods(d)))
     term.onResize(({ cols, rows }) => socket.resize(cols, rows))
   }
 
@@ -640,7 +674,7 @@
 
 <!-- Per-session bottom status bar (reused in single + split): live status, start, duration, clock. -->
 {#snippet statusBar(tab)}
-  <div class="flex items-center gap-3 px-3 py-1 text-[10px] border-t border-white/10 bg-[#12161d] text-white/50 overflow-x-auto shrink-0">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1 text-[10px] border-t border-white/10 bg-[#12161d] text-white/50 shrink-0">
     <span class="flex items-center gap-1 shrink-0">
       <span class="w-1.5 h-1.5 rounded-full {tab.exited ? 'bg-white/30' : 'bg-green-400'}"></span>{tab.exited ? 'Ended' : 'Active'}
     </span>
@@ -930,6 +964,21 @@
     </aside>
   {/if}
   </div>
+
+  <!-- Mobile key bar (touch only). pointerdown is cancelled so a tap never blurs the terminal and
+       dismisses the on-screen keyboard. Ctrl/Alt light up while armed for the next key. -->
+  {#if isTouch && activeTab && !readonly}
+    <div class="shrink-0 border-t border-white/10 bg-[#12161d] p-1.5 grid gap-1 select-none">
+      {#each keyRows as row, ri (ri)}
+        <div class="grid grid-cols-8 gap-1">
+          {#each row as k (k.l)}
+            <button onpointerdown={(e) => e.preventDefault()} onclick={() => pressKey(k)}
+              class="h-9 rounded text-xs font-medium {(k.mod === 'ctrl' && ctrlArmed) || (k.mod === 'alt' && altArmed) ? 'bg-[#58a6ff] text-white' : 'bg-white/5 text-white/80 active:bg-white/15'}">{k.l}</button>
+          {/each}
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <!-- Inline file editor -->
   {#if editPath != null}
