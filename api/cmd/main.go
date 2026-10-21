@@ -736,6 +736,8 @@ func main() {
 	// step-up grant + per-host enable + scope before bridging to the machine's agent channel.
 	if flSvc != nil {
 		mux.Handle("/api/fleet/console/ws", http.HandlerFunc(flSvc.HandleBrowserConsole))
+		// Console-events WS: pushes the global session list + serves snapshots/kills (no polling).
+		mux.Handle("/api/fleet/console/events", http.HandlerFunc(flSvc.HandleConsoleEvents))
 	}
 
 	// Internal-only block-list feed for the Traefik sentinel plugin (fetched container-to-
