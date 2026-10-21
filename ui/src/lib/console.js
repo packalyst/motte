@@ -18,7 +18,7 @@ const enc = new TextEncoder()
 
 export class ConsoleSocket {
   constructor(opts) {
-    this.opts = opts // {machine, grant, session, cols, rows, onData, onExit, onError, onFileChunk, onOpen, onClose}
+    this.opts = opts // {machine, grant, session, cols, rows, onData, onExit, onError, onFileChunk, onFileList, onOpen, onClose}
     this.ws = null
     this.closedByUs = false
     this._fileBufs = new Map() // path -> array of Uint8Array (downloads)
@@ -49,6 +49,9 @@ export class ConsoleSocket {
         break
       case 'file-chunk':
         this._onFileChunk(f)
+        break
+      case 'file-list-result':
+        this.opts.onFileList?.(f.path, f.items || [])
         break
     }
   }
@@ -91,6 +94,11 @@ export class ConsoleSocket {
 
   getFile(path) {
     this._send({ t: 'file-get', session: this.opts.session, path })
+  }
+
+  // listDir asks the agent for a directory's entries; the reply arrives via onFileList.
+  listDir(path) {
+    this._send({ t: 'file-list', session: this.opts.session, path })
   }
 
   close() {
