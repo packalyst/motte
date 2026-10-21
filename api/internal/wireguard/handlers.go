@@ -112,6 +112,10 @@ func (s *Service) handleGetPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.enrichPeersWithStatus([]*Peer{peer})
+	// Never expose private/preshared keys on the details endpoint (it defaults to viewer):
+	// only the admin-gated /config and /qr paths return them. peerStore.Get returns a copy,
+	// so stripping here cannot corrupt the cached peer.
+	stripSensitiveKeys(peer)
 	router.JSON(w, peer)
 }
 
