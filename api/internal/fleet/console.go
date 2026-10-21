@@ -110,6 +110,47 @@ type agentConn struct {
 	mu      sync.Mutex
 	bridges map[string][]*consoleBridge // session id → viewers
 	owners  map[string]int64            // session id → user who opened it (interactive attach is owner-only)
+	opened  map[string]time.Time        // session id → first open (max-duration reaper)
+	seen    map[string]time.Time        // session id → last activity (idle reaper)
+}
+
+// A resumable shell lives on until it exits — so cap how long one can stay open (max-duration) or
+// sit idle (idle timeout). The reaper tells the agent to KILL (not detach) past-limit sessions.
+const (
+	consoleIdleTimeout = 30 * time.Minute
+	consoleMaxDuration = 12 * time.Hour
+)
+
+// touch records activity on a session (first open sets `opened`; every call refreshes `seen`), so
+// the reaper can tell an active long-running command from an abandoned shell.
+func (a *agentConn) touch(session string) {
+	a.mu.Lock()
+	now := time.Now()
+	if _, ok := a.opened[session]; !ok {
+		a.opened[session] = now
+	}
+	a.seen[session] = now
+	a.mu.Unlock()
+}
+
+// reapExpired kills sessions past the idle or max-duration limit. It only signals the agent
+// (writeToAgent "kill"); the agent destroys the tmux session and replies session-exit, which the
+// normal routeToBrowsers path uses to free owner/bridges — so ownership is never dropped while a
+// shell is still alive (no cross-operator hijack), and an un-upgraded agent simply ignores "kill".
+func (a *agentConn) reapExpired() {
+	now := time.Now()
+	a.mu.Lock()
+	var kill []string
+	for id := range a.owners {
+		op, sn := a.opened[id], a.seen[id]
+		if (!op.IsZero() && now.Sub(op) > consoleMaxDuration) || (!sn.IsZero() && now.Sub(sn) > consoleIdleTimeout) {
+			kill = append(kill, id)
+		}
+	}
+	a.mu.Unlock()
+	for _, id := range kill {
+		a.writeToAgent(consoleFrame{T: "kill", Session: id})
+	}
 }
 
 // claimOwner records the opener of a session. It returns false if the session already has a
@@ -187,6 +228,8 @@ func (a *agentConn) routeToBrowsers(f consoleFrame) {
 		a.mu.Lock()
 		delete(a.bridges, f.Session)
 		delete(a.owners, f.Session) // the shell ended — free the session id
+		delete(a.opened, f.Session)
+		delete(a.seen, f.Session)
 		a.mu.Unlock()
 	}
 }
@@ -260,9 +303,28 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(8 << 20) // 8 MiB/frame cap (file-get chunks can be large but still bounded)
-	a := &agentConn{conn: conn, bridges: map[string][]*consoleBridge{}, owners: map[string]int64{}}
+	a := &agentConn{
+		conn: conn, bridges: map[string][]*consoleBridge{}, owners: map[string]int64{},
+		opened: map[string]time.Time{}, seen: map[string]time.Time{},
+	}
 	regSet(m.ID, a)
+	// Reaper: sweep this channel's sessions for idle / over-max every minute, for the life of the
+	// connection. Kills past-limit resumable shells so a root session can't linger indefinitely.
+	stopReaper := make(chan struct{})
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopReaper:
+				return
+			case <-t.C:
+				a.reapExpired()
+			}
+		}
+	}()
 	defer func() {
+		close(stopReaper)
 		regDel(m.ID, a)
 		a.closeAll()
 		conn.Close()
@@ -271,6 +333,9 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		var f consoleFrame
 		if err := conn.ReadJSON(&f); err != nil {
 			return
+		}
+		if f.T == "data" {
+			a.touch(f.Session) // agent→browser output counts as activity (a long-running command isn't idle)
 		}
 		a.routeToBrowsers(f)
 	}
@@ -355,6 +420,9 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		conn.WriteJSON(consoleFrame{T: "error", Msg: "session belongs to another operator"})
 		return
 	}
+	if !readonly {
+		a.touch(effSession) // start/refresh the session's activity clock for the reaper
+	}
 	b := &consoleBridge{browser: conn, session: effSession, readonly: readonly, rec: rec}
 	first := a.addBridge(effSession, b)
 	events.Audit("fleet", "console_open", events.SeverityWarning, p.Username, helper.GetClientIP(r),
@@ -388,6 +456,8 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		f.Session = effSession // never let a browser target another session
 		if f.T == "resize" {
 			f.Cols, f.Rows = clampResize(f.Cols), clampResize(f.Rows) // bound every resize, not just open
+		} else if f.T == "data" {
+			a.touch(effSession) // keystrokes refresh the idle clock
 		}
 		a.writeToAgent(f)
 	}
