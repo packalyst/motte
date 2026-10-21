@@ -183,7 +183,7 @@
     busy = true
     try {
       const g = await ensureGrant(machine)
-      const tab = { id: session, machine, label, name: null, startedAt: Date.now(), latency: null, cwd: '', pinger: null, el: null, term: null, fit: null, search: null, socket: null, exited: false }
+      const tab = { id: session, machine, label, name: null, startedAt: Date.now(), latency: null, cwd: '', commands: [], pinger: null, el: null, term: null, fit: null, search: null, socket: null, exited: false }
       tabs = [...tabs, tab]
       activeId = session
       await tick() // let the terminal container mount
@@ -248,6 +248,7 @@
       onPong: (latency, cwd) => { tab.latency = latency; tab.cwd = cwd; tabs = [...tabs] },
       onGit: (text) => { if (tab.id === activeId) { gitText = text; gitLoading = false } },
       onDocker: (action, data) => { if (tab.id === activeId) handleDocker(action, data) },
+      onCommand: (c) => { tab.commands = [c, ...tab.commands].slice(0, 100); tabs = [...tabs] },
       onFileChunk: (path, parts) => handleFileChunk(path, parts),
       onFileList: (path, items) => handleFileList(tab.id, path, items),
     })
@@ -437,6 +438,24 @@
   }
   function delSnippet(i) { snippets = snippets.filter((_, x) => x !== i); saveSnippets() }
 
+  let forwards = $state([]) // [{id, url, host, port}] — reach a web service on the machine via the agent
+  async function addForward() {
+    openPrompt({ title: 'Forward to host:port (as the machine sees it)', placeholder: 'localhost:8080', onok: async (v) => {
+      const t = (v || '').trim()
+      if (!t) return
+      const i = t.lastIndexOf(':')
+      const host = i > 0 ? t.slice(0, i) : 'localhost'
+      const port = parseInt(i > 0 ? t.slice(i + 1) : t, 10)
+      if (!port || port < 1 || port > 65535) { toast('Enter a valid port', 'error'); return }
+      try {
+        const res = await apiPost('/api/fleet/console/forward', { machine_id: activeTab.machine.id, host, port })
+        forwards = [...forwards, { id: res.id, url: res.url, host, port }]
+      } catch (e) {
+        toast(e.message || 'could not open forward', 'error')
+      }
+    } })
+  }
+
   function openTool(t) {
     tool = tool === t ? null : t
     if (tool) filesVisible = false
@@ -573,6 +592,8 @@
         <button onclick={() => openTool('snippets')} title="Snippets" class="p-1.5 rounded hover:bg-white/5 {tool === 'snippets' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="bolt" size={14} /></button>
         <button onclick={() => openTool('git')} title="Git status" class="p-1.5 rounded hover:bg-white/5 {tool === 'git' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="git-branch" size={14} /></button>
         <button onclick={() => openTool('docker')} title="Docker" class="p-1.5 rounded hover:bg-white/5 {tool === 'docker' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="brand-docker" size={14} /></button>
+        <button onclick={() => openTool('forwards')} title="Port forwards" class="p-1.5 rounded hover:bg-white/5 {tool === 'forwards' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="arrows-exchange" size={14} /></button>
+        <button onclick={() => openTool('commands')} title="Command history" class="p-1.5 rounded hover:bg-white/5 {tool === 'commands' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="list-details" size={14} /></button>
         <button onclick={() => pasteInto(activeTab)} title="Paste clipboard" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="clipboard" size={14} /></button>
         <button onclick={toggleTheme} title="Terminal theme" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name={termLight ? 'moon' : 'sun'} size={14} /></button>
         <span class="w-px h-4 bg-white/10 mx-0.5"></span>
@@ -676,11 +697,12 @@
   {#if tool}
     <aside class="w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
-        <Icon name={tool === 'git' ? 'git-branch' : tool === 'docker' ? 'brand-docker' : 'bolt'} size={14} class="text-[#58a6ff]" />
+        <Icon name={tool === 'git' ? 'git-branch' : tool === 'docker' ? 'brand-docker' : tool === 'forwards' ? 'arrows-exchange' : tool === 'commands' ? 'list-details' : 'bolt'} size={14} class="text-[#58a6ff]" />
         <span class="font-medium text-sm capitalize">{tool}</span>
         {#if tool === 'git'}<button onclick={refreshGit} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>{/if}
         {#if tool === 'docker'}<button onclick={() => { dockerLog = null; dockerPs() }} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>{/if}
         {#if tool === 'snippets'}<button onclick={addSnippet} title="Add snippet" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="plus" size={14} /></button>{/if}
+        {#if tool === 'forwards'}<button onclick={addForward} title="New forward" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="plus" size={14} /></button>{/if}
         <button onclick={() => (tool = null)} title="Close" class="p-1 text-white/60 hover:text-white"><Icon name="x" size={14} /></button>
       </div>
       <div class="flex-1 overflow-y-auto">
@@ -729,6 +751,33 @@
             {/each}
           {:else}
             <div class="p-3 text-xs text-white/40">No containers.</div>
+          {/if}
+        {:else if tool === 'forwards'}
+          {#if forwards.length}
+            {#each forwards as f (f.id)}
+              <div class="flex items-center gap-2 px-3 py-2 border-b border-white/5 text-xs">
+                <Icon name="arrows-exchange" size={13} class="text-[#58a6ff] shrink-0" />
+                <span class="font-mono text-white/80 truncate flex-1">{f.host}:{f.port}</span>
+                <a href={f.url} target="_blank" rel="noopener noreferrer" class="text-[#58a6ff] hover:underline shrink-0">open ↗</a>
+              </div>
+            {/each}
+          {:else}
+            <div class="p-3 text-xs text-white/40 leading-relaxed">No forwards. Add one with + to reach a web service the machine can see (e.g. <span class="font-mono">localhost:8080</span>) in your browser.</div>
+          {/if}
+        {:else if tool === 'commands'}
+          {#if activeTab?.commands?.length}
+            {#each activeTab.commands as c, i (i)}
+              <div class="px-3 py-1.5 border-b border-white/5 text-xs">
+                <div class="flex items-center gap-2">
+                  <span class="w-1.5 h-1.5 rounded-full shrink-0 {c.exit === 0 ? 'bg-green-400' : 'bg-red-400'}"></span>
+                  <span class="font-mono text-white/80 truncate flex-1" title={c.cmd}>{c.cmd}</span>
+                  <span class="text-white/40 shrink-0 tabular-nums">{c.ms} ms</span>
+                </div>
+                {#if c.exit !== 0}<div class="text-red-300/70 text-[10px] pl-3.5">exit {c.exit}</div>{/if}
+              </div>
+            {/each}
+          {:else}
+            <div class="p-3 text-xs text-white/40 leading-relaxed">No commands yet. Run something — your history appears here with exit status and timing (bash sessions).</div>
           {/if}
         {/if}
       </div>

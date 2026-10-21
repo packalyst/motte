@@ -64,6 +64,15 @@ export class ConsoleSocket {
       case 'docker-result':
         this.opts.onDocker?.(f.action || '', f.data ? new TextDecoder().decode(b64decodeToBytes(f.data)) : '')
         break
+      case 'command': {
+        // payload: "<exit>|<ms>|<command line>"
+        const s = f.data ? new TextDecoder().decode(b64decodeToBytes(f.data)) : ''
+        const first = s.indexOf('|'), second = s.indexOf('|', first + 1)
+        if (first > 0 && second > first) {
+          this.opts.onCommand?.({ exit: parseInt(s.slice(0, first), 10), ms: parseInt(s.slice(first + 1, second), 10), cmd: s.slice(second + 1) })
+        }
+        break
+      }
     }
   }
 
