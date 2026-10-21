@@ -231,6 +231,9 @@
     tab.term = term
     tab.fit = fit
     tab.search = search
+    // A pane added in split view mounts into a grid cell that isn't sized yet, so the first fit
+    // measures wrong (blank/garbled until a refresh). Refit on the next frame once layout settles.
+    requestAnimationFrame(() => { try { fit.fit() } catch { /* detached */ } })
 
     const socket = new ConsoleSocket({
       machine: tab.machine.id, grant: g, session: tab.id, cols: term.cols, rows: term.rows,
@@ -824,3 +827,8 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* Native <button>s don't carry a pointer cursor; every control in the console chrome is clickable. */
+  button:not(:disabled) { cursor: pointer; }
+</style>
