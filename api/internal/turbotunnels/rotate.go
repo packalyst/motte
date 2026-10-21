@@ -119,10 +119,14 @@ func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
 // IP filtering: private targets (WG 10.8.x, Headscale 100.64.x, LAN) are all
 // legitimate here — the URL is admin-configured, the public caller only supplies
 // the key that selects a pre-set tunnel.
-var rotateHTTPClient = &http.Client{
-	Timeout:       15 * time.Second,
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-}
+// rotateHTTPClient blocks link-local/cloud-metadata at dial time (RFC1918/LAN provider
+// targets stay allowed — the URL is admin-configured) and refuses redirects, so a rotate-key
+// holder can't exfil instance metadata through the capped response body returned to them.
+var rotateHTTPClient = func() *http.Client {
+	c := helper.SafeInternalHTTPClient(15 * time.Second)
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c
+}()
 
 // callProviderRotate GETs the provider's "change IP" endpoint server-side. It
 // returns whether it succeeded, the provider's HTTP status, and a capped copy of
