@@ -45,6 +45,14 @@
   // never prompts per machine. Returns the {machineId: grant} map, or null if the user cancelled.
   async function bulkGrants(machineIds) {
     if (!machineIds.length) return {}
+    // Try silently first: the server honours a step-up grace window, so re-opening the console
+    // within it needs no prompt. Only a 428 (grace lapsed) pops the re-auth dialog.
+    try {
+      const res = await apiPost('/api/fleet/console/grant-all', { machine_ids: machineIds })
+      return res?.grants || {}
+    } catch (e) {
+      if (e?.status !== 428) throw e
+    }
     const r = await stepUpConfirm({ title: 'Open console', description: 'Re-authenticate to open your sessions.' })
     if (!r?.confirmed) return null
     const res = await apiPost('/api/fleet/console/grant-all', { machine_ids: machineIds, currentPassword: r.password, totpCode: r.totp })
