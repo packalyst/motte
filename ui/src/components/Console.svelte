@@ -3,13 +3,14 @@
   // tab (session), rendered with xterm.js. Supports multiple tabs, reattach to a resumable session
   // (tmux survives a disconnect), resize, copy/paste (xterm), scrollback search, file
   // upload/download, a read-only share link, and shows a recording badge.
-  import { onDestroy, tick } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
   import { SearchAddon } from '@xterm/addon-search'
   import { WebLinksAddon } from '@xterm/addon-web-links'
   import '@xterm/xterm/css/xterm.css'
-  import { apiPost, stepUpConfirm, toast } from '../stores/app.js'
+  import { apiPost, stepUpConfirm, toast, confirm } from '../stores/app.js'
+  import { consoleSessions } from '../lib/consoleEvents.js'
   import { ConsoleSocket } from '../lib/console.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
@@ -28,14 +29,19 @@
     startFiles = false,
     embedded = false,
     onclose,
+    ontabs = null, // called with the open tabs [{machine_id, machine_name, session, label}] on change
     shareGrant = null,
     shareSession = null,
     shareMachine = null,
   } = $props()
 
-  const termTheme = {
+  const darkTheme = {
     background: '#0f1419', foreground: '#d7dce2', cursor: '#58a6ff',
     selectionBackground: '#2d3340', black: '#1a1f29', brightBlack: '#5c6773',
+  }
+  const lightTheme = {
+    background: '#ffffff', foreground: '#1f2328', cursor: '#0969da',
+    selectionBackground: '#b6d7ff', black: '#1f2328', brightBlack: '#8c959f',
   }
 
   let tabs = $state([])
@@ -67,6 +73,66 @@
   // The machine whose name/badges the header shows and the + button opens onto.
   const activeTab = $derived(tabs.find((t) => t.id === activeId) || null)
   const activeMachine = $derived(activeTab?.machine || initialMachine || shareMachine || null)
+
+  // --- chrome state (font / theme / rename / maximize / menus / live clock) ---
+  let fontSize = $state(13)
+  let termLight = $state(false)
+  let maximizedId = $state(null) // in split, show only this pane
+  let newMenuOpen = $state(false)
+  let allMenuOpen = $state(false)
+  let now = $state(Date.now()) // ticks every second for live durations
+  onMount(() => {
+    const iv = setInterval(() => (now = Date.now()), 1000)
+    return () => clearInterval(iv)
+  })
+
+  function applyTermOpts() {
+    const theme = termLight ? lightTheme : darkTheme
+    for (const t of tabs) {
+      if (!t.term) continue
+      t.term.options.fontSize = fontSize
+      t.term.options.theme = theme
+    }
+    fitAll()
+  }
+  function setFont(d) { fontSize = Math.min(24, Math.max(9, fontSize + d)); applyTermOpts() }
+  function toggleTheme() { termLight = !termLight; applyTermOpts() }
+  function tabTitle(tab) { return tab.name || ('Session ' + (tab.label ?? '•')) }
+  function startRename(tab) {
+    const name = window.prompt('Rename session', tabTitle(tab))
+    if (name != null) { tab.name = name.trim() || null; tabs = [...tabs] }
+  }
+  function toggleMaximize(tab) { maximizedId = maximizedId === tab.id ? null : tab.id; fitAll() }
+  function pasteInto(tab) {
+    navigator.clipboard?.readText?.().then((t) => { if (t && tab?.socket) tab.socket.sendInput(t) }).catch(() => {})
+  }
+
+  // Tab close (X): confirm, then KILL the session (not just detach) — matches the session list.
+  async function killTab(tab) {
+    const ok = await confirm({
+      title: 'Close session',
+      message: `Close ${tabTitle(tab)} on ${tab.machine.name || tab.machine.id}? Anything running in it is terminated.`,
+      variant: 'destructive', confirmText: 'Close',
+    })
+    if (!ok) return
+    try {
+      await apiPost('/api/fleet/console/kill', { machine_id: tab.machine.id, session: tab.id })
+    } catch (e) {
+      toast(e.message || 'could not close session', 'error')
+    }
+    closeTab(tab) // detach locally; the server tears down the tmux session
+  }
+
+  // --- bottom status-bar formatting ---
+  function fmtDuration(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000))
+    if (s < 60) return s + 's'
+    const m = Math.floor(s / 60)
+    if (m < 60) return m + 'm ' + (s % 60) + 's'
+    return Math.floor(m / 60) + 'h ' + (m % 60) + 'm'
+  }
+  const fmtClock = (ms) => new Date(ms).toLocaleTimeString()
+  const fmtStart = (ms) => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
   function randSession() {
     const b = new Uint8Array(16)
@@ -102,7 +168,7 @@
     busy = true
     try {
       const g = await ensureGrant(machine)
-      const tab = { id: session, machine, label, el: null, term: null, fit: null, search: null, socket: null, exited: false }
+      const tab = { id: session, machine, label, name: null, startedAt: Date.now(), el: null, term: null, fit: null, search: null, socket: null, exited: false }
       tabs = [...tabs, tab]
       activeId = session
       await tick() // let the terminal container mount
@@ -131,7 +197,7 @@
     if (tab) tab.el = el
     const term = new Terminal({
       cursorBlink: true, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      fontSize: 13, theme: termTheme, scrollback: 5000, allowProposedApi: true,
+      fontSize, theme: termLight ? lightTheme : darkTheme, scrollback: 5000, allowProposedApi: true,
     })
     const fit = new FitAddon()
     const search = new SearchAddon()
@@ -190,6 +256,7 @@
   }
   // Square-ish grid for the panes (2 → 1×2, 3-4 → 2×2, …).
   const splitCols = $derived(Math.ceil(Math.sqrt(Math.max(1, tabs.length))))
+  const inSplit = $derived(splitView && !maximizedId) // maximizing a pane collapses the grid
   // Re-fit whenever the layout, pane count, or the files panel (which narrows the terminal) changes.
   $effect(() => { splitView; tabs.length; filesVisible; fitAll() })
 
@@ -332,58 +399,122 @@
     else if (initialMachine) openTab(initialMachine, initialSession)
   })
 
+  // Report the open tabs to the parent (to mirror into the URL hash for refresh/deep-link).
+  $effect(() => { ontabs?.(tabs.map((t) => ({ machine_id: t.machine.id, machine_name: t.machine.name, session: t.id, label: t.label }))) })
+
   onDestroy(() => { for (const t of tabs) { t.socket?.close(); t.term?.dispose() } })
 </script>
 
 <svelte:window on:resize={onResize} />
+
+<!-- Per-session bottom status bar (reused in single + split): live status, start, duration, clock. -->
+{#snippet statusBar(tab)}
+  <div class="flex items-center gap-3 px-3 py-1 text-[10px] border-t border-white/10 bg-[#12161d] text-white/50 overflow-x-auto shrink-0">
+    <span class="flex items-center gap-1 shrink-0">
+      <span class="w-1.5 h-1.5 rounded-full {tab.exited ? 'bg-white/30' : 'bg-green-400'}"></span>{tab.exited ? 'Ended' : 'Active'}
+    </span>
+    <span class="shrink-0">start {fmtStart(tab.startedAt)}</span>
+    <span class="shrink-0">duration {fmtDuration(now - tab.startedAt)}</span>
+    <span class="flex items-center gap-1 shrink-0"><Icon name="clock" size={10} />{fmtClock(now)}</span>
+    <span class="shrink-0 text-white/30 ml-auto">{tab.machine.name || tab.machine.id}</span>
+  </div>
+{/snippet}
 
 <!-- Overlay mode: inset past the app sidebar on desktop so it stays visible (a page, not a modal).
      Embedded mode (global console): fill the page column the parent lays out beside its rail. -->
 <div class={embedded
     ? 'relative flex-1 min-w-0 flex flex-col bg-[#0f1419] text-[#d7dce2]'
     : 'fixed inset-0 lg:left-60 z-50 flex flex-col bg-[#0f1419] text-[#d7dce2]'}>
-  <!-- Header / toolbar -->
-  <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10 bg-[#12161d]">
-    <Icon name="terminal-2" size={16} class="text-[#58a6ff]" />
-    <span class="text-sm font-medium truncate">{activeMachine?.name || activeMachine?.id || 'Console'}</span>
-    {#if readonly}<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">read-only</span>{/if}
-    {#if activeMachine?.console_record && !readonly}<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>recording</span>{/if}
-
-    <!-- Tabs: "Session N" over the machine name (sessions can span machines). -->
-    <div class="flex items-center gap-1 ml-2 overflow-x-auto">
+  <!-- TOP BAR: tabs on the left (can span machines); session controls on the right. -->
+  <div class="flex items-center gap-2 px-2 py-1.5 border-b border-white/10 bg-[#12161d]">
+    <div class="flex items-center gap-1 overflow-x-auto flex-1 min-w-0">
       {#each tabs as tab (tab.id)}
         <button onclick={() => activate(tab.id)}
-          class="group flex items-center gap-1.5 px-2.5 py-1 rounded whitespace-nowrap {activeId === tab.id ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5'}">
-          <Icon name="terminal" size={12} />
+          class="group flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded border-l-2 whitespace-nowrap shrink-0 {activeId === tab.id ? 'bg-white/10 border-[#58a6ff]' : 'border-transparent hover:bg-white/5'}">
+          <span class="w-1.5 h-1.5 rounded-full {tab.exited ? 'bg-white/30' : 'bg-green-400'}"></span>
           <span class="flex flex-col items-start leading-tight text-left">
-            <span class="text-xs">Session {tab.label ?? '•'}{tab.exited ? ' (ended)' : ''}</span>
-            <span class="text-[9px] text-white/40 truncate max-w-[120px]">{tab.machine.name || tab.machine.id}</span>
+            <span class="text-xs {activeId === tab.id ? 'text-white' : 'text-white/70'}">{tabTitle(tab)}{tab.exited ? ' (ended)' : ''}</span>
+            <span class="text-[9px] text-white/40 truncate max-w-[110px]">{tab.machine.name || tab.machine.id}</span>
           </span>
-          <span onclick={(e) => { e.stopPropagation(); closeTab(tab) }} class="opacity-0 group-hover:opacity-100 hover:text-red-300"><Icon name="x" size={11} /></span>
+          {#if !readonly}
+            <span role="button" tabindex="-1" onkeydown={() => {}} onclick={(e) => { e.stopPropagation(); killTab(tab) }}
+              class="opacity-0 group-hover:opacity-100 hover:text-red-300 ml-1"><Icon name="x" size={11} /></span>
+          {/if}
         </button>
       {/each}
-      {#if !readonly && activeMachine}
-        <button onclick={() => openTab(activeMachine)} disabled={busy} title="New session on {activeMachine.name || activeMachine.id}" class="px-2 py-1 rounded text-white/60 hover:bg-white/5"><Icon name="plus" size={13} /></button>
-      {/if}
+      {#if tabs.length === 0}<span class="text-xs text-white/40 px-2">No sessions open</span>{/if}
     </div>
 
-    <div class="ml-auto flex items-center gap-1">
+    <div class="flex items-center gap-1 shrink-0 relative">
+      {#if !readonly}
+        <!-- Jump to any live session across machines -->
+        <button onclick={() => { allMenuOpen = !allMenuOpen; newMenuOpen = false }} title="All sessions" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="layout-list" size={15} /></button>
+        {#if allMenuOpen}
+          <div class="absolute right-0 top-9 z-50 w-64 max-h-80 overflow-y-auto bg-[#1a1f29] border border-white/10 rounded-lg shadow-xl py-1">
+            <div class="px-3 py-1 text-[10px] uppercase tracking-wide text-white/40">Active sessions</div>
+            {#if $consoleSessions.length}
+              {#each $consoleSessions as s (s.machine_id + '|' + s.id)}
+                <button onclick={() => { allMenuOpen = false; openSession(s) }} class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-white/70 hover:bg-white/5 text-left">
+                  <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.attached ? 'bg-green-400' : 'bg-white/30'}"></span>
+                  <span class="flex-1 truncate">Session {s.label} · {s.machine_name}</span>
+                </button>
+              {/each}
+            {:else}<div class="px-3 py-2 text-xs text-white/40">No active sessions.</div>{/if}
+          </div>
+        {/if}
+        <!-- New session (machine picker when more than one is available) -->
+        <button onclick={() => { if (machines.length > 1) { newMenuOpen = !newMenuOpen; allMenuOpen = false } else if (activeMachine) openTab(activeMachine) }}
+          disabled={busy} title="New session" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="plus" size={16} /></button>
+        {#if newMenuOpen}
+          <div class="absolute right-0 top-9 z-50 w-56 max-h-80 overflow-y-auto bg-[#1a1f29] border border-white/10 rounded-lg shadow-xl py-1">
+            <div class="px-3 py-1 text-[10px] uppercase tracking-wide text-white/40">New session on…</div>
+            {#each machines as m (m.id)}
+              <button onclick={() => { newMenuOpen = false; openTab({ id: m.id, name: m.name, console_record: m.console_record }) }}
+                class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-white/70 hover:bg-white/5 text-left"><Icon name="server" size={13} class="text-[#58a6ff] shrink-0" /><span class="truncate">{m.name || m.id}</span></button>
+            {/each}
+          </div>
+        {/if}
+      {/if}
       {#if tabs.length > 1}
         <button onclick={() => (splitView = !splitView)} title={splitView ? 'Single view' : 'Split view'}
-          class="p-1.5 rounded hover:bg-white/5 {splitView ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name={splitView ? 'layout-columns' : 'layout-grid'} size={14} /></button>
+          class="p-1.5 rounded hover:bg-white/5 {splitView ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name={splitView ? 'layout-columns' : 'layout-grid'} size={15} /></button>
       {/if}
-      <button onclick={() => (searchVisible = !searchVisible)} title="Search" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="search" size={14} /></button>
-      {#if !readonly}
+      <button onclick={() => closeAll()} title="Close console (back)" class="p-1.5 rounded text-white/60 hover:bg-red-500/20 hover:text-red-300"><Icon name="x" size={16} /></button>
+    </div>
+  </div>
+
+  <!-- Backdrop that dismisses the dropdowns -->
+  {#if newMenuOpen || allMenuOpen}
+    <button aria-label="Close menu" class="fixed inset-0 z-40 cursor-default" onclick={() => { newMenuOpen = false; allMenuOpen = false }}></button>
+  {/if}
+
+  <!-- SESSION TOOLBAR (acts on the active session) -->
+  {#if activeTab && !readonly}
+    <div class="flex items-center gap-1 px-3 py-1.5 border-b border-white/10 bg-[#0f1419] overflow-x-auto">
+      <span class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 shrink-0">
+        <span class="w-1.5 h-1.5 rounded-full {activeTab.exited ? 'bg-white/30' : 'bg-green-400'}"></span>
+        <span class="text-white/80 font-mono text-[11px]">root@{activeMachine?.name || activeMachine?.id}</span>
+      </span>
+      <button onclick={() => startRename(activeTab)} title="Rename session" class="text-sm text-white/80 px-1 shrink-0 hover:text-white truncate max-w-[160px]">{tabTitle(activeTab)}</button>
+      <div class="ml-auto flex items-center gap-0.5 shrink-0">
+        <button onclick={() => (searchVisible = !searchVisible)} title="Search scrollback" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="search" size={14} /></button>
         <button onclick={openFiles} title="File browser" class="p-1.5 rounded hover:bg-white/5 {filesVisible ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="folder" size={14} /></button>
         <button onclick={upload} title="Quick upload" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="upload" size={14} /></button>
         <button onclick={download} title="Quick download" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="download" size={14} /></button>
-        <button onclick={share} title="Share read-only" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="share" size={14} /></button>
-      {/if}
-      {#if !embedded}
-        <button onclick={closeAll} title="Close console" class="p-1.5 rounded text-white/60 hover:bg-red-500/20 hover:text-red-300"><Icon name="x" size={16} /></button>
-      {/if}
+        <button onclick={() => pasteInto(activeTab)} title="Paste clipboard" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="clipboard" size={14} /></button>
+        <button onclick={toggleTheme} title="Terminal theme" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name={termLight ? 'moon' : 'sun'} size={14} /></button>
+        <span class="w-px h-4 bg-white/10 mx-0.5"></span>
+        <button onclick={() => setFont(-1)} title="Smaller text" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="minus" size={14} /></button>
+        <span class="text-[10px] text-white/40 tabular-nums w-4 text-center">{fontSize}</span>
+        <button onclick={() => setFont(1)} title="Larger text" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="plus" size={14} /></button>
+        <span class="w-px h-4 bg-white/10 mx-0.5"></span>
+        <button onclick={() => startRename(activeTab)} title="Rename" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="pencil" size={14} /></button>
+        <button onclick={share} title="Share read-only link" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="share" size={14} /></button>
+        <button onclick={() => toggleMaximize(activeTab)} title="Maximize" class="p-1.5 rounded hover:bg-white/5 {maximizedId ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="arrows-maximize" size={14} /></button>
+        {#if activeMachine?.console_record}<span class="flex items-center gap-1 text-[10px] text-red-300 px-1.5"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>rec</span>{/if}
+      </div>
     </div>
-  </div>
+  {/if}
 
   {#if searchVisible}
     <div class="flex items-center gap-2 px-3 py-1.5 bg-[#12161d] border-b border-white/10">
@@ -400,22 +531,33 @@
 
   <!-- Body: terminal area + optional file-browser panel, side by side -->
   <div class="flex-1 min-h-0 flex">
-  <!-- Terminal area: one container per session. Tab view stacks them (only the active one shown);
-       split view lays them in a grid. The mount nodes stay stable across the switch so xterm is not
-       re-created. -->
-  <div class="flex-1 min-h-0 relative overflow-hidden {splitView ? 'grid gap-1 p-1' : ''}"
-    style={splitView ? `grid-template-columns: repeat(${splitCols}, minmax(0,1fr)); grid-auto-rows: minmax(0,1fr)` : ''}>
+  <!-- Terminal panes. Single view shows the active pane full; split lays them in a grid, each with
+       its own header + bottom status bar. Mount nodes (wt-<id>) stay stable so xterm isn't recreated. -->
+  <div class="flex-1 min-h-0 relative overflow-hidden {inSplit ? 'grid gap-1 p-1' : ''}"
+    style={inSplit ? `grid-template-columns: repeat(${splitCols}, minmax(0,1fr)); grid-auto-rows: minmax(0,1fr)` : ''}>
     {#each tabs as tab (tab.id)}
-      <div id={'wt-' + tab.id} bind:this={tab.el}
-        onclick={() => { if (splitView) activate(tab.id) }}
-        class={splitView
-          ? 'relative overflow-hidden rounded border p-1 min-h-0 ' + (activeId === tab.id ? 'border-[#58a6ff]' : 'border-white/10')
-          : 'absolute inset-0 p-1.5'}
-        style:display={splitView || activeId === tab.id ? 'block' : 'none'}></div>
+      {@const shown = maximizedId ? maximizedId === tab.id : splitView || activeId === tab.id}
+      <div onclick={() => activate(tab.id)}
+        class="flex flex-col min-h-0 {inSplit ? 'rounded border overflow-hidden ' + (activeId === tab.id ? 'border-[#58a6ff]' : 'border-white/10') : 'absolute inset-0'}"
+        style:display={shown ? 'flex' : 'none'}>
+        {#if inSplit || maximizedId === tab.id}
+          <div class="flex items-center gap-2 px-2 py-1 text-[11px] border-b border-white/10 bg-[#12161d] shrink-0">
+            <Icon name="grip-vertical" size={12} class="text-white/30" />
+            <span class="text-white/70 truncate">{tabTitle(tab)}</span>
+            <span class="text-white/40 truncate">· {tab.machine.name || tab.machine.id}</span>
+            <div class="ml-auto flex items-center gap-1.5">
+              <button onclick={(e) => { e.stopPropagation(); toggleMaximize(tab) }} title={maximizedId ? 'Restore' : 'Maximize'} class="text-white/50 hover:text-white"><Icon name={maximizedId ? 'arrows-minimize' : 'arrows-maximize'} size={12} /></button>
+              {#if !readonly}<button onclick={(e) => { e.stopPropagation(); killTab(tab) }} title="Close session" class="text-white/50 hover:text-red-300"><Icon name="x" size={12} /></button>{/if}
+            </div>
+          </div>
+        {/if}
+        <div id={'wt-' + tab.id} bind:this={tab.el} class="flex-1 min-h-0 p-1.5"></div>
+        {@render statusBar(tab)}
+      </div>
     {/each}
     {#if tabs.length === 0}
       <div class="absolute inset-0 flex items-center justify-center text-white/40 text-sm">
-        {busy ? 'Opening console…' : 'No session'}
+        {busy ? 'Opening console…' : 'No session open — start one from the top bar.'}
       </div>
     {/if}
   </div>

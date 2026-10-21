@@ -9,8 +9,8 @@
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser } from '../stores/app.js'
-  import Console from './Console.svelte'
+  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser, currentView, consoleTarget } from '../stores/app.js'
+  import { consoleSessions, openConsoleEvents, refreshSessions } from '../lib/consoleEvents.js'
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
@@ -33,34 +33,27 @@
   let consoleEnabled = $state(machine.console_enabled)
   let consoleRecord = $state(machine.console_record)
   let consoleBusy = $state(false)
-  let showConsole = $state(false)
-  let consoleSession = $state(null) // session id to (re)attach when the console opens; null = fresh
-  let consoleStartFiles = $state(false) // open with the file browser panel showing
-
-  // openConsole(session, startFiles) opens the console page, reattaching `session` when given and
-  // showing the file browser immediately when startFiles is set.
-  function openConsole(session = null, startFiles = false) {
+  // openConsole navigates to the standalone console page (not an overlay), opening the given session
+  // as a tab there — or a fresh session when none is passed. The target is a one-shot the console
+  // page consumes on arrival.
+  function openConsole(session = null) {
     if (!consoleEnabled) {
       toast('Console is disabled for this machine', 'error')
       return
     }
-    consoleSession = session
-    consoleStartFiles = startFiles
-    showConsole = true
+    consoleTarget.set({
+      machine_id: machine.id,
+      machine_name: machine.name,
+      session,
+      label: session ? liveSessions.find((s) => s.id === session)?.label : null,
+    })
+    currentView.set('console')
   }
 
   // Resumable sessions (tmux) the caller owns on this host — drives the Sessions tab's reattach
   // list. A session survives a browser drop, so this lets you climb back into it after a reload.
-  let liveSessions = $state([])
-  let sessionsLoading = $state(false)
-  async function loadSessions() {
-    if (!consoleEnabled || !canOpenConsole) { liveSessions = []; return }
-    sessionsLoading = true
-    try {
-      const res = await apiGet('/api/fleet/console/sessions?machine_id=' + encodeURIComponent(machine.id))
-      liveSessions = res?.sessions || []
-    } catch { liveSessions = [] } finally { sessionsLoading = false }
-  }
+  // This machine's live sessions come from the shared console-events WS (pushed, no polling).
+  const liveSessions = $derived($consoleSessions.filter((s) => s.machine_id === machine.id))
   async function killSession(s) {
     const ok = await confirm({
       title: 'Close session',
@@ -70,9 +63,7 @@
     if (!ok) return
     try {
       await apiPost('/api/fleet/console/kill', { machine_id: machine.id, session: s.id })
-      toast('Session closed', 'success')
-      liveSessions = liveSessions.filter((x) => x.id !== s.id)
-      loadSessions()
+      toast('Session closed', 'success') // the WS pushes the updated list
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -198,14 +189,13 @@
     history.replaceState(history.state, '', window.location.pathname + (q ? '#' + q : ''))
   }
 
-  // Keep the resumable-session list fresh while the Sessions tab is open: fetch immediately, then
-  // poll, so a session the agent reports after a reconnect (e.g. just after a panel redeploy) shows
-  // up on its own instead of needing a manual refresh / console re-enable.
+  // Keep the resumable-session list fresh while the Sessions tab is open by subscribing to the shared
+  // console-events WS (it pushes updates on open/close; no polling). A refresh asks for a live list.
   $effect(() => {
     if (activeTab !== 'sessions' || !consoleEnabled || !canOpenConsole) return
-    loadSessions()
-    const t = setInterval(loadSessions, 4000)
-    return () => clearInterval(t)
+    const release = openConsoleEvents()
+    refreshSessions()
+    return release
   })
 
   // kernel-maintenance job status (absent unless a kernel update has run). Each phase
@@ -693,7 +683,7 @@
           <div class="flex flex-wrap items-center gap-2">
             {#if canOpenConsole && consoleEnabled}
               <Button variant="primary" size="sm" icon="terminal-2" onclick={() => openConsole()}>New session</Button>
-              <Button variant="ghost" size="sm" icon="refresh" loading={sessionsLoading} onclick={loadSessions}>Refresh</Button>
+              <Button variant="ghost" size="sm" icon="refresh" onclick={refreshSessions}>Refresh</Button>
             {/if}
             {#if canManageConsole}
               <Button variant={consoleEnabled ? 'outline' : 'primary'} size="sm" icon="power" loading={consoleBusy} onclick={() => setConsole(!consoleEnabled)}>
@@ -714,9 +704,7 @@
           {#if consoleEnabled && canOpenConsole}
             <div class="mt-3 pt-3 border-t border-border">
               <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Your live sessions</div>
-              {#if sessionsLoading && !liveSessions.length}
-                <div class="text-xs text-muted-foreground py-1">Checking…</div>
-              {:else if liveSessions.length}
+              {#if liveSessions.length}
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {#each liveSessions as s (s.id)}
                     <SessionCard session={s} machine={{ id: machine.id, name: machine.name }}
@@ -1035,7 +1023,7 @@
         {@render head('folder', 'File browser', 'browse · upload · download · edit', 'text-primary')}
         {#if canOpenConsole && consoleEnabled}
           <p class="text-sm text-muted-foreground mb-3">Browse, upload, download and edit files on this host over the encrypted agent channel. It opens in the console (the browser rides the same session).</p>
-          <Button variant="primary" size="sm" icon="folder" onclick={() => openConsole(null, true)}>Open file browser</Button>
+          <Button variant="primary" size="sm" icon="folder" onclick={() => openConsole()}>Open console</Button>
         {:else if canManageConsole && !consoleEnabled}
           <p class="text-sm text-muted-foreground">Enable the console (on the Sessions tab) to browse files — the file browser uses the same gated channel.</p>
         {:else if !consoleEnabled}
@@ -1099,9 +1087,3 @@
   {/if}
 </Modal>
 
-{#if showConsole}
-  <Console initialMachine={{ id: machine.id, name: machine.name, console_record: consoleRecord }}
-    initialSession={consoleSession}
-    startFiles={consoleStartFiles}
-    onclose={() => { showConsole = false; consoleSession = null; consoleStartFiles = false; loadSessions() }} />
-{/if}
