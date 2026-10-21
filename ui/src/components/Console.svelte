@@ -16,7 +16,8 @@
 
   // shareGrant/shareSession open a read-only session from a shared link (no step-up).
   // initialSession reattaches a specific resumable session (tmux) instead of opening a fresh one.
-  let { machine, onclose, shareGrant = null, shareSession = null, initialSession = null } = $props()
+  // startFiles opens with the file-browser panel showing.
+  let { machine, onclose, shareGrant = null, shareSession = null, initialSession = null, startFiles = false } = $props()
 
   const termTheme = {
     background: '#0f1419', foreground: '#d7dce2', cursor: '#58a6ff',
@@ -33,7 +34,7 @@
   let splitView = $state(false) // false = one session shown (tabs); true = all sessions in a grid
 
   // --- File browser (slide-in panel over the active session) ---
-  let filesVisible = $state(false)
+  let filesVisible = $state(startFiles)
   let filesCwd = $state('/root')
   let filesList = $state([])
   let filesLoading = $state(false)
@@ -115,7 +116,7 @@
 
     const socket = new ConsoleSocket({
       machine: machine.id, grant: g, session: tab.id, cols: term.cols, rows: term.rows,
-      onOpen: () => { if (!readonly) term.focus() },
+      onOpen: () => { if (!readonly) term.focus(); if (filesVisible && tab.id === activeId) listFiles(filesCwd) },
       onData: (bytes) => term.write(bytes),
       onExit: () => { tab.exited = true; term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n'); tabs = [...tabs] },
       onError: (m) => { error = m; if (/grant/i.test(m)) grant = null },

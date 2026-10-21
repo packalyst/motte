@@ -725,10 +725,14 @@ func (s *Service) handleConsoleSessions(w http.ResponseWriter, r *http.Request) 
 	online := false
 	if a := regGet(machineID); a != nil {
 		online = true
+		// owners keys are the SERVER-namespaced ids (nsSession: "<userID>_<client id>"). Return the
+		// client-facing id (prefix stripped) so a reattach re-namespaces to the SAME session instead
+		// of opening a doubly-prefixed new one.
+		prefix := strconv.FormatInt(p.UserID, 10) + "_"
 		a.mu.Lock()
 		for id, uid := range a.owners {
 			if uid == p.UserID {
-				sessions = append(sessions, sessInfo{ID: id, Attached: len(a.bridges[id]) > 0})
+				sessions = append(sessions, sessInfo{ID: strings.TrimPrefix(id, prefix), Attached: len(a.bridges[id]) > 0})
 			}
 		}
 		a.mu.Unlock()

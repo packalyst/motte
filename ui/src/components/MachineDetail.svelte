@@ -34,14 +34,17 @@
   let consoleBusy = $state(false)
   let showConsole = $state(false)
   let consoleSession = $state(null) // session id to (re)attach when the console opens; null = fresh
+  let consoleStartFiles = $state(false) // open with the file browser panel showing
 
-  // openConsole(session) opens the full-screen console, reattaching `session` when given.
-  function openConsole(session = null) {
+  // openConsole(session, startFiles) opens the console page, reattaching `session` when given and
+  // showing the file browser immediately when startFiles is set.
+  function openConsole(session = null, startFiles = false) {
     if (!consoleEnabled) {
       toast('Console is disabled for this machine', 'error')
       return
     }
     consoleSession = session
+    consoleStartFiles = startFiles
     showConsole = true
   }
 
@@ -146,7 +149,7 @@
   const navList = $derived([
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'sessions', label: 'Sessions', icon: 'terminal-2' },
-    { id: 'files', label: 'Files', icon: 'folder', soon: true },
+    { id: 'files', label: 'Files', icon: 'folder' },
     { id: 'docker', label: 'Docker', icon: 'brand-docker', soon: true },
     { id: 'diagnostics', label: 'Diagnostics', icon: 'stethoscope', soon: true },
     { id: 'forwards', label: 'Forwards', icon: 'arrows-exchange', soon: true },
@@ -1008,7 +1011,20 @@
     {/if}
 
     {#if activeTab === 'files'}
-      {@render soon('folder', 'File browser', 'Browse, upload and download files on this host over the encrypted agent channel — a full tree with inline editing. Wiring up next.')}
+      <div class="bg-card border border-border rounded-xl p-4">
+        {@render head('folder', 'File browser', 'browse · upload · download · edit', 'text-primary')}
+        {#if canOpenConsole && consoleEnabled}
+          <p class="text-sm text-muted-foreground mb-3">Browse, upload, download and edit files on this host over the encrypted agent channel. It opens in the console (the browser rides the same session).</p>
+          <Button variant="primary" size="sm" icon="folder" onclick={() => openConsole(null, true)}>Open file browser</Button>
+        {:else if canManageConsole && !consoleEnabled}
+          <p class="text-sm text-muted-foreground">Enable the console (on the Sessions tab) to browse files — the file browser uses the same gated channel.</p>
+        {:else if !consoleEnabled}
+          <p class="text-sm text-muted-foreground">The console is disabled for this machine, so file access is off.</p>
+        {:else}
+          <p class="text-sm text-muted-foreground">You don't have permission to browse files on this machine.</p>
+        {/if}
+        {@render note('The file browser rides the console channel, so it needs the console enabled and the operator+ role — the same gates. Read-only shares cannot browse or read files.')}
+      </div>
     {/if}
     {#if activeTab === 'docker'}
       {@render soon('brand-docker', 'Docker', 'List containers, read their logs and start / stop / restart them on this host. Ships with the next agent release.')}
@@ -1066,5 +1082,6 @@
 {#if showConsole}
   <Console machine={{ id: machine.id, name: machine.name, console_record: consoleRecord }}
     initialSession={consoleSession}
-    onclose={() => { showConsole = false; consoleSession = null; loadSessions() }} />
+    startFiles={consoleStartFiles}
+    onclose={() => { showConsole = false; consoleSession = null; consoleStartFiles = false; loadSessions() }} />
 {/if}
