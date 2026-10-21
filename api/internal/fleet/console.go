@@ -639,14 +639,23 @@ func (s *Service) handleConsoleSessions(w http.ResponseWriter, r *http.Request) 
 		router.JSONError(w, "console is not enabled for this machine", http.StatusForbidden)
 		return
 	}
-	sessions := []string{}
+	// List the caller's own resumable sessions. Ownership (a.owners) persists across a browser
+	// detach — the tmux shell lives on the agent for resume — so we list by owner, NOT by live
+	// bridge (a.bridges is cleared on disconnect). `attached` flags a session still open in
+	// another tab/viewer, so the UI can show reattach vs. switch-to. Still owner-scoped: we never
+	// disclose another operator's sessions.
+	type sessInfo struct {
+		ID       string `json:"id"`
+		Attached bool   `json:"attached"`
+	}
+	sessions := []sessInfo{}
 	online := false
 	if a := regGet(machineID); a != nil {
 		online = true
 		a.mu.Lock()
-		for id := range a.bridges { // only the caller's own sessions — don't disclose other operators'
-			if a.owners[id] == p.UserID {
-				sessions = append(sessions, id)
+		for id, uid := range a.owners {
+			if uid == p.UserID {
+				sessions = append(sessions, sessInfo{ID: id, Attached: len(a.bridges[id]) > 0})
 			}
 		}
 		a.mu.Unlock()

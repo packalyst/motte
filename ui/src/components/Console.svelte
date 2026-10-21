@@ -1,7 +1,8 @@
 <script>
   // Full-screen interactive console for a fleet machine. Opens one step-up-granted WebSocket per
-  // tab (session), rendered with xterm.js. Supports multiple tabs, resize, copy/paste (xterm),
-  // scrollback search, file upload/download, a read-only share link, and shows a recording badge.
+  // tab (session), rendered with xterm.js. Supports multiple tabs, reattach to a resumable session
+  // (tmux survives a disconnect), resize, copy/paste (xterm), scrollback search, file
+  // upload/download, a read-only share link, and shows a recording badge.
   import { onDestroy, tick } from 'svelte'
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
@@ -14,7 +15,8 @@
   import Button from './Button.svelte'
 
   // shareGrant/shareSession open a read-only session from a shared link (no step-up).
-  let { machine, onclose, shareGrant = null, shareSession = null } = $props()
+  // initialSession reattaches a specific resumable session (tmux) instead of opening a fresh one.
+  let { machine, onclose, shareGrant = null, shareSession = null, initialSession = null } = $props()
 
   const termTheme = {
     background: '#0f1419', foreground: '#d7dce2', cursor: '#58a6ff',
@@ -54,12 +56,13 @@
     return grant
   }
 
-  async function openTab() {
+  // sessionId reattaches an existing resumable session (tmux new -A); null opens a fresh one.
+  async function openTab(sessionId = null) {
     error = ''
     busy = true
     try {
       const g = await ensureGrant()
-      const session = readonly && shareSession ? shareSession : randSession()
+      const session = readonly && shareSession ? shareSession : (sessionId || randSession())
       const tab = { id: session, el: null, term: null, fit: null, search: null, socket: null, title: 'shell', exited: false }
       tabs = [...tabs, tab]
       activeId = session
@@ -193,8 +196,8 @@
   }
 
   $effect(() => {
-    // Auto-open the first tab on mount.
-    if (tabs.length === 0 && !busy) openTab()
+    // Auto-open the first tab on mount — reattaching initialSession when one was passed.
+    if (tabs.length === 0 && !busy) openTab(initialSession)
   })
 
   onDestroy(() => { for (const t of tabs) { t.socket?.close(); t.term?.dispose() } })
@@ -221,7 +224,7 @@
         </button>
       {/each}
       {#if !readonly}
-        <button onclick={openTab} disabled={busy} title="New session" class="px-2 py-1 rounded text-white/60 hover:bg-white/5"><Icon name="plus" size={13} /></button>
+        <button onclick={() => openTab()} disabled={busy} title="New session" class="px-2 py-1 rounded text-white/60 hover:bg-white/5"><Icon name="plus" size={13} /></button>
       {/if}
     </div>
 
