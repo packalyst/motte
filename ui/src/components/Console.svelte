@@ -30,6 +30,7 @@
   let readonly = $state(!!shareGrant)
   let searchVisible = $state(false)
   let searchQuery = $state('')
+  let splitView = $state(false) // false = one session shown (tabs); true = all sessions in a grid
 
   let grant = shareGrant // reused across tabs/reconnects until it stops working
   let fileInput
@@ -135,10 +136,18 @@
     onclose?.()
   }
 
-  function onResize() {
-    const tab = tabs.find((t) => t.id === activeId)
-    tab?.fit?.fit()
+  // Re-fit terminals to their containers. Split view resizes every pane; tab view only the visible one.
+  function fitAll() {
+    tick().then(() => { for (const t of tabs) t.fit?.fit() })
   }
+  function onResize() {
+    if (splitView) fitAll()
+    else tabs.find((t) => t.id === activeId)?.fit?.fit()
+  }
+  // Square-ish grid for the panes (2 → 1×2, 3-4 → 2×2, …).
+  const splitCols = $derived(Math.ceil(Math.sqrt(Math.max(1, tabs.length))))
+  // Re-fit whenever the layout or the number of panes changes (switch to split, open/close a tab).
+  $effect(() => { splitView; tabs.length; fitAll() })
 
   // --- toolbar actions ---
   function runSearch(dir) {
@@ -205,7 +214,9 @@
 
 <svelte:window on:resize={onResize} />
 
-<div class="fixed inset-0 z-50 flex flex-col bg-[#0f1419] text-[#d7dce2]">
+<!-- Inset past the app sidebar on desktop so it stays visible/usable (a page, not a modal); the
+     sidebar is off-canvas on mobile, so go full-width there. -->
+<div class="fixed inset-0 lg:left-60 z-50 flex flex-col bg-[#0f1419] text-[#d7dce2]">
   <!-- Header / toolbar -->
   <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10 bg-[#12161d]">
     <Icon name="terminal-2" size={16} class="text-[#58a6ff]" />
@@ -229,6 +240,10 @@
     </div>
 
     <div class="ml-auto flex items-center gap-1">
+      {#if tabs.length > 1}
+        <button onclick={() => (splitView = !splitView)} title={splitView ? 'Single view' : 'Split view'}
+          class="p-1.5 rounded hover:bg-white/5 {splitView ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name={splitView ? 'layout-columns' : 'layout-grid'} size={14} /></button>
+      {/if}
       <button onclick={() => (searchVisible = !searchVisible)} title="Search" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="search" size={14} /></button>
       {#if !readonly}
         <button onclick={upload} title="Upload file" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="upload" size={14} /></button>
@@ -252,10 +267,18 @@
     <div class="px-3 py-1.5 text-xs bg-red-500/15 text-red-300 border-b border-red-500/20">{error}</div>
   {/if}
 
-  <!-- Terminal area: one container per tab, only the active one shown -->
-  <div class="flex-1 relative overflow-hidden">
+  <!-- Terminal area: one container per session. Tab view stacks them (only the active one shown);
+       split view lays them in a grid. The mount nodes stay stable across the switch so xterm is not
+       re-created. -->
+  <div class="flex-1 min-h-0 relative overflow-hidden {splitView ? 'grid gap-1 p-1' : ''}"
+    style={splitView ? `grid-template-columns: repeat(${splitCols}, minmax(0,1fr)); grid-auto-rows: minmax(0,1fr)` : ''}>
     {#each tabs as tab (tab.id)}
-      <div id={'wt-' + tab.id} bind:this={tab.el} class="absolute inset-0 p-1.5" style:display={activeId === tab.id ? 'block' : 'none'}></div>
+      <div id={'wt-' + tab.id} bind:this={tab.el}
+        onclick={() => { if (splitView) activate(tab.id) }}
+        class={splitView
+          ? 'relative overflow-hidden rounded border p-1 min-h-0 ' + (activeId === tab.id ? 'border-[#58a6ff]' : 'border-white/10')
+          : 'absolute inset-0 p-1.5'}
+        style:display={splitView || activeId === tab.id ? 'block' : 'none'}></div>
     {/each}
     {#if tabs.length === 0}
       <div class="absolute inset-0 flex items-center justify-center text-white/40 text-sm">
