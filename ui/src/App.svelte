@@ -168,7 +168,7 @@
 <!-- Read-only shared console (opened from a #fconsole= link) -->
 {#if user && shareConsole}
   <Console
-    machine={{ id: shareConsole.id, name: shareConsole.id }}
+    shareMachine={{ id: shareConsole.id, name: shareConsole.id }}
     shareGrant={shareConsole.grant}
     shareSession={shareConsole.session}
     onclose={() => { shareConsole = null; location.hash = '' }}

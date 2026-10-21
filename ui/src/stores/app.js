@@ -19,7 +19,7 @@ theme.subscribe(value => {
 })
 
 // Valid view IDs for URL routing
-export const validViews = ['overview', 'nodes', 'users', 'firewall', 'server', 'fleet', 'iplookup',
+export const validViews = ['overview', 'nodes', 'users', 'firewall', 'server', 'fleet', 'console', 'iplookup',
                            'routes', 'authkeys', 'apikeys', 'traefik', 'domains', 'tunnels', 'adguard',
                            'docker', 'logs', 'analytics', 'activity', 'routines', 'settings', 'profile', 'team', 'about']
 

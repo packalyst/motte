@@ -14,10 +14,24 @@
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
 
-  // shareGrant/shareSession open a read-only session from a shared link (no step-up).
-  // initialSession reattaches a specific resumable session (tmux) instead of opening a fresh one.
-  // startFiles opens with the file-browser panel showing.
-  let { machine, onclose, shareGrant = null, shareSession = null, initialSession = null, startFiles = false } = $props()
+  // The console is machine-agnostic: every tab carries its OWN machine, so one console can hold
+  // sessions from different hosts (the global console). Grants are cached per machine.
+  //   machines        — accessible, console-enabled machines, for the "new session" picker (global)
+  //   initialMachine  — open the first tab here on mount (per-machine / resume launch); null = empty
+  //   initialSession  — reattach this resumable session on initialMachine (tmux), else a fresh shell
+  //   embedded        — render inline inside a page (global console) instead of a fixed overlay
+  //   shareGrant/shareSession/shareMachine — open a read-only session from a shared link (no step-up)
+  let {
+    machines = [],
+    initialMachine = null,
+    initialSession = null,
+    startFiles = false,
+    embedded = false,
+    onclose,
+    shareGrant = null,
+    shareSession = null,
+    shareMachine = null,
+  } = $props()
 
   const termTheme = {
     background: '#0f1419', foreground: '#d7dce2', cursor: '#58a6ff',
@@ -44,9 +58,15 @@
   let editLoading = $state(false)
   const editPending = new Set() // paths fetched for EDITING (vs downloading) — routes file-chunk
 
-  let grant = shareGrant // reused across tabs/reconnects until it stops working
+  // One grant per machine, reused across that machine's tabs/reconnects until the server rejects it.
+  const grants = new Map()
+  if (shareGrant && shareMachine) grants.set(shareMachine.id, shareGrant)
   let fileInput
   let filesUploadInput
+
+  // The machine whose name/badges the header shows and the + button opens onto.
+  const activeTab = $derived(tabs.find((t) => t.id === activeId) || null)
+  const activeMachine = $derived(activeTab?.machine || initialMachine || shareMachine || null)
 
   function randSession() {
     const b = new Uint8Array(16)
@@ -54,10 +74,11 @@
     return 's' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
   }
 
-  // ensureGrant mints (or reuses) a console grant. Normal grants need a step-up; the first call
-  // prompts, later ones reuse the multi-use grant until the server rejects it.
-  async function ensureGrant() {
-    if (grant) return grant
+  // ensureGrant mints (or reuses) a console grant for a specific machine. Normal grants need a
+  // step-up; the first call per machine prompts, later ones reuse the multi-use grant until rejected.
+  async function ensureGrant(machine) {
+    const have = grants.get(machine.id)
+    if (have) return have
     const r = await stepUpConfirm({
       title: 'Open console',
       description: `Re-authenticate to open an interactive console on "${machine.name || machine.id}".`,
@@ -66,18 +87,22 @@
     const res = await apiPost('/api/fleet/console/grant', {
       machine_id: machine.id, currentPassword: r.password, totpCode: r.totp,
     })
-    grant = res.grant
-    return grant
+    grants.set(machine.id, res.grant)
+    return res.grant
   }
 
-  // sessionId reattaches an existing resumable session (tmux new -A); null opens a fresh one.
-  async function openTab(sessionId = null) {
+  // openTab opens a session on a given machine. sessionId reattaches an existing resumable session
+  // (tmux new -A); null opens a fresh one. label is the "Session N" shown on the tab.
+  async function openTab(machine, sessionId = null, label = null) {
+    if (!machine) return
     error = ''
+    const session = readonly && shareSession ? shareSession : (sessionId || randSession())
+    const existing = tabs.find((t) => t.id === session && t.machine.id === machine.id)
+    if (existing) { activate(session); return } // already open — just focus it
     busy = true
     try {
-      const g = await ensureGrant()
-      const session = readonly && shareSession ? shareSession : (sessionId || randSession())
-      const tab = { id: session, el: null, term: null, fit: null, search: null, socket: null, title: 'shell', exited: false }
+      const g = await ensureGrant(machine)
+      const tab = { id: session, machine, label, el: null, term: null, fit: null, search: null, socket: null, exited: false }
       tabs = [...tabs, tab]
       activeId = session
       await tick() // let the terminal container mount
@@ -89,6 +114,11 @@
       busy = false
     }
   }
+
+  // Driven by the parent (the global console's rail / session cards).
+  export function openNew(machine) { openTab(machine) }
+  export function openSession(s) { openTab({ id: s.machine_id, name: s.machine_name }, s.id, s.label) }
+  export function hasTabs() { return tabs.length > 0 }
 
   function startTerminal(tab, g, session) {
     // Look the container up directly from the DOM (don't rely on Svelte's proxy write-back of
@@ -115,7 +145,7 @@
     tab.search = search
 
     const socket = new ConsoleSocket({
-      machine: machine.id, grant: g, session: tab.id, cols: term.cols, rows: term.rows,
+      machine: tab.machine.id, grant: g, session: tab.id, cols: term.cols, rows: term.rows,
       onOpen: () => { if (!readonly) term.focus(); if (filesVisible && tab.id === activeId) listFiles(filesCwd) },
       onData: (bytes) => term.write(bytes),
       onExit: () => { tab.exited = true; term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n'); tabs = [...tabs] },
@@ -283,10 +313,10 @@
       const r = await stepUpConfirm({ title: 'Share read-only console', description: 'Re-authenticate to create a view-only link.' })
       if (!r?.confirmed) return
       const res = await apiPost('/api/fleet/console/grant?readonly=true', {
-        machine_id: machine.id, session: tab.id, currentPassword: r.password, totpCode: r.totp,
+        machine_id: tab.machine.id, session: tab.id, currentPassword: r.password, totpCode: r.totp,
       })
       // res.session is the owner's namespaced session the grant is bound to — the viewer must open that.
-      const link = `${location.origin}/#fconsole=${encodeURIComponent(machine.id)}|${encodeURIComponent(res.session)}|${encodeURIComponent(res.grant)}`
+      const link = `${location.origin}/#fconsole=${encodeURIComponent(tab.machine.id)}|${encodeURIComponent(res.session)}|${encodeURIComponent(res.grant)}`
       await navigator.clipboard.writeText(link)
       toast('Read-only link copied (valid ~30 min)', 'success')
     } catch (e) {
@@ -295,8 +325,11 @@
   }
 
   $effect(() => {
-    // Auto-open the first tab on mount — reattaching initialSession when one was passed.
-    if (tabs.length === 0 && !busy) openTab(initialSession)
+    // Auto-open the first tab on mount for a direct launch (per-machine or a share link). In the
+    // global console no initial machine is passed — the parent drives openNew/openSession instead.
+    if (tabs.length > 0 || busy) return
+    if (shareGrant && shareMachine) openTab(shareMachine, shareSession)
+    else if (initialMachine) openTab(initialMachine, initialSession)
   })
 
   onDestroy(() => { for (const t of tabs) { t.socket?.close(); t.term?.dispose() } })
@@ -304,28 +337,33 @@
 
 <svelte:window on:resize={onResize} />
 
-<!-- Inset past the app sidebar on desktop so it stays visible/usable (a page, not a modal); the
-     sidebar is off-canvas on mobile, so go full-width there. -->
-<div class="fixed inset-0 lg:left-60 z-50 flex flex-col bg-[#0f1419] text-[#d7dce2]">
+<!-- Overlay mode: inset past the app sidebar on desktop so it stays visible (a page, not a modal).
+     Embedded mode (global console): fill the page column the parent lays out beside its rail. -->
+<div class={embedded
+    ? 'relative flex-1 min-w-0 flex flex-col bg-[#0f1419] text-[#d7dce2]'
+    : 'fixed inset-0 lg:left-60 z-50 flex flex-col bg-[#0f1419] text-[#d7dce2]'}>
   <!-- Header / toolbar -->
   <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10 bg-[#12161d]">
     <Icon name="terminal-2" size={16} class="text-[#58a6ff]" />
-    <span class="text-sm font-medium truncate">{machine.name || machine.id}</span>
+    <span class="text-sm font-medium truncate">{activeMachine?.name || activeMachine?.id || 'Console'}</span>
     {#if readonly}<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">read-only</span>{/if}
-    {#if machine.console_record && !readonly}<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>recording</span>{/if}
+    {#if activeMachine?.console_record && !readonly}<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>recording</span>{/if}
 
-    <!-- Tabs -->
+    <!-- Tabs: "Session N" over the machine name (sessions can span machines). -->
     <div class="flex items-center gap-1 ml-2 overflow-x-auto">
       {#each tabs as tab (tab.id)}
         <button onclick={() => activate(tab.id)}
-          class="group flex items-center gap-1.5 px-2.5 py-1 rounded text-xs whitespace-nowrap {activeId === tab.id ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5'}">
+          class="group flex items-center gap-1.5 px-2.5 py-1 rounded whitespace-nowrap {activeId === tab.id ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5'}">
           <Icon name="terminal" size={12} />
-          {tab.title}{tab.exited ? ' (ended)' : ''}
+          <span class="flex flex-col items-start leading-tight text-left">
+            <span class="text-xs">Session {tab.label ?? '•'}{tab.exited ? ' (ended)' : ''}</span>
+            <span class="text-[9px] text-white/40 truncate max-w-[120px]">{tab.machine.name || tab.machine.id}</span>
+          </span>
           <span onclick={(e) => { e.stopPropagation(); closeTab(tab) }} class="opacity-0 group-hover:opacity-100 hover:text-red-300"><Icon name="x" size={11} /></span>
         </button>
       {/each}
-      {#if !readonly}
-        <button onclick={() => openTab()} disabled={busy} title="New session" class="px-2 py-1 rounded text-white/60 hover:bg-white/5"><Icon name="plus" size={13} /></button>
+      {#if !readonly && activeMachine}
+        <button onclick={() => openTab(activeMachine)} disabled={busy} title="New session on {activeMachine.name || activeMachine.id}" class="px-2 py-1 rounded text-white/60 hover:bg-white/5"><Icon name="plus" size={13} /></button>
       {/if}
     </div>
 
@@ -341,7 +379,9 @@
         <button onclick={download} title="Quick download" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="download" size={14} /></button>
         <button onclick={share} title="Share read-only" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="share" size={14} /></button>
       {/if}
-      <button onclick={closeAll} title="Close console" class="p-1.5 rounded text-white/60 hover:bg-red-500/20 hover:text-red-300"><Icon name="x" size={16} /></button>
+      {#if !embedded}
+        <button onclick={closeAll} title="Close console" class="p-1.5 rounded text-white/60 hover:bg-red-500/20 hover:text-red-300"><Icon name="x" size={16} /></button>
+      {/if}
     </div>
   </div>
 
