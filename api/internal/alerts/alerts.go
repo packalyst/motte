@@ -95,12 +95,25 @@ func (s *Service) expandTargets(r Rule) []target {
 	if r.Targets.Host {
 		add(target{kind: "host", id: "", label: "this panel"})
 	}
-	ids := append([]string{}, r.Targets.MachineIDs...)
-	if r.Targets.AllMachines {
-		ids = append(ids, s.accessibleMachineIDs(r.UserID)...)
-	}
-	for _, id := range ids {
-		add(target{kind: "machine", id: id, label: s.machineNameOr(id)})
+	// Re-check machine scope at fire time, not only at rule creation: if the owner's scope was
+	// narrowed afterwards (or a machine was revoked), explicitly-listed machines that are now
+	// out of scope must stop alerting. accessibleMachineIDs reflects the owner's current scope.
+	if r.Targets.AllMachines || len(r.Targets.MachineIDs) > 0 {
+		allowed := make(map[string]bool)
+		for _, id := range s.accessibleMachineIDs(r.UserID) {
+			allowed[id] = true
+		}
+		if r.Targets.AllMachines {
+			for id := range allowed {
+				add(target{kind: "machine", id: id, label: s.machineNameOr(id)})
+			}
+		} else {
+			for _, id := range r.Targets.MachineIDs {
+				if allowed[id] {
+					add(target{kind: "machine", id: id, label: s.machineNameOr(id)})
+				}
+			}
+		}
 	}
 	return out
 }
