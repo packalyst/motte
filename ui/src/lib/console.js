@@ -58,12 +58,26 @@ export class ConsoleSocket {
         this.opts.onPong?.(latency, f.cwd || '')
         break
       }
+      case 'git-result':
+        this.opts.onGit?.(f.data ? new TextDecoder().decode(b64decodeToBytes(f.data)) : '')
+        break
+      case 'docker-result':
+        this.opts.onDocker?.(f.action || '', f.data ? new TextDecoder().decode(b64decodeToBytes(f.data)) : '')
+        break
     }
   }
 
   // ping measures round-trip latency and fetches the session's cwd (reply via onPong).
   ping() {
     this._send({ t: 'ping', session: this.opts.session, ts: Date.now() })
+  }
+
+  // git / docker tool panels (replies via onGit / onDocker).
+  gitStatus() {
+    this._send({ t: 'git', session: this.opts.session })
+  }
+  docker(action, container) {
+    this._send({ t: 'docker', session: this.opts.session, action, path: container })
   }
 
   _onFileChunk(f) {

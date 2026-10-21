@@ -246,6 +246,8 @@
       onError: (m) => { error = m; if (/grant/i.test(m)) grants.delete(tab.machine.id) },
       onClose: () => { if (!tab.exited) term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n') },
       onPong: (latency, cwd) => { tab.latency = latency; tab.cwd = cwd; tabs = [...tabs] },
+      onGit: (text) => { if (tab.id === activeId) { gitText = text; gitLoading = false } },
+      onDocker: (action, data) => { if (tab.id === activeId) handleDocker(action, data) },
       onFileChunk: (path, parts) => handleFileChunk(path, parts),
       onFileList: (path, items) => handleFileList(tab.id, path, items),
     })
@@ -289,7 +291,7 @@
   const splitCols = $derived(Math.ceil(Math.sqrt(Math.max(1, tabs.length))))
   const inSplit = $derived(splitView && !maximizedId) // maximizing a pane collapses the grid
   // Re-fit whenever the layout, pane count, or the files panel (which narrows the terminal) changes.
-  $effect(() => { splitView; tabs.length; filesVisible; fitAll() })
+  $effect(() => { splitView; tabs.length; filesVisible; tool; maximizedId; fitAll() })
 
   // --- toolbar actions ---
   function runSearch(dir) {
@@ -402,6 +404,62 @@
     }
   }
 
+  // --- tool panels (snippets / git / docker), one open at a time, acting on the active session ---
+  let tool = $state(null) // 'snippets' | 'git' | 'docker' | null
+  let gitText = $state('')
+  let gitLoading = $state(false)
+  let dockerList = $state([])
+  let dockerLoading = $state(false)
+  let dockerLog = $state(null) // { name, text } when viewing one container's logs
+
+  function loadSnippets() {
+    try {
+      const s = JSON.parse(localStorage.getItem('console_snippets') || 'null')
+      if (Array.isArray(s)) return s
+    } catch { /* noop */ }
+    return [
+      { name: 'List files', command: 'ls -la' },
+      { name: 'Disk usage', command: 'df -h' },
+      { name: 'Top processes', command: 'top -b -n1 | head -20' },
+    ]
+  }
+  let snippets = $state(loadSnippets())
+  function saveSnippets() { try { localStorage.setItem('console_snippets', JSON.stringify(snippets)) } catch { /* noop */ } }
+  function runSnippet(sn) { activeSocket()?.sendInput(sn.command + '\n') }
+  function addSnippet() {
+    openPrompt({ title: 'New snippet — command to run', placeholder: 'e.g. docker ps', onok: (command) => {
+      if (!command.trim()) return
+      openPrompt({ title: 'Name this snippet', value: command.slice(0, 28), onok: (name) => {
+        snippets = [...snippets, { name: name.trim() || command, command }]
+        saveSnippets()
+      } })
+    } })
+  }
+  function delSnippet(i) { snippets = snippets.filter((_, x) => x !== i); saveSnippets() }
+
+  function openTool(t) {
+    tool = tool === t ? null : t
+    if (tool) filesVisible = false
+    if (tool === 'git') refreshGit()
+    if (tool === 'docker') { dockerLog = null; dockerPs() }
+    fitAll()
+  }
+  function refreshGit() { const s = activeSocket(); if (!s) return; gitLoading = true; s.gitStatus() }
+  function dockerPs() { const s = activeSocket(); if (!s) return; dockerLoading = true; s.docker('ps') }
+  function dockerDo(c, action) { activeSocket()?.docker(action, c.id) }
+  function dockerLogs(c) { dockerLog = { name: c.name, text: 'Loading…' }; activeSocket()?.docker('logs', c.id) }
+  function parsePs(data) {
+    return data.split('\n').filter(Boolean).map((l) => {
+      const [id, name, image, state, status] = l.split('|')
+      return { id, name, image, state, status }
+    })
+  }
+  function handleDocker(action, data) {
+    if (action === 'ps') { dockerList = parsePs(data); dockerLoading = false }
+    else if (action === 'logs') { dockerLog = { ...(dockerLog || {}), text: data || '(no output)' } }
+    else { dockerPs() } // start/stop/restart → refresh the list
+  }
+
   $effect(() => {
     // Auto-open the first tab on mount for a direct launch (per-machine or a share link). In the
     // global console no initial machine is passed — the parent drives openNew/openSession instead.
@@ -512,6 +570,9 @@
       <div class="ml-auto flex items-center gap-0.5 shrink-0">
         <button onclick={() => (searchVisible = !searchVisible)} title="Search scrollback" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="search" size={14} /></button>
         <button onclick={openFiles} title="File manager" class="p-1.5 rounded hover:bg-white/5 {filesVisible ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="folder" size={14} /></button>
+        <button onclick={() => openTool('snippets')} title="Snippets" class="p-1.5 rounded hover:bg-white/5 {tool === 'snippets' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="bolt" size={14} /></button>
+        <button onclick={() => openTool('git')} title="Git status" class="p-1.5 rounded hover:bg-white/5 {tool === 'git' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="git-branch" size={14} /></button>
+        <button onclick={() => openTool('docker')} title="Docker" class="p-1.5 rounded hover:bg-white/5 {tool === 'docker' ? 'text-[#58a6ff]' : 'text-white/60'}"><Icon name="brand-docker" size={14} /></button>
         <button onclick={() => pasteInto(activeTab)} title="Paste clipboard" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="clipboard" size={14} /></button>
         <button onclick={toggleTheme} title="Terminal theme" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name={termLight ? 'moon' : 'sun'} size={14} /></button>
         <span class="w-px h-4 bg-white/10 mx-0.5"></span>
@@ -606,6 +667,69 @@
           {/each}
         {:else}
           <div class="p-3 text-xs text-white/40">Empty directory.</div>
+        {/if}
+      </div>
+    </aside>
+  {/if}
+
+  <!-- Tool panel: snippets / git / docker (one at a time) -->
+  {#if tool}
+    <aside class="w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
+        <Icon name={tool === 'git' ? 'git-branch' : tool === 'docker' ? 'brand-docker' : 'bolt'} size={14} class="text-[#58a6ff]" />
+        <span class="font-medium text-sm capitalize">{tool}</span>
+        {#if tool === 'git'}<button onclick={refreshGit} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>{/if}
+        {#if tool === 'docker'}<button onclick={() => { dockerLog = null; dockerPs() }} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>{/if}
+        {#if tool === 'snippets'}<button onclick={addSnippet} title="Add snippet" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="plus" size={14} /></button>{/if}
+        <button onclick={() => (tool = null)} title="Close" class="p-1 text-white/60 hover:text-white"><Icon name="x" size={14} /></button>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        {#if tool === 'snippets'}
+          {#each snippets as sn, i (i)}
+            <div class="group flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 text-xs">
+              <button onclick={() => runSnippet(sn)} class="min-w-0 flex-1 text-left">
+                <div class="text-white/80 truncate">{sn.name}</div>
+                <div class="text-white/40 font-mono text-[10px] truncate">{sn.command}</div>
+              </button>
+              <button onclick={() => runSnippet(sn)} title="Run" class="opacity-0 group-hover:opacity-100 p-0.5 text-[#58a6ff]"><Icon name="player-play" size={13} /></button>
+              <button onclick={() => delSnippet(i)} title="Delete" class="opacity-0 group-hover:opacity-100 p-0.5 text-white/50 hover:text-red-300"><Icon name="trash" size={12} /></button>
+            </div>
+          {/each}
+          {#if !snippets.length}<div class="p-3 text-xs text-white/40">No snippets. Add one with +.</div>{/if}
+        {:else if tool === 'git'}
+          {#if gitLoading}<div class="p-3 text-xs text-white/40">Loading…</div>
+          {:else}<pre class="p-3 text-[11px] text-[#d7dce2] font-mono whitespace-pre-wrap break-all">{gitText}</pre>{/if}
+        {:else if tool === 'docker'}
+          {#if dockerLog}
+            <div class="flex items-center gap-2 px-3 py-1.5 border-b border-white/10 text-xs">
+              <button onclick={() => (dockerLog = null)} class="text-white/60 hover:text-white"><Icon name="chevron-up" size={13} /></button>
+              <span class="truncate font-mono text-white/70">{dockerLog.name}</span>
+            </div>
+            <pre class="p-3 text-[10px] text-[#d7dce2] font-mono whitespace-pre-wrap break-all">{dockerLog.text}</pre>
+          {:else if dockerLoading}
+            <div class="p-3 text-xs text-white/40">Loading…</div>
+          {:else if dockerList.length}
+            {#each dockerList as c (c.id)}
+              <div class="px-3 py-2 border-b border-white/5 text-xs">
+                <div class="flex items-center gap-2">
+                  <span class="w-1.5 h-1.5 rounded-full shrink-0 {c.state === 'running' ? 'bg-green-400' : 'bg-white/30'}"></span>
+                  <span class="truncate font-medium text-white/80 flex-1" title={c.image}>{c.name}</span>
+                </div>
+                <div class="text-white/40 text-[10px] truncate mt-0.5">{c.status}</div>
+                <div class="flex items-center gap-1 mt-1.5">
+                  <button onclick={() => dockerLogs(c)} class="px-1.5 py-0.5 rounded bg-white/5 text-white/70 hover:bg-white/10">logs</button>
+                  {#if c.state === 'running'}
+                    <button onclick={() => dockerDo(c, 'restart')} class="px-1.5 py-0.5 rounded bg-white/5 text-white/70 hover:bg-white/10">restart</button>
+                    <button onclick={() => dockerDo(c, 'stop')} class="px-1.5 py-0.5 rounded bg-white/5 text-amber-300 hover:bg-white/10">stop</button>
+                  {:else}
+                    <button onclick={() => dockerDo(c, 'start')} class="px-1.5 py-0.5 rounded bg-white/5 text-green-300 hover:bg-white/10">start</button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          {:else}
+            <div class="p-3 text-xs text-white/40">No containers.</div>
+          {/if}
         {/if}
       </div>
     </aside>
