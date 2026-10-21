@@ -134,6 +134,14 @@ export class ConsoleSocket {
     this._send({ t: 'file-list', session: this.opts.session, path })
   }
 
+  // deleteFile removes one file; mkdir creates a directory. Both reply with a fresh file-list-result.
+  deleteFile(path) {
+    this._send({ t: 'file-delete', session: this.opts.session, path })
+  }
+  mkdir(path) {
+    this._send({ t: 'file-mkdir', session: this.opts.session, path })
+  }
+
   close() {
     this.closedByUs = true
     this._send({ t: 'close', session: this.opts.session })
