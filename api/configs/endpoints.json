@@ -2167,7 +2167,16 @@
             "GET"
           ],
           "handler": "ConsoleSessions",
-          "description": "List live console sessions for a machine (?machine_id=)",
+          "description": "List live console sessions for a machine (?machine_id=) or all machines",
+          "min_role": "operator"
+        },
+        {
+          "path": "/console/snapshot",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ConsoleSnapshot",
+          "description": "Capture a session's current screen for a preview (?machine_id=&session=)",
           "min_role": "operator"
         }
       ]
