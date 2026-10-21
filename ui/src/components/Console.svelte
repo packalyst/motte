@@ -48,7 +48,7 @@
   let activeId = $state(null)
   let error = $state('')
   let busy = $state(false)
-  let readonly = $state(!!shareGrant)
+  const readonly = $derived(!!shareGrant) // a share-link console is view-only for its whole life
   let searchVisible = $state(false)
   let searchQuery = $state('')
   let splitView = $state(false) // false = one session shown (tabs); true = all sessions in a grid
@@ -199,6 +199,7 @@
       { icon: 'brand-docker', title: 'Docker', on: tool === 'docker' && mine, fn: () => openTool('docker') },
       { icon: 'terminal-2', title: 'Snippets', on: tool === 'snippets' && mine, fn: () => openTool('snippets') },
       { icon: 'clipboard', title: 'Paste clipboard', fn: () => pasteInto(tab) },
+      { icon: 'stethoscope', title: 'Diagnostics', on: tool === 'diag' && mine, more: true, fn: () => openTool('diag') },
       { icon: termLight ? 'moon' : 'sun', title: 'Terminal theme', more: true, fn: toggleTheme },
       { icon: 'copy', title: 'Copy selection', more: true, fn: () => copySelection(tab) },
       { icon: 'pencil', title: 'Rename session', more: true, fn: () => startRename(tab) },
@@ -287,8 +288,9 @@
   }
 
   // Driven by the parent (the global console page).
-  export function openNew(machine) { openTab(machine) }
-  export function openSession(s) { openTab({ id: s.machine_id, name: s.machine_name }, s.id, s.label) }
+  // Return openTab's promise so the parent can wait for the tab to exist (e.g. before openPanel).
+  export function openNew(machine) { return openTab(machine) }
+  export function openSession(s) { return openTab({ id: s.machine_id, name: s.machine_name }, s.id, s.label) }
   export function hasTabs() { return tabs.length > 0 }
   // Pre-seed per-machine grants (from one bulk step-up) so auto-opening every session doesn't prompt.
   export function seedGrants(obj) { for (const [mid, g] of Object.entries(obj || {})) if (g) grants.set(mid, g) }
@@ -329,7 +331,7 @@
       machine: tab.machine.id, grant: g, session: tab.id, cols: term.cols, rows: term.rows,
       onOpen: () => {
         if (!readonly) term.focus()
-        if (filesVisible && tab.id === activeId) listFiles(filesCwd)
+        if (tab.id === activeId) { if (filesVisible) listFiles(filesCwd); else if (tool) loadTool(tool) }
         socket.ping() // first latency/cwd probe, then keep it fresh
         clearInterval(tab.pinger)
         tab.pinger = setInterval(() => socket.ping(), 5000)
@@ -341,6 +343,7 @@
       onPong: (latency, cwd) => { tab.latency = latency; tab.cwd = cwd; tabs = [...tabs] },
       onGit: (text) => { if (tab.id === activeId) { gitText = text; gitLoading = false } },
       onDocker: (action, data) => { if (tab.id === activeId) handleDocker(action, data) },
+      onDiag: (_action, text) => { if (tab.id === activeId) { diagOut = text || '(no output)'; diagBusy = false } },
       onCommand: (c) => { tab.commands = [c, ...tab.commands].slice(0, 100); tabs = [...tabs] },
       onFileChunk: (path, parts) => handleFileChunk(path, parts),
       onFileList: (path, items) => handleFileList(tab.id, path, items),
@@ -584,12 +587,47 @@
     } })
   }
 
+  // Panel header icon + title per tool (same icons as the toolbar).
+  const toolMeta = {
+    snippets: { icon: 'terminal-2', title: 'Snippets' },
+    git: { icon: 'git-branch', title: 'Git status' },
+    docker: { icon: 'brand-docker', title: 'Docker' },
+    forwards: { icon: 'arrows-exchange', title: 'Port forwards' },
+    commands: { icon: 'list-details', title: 'Commands' },
+    diag: { icon: 'stethoscope', title: 'Diagnostics' },
+  }
+
+  // Diagnostics: one reachability check at a time from the host (ping / traceroute / dns).
+  let diagTarget = $state('')
+  let diagOut = $state('')
+  let diagBusy = $state(false)
+  function runDiag(action) {
+    const t = diagTarget.trim()
+    if (!t) return toast('Enter a hostname or IP', 'error')
+    const s = activeSocket()
+    if (!s) return
+    diagBusy = true
+    diagOut = `Running ${action} ${t}…`
+    s.diag(action, t)
+  }
+
+  // loadTool fetches a panel's data; shared by a toolbar click, a machine-page deep link, and the
+  // socket's onOpen (a panel requested before the session connected loads once it does).
+  function loadTool(t) {
+    if (t === 'git') refreshGit()
+    if (t === 'docker') { dockerLog = null; dockerPs() }
+  }
   function openTool(t) {
     tool = tool === t ? null : t
     if (tool) filesVisible = false
-    if (tool === 'git') refreshGit()
-    if (tool === 'docker') { dockerLog = null; dockerPs() }
+    loadTool(tool)
     fitAll()
+  }
+  // Driven by the parent: open a panel on arrival (machine page → "Open Docker" etc.). Safe to call
+  // before the session connects — the state is set now and the data loads in onOpen.
+  export function openPanel(name) {
+    if (name === 'files') { tool = null; filesVisible = true; if (activeSocket()?.isOpen) listFiles(filesCwd) }
+    else { filesVisible = false; tool = name; if (activeSocket()?.isOpen) loadTool(name) }
   }
   function refreshGit() { const s = activeSocket(); if (!s) return; gitLoading = true; s.gitStatus() }
   function dockerPs() { const s = activeSocket(); if (!s) return; dockerLoading = true; s.docker('ps') }
@@ -877,8 +915,8 @@
   {#if tool}
     <aside class="absolute inset-y-0 right-0 z-30 w-full sm:w-96 lg:static lg:w-80 shrink-0 border-l border-white/10 bg-[#12161d] flex flex-col">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
-        <Icon name={tool === 'git' ? 'git-branch' : tool === 'docker' ? 'brand-docker' : tool === 'forwards' ? 'arrows-exchange' : tool === 'commands' ? 'list-details' : 'bolt'} size={14} class="text-[#58a6ff]" />
-        <span class="font-medium text-sm capitalize">{tool}</span>
+        <Icon name={toolMeta[tool]?.icon} size={14} class="text-[#58a6ff]" />
+        <span class="font-medium text-sm">{toolMeta[tool]?.title}</span>
         {#if tool === 'git'}<button onclick={refreshGit} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>{/if}
         {#if tool === 'docker'}<button onclick={() => { dockerLog = null; dockerPs() }} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>{/if}
         {#if tool === 'snippets'}<button onclick={addSnippet} title="Add snippet" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="plus" size={14} /></button>{/if}
@@ -944,6 +982,20 @@
           {:else}
             <div class="p-3 text-xs text-white/40 leading-relaxed">No forwards. Add one with + to reach a web service the machine can see (e.g. <span class="font-mono">localhost:8080</span>) in your browser.</div>
           {/if}
+        {:else if tool === 'diag'}
+          <div class="p-3 space-y-2">
+            <input bind:value={diagTarget} placeholder="hostname or IP (e.g. 1.1.1.1)"
+              onkeydown={(e) => e.key === 'Enter' && runDiag('ping')}
+              class="w-full bg-black/30 border border-white/10 rounded px-2 py-1.5 text-xs text-white font-mono outline-none focus:border-[#58a6ff]" />
+            <div class="flex gap-1.5">
+              {#each [['ping', 'Ping'], ['traceroute', 'Traceroute'], ['dns', 'DNS']] as [a, l] (a)}
+                <button onclick={() => runDiag(a)} disabled={diagBusy}
+                  class="flex-1 px-2 py-1 rounded text-xs bg-white/5 text-white/80 hover:bg-white/10 disabled:opacity-40">{l}</button>
+              {/each}
+            </div>
+            <p class="text-[10px] text-white/40 leading-relaxed">Runs from this host, so it shows what <em>it</em> can reach and resolve.</p>
+          </div>
+          {#if diagOut}<pre class="px-3 pb-3 text-[11px] text-[#d7dce2] font-mono whitespace-pre-wrap break-all">{diagOut}</pre>{/if}
         {:else if tool === 'commands'}
           {#if activeTab?.commands?.length}
             {#each activeTab.commands as c, i (i)}

@@ -99,8 +99,11 @@
     // Open every live session as a tab (the target one LAST so it ends up active).
     const targetS = target?.session ? sessions.find((s) => s.machine_id === target.machine_id && s.id === target.session) : null
     for (const s of sessions) { if (s !== targetS) consoleRef?.openSession(s) }
-    if (target?.fresh && target.machine_id) consoleRef?.openNew({ id: target.machine_id, name: target.machine_name })
-    if (targetS) consoleRef?.openSession(targetS)
+    if (target?.fresh && target.machine_id) await consoleRef?.openNew({ id: target.machine_id, name: target.machine_name })
+    if (targetS) await consoleRef?.openSession(targetS)
+    // Arrived from a machine-page tool card (Files / Docker / Diagnostics / Forwards): open that panel
+    // on the now-active target session.
+    if (target?.panel) consoleRef?.openPanel(target.panel)
   }
 
   onMount(async () => {

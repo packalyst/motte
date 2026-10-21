@@ -64,6 +64,9 @@ export class ConsoleSocket {
       case 'docker-result':
         this.opts.onDocker?.(f.action || '', f.data ? new TextDecoder().decode(b64decodeToBytes(f.data)) : '')
         break
+      case 'diag-result':
+        this.opts.onDiag?.(f.action || '', f.data ? new TextDecoder().decode(b64decodeToBytes(f.data)) : '')
+        break
       case 'command': {
         // payload: "<exit>|<ms>|<command line>"
         const s = f.data ? new TextDecoder().decode(b64decodeToBytes(f.data)) : ''
@@ -87,6 +90,13 @@ export class ConsoleSocket {
   }
   docker(action, container) {
     this._send({ t: 'docker', session: this.opts.session, action, path: container })
+  }
+  // diag runs a reachability check (ping | traceroute | dns) from the host; reply via onDiag.
+  diag(action, target) {
+    this._send({ t: 'diag', session: this.opts.session, action, path: target })
+  }
+  get isOpen() {
+    return this.ws?.readyState === WebSocket.OPEN
   }
 
   _onFileChunk(f) {
