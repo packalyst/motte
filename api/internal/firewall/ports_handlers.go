@@ -190,6 +190,10 @@ func (s *Service) handleRemovePort(w http.ResponseWriter, r *http.Request) {
 
 // handleChangeSSHPort changes the SSH port
 func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
+	// Step-up: changing the SSH port can lock the operator out of the host.
+	if !router.StepUp(w, r) {
+		return
+	}
 	var req struct {
 		Port int `json:"port"`
 	}

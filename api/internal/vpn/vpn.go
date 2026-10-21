@@ -587,6 +587,10 @@ func (s *Service) handleRestartRouter(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleRemoveRouter(w http.ResponseWriter, r *http.Request) {
+	// Step-up: removing the VPN router tears down tailnet subnet routing.
+	if !router.StepUp(w, r) {
+		return
+	}
 	if err := RemoveRouter(); err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return

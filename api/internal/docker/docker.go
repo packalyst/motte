@@ -441,6 +441,10 @@ func (s *Service) handleRestart(w http.ResponseWriter, r *http.Request) {
 
 // handleStop stops a container
 func (s *Service) handleStop(w http.ResponseWriter, r *http.Request) {
+	// Step-up: stopping a container is disruptive (can take the panel or VPN offline).
+	if !router.StepUp(w, r) {
+		return
+	}
 	name := router.ExtractPathParam(r, "/api/docker/containers/")
 	name = strings.TrimSuffix(name, "/stop")
 	if name == "" {
