@@ -2,10 +2,15 @@
   // A live session shown as a card with a terminal snapshot preview (like the reference UI's
   // "active sessions"). Clicking it resumes the session; the X kills it. Reused on the machine
   // Sessions tab and the dashboard resume strip. Fetches its own one-shot snapshot.
-  import { apiGet } from '../stores/app.js'
+  import { onMount, onDestroy } from 'svelte'
+  import { requestSnapshot, openConsoleEvents } from '../lib/consoleEvents.js'
   import Icon from './Icon.svelte'
 
   let { session, machine, onresume, onkill } = $props()
+
+  let releaseEvents
+  onMount(() => { releaseEvents = openConsoleEvents() })
+  onDestroy(() => releaseEvents?.())
 
   let preview = $state('')
   let loading = $state(true)
@@ -32,10 +37,8 @@
   async function loadPreview() {
     loading = true
     try {
-      const res = await apiGet(
-        `/api/fleet/console/snapshot?machine_id=${encodeURIComponent(machine.id)}&session=${encodeURIComponent(session.id)}`,
-      )
-      preview = res?.data ? clean(decodeB64(res.data)) : ''
+      const data = await requestSnapshot(machine.id, session.id)
+      preview = data ? clean(decodeB64(data)) : ''
     } catch {
       preview = ''
     } finally {

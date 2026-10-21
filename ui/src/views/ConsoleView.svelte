@@ -1,12 +1,14 @@
 <script>
-  // The standalone GLOBAL console: one workspace showing the caller's live sessions across EVERY
-  // accessible, console-enabled machine. A left rail lists sessions to resume + machines to start a
-  // new session on; the terminal (embedded Console) holds tabs that can span different hosts and
-  // split across them. Fixed overlay inset past the app sidebar, so the sidebar stays usable.
-  import { onMount, onDestroy } from 'svelte'
-  import { apiGet, apiPost, confirm, toast, currentView, currentUser } from '../stores/app.js'
+  // The standalone GLOBAL console page. No left rail (the app sidebar already is the menu): the
+  // console chrome (tabs, all-sessions menu, new-session picker, split, close) lives in Console
+  // itself. This view just supplies the machine list, drives the one-shot open target from a
+  // machine's session card, mirrors open tabs into the URL hash (refresh/deep-link), and sends the
+  // close button back to the page you came from. Live data arrives over the console-events WS.
+  import { onMount, onDestroy, tick } from 'svelte'
+  import { get } from 'svelte/store'
+  import { apiGet, currentView, previousView, consoleTarget, currentUser } from '../stores/app.js'
+  import { consoleSessions, openConsoleEvents } from '../lib/consoleEvents.js'
   import Console from '../components/Console.svelte'
-  import Icon from '../components/Icon.svelte'
 
   let { loading = $bindable() } = $props()
 
@@ -14,9 +16,9 @@
   const canOpen = $derived((ROLE_RANK[$currentUser?.role] || 0) >= ROLE_RANK.operator)
 
   let consoleRef = $state(null)
-  let sessions = $state([]) // global list: [{id,label,attached,viewers,machine_id,machine_name}]
-  let machines = $state([]) // console-enabled accessible machines
-  let poll
+  let machines = $state([])
+  let release
+  let restored = false
 
   async function loadMachines() {
     try {
@@ -26,43 +28,61 @@
       machines = []
     }
   }
-  async function loadSessions() {
-    try {
-      const res = await apiGet('/api/fleet/console/sessions') // no machine_id → all machines
-      sessions = res?.sessions || []
-    } catch {
-      sessions = []
-    }
+
+  // URL hash <-> open tabs, so a refresh reopens (reattaches) them. Format: #t=machineId|session,…
+  function readHashTabs() {
+    const h = new URLSearchParams(location.hash.slice(1)).get('t')
+    if (!h) return []
+    return h
+      .split(',')
+      .map((x) => { const [machine_id, session] = x.split('|'); return { machine_id, session } })
+      .filter((x) => x.machine_id && x.session)
   }
-  function resume(s) {
-    consoleRef?.openSession(s)
+  function onTabs(list) {
+    const h = list.map((t) => `${t.machine_id}|${t.session}`).join(',')
+    const url = new URL(location.href)
+    url.hash = h ? 't=' + h : ''
+    history.replaceState(history.state, '', url)
   }
-  function newOn(m) {
-    consoleRef?.openNew({ id: m.id, name: m.name, console_record: m.console_record })
-  }
-  async function kill(s) {
-    const ok = await confirm({
-      title: 'Close session',
-      message: `Close Session ${s.label || ''} on ${s.machine_name}? Anything running in it is terminated.`,
-      variant: 'destructive', confirmText: 'Close',
-    })
-    if (!ok) return
-    try {
-      await apiPost('/api/fleet/console/kill', { machine_id: s.machine_id, session: s.id })
-      sessions = sessions.filter((x) => !(x.id === s.id && x.machine_id === s.machine_id))
-      loadSessions()
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
+
+  function goBack() {
+    const prev = get(previousView)
+    currentView.set(prev && prev !== 'console' ? prev : 'fleet')
   }
 
   onMount(async () => {
     loading = false // this view paints its own full-height overlay; release the shell spinner
     if (!canOpen) return
-    await Promise.all([loadMachines(), loadSessions()])
-    poll = setInterval(loadSessions, 5000)
+    release = openConsoleEvents()
+    await loadMachines()
+    await tick()
+    // A machine's session card set a one-shot target before navigating here — honor it.
+    const target = get(consoleTarget)
+    if (target) {
+      consoleTarget.set(null)
+      restored = true // the target replaces any hash restore
+      if (target.session) {
+        consoleRef?.openSession({ id: target.session, machine_id: target.machine_id, machine_name: target.machine_name, label: target.label })
+      } else {
+        consoleRef?.openNew({ id: target.machine_id, name: target.machine_name })
+      }
+    }
   })
-  onDestroy(() => clearInterval(poll))
+  onDestroy(() => release?.())
+
+  // Restore tabs from the URL hash once the live list is known (to recover each session's label).
+  $effect(() => {
+    if (restored || !consoleRef) return
+    const want = readHashTabs()
+    if (!want.length) { restored = true; return }
+    const list = $consoleSessions
+    if (!list.length) return // wait for the first push
+    restored = true
+    for (const w of want) {
+      const s = list.find((x) => x.machine_id === w.machine_id && x.id === w.session)
+      if (s) consoleRef.openSession(s)
+    }
+  })
 </script>
 
 {#if !canOpen}
@@ -71,55 +91,12 @@
   </div>
 {:else}
   <div class="fixed inset-0 lg:left-60 z-40 flex bg-[#0f1419] text-[#d7dce2]">
-    <!-- Session rail -->
-    <aside class="w-56 lg:w-60 shrink-0 border-r border-white/10 bg-[#12161d] flex flex-col">
-      <div class="flex items-center gap-2 px-3 py-2.5 border-b border-white/10">
-        <button onclick={() => currentView.set('fleet')} title="Back" class="p-1 text-white/60 hover:text-white lg:hidden">
-          <Icon name="arrow-left" size={16} />
-        </button>
-        <Icon name="terminal-2" size={16} class="text-[#58a6ff]" />
-        <span class="font-semibold text-sm">Console</span>
-        <span class="ml-auto text-[10px] text-white/40">{sessions.length} active</span>
-      </div>
-
-      <div class="flex-1 overflow-y-auto">
-        <div class="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wide text-white/40">New session</div>
-        {#if machines.length}
-          {#each machines as m (m.id)}
-            <button onclick={() => newOn(m)}
-              class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-white/70 hover:bg-white/5 hover:text-white transition">
-              <Icon name="plus" size={13} class="text-[#58a6ff] shrink-0" />
-              <span class="truncate">{m.name || m.id}</span>
-            </button>
-          {/each}
-        {:else}
-          <div class="px-3 py-1.5 text-xs text-white/40">No console-enabled machines.</div>
-        {/if}
-
-        <div class="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wide text-white/40">Active sessions</div>
-        {#if sessions.length}
-          {#each sessions as s (s.machine_id + '|' + s.id)}
-            <div class="group flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 transition">
-              <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.attached ? 'bg-green-400' : 'bg-white/30'}"
-                title={s.attached ? 'attached' : 'detached'}></span>
-              <button onclick={() => resume(s)} class="min-w-0 flex-1 text-left">
-                <div class="text-xs text-white/80 truncate">Session {s.label}</div>
-                <div class="text-[10px] text-white/40 truncate">{s.machine_name}</div>
-              </button>
-              {#if s.viewers > 0}
-                <span class="text-[10px] text-white/40 flex items-center gap-0.5 shrink-0"><Icon name="eye" size={10} />{s.viewers}</span>
-              {/if}
-              <button onclick={() => kill(s)} title="Close session"
-                class="opacity-0 group-hover:opacity-100 p-0.5 text-white/50 hover:text-red-300 shrink-0"><Icon name="x" size={12} /></button>
-            </div>
-          {/each}
-        {:else}
-          <div class="px-3 py-1.5 text-xs text-white/40">No active sessions. Start one above.</div>
-        {/if}
-      </div>
-    </aside>
-
-    <!-- Terminal (tabs span machines; split mixes hosts) -->
-    <Console embedded machines={machines.map((m) => ({ id: m.id, name: m.name, console_record: m.console_record }))} bind:this={consoleRef} />
+    <Console
+      embedded
+      machines={machines.map((m) => ({ id: m.id, name: m.name, console_record: m.console_record }))}
+      ontabs={onTabs}
+      onclose={goBack}
+      bind:this={consoleRef}
+    />
   </div>
 {/if}

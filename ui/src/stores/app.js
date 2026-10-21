@@ -47,8 +47,15 @@ export const currentView = writable(urlView || savedView || 'overview')
 // Track if we're handling popstate to avoid double-pushing
 let handlingPopstate = false
 
+// The view navigated away FROM (so the console's close button can return there), and a one-shot
+// target the console page opens on arrival (set by a machine's session card before navigating).
+export const previousView = writable(null)
+export const consoleTarget = writable(null)
+let _lastView = urlView || savedView || 'overview'
+
 currentView.subscribe(value => {
   if (typeof window !== 'undefined' && value) {
+    if (value !== _lastView) { previousView.set(_lastView); _lastView = value }
     localStorage.setItem('hs_view', value)
     // Update URL without reload (skip if handling popstate)
     const newPath = '/' + value
