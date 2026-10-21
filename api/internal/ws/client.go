@@ -116,7 +116,7 @@ func (c *Client) ReadPump() {
 		switch msg.Action {
 		case "subscribe":
 			for _, channel := range msg.Channels {
-				if isValidChannel(channel) {
+				if isValidChannel(channel) && c.maySubscribe(channel) {
 					c.hub.Subscribe(c, channel)
 					// Send current data immediately on subscribe
 					switch channel {
@@ -190,6 +190,29 @@ func (c *Client) WritePump() {
 // isValidChannel checks if a channel name is allowed
 func isValidChannel(channel string) bool {
 	return validChannels[channel]
+}
+
+// channelMinRole gates sensitive channels at subscribe time. Channels not listed are
+// readable by any authenticated session (viewer+). The docker* channels stream the
+// container list and live container logs, which can leak tokens/keys/IPs — their REST
+// equivalents are admin-gated, so the WS path must match.
+var channelMinRole = map[string]string{
+	"docker":          "admin",
+	"docker_logs":     "admin",
+	"container_stats": "admin",
+}
+
+// wsRoleRank mirrors the auth role ladder (kept local to avoid an import cycle). 0 = unknown.
+var wsRoleRank = map[string]int{"viewer": 1, "operator": 2, "admin": 3, "owner": 4}
+
+// maySubscribe reports whether this client's role satisfies a channel's minimum role.
+func (c *Client) maySubscribe(channel string) bool {
+	min, gated := channelMinRole[channel]
+	if !gated {
+		return true
+	}
+	have := wsRoleRank[c.Role]
+	return have > 0 && have >= wsRoleRank[min]
 }
 
 // sendMessage sends a message to this client (non-blocking)
