@@ -77,6 +77,9 @@ type consoleFrame struct {
 	// measurement; Cwd carries the session's current working directory for the status bar.
 	Ts  int64  `json:"ts,omitempty"`
 	Cwd string `json:"cwd,omitempty"`
+	// git / docker tool panels (relayed verbatim): Action selects the operation (docker ps/logs/
+	// start/stop/restart); Path carries the container id/name for a per-container action.
+	Action string `json:"action,omitempty"`
 }
 
 var (
