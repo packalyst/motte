@@ -2178,6 +2178,15 @@
           "handler": "ConsoleSnapshot",
           "description": "Capture a session's current screen for a preview (?machine_id=&session=)",
           "min_role": "operator"
+        },
+        {
+          "path": "/console/kill",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ConsoleKill",
+          "description": "Kill one of the caller's own console sessions",
+          "min_role": "operator"
         }
       ]
     },
