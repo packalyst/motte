@@ -66,8 +66,9 @@
   </button>
   <!-- footer -->
   <div class="flex items-center gap-2 px-3 py-2">
-    <span class="w-2 h-2 rounded-full shrink-0 {session.attached ? 'bg-success' : 'bg-muted-foreground/40'}"
-      title={session.attached ? 'attached' : 'detached'}></span>
+    <!-- A listed session is always alive (tmux). Green = live; dimmed when no one is attached. -->
+    <span class="w-2 h-2 rounded-full shrink-0 bg-success {session.attached ? '' : 'opacity-40'}"
+      title={session.attached ? `live · ${session.viewers} watching` : 'live · detached'}></span>
     <button type="button" onclick={() => onresume?.(session)} class="min-w-0 flex-1 text-left cursor-pointer">
       <div class="text-sm font-medium text-foreground truncate">Session {session.label || '?'}</div>
       <div class="text-[11px] text-muted-foreground truncate">{machine.name || machine.id}</div>
