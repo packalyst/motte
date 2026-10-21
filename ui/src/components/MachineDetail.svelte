@@ -33,13 +33,29 @@
   let consoleRecord = $state(machine.console_record)
   let consoleBusy = $state(false)
   let showConsole = $state(false)
+  let consoleSession = $state(null) // session id to (re)attach when the console opens; null = fresh
 
-  function openConsole() {
+  // openConsole(session) opens the full-screen console, reattaching `session` when given.
+  function openConsole(session = null) {
     if (!consoleEnabled) {
       toast('Console is disabled for this machine', 'error')
       return
     }
+    consoleSession = session
     showConsole = true
+  }
+
+  // Resumable sessions (tmux) the caller owns on this host — drives the Sessions tab's reattach
+  // list. A session survives a browser drop, so this lets you climb back into it after a reload.
+  let liveSessions = $state([])
+  let sessionsLoading = $state(false)
+  async function loadSessions() {
+    if (!consoleEnabled || !canOpenConsole) { liveSessions = []; return }
+    sessionsLoading = true
+    try {
+      const res = await apiGet('/api/fleet/console/sessions?machine_id=' + encodeURIComponent(machine.id))
+      liveSessions = res?.sessions || []
+    } catch { liveSessions = [] } finally { sessionsLoading = false }
   }
 
   async function setConsole(enabled) {
@@ -161,6 +177,11 @@
     const q = p.toString()
     history.replaceState(history.state, '', window.location.pathname + (q ? '#' + q : ''))
   }
+
+  // Refresh the resumable-session list whenever the Sessions tab is shown (console on + allowed).
+  $effect(() => {
+    if (activeTab === 'sessions' && consoleEnabled && canOpenConsole) loadSessions()
+  })
 
   // kernel-maintenance job status (absent unless a kernel update has run). Each phase
   // maps to a dot color + human label so a long, reboot-spanning job is legible.
@@ -509,7 +530,7 @@
         <Icon name="refresh" size={14} />Refresh
       </button>
       {#if canOpenConsole && consoleEnabled}
-        <button onclick={openConsole} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-primary hover:bg-primary/10 transition cursor-pointer">
+        <button onclick={() => openConsole()} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-primary hover:bg-primary/10 transition cursor-pointer">
           <Icon name="terminal-2" size={14} />Console
         </button>
       {/if}
@@ -646,7 +667,8 @@
         {#if canOpenConsole || canManageConsole}
           <div class="flex flex-wrap items-center gap-2">
             {#if canOpenConsole && consoleEnabled}
-              <Button variant="primary" size="sm" icon="terminal-2" onclick={openConsole}>Open console</Button>
+              <Button variant="primary" size="sm" icon="terminal-2" onclick={() => openConsole()}>New session</Button>
+              <Button variant="ghost" size="sm" icon="refresh" loading={sessionsLoading} onclick={loadSessions}>Refresh</Button>
             {/if}
             {#if canManageConsole}
               <Button variant={consoleEnabled ? 'outline' : 'primary'} size="sm" icon="power" loading={consoleBusy} onclick={() => setConsole(!consoleEnabled)}>
@@ -662,10 +684,31 @@
               <span class="text-sm text-muted-foreground">Console is disabled for this machine.</span>
             {/if}
           </div>
+
+          <!-- Resumable sessions: a shell survives a browser drop (tmux), so reattach after a reload. -->
+          {#if consoleEnabled && canOpenConsole}
+            <div class="mt-3 pt-3 border-t border-border">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Your live sessions</div>
+              {#if sessionsLoading && !liveSessions.length}
+                <div class="text-xs text-muted-foreground py-1">Checking…</div>
+              {:else if liveSessions.length}
+                {#each liveSessions as s}
+                  <div class="flex items-center gap-2 py-1.5 border-t border-border first:border-t-0 text-sm">
+                    <Icon name="terminal" size={14} class="text-primary shrink-0" />
+                    <span class="font-mono text-xs truncate flex-1">{s.id}</span>
+                    {#if s.attached}<Badge variant="info" size="sm">attached</Badge>{/if}
+                    <Button size="xs" variant="outline" icon="plug-connected" onclick={() => openConsole(s.id)}>Reattach</Button>
+                  </div>
+                {/each}
+              {:else}
+                <div class="text-xs text-muted-foreground py-1">No resumable sessions yet. Start one — it survives a disconnect, so you can reattach after a reload or dropped connection.</div>
+              {/if}
+            </div>
+          {/if}
         {:else}
           <div class="text-sm text-muted-foreground">You don't have permission to use the console.</div>
         {/if}
-        {@render note('A remote interactive shell is gated: enable per-machine (admin, re-authenticate), then open (operator+). Sessions resume server-side (tmux) and can be recorded to an audit cast. A session list, file browser, editor and split view are coming.')}
+        {@render note('A remote interactive shell is gated: enable per-machine (admin, re-authenticate), then open (operator+). Sessions resume server-side (tmux) — reattach from the list above after a reload — and can be recorded to an audit cast. File browser, editor and split view are coming.')}
       </div>
     {/if}
 
@@ -1021,5 +1064,7 @@
 </Modal>
 
 {#if showConsole}
-  <Console machine={{ id: machine.id, name: machine.name, console_record: consoleRecord }} onclose={() => (showConsole = false)} />
+  <Console machine={{ id: machine.id, name: machine.name, console_record: consoleRecord }}
+    initialSession={consoleSession}
+    onclose={() => { showConsole = false; consoleSession = null; loadSessions() }} />
 {/if}
