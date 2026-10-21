@@ -111,6 +111,12 @@ func (s *Service) verifyCommandStepUp(r *http.Request, ctype, currentPassword, c
 			fmt.Sprintf("Command %q denied: operator could not be verified for step-up", ctype))
 		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
 	}
+	// Inside the shared fleet step-up grace window (from a recent console open or command)? Pass
+	// without prompting, and slide the window — so administering a fleet isn't a password per action.
+	if recentFleetStepUp(userID) {
+		touchStepUpGrace(userID)
+		return 0, nil
+	}
 	if currentPassword == "" {
 		// Benign first attempt — the UI hasn't prompted yet. Signal step-up, don't audit.
 		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
@@ -123,6 +129,7 @@ func (s *Service) verifyCommandStepUp(r *http.Request, ctype, currentPassword, c
 			fmt.Sprintf("Command %q denied: step-up re-authentication failed", ctype))
 		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication failed")
 	}
+	touchStepUpGrace(userID)
 	return 0, nil
 }
 
