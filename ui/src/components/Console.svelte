@@ -58,6 +58,12 @@
   let filesCwd = $state('/root')
   let filesList = $state([])
   let filesLoading = $state(false)
+  let fileSel = $state(new Set()) // selected file names in the current directory (multi-select)
+  let fileFilter = $state('')
+  let showHidden = $state(false)
+  const filesShown = $derived(filesList.filter((it) =>
+    (showHidden || !it.name.startsWith('.')) &&
+    (!fileFilter || it.name.toLowerCase().includes(fileFilter.toLowerCase()))))
   // Inline editor (textarea); opened from the browser, saved back via putFile.
   let editPath = $state(null)
   let editContent = $state('')
@@ -347,9 +353,40 @@
   // Agent reply for a listing (only the active session's).
   function handleFileList(session, path, items) {
     if (session !== activeId) return
+    if (path !== filesCwd) fileSel = new Set() // leaving a directory drops its selection
     filesCwd = path
     filesList = items
     filesLoading = false
+  }
+
+  // --- file multi-select (download / delete / new folder) ---
+  function toggleSel(name) { const s = new Set(fileSel); s.has(name) ? s.delete(name) : s.add(name); fileSel = s }
+  function clearSel() { fileSel = new Set() }
+  function toggleSelAll() {
+    const names = filesShown.filter((it) => !it.dir).map((it) => it.name)
+    fileSel = (names.length && names.every((n) => fileSel.has(n))) ? new Set() : new Set(names)
+  }
+  function downloadSelected() {
+    const s = activeSocket()
+    if (!s) return
+    for (const n of fileSel) s.getFile(joinPath(filesCwd, n))
+    clearSel()
+  }
+  async function deleteSelected() {
+    const names = [...fileSel]
+    if (!names.length) return
+    const ok = await confirm({ title: 'Delete files', message: `Delete ${names.length} item(s) from ${filesCwd}? This cannot be undone.`, variant: 'destructive', confirmText: 'Delete' })
+    if (!ok) return
+    const s = activeSocket()
+    if (!s) return
+    for (const n of names) s.deleteFile(joinPath(filesCwd, n)) // agent replies with a fresh listing
+    clearSel()
+  }
+  function newFolder() {
+    openPrompt({ title: 'New folder name', placeholder: 'folder', onok: (name) => {
+      const n = (name || '').trim()
+      if (n) activeSocket()?.mkdir(joinPath(filesCwd, n))
+    } })
   }
   // Route a delivered file: into the editor if we requested it for editing, else download it.
   function handleFileChunk(path, parts) {
@@ -384,8 +421,10 @@
     if (!file) return
     const s = activeSocket()
     if (!s) return
-    await s.putFile(joinPath(filesCwd, file.name), file)
-    toast('Uploading ' + file.name + '…', 'info')
+    // Upload under the basename only — a crafted name with path parts must not escape the cwd.
+    const base = (file.name.split(/[\\/]/).pop() || 'upload').replace(/\.{2,}/g, '.')
+    await s.putFile(joinPath(filesCwd, base), file)
+    toast('Uploading ' + base + '…', 'info')
   }
   const enterDir = (name) => listFiles(joinPath(filesCwd, name))
   const upDir = () => listFiles(parentPath(filesCwd))
@@ -681,19 +720,35 @@
       <div class="flex items-center gap-1 px-2 py-1.5 border-b border-white/10">
         <button onclick={upDir} title="Up a directory" class="p-1 text-white/60 hover:text-white"><Icon name="arrow-up" size={13} /></button>
         <span class="font-mono text-[11px] text-white/70 truncate flex-1" title={filesCwd}>{filesCwd}</span>
+        <button onclick={newFolder} title="New folder" class="p-1 text-white/60 hover:text-white"><Icon name="folder-plus" size={14} /></button>
         <button onclick={() => filesUploadInput?.click()} title="Upload to this directory" class="p-1 text-white/60 hover:text-white"><Icon name="upload" size={13} /></button>
+        <button onclick={() => (showHidden = !showHidden)} title="Show hidden files" class="px-1 text-[11px] font-mono {showHidden ? 'text-[#58a6ff]' : 'text-white/50 hover:text-white'}">.*</button>
+      </div>
+      <div class="px-2 py-1.5 border-b border-white/10">
+        <input bind:value={fileFilter} placeholder="filter…"
+          class="w-full bg-black/30 border border-white/10 rounded px-2 py-1 text-[11px] text-white outline-none focus:border-[#58a6ff]" />
       </div>
       <div class="flex-1 overflow-y-auto">
         {#if filesLoading}
           <div class="p-3 text-xs text-white/40">Loading…</div>
-        {:else if filesList.length}
-          {#each filesList as it}
-            <div class="group flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 text-xs">
-              <Icon name={it.dir ? 'folder' : 'file'} size={14} class={it.dir ? 'text-[#58a6ff] shrink-0' : 'text-white/50 shrink-0'} />
+        {:else if filesShown.length}
+          <!-- select-all (files only) -->
+          <label class="flex items-center gap-2 px-3 py-1 text-[10px] uppercase tracking-wide text-white/40 border-b border-white/5 cursor-pointer">
+            <input type="checkbox" class="accent-[#58a6ff]"
+              checked={filesShown.some((it) => !it.dir) && filesShown.filter((it) => !it.dir).every((it) => fileSel.has(it.name))}
+              onchange={toggleSelAll} />
+            name
+          </label>
+          {#each filesShown as it (it.name)}
+            <div class="group flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 text-xs {fileSel.has(it.name) ? 'bg-[#58a6ff]/10' : ''}">
               {#if it.dir}
+                <span class="w-[13px] shrink-0"></span>
+                <Icon name="folder" size={14} class="text-[#58a6ff] shrink-0" />
                 <button onclick={() => enterDir(it.name)} class="flex-1 text-left truncate hover:text-white">{it.name}/</button>
               {:else}
-                <span class="flex-1 truncate" title={it.name}>{it.name}</span>
+                <input type="checkbox" class="accent-[#58a6ff] shrink-0" checked={fileSel.has(it.name)} onchange={() => toggleSel(it.name)} />
+                <Icon name="file" size={14} class="text-white/50 shrink-0" />
+                <button onclick={() => toggleSel(it.name)} class="flex-1 truncate text-left" title={it.name}>{it.name}</button>
                 <span class="text-white/30 tabular-nums shrink-0">{fmtSize(it.size)}</span>
                 <button onclick={() => editFromBrowser(it.name)} title="Edit" class="opacity-0 group-hover:opacity-100 p-0.5 text-white/60 hover:text-white shrink-0"><Icon name="pencil" size={12} /></button>
                 <button onclick={() => downloadFromBrowser(it.name)} title="Download" class="opacity-0 group-hover:opacity-100 p-0.5 text-white/60 hover:text-white shrink-0"><Icon name="download" size={12} /></button>
@@ -701,9 +756,17 @@
             </div>
           {/each}
         {:else}
-          <div class="p-3 text-xs text-white/40">Empty directory.</div>
+          <div class="p-3 text-xs text-white/40">{fileFilter ? 'No match.' : 'Empty directory.'}</div>
         {/if}
       </div>
+      {#if fileSel.size}
+        <div class="flex items-center gap-3 px-3 py-2 border-t border-white/10 bg-[#0f1419] text-xs">
+          <span class="text-white/50">{fileSel.size} selected</span>
+          <button onclick={downloadSelected} class="flex items-center gap-1 text-white/70 hover:text-white"><Icon name="download" size={13} />Download</button>
+          <button onclick={deleteSelected} class="flex items-center gap-1 text-red-300 hover:text-red-200"><Icon name="trash" size={13} />Delete</button>
+          <button onclick={clearSel} class="ml-auto text-white/50 hover:text-white">Clear</button>
+        </div>
+      {/if}
     </aside>
   {/if}
 
