@@ -16,7 +16,13 @@ var (
 
 	// Simple hostname/label validation (single segment)
 	hostnameRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-_]*[a-zA-Z0-9])?$`)
+
+	// Tag name (Tailscale's rule, used for machine tags too): a letter, then letters, digits, dashes
+	tagRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9-]{0,62}$`)
 )
+
+// MaxTags caps how many tags one client can carry.
+const MaxTags = 16
 
 // ValidationError represents a validation failure
 type ValidationError struct {
@@ -26,6 +32,28 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
+}
+
+// NormalizeTags trims and de-duplicates tags and checks each one. prefix ("tag:" for Headscale,
+// "" for machines) is required on every tag and is not part of the checked name.
+func NormalizeTags(tags []string, prefix string) ([]string, error) {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		if !strings.HasPrefix(t, prefix) || !tagRegex.MatchString(strings.TrimPrefix(t, prefix)) {
+			return nil, &ValidationError{Field: "tags", Message: fmt.Sprintf("invalid tag %q: use a letter, then letters, digits or dashes", t)}
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	if len(out) > MaxTags {
+		return nil, &ValidationError{Field: "tags", Message: fmt.Sprintf("at most %d tags", MaxTags)}
+	}
+	return out, nil
 }
 
 // ValidateIP validates an IP address (IPv4 or IPv6)

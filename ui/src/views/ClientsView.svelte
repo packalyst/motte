@@ -8,7 +8,7 @@
    */
   import { onMount, onDestroy } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, openView, currentUser, toast } from '../stores/app.js'
+  import { apiGet, apiPost, openView, currentUser, hasRole, toast } from '../stores/app.js'
   import { loadState, saveState } from '../stores/helpers.js'
   import { subscribe, unsubscribe, clientsStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
@@ -54,7 +54,7 @@
   }
 
   // Approving a LAN device is admin-only on the server; the button only shows for admins.
-  const isAdmin = $derived(['admin', 'owner'].includes($currentUser?.role))
+  const isAdmin = $derived(hasRole($currentUser, 'admin'))
   let approving = $state(null)
   async function approve(c) {
     approving = c.key
@@ -84,7 +84,7 @@
     return clients.filter((c) =>
       (status === 'all' || (status === 'online') === c.online) &&
       (!kind || isKind(c, kind)) &&
-      (!q || `${c.name} ${c.ip} ${c.meta || ''} ${KINDS[c.kind].label}`.toLowerCase().includes(q)))
+      (!q || `${c.name} ${c.ip} ${c.meta || ''} ${KINDS[c.kind].label} ${(c.tags || []).join(' ')}`.toLowerCase().includes(q)))
   })
   const groups = $derived(
     Object.entries(KINDS)
@@ -145,7 +145,7 @@
     </div>
   {/if}
 
-  <Toolbar bind:search placeholder="Search name, IP, user, OS or network…">
+  <Toolbar bind:search placeholder="Search name, IP, user, OS, network or tag…">
     <div class="flex min-w-0 flex-wrap items-center gap-2">
       <Segmented label="Status" bind:value={status} options={[
         { value: 'all', label: 'All', count: clients.length },
@@ -187,6 +187,7 @@
             subtitle={c.meta}
             subtitleIcon={SUBTITLE_ICON[c.kind]}
             flags={c.flags || []}
+            tags={c.tags?.length ? c.tags.map((t) => t.replace(/^tag:/, '')) : null}
             highlight={c.pending}
             onopen={() => open(c)}
             openTitle={'Open in ' + KINDS[c.kind].label}

@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob, stepUpConfirm, takeHashParam } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob, stepUpConfirm, takeHashParam, currentUser, hasRole } from '../stores/app.js'
   import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
@@ -21,6 +21,7 @@
   import OptionCard from '../components/OptionCard.svelte'
   import ClientCard from '../components/ClientCard.svelte'
   import BarList from '../components/BarList.svelte'
+  import TagEditor from '../components/TagEditor.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -571,6 +572,14 @@
   }
 
 
+  // Headscale ACL tags set by an admin (forcedTags). Tags the device advertised itself (validTags)
+  // are shown but can't be removed here.
+  async function saveNodeTags(next) {
+    await apiPut(`/api/hs/nodes/${selectedNode.id}/tags`, { tags: next })
+    selectedNode.forcedTags = next
+    loader.reload()
+  }
+
   async function deleteNode() {
     if (!selectedNode) return
     // Destructive + irreversible → step-up re-auth (password, +2FA when enabled), verified server-side.
@@ -917,6 +926,15 @@
                 {#each [['Machine Key', selectedNode.machineKey], ['Node Key', selectedNode.nodeKey], ['Disco Key', selectedNode.discoKey]].filter(([,v]) => v) as [label, key]}
                   <ContentBlock variant="data" size="sm" solid light label={label} value={key} copyable mono />
                 {/each}
+              </div>
+
+              <!-- Tags -->
+              <div class="pt-3 border-t border-border">
+                <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">ACL tags</h4>
+                <TagEditor tags={selectedNode.forcedTags || []} prefix="tag:" canEdit={hasRole($currentUser, 'admin')} onsave={saveNodeTags} />
+                {#if selectedNode.validTags?.length}
+                  <p class="mt-1.5 text-[11px] text-muted-foreground">Advertised by the device: {selectedNode.validTags.map((t) => t.replace('tag:', '')).join(', ')}</p>
+                {/if}
               </div>
 
               <!-- Routes -->

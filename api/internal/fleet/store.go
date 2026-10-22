@@ -10,6 +10,8 @@ import (
 	"encoding/pem"
 	"strings"
 	"time"
+
+	"api/internal/helper"
 )
 
 // Machine is one enrolled agent.
@@ -39,21 +41,6 @@ func splitTags(csv string) []string {
 		}
 	}
 	return out
-}
-
-// joinTags normalizes a tag slice to a de-duplicated, trimmed CSV for storage.
-func joinTags(tags []string) string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, t := range tags {
-		t = strings.TrimSpace(t)
-		if t == "" || seen[t] {
-			continue
-		}
-		seen[t] = true
-		out = append(out, t)
-	}
-	return strings.Join(out, ",")
 }
 
 // MachineSummary is the at-a-glance slice of a machine's latest report, so the fleet
@@ -308,7 +295,11 @@ func (s *Service) machineTags(id string) ([]string, error) {
 
 // SetMachineTags replaces a machine's tag set (normalized, de-duplicated CSV).
 func (s *Service) SetMachineTags(id string, tags []string) error {
-	res, err := s.db.Exec(`UPDATE fleet_machines SET tags = ? WHERE id = ?`, joinTags(tags), id)
+	tags, err := helper.NormalizeTags(tags, "") // also keeps commas out of the stored CSV
+	if err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`UPDATE fleet_machines SET tags = ? WHERE id = ?`, strings.Join(tags, ","), id)
 	if err != nil {
 		return err
 	}

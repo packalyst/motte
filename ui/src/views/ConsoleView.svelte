@@ -6,15 +6,14 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import { get } from 'svelte/store'
   import {
-    apiGet, apiPost, stepUpConfirm, currentView, previousView, consoleTarget, consoleReturn, currentUser,
+    apiGet, apiPost, stepUpConfirm, currentView, previousView, consoleTarget, consoleReturn, currentUser, hasRole,
   } from '../stores/app.js'
   import { consoleSessions, openConsoleEvents } from '../lib/consoleEvents.js'
   import Console from '../components/Console.svelte'
 
   let { loading = $bindable() } = $props()
 
-  const ROLE_RANK = { viewer: 1, operator: 2, admin: 3, owner: 4 }
-  const canOpen = $derived((ROLE_RANK[$currentUser?.role] || 0) >= ROLE_RANK.operator)
+  const canOpen = $derived(hasRole($currentUser, 'operator'))
 
   let consoleRef = $state(null)
   let machines = $state([])

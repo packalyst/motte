@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { slide } from 'svelte/transition'
-  import { theme, currentView, apiGet } from '../stores/app.js'
+  import { theme, currentView, apiGet, hasRole } from '../stores/app.js'
   import { subscribe, unsubscribe, generalInfoStore } from '../stores/websocket.js'
   import { visibilityChangeCount } from '../stores/network.js'
   import { isInstalledPWA } from '../lib/pwa/permissions.js'
@@ -41,7 +41,7 @@
   let { user = null, onLogout, showAdguardBanner = false, onDismissAdguardBanner } = $props()
 
   // Panel user/role management is an admin+ area.
-  const canManageTeam = $derived(user?.role === 'owner' || user?.role === 'admin')
+  const canManageTeam = $derived(hasRole(user, 'admin'))
 
   let sidebarOpen = $state(false)
   let loading = $state(true)

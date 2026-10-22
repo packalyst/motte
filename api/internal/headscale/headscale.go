@@ -12,6 +12,7 @@ import (
 
 	"api/internal/database"
 	"api/internal/domains"
+	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
 )
@@ -457,8 +458,27 @@ func (s *Service) handleUpdateNodeTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, _ := json.Marshal(map[string][]string{"tags": req.Tags})
-	s.proxyPost(w, "/node/"+id+"/tags", string(body))
+	tags, err := helper.NormalizeTags(req.Tags, "tag:")
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	body, _ := json.Marshal(map[string][]string{"tags": tags})
+	resp, err := helper.HeadscalePost("/node/"+id+"/tags", string(body))
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusFailedDependency)
+		return
+	}
+	if resp.StatusCode < 300 {
+		actor := ""
+		if p := router.CurrentUser(r); p != nil {
+			actor = p.Username
+		}
+		events.Audit("headscale", "node_tags", events.SeverityInfo, actor, helper.GetClientIP(r),
+			fmt.Sprintf("Node %s tags set to [%s]", id, strings.Join(tags, ", ")))
+	}
+	s.proxyResponse(w, resp)
 }
 
 // --- Routes ---
