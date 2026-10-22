@@ -11,6 +11,7 @@
   // Lazy load views - each becomes a separate chunk
   const views = {
     overview: () => import('./OverviewView.svelte'),
+    clients: () => import('./ClientsView.svelte'),
     nodes: () => import('./NodesView.svelte'),
     networks: () => import('./NetworksView.svelte'),
     users: () => import('./UsersView.svelte'),
@@ -58,7 +59,7 @@
   // Submenu groups → their child view ids. Drives auto-expand + collapse so the
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
-    'grp-clients': ['nodes', 'fleet', 'networks'],
+    'grp-clients': ['clients', 'nodes', 'fleet', 'networks'],
     'grp-monitoring': ['analytics', 'logs', 'activity', 'routines'],
     'grp-web': ['traefik', 'domains', 'tunnels'],
     'grp-services': ['adguard', 'docker'],
@@ -137,6 +138,7 @@
     {
       id: 'grp-clients', label: 'Clients', icon: 'devices',
       children: [
+        { id: 'clients', label: 'All clients', icon: 'list' },
         { id: 'nodes', label: 'Nodes', icon: 'server' },
         { id: 'fleet', label: 'Machines', icon: 'device-desktop' },
         { id: 'networks', label: 'Networks', icon: 'router' },

@@ -26,6 +26,7 @@ type Machine struct {
 	Tags           []string        `json:"tags"`
 	ConsoleEnabled bool            `json:"console_enabled"`
 	ConsoleRecord  bool            `json:"console_record"`
+	LastIP         string          `json:"last_ip,omitempty"` // address its last report came from (matches a VPN client when it reports over the tunnel)
 	Summary        *MachineSummary `json:"summary,omitempty"`
 }
 
@@ -204,7 +205,7 @@ func (s *Service) registerMachine(m Machine) error {
 // ListMachines returns all enrolled machines, newest first, each with an at-a-glance
 // summary parsed from its latest report (for the fleet card grid).
 func (s *Service) ListMachines() ([]Machine, error) {
-	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report, COALESCE(tags, ''), COALESCE(console_enabled, 0), COALESCE(console_record, 0)
+	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report, COALESCE(tags, ''), COALESCE(console_enabled, 0), COALESCE(console_record, 0), COALESCE(last_ip, '')
 		FROM fleet_machines ORDER BY enrolled_at DESC`)
 	if err != nil {
 		return nil, err
@@ -215,7 +216,7 @@ func (s *Service) ListMachines() ([]Machine, error) {
 		var m Machine
 		var enrolled, lastSeen, wg, report, tags sql.NullString
 		var consoleEnabled, consoleRecord int
-		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report, &tags, &consoleEnabled, &consoleRecord); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report, &tags, &consoleEnabled, &consoleRecord, &m.LastIP); err != nil {
 			return nil, err
 		}
 		m.WGPubkey = wg.String

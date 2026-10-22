@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, takeHashParam } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
@@ -66,7 +66,12 @@
       loading = false
     }
   }
-  onMount(load)
+  onMount(async () => {
+    await load()
+    // Deep link (#net=<network id>, e.g. from the Clients page): expand that network.
+    const id = Number(takeHashParam('net'))
+    if (id && networks.some((n) => n.id === id)) toggleExpand(id)
+  })
 
   // Derive the network base (e.g. 10.20.20.0/24) from an address like 10.20.20.1/24.
   function networkBase(cidr) {

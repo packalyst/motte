@@ -20,7 +20,7 @@ theme.subscribe(value => {
 
 // Valid view IDs for URL routing
 export const validViews = ['overview', 'nodes', 'users', 'firewall', 'server', 'fleet', 'console', 'iplookup',
-                           'routes', 'authkeys', 'apikeys', 'traefik', 'domains', 'tunnels', 'adguard',
+                           'clients', 'networks', 'routes', 'authkeys', 'apikeys', 'traefik', 'domains', 'tunnels', 'adguard',
                            'docker', 'logs', 'analytics', 'activity', 'routines', 'settings', 'profile', 'team', 'about']
 
 // Get initial tab from URL hash (for tab persistence on refresh)
@@ -74,6 +74,24 @@ currentView.subscribe(value => {
     }
   }
 })
+
+// openView navigates to a view with a deep-link hash (e.g. 'n=<id>') that the view reads once its
+// data has loaded, to open that item. The view switch pushes the bare path synchronously, so the
+// hash is added to that same history entry.
+export function openView(view, hash) {
+  currentView.set(view)
+  if (typeof window !== 'undefined' && hash) {
+    window.history.replaceState(window.history.state, '', '/' + view + '#' + hash)
+  }
+}
+
+// takeHashParam returns a deep-link hash parameter once and strips the hash from the URL.
+export function takeHashParam(key) {
+  if (typeof window === 'undefined') return null
+  const v = new URLSearchParams(window.location.hash.slice(1)).get(key)
+  if (v !== null) window.history.replaceState(window.history.state, '', window.location.pathname)
+  return v
+}
 
 // Handle browser back/forward
 if (typeof window !== 'undefined') {

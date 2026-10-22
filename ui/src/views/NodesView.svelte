@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy, untrack } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob, stepUpConfirm } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob, stepUpConfirm, takeHashParam } from '../stores/app.js'
   import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
@@ -29,6 +29,16 @@
   ])
 
   const vpnClients = $derived(loader.data.clients || [])
+
+  // Deep link (#n=<node id>, e.g. from the Clients page): open that node once the list has loaded.
+  let deepLinked = false
+  $effect(() => {
+    if (deepLinked || !allNodes.length) return
+    deepLinked = true
+    const id = takeHashParam('n')
+    const node = id && allNodes.find((n) => n.id === id)
+    if (node) selectNode(node)
+  })
   const routes = $derived(loader.data.routes || [])
 
   // Sync loading state to parent
@@ -245,11 +255,6 @@
       editingName = false
     }
   })
-
-  function openNodeModal(node) {
-    selectedNode = node
-    showNodeModal = true
-  }
 
   let newPeerName = $state('')
   let createdPeer = $state(null)
