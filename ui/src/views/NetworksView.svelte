@@ -247,7 +247,7 @@
   />
 
   <Toolbar bind:search={searchQuery} placeholder="Search networks...">
-    <Button size="xs" icon="plus" onclick={openAdd}>Add network</Button>
+    <Button icon="plus" onclick={openAdd}>Add network</Button>
   </Toolbar>
 
   {#if !networks.length}

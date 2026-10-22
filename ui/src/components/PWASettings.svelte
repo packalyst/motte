@@ -443,7 +443,6 @@
             onclick={openLocationMap}
             loading={loadingLocation}
             variant="secondary"
-            size="xs"
             icon="map"
           >
             View
@@ -452,7 +451,6 @@
             onclick={requestLocation}
             loading={requestingLocation}
             variant="secondary"
-            size="xs"
             icon="refresh"
           >
             Update
@@ -464,7 +462,6 @@
             onclick={requestLocation}
             loading={requestingLocation}
             variant="success"
-            size="xs"
             icon="map-pin"
           >
             Enable
@@ -509,7 +506,6 @@
               onclick={testNotification}
               loading={testingNotification}
               variant="secondary"
-              size="xs"
               icon="bell-ringing"
             >
               Test
@@ -519,7 +515,6 @@
             onclick={togglePush}
             loading={togglingPush}
             variant={$pushEnabled ? 'destructive' : 'success'}
-            size="xs"
             icon={$pushEnabled ? 'bell-off' : 'bell'}
           >
             {$pushEnabled ? 'Disable' : 'Enable'}

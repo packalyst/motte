@@ -709,9 +709,7 @@
                   {#each blockedDomains as domain}
                     <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 border-l-2 border-l-destructive/60 hover:bg-muted/50">
                       <span class="font-mono text-xs truncate flex-1">{domain}</span>
-                      <button onclick={() => removeRule(`||${domain}^`)} class="icon-btn-destructive shrink-0" title="Remove" aria-label="Remove {domain}">
-                        <Icon name="trash" size={14} />
-                      </button>
+                      <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => removeRule(`||${domain}^`)} title="Remove" aria-label="Remove {domain}" />
                     </div>
                   {/each}
                 </div>
@@ -732,9 +730,7 @@
                   {#each allowedDomains as domain}
                     <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-md bg-muted/30 border border-border/50 border-l-2 border-l-success/60 hover:bg-muted/50">
                       <span class="font-mono text-xs truncate flex-1">{domain}</span>
-                      <button onclick={() => removeRule(`@@||${domain}^`)} class="icon-btn-destructive shrink-0" title="Remove" aria-label="Remove {domain}">
-                        <Icon name="trash" size={14} />
-                      </button>
+                      <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => removeRule(`@@||${domain}^`)} title="Remove" aria-label="Remove {domain}" />
                     </div>
                   {/each}
                 </div>
@@ -773,9 +769,7 @@
                     <span class="font-mono text-xs truncate">{rewrite.domain}</span>
                     <Icon name="arrow-right" size={12} class="text-muted-foreground shrink-0" />
                     <span class="font-mono text-xs text-primary truncate flex-1">{rewrite.answer}</span>
-                    <button onclick={() => deleteRewrite(rewrite.domain, rewrite.answer)} class="icon-btn-destructive shrink-0" title="Remove" aria-label="Remove rewrite">
-                      <Icon name="trash" size={14} />
-                    </button>
+                    <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => deleteRewrite(rewrite.domain, rewrite.answer)} title="Remove" aria-label="Remove rewrite" />
                   </div>
                 {/each}
               </div>

@@ -299,14 +299,6 @@ input:-webkit-autofill:active {
     @apply bg-muted;
   }
 
-  /* Icon button - small clickable icon */
-  .icon-btn {
-    @apply p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer;
-  }
-  .icon-btn-destructive {
-    @apply p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer;
-  }
-
   /* Custom checkbox */
   .kt-checkbox {
     @apply appearance-none w-4 h-4 rounded border border-border bg-background cursor-pointer transition-all duration-150;

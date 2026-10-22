@@ -237,27 +237,12 @@
 
           <!-- Actions -->
           <div class="flex items-center justify-end gap-0.5 px-2 py-1.5 border-t border-border bg-muted/30">
-            <button
-              onclick={() => openEditModal(user)}
-              class="icon-btn"
-              title="Customize"
-            >
-              <Icon name="settings" size={14} />
-            </button>
-            <button
-              onclick={() => renameUser(user)}
-              class="icon-btn"
-              title="Rename"
-            >
-              <Icon name="edit" size={14} />
-            </button>
-            <button
-              onclick={() => confirmDeleteUser(user)}
-              class="icon-btn-destructive"
-              title="Delete"
-            >
-              <Icon name="trash" size={14} />
-            </button>
+            <Button variant="ghost" size="xs" iconOnly icon="settings" onclick={() => openEditModal(user)}
+       title="Customize" />
+            <Button variant="ghost" size="xs" iconOnly icon="edit" onclick={() => renameUser(user)}
+       title="Rename" />
+            <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => confirmDeleteUser(user)}
+       title="Delete" />
           </div>
         </div>
       {/each}

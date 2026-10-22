@@ -163,16 +163,9 @@
             </div>
             <div class="flex items-center gap-0.5">
               {#if !key._expired}
-                <button
-                  onclick={() => confirmExpireKey(key)}
-                  class="icon-btn-destructive"
-                  data-kt-tooltip
-                >
-                  <Icon name="ban" size={14} />
-                  <span data-kt-tooltip-content class="kt-tooltip hidden">Expire key</span>
-                </button>
+                <Button variant="ghost-danger" size="xs" iconOnly icon="ban" tooltip="Expire key" onclick={() => confirmExpireKey(key)} />
               {:else}
-                <span class="icon-btn cursor-not-allowed" data-kt-tooltip>
+                <span class="kt-btn kt-btn-ghost kt-btn-xs kt-btn-icon opacity-50 cursor-not-allowed" data-kt-tooltip>
                   <Icon name="ban" size={14} />
                   <span data-kt-tooltip-content class="kt-tooltip hidden">Key expired</span>
                 </span>

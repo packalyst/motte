@@ -7,6 +7,7 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import Icon from '../components/Icon.svelte'
+  import Segmented from '../components/Segmented.svelte'
   import Badge from '../components/Badge.svelte'
   import Modal from '../components/Modal.svelte'
   import Pagination from '../components/Pagination.svelte'
@@ -723,16 +724,8 @@
             <div class="data-table-header">
               <div class="data-table-header-start">
                 <!-- Deny / Allow view toggle (full-width 50/50 on mobile) -->
-                <div class="flex w-full sm:w-auto rounded-lg border border-border overflow-hidden shrink-0">
-                  <button
-                    class="flex-1 sm:flex-none px-3 py-1.5 text-xs font-medium transition cursor-pointer {viewAction === 'block' ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground hover:bg-muted/50'}"
-                    onclick={() => setViewAction('block')}
-                  >Deny</button>
-                  <button
-                    class="flex-1 sm:flex-none px-3 py-1.5 text-xs font-medium border-l border-border transition cursor-pointer {viewAction === 'allow' ? 'bg-success/10 text-success' : 'text-muted-foreground hover:bg-muted/50'}"
-                    onclick={() => setViewAction('allow')}
-                  >Allow</button>
-                </div>
+                <Segmented label="Rule type" stretch value={viewAction} onchange={setViewAction}
+                  options={[{ value: 'block', label: 'Deny', tone: 'destructive' }, { value: 'allow', label: 'Allow', tone: 'success' }]} />
                 <Input
                   type="search"
                   value={blockedSearchQuery}
@@ -941,9 +934,7 @@
                               <Icon name="lock" size={14} />
                             </span>
                           {:else}
-                            <button onclick={() => confirmUnblock(entry)} class="icon-btn" title={entry.action === 'allow' ? 'Remove allow rule' : 'Unblock'}>
-                              <Icon name={entry.action === 'allow' ? 'trash' : 'lock-open'} size={14} />
-                            </button>
+                            <Button variant="ghost" size="xs" iconOnly icon={entry.action === 'allow' ? 'trash' : 'lock-open'} onclick={() => confirmUnblock(entry)} title={entry.action === 'allow' ? 'Remove allow rule' : 'Unblock'} />
                           {/if}
                         </td>
                       </tr>

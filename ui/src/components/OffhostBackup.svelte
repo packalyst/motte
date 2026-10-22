@@ -187,8 +187,8 @@
         <div class="flex items-center justify-between">
           <span class="text-sm font-medium">Destinations</span>
           <div class="flex gap-2">
-            <Button variant="outline" size="xs" icon="plus" onclick={() => addDest('s3')}>S3</Button>
-            <Button variant="outline" size="xs" icon="plus" onclick={() => addDest('sftp')}>SFTP</Button>
+            <Button variant="outline" icon="plus" onclick={() => addDest('s3')}>S3</Button>
+            <Button variant="outline" icon="plus" onclick={() => addDest('sftp')}>SFTP</Button>
           </div>
         </div>
 
