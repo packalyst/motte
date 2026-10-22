@@ -2223,6 +2223,15 @@
           "handler": "ConsoleRecording",
           "description": "Fetch one session recording for playback/download (audited)",
           "min_role": "operator"
+        },
+        {
+          "path": "/console/recording/delete",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ConsoleRecordingDelete",
+          "description": "Delete a session recording and its key (admin, re-authenticated, audited)",
+          "min_role": "admin"
         }
       ]
     },

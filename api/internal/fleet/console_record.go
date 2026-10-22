@@ -7,15 +7,19 @@ package fleet
 // attach. Output only — keystrokes are never stored (what you see is the shell's own echo, so a
 // password typed at a no-echo prompt never lands here). Command markers ("m" events, from the shell
 // integration hook) let the player jump to each command. Files are size-capped and deleted after
-// console_record_days by a janitor. Viewing: an operator sees their own recordings, an admin sees all,
-// and every playback is audited. There is no delete endpoint on purpose — retention is the only way a
-// recording goes away, so the trail can't be erased by hand.
+// console_record_days by a janitor. Files are encrypted at rest (console_record_crypt.go). Viewing: an
+// operator sees their own recordings, an admin sees all, and every playback is audited. Only an admin
+// can delete one by hand (re-authenticated every time, never while it is still being written, and the
+// deletion itself stays in the audit log) — so an operator can't erase their own trail.
 
 import (
-	"bufio"
+	"bytes"
+	"crypto/cipher"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -76,65 +80,109 @@ type recHeader struct {
 	Meta      recMeta `json:"wgadmin"`
 }
 
-// readRecHeader parses a recording's first line.
-func readRecHeader(path string) (recHeader, error) {
-	var h recHeader
-	f, err := os.Open(path)
-	if err != nil {
-		return h, err
-	}
-	defer f.Close()
-	r := bufio.NewReaderSize(f, 64<<10)
-	line, err := r.ReadBytes('\n')
-	if err != nil && len(line) == 0 {
-		return h, err
-	}
-	err = json.Unmarshal(line, &h)
-	return h, err
-}
-
 type consoleRecorder struct {
 	mu     sync.Mutex
 	f      *os.File
+	aead   cipher.AEAD // this file's data key (see console_record_crypt.go)
+	name   string      // file name, bound into every record
+	seq    uint64      // next record's sequence number
 	start  time.Time
 	size   int64
 	capped bool
 	refs   int // interactive viewers attached that keep it open (guarded by agentConn.mu)
 }
 
-// openRecorder opens (or resumes) a session's recording. A new file gets the header; an existing one
-// is appended to with the timeline continued from its header timestamp.
+// openRecorder opens (or resumes) a session's encrypted recording. A new file gets a fresh key and the
+// header; an existing one is appended to with the timeline continued from its header timestamp.
 func openRecorder(m *Machine, session string, cols, rows int, meta recMeta) (*consoleRecorder, bool, error) {
 	dir := recordDir()
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, false, err
 	}
-	path := filepath.Join(dir, recordFileName(m.ID, session))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
-	if err != nil {
-		return nil, false, err
-	}
-	st, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, false, err
-	}
-	rec := &consoleRecorder{f: f, start: time.Now(), size: st.Size()}
-	if st.Size() == 0 {
+	name := recordFileName(m.ID, session)
+	path := filepath.Join(dir, name)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		aead, err := newRecKey(name)
+		if err != nil {
+			return nil, false, err
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, 0o640)
+		if err != nil {
+			deleteRecKey(name)
+			return nil, false, err
+		}
+		rec := &consoleRecorder{f: f, aead: aead, name: name, start: time.Now()}
 		title := "Session"
 		if meta.Label > 0 {
 			title = "Session " + strconv.Itoa(meta.Label)
 		}
 		b, _ := json.Marshal(recHeader{Version: 2, Width: cols, Height: rows, Timestamp: rec.start.Unix(), Title: title, Meta: meta})
-		n, _ := f.Write(append(b, '\n'))
-		rec.size = int64(n)
+		if err := rec.writeRecord(recMagic, append(b, '\n')); err != nil {
+			if rec.f != nil {
+				rec.f.Close()
+			}
+			os.Remove(path)
+			deleteRecKey(name)
+			return nil, false, err
+		}
 		return rec, true, nil
+	} else if err != nil {
+		return nil, false, err
 	}
-	if h, err := readRecHeader(path); err == nil && h.Timestamp > 0 {
+	// Resume: the header gives the timeline origin; count the records (sequence numbers continue)
+	// and trim a half-written trailing record left by a crash so the next append stays readable.
+	h, err := readRecHeader(path)
+	if err != nil {
+		return nil, false, err
+	}
+	aead, err := loadRecKey(name)
+	if err != nil {
+		return nil, false, err
+	}
+	rf, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	end, n, err := walkRecords(rf, nil)
+	rf.Close()
+	if err != nil {
+		return nil, false, err
+	}
+	if err := os.Truncate(path, end); err != nil {
+		return nil, false, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o640)
+	if err != nil {
+		return nil, false, err
+	}
+	rec := &consoleRecorder{f: f, aead: aead, name: name, seq: n, start: time.Now(), size: end}
+	if h.Timestamp > 0 {
 		rec.start = time.Unix(h.Timestamp, 0)
 	}
 	rec.capped = rec.size >= recordMaxBytes
 	return rec, false, nil
+}
+
+// writeRecord seals one plaintext line as the next record and appends it (after prefix, used only
+// for the file magic). Caller holds c.mu or owns c exclusively.
+func (c *consoleRecorder) writeRecord(prefix, plain []byte) error {
+	rec, err := sealRecord(c.aead, c.name, c.seq, plain)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 0, len(prefix)+len(rec))
+	buf = append(append(buf, prefix...), rec...)
+	n, err := c.f.Write(buf)
+	c.size += int64(n)
+	if err != nil {
+		// A partial record may be on disk: stop writing (a later append would follow garbage); the
+		// next open trims it.
+		c.f.Close()
+		c.f = nil
+		return err
+	}
+	c.seq++
+	return nil
 }
 
 func (c *consoleRecorder) event(kind, text string) {
@@ -145,14 +193,13 @@ func (c *consoleRecorder) event(kind, text string) {
 	}
 	b, _ := json.Marshal([]any{time.Since(c.start).Seconds(), kind, text})
 	b = append(b, '\n')
-	if c.size+int64(len(b)) > recordMaxBytes {
+	if c.size+int64(len(b))+64 > recordMaxBytes { // 64: record framing + nonce + tag, with margin
 		c.capped = true
 		note, _ := json.Marshal([]any{time.Since(c.start).Seconds(), "m", "recording size limit reached — later output not recorded"})
-		c.f.Write(append(note, '\n'))
+		c.writeRecord(nil, append(note, '\n'))
 		return
 	}
-	n, _ := c.f.Write(b)
-	c.size += int64(n)
+	c.writeRecord(nil, b)
 }
 
 // writeOutput records one output frame (base64 from the agent, decoded so it replays correctly).
@@ -292,16 +339,37 @@ func sweepRecordings() {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".cast") {
 			continue
 		}
-		if info, err := e.Info(); err == nil && info.ModTime().Before(cutoff) {
+		if info, err := e.Info(); err == nil && (info.ModTime().Before(cutoff) || isPlainRecording(filepath.Join(dir, e.Name()), info)) {
 			if os.Remove(filepath.Join(dir, e.Name())) == nil {
+				deleteRecKey(e.Name())
 				removed++
 			}
 		}
 	}
+	pruneRecKeys(dir)
 	if removed > 0 {
 		events.Audit("fleet", "console_record_purge", events.SeverityInfo, "", "",
 			fmt.Sprintf("Deleted %d console recording(s) past the retention period", removed))
 	}
+}
+
+// isPlainRecording spots an unencrypted recording left by a build before encryption at rest, so the
+// janitor removes it now instead of keeping plaintext for the whole retention period. Files younger
+// than a minute are skipped, so a recording being created is never mistaken for one.
+func isPlainRecording(path string, info os.FileInfo) bool {
+	if info.Size() < int64(len(recMagic)) || time.Since(info.ModTime()) < time.Minute {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, len(recMagic))
+	if _, err := io.ReadFull(f, head); err != nil {
+		return false
+	}
+	return !bytes.Equal(head, recMagic)
 }
 
 var recordJanitorOnce sync.Once
@@ -415,17 +483,96 @@ func (s *Service) handleConsoleRecording(w http.ResponseWriter, r *http.Request)
 		router.JSONError(w, "recording not found", http.StatusNotFound) // don't confirm someone else's exists
 		return
 	}
-	f, err := os.Open(path)
+	st, err := os.Stat(path)
 	if err != nil {
 		router.JSONError(w, "recording not found", http.StatusNotFound)
 		return
 	}
-	defer f.Close()
-	st, _ := f.Stat()
+	data, err := decryptRecording(path)
+	if err != nil {
+		router.JSONError(w, "recording can't be read: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	events.Audit("fleet", "console_recording_view", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Viewed recording %s of %s's session on %q", name, h.Meta.User, m.Name))
 	w.Header().Set("Content-Type", "application/x-asciicast")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeContent(w, r, name, st.ModTime(), f)
+	http.ServeContent(w, r, name, st.ModTime(), bytes.NewReader(data))
 }
+
+// handleConsoleRecordingDelete deletes one recording and its key (so leftover copies of the file can
+// never be decrypted). Admin only, re-authenticated EVERY time (no grace window — erasing an audit
+// trail is rarer and weightier than opening a console), refused while the session is still being
+// recorded, and audited.
+// POST /api/fleet/console/recording/delete {"machine_id","name","currentPassword","totpCode"}
+func (s *Service) handleConsoleRecordingDelete(w http.ResponseWriter, r *http.Request) {
+	p := router.CurrentUser(r)
+	if p == nil || !auth.RoleAtLeast(p.Role, auth.RoleAdmin) {
+		router.JSONError(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		MachineID       string `json:"machine_id"`
+		Name            string `json:"name"`
+		CurrentPassword string `json:"currentPassword"`
+		TOTPCode        string `json:"totpCode"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	m, err := s.machineByID(req.MachineID)
+	if err != nil || m == nil {
+		router.JSONError(w, "unknown machine", http.StatusNotFound)
+		return
+	}
+	if !scopeAllows(p, *m) {
+		router.JSONError(w, "machine out of scope", http.StatusForbidden)
+		return
+	}
+	if !recNameRe.MatchString(req.Name) || filepath.Base(req.Name) != req.Name {
+		router.JSONError(w, "invalid recording name", http.StatusBadRequest)
+		return
+	}
+	path := filepath.Join(recordDir(), req.Name)
+	h, err := readRecHeader(path)
+	if err != nil || h.Meta.MachineID != m.ID {
+		router.JSONError(w, "recording not found", http.StatusNotFound)
+		return
+	}
+	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TOTPCode); err != nil {
+		router.JSONError(w, err.Error(), status)
+		return
+	}
+	// Under the agent's lock, so a viewer can't reattach (reopening the file) between the live check
+	// and the removal. The key goes first: even if the file removal fails, its content is unreadable.
+	a := regGet(m.ID)
+	if a != nil {
+		a.mu.Lock()
+	}
+	err = nil
+	if a != nil && a.recs[h.Meta.Session] != nil {
+		err = errRecLive
+	} else if err = deleteRecKey(req.Name); err == nil {
+		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+			err = rmErr
+		}
+	}
+	if a != nil {
+		a.mu.Unlock()
+	}
+	if errors.Is(err, errRecLive) {
+		router.JSONError(w, "this session is still being recorded — stop the session first", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		router.JSONError(w, "couldn't delete the recording: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	events.Audit("fleet", "console_recording_delete", events.SeverityWarning, p.Username, helper.GetClientIP(r),
+		fmt.Sprintf("Deleted recording %s of %s's session on %q (started %s)", req.Name, h.Meta.User, m.Name,
+			time.Unix(h.Timestamp, 0).UTC().Format(time.RFC3339)))
+	router.JSON(w, map[string]any{"ok": true})
+}
+
+var errRecLive = errors.New("recording is live")

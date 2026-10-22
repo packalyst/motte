@@ -132,6 +132,7 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 		agentCache:     newAgentCache(),
 		clientCertTTL:  90 * 24 * time.Hour,
 	}
+	recordDB = db             // wrapped keys of the encrypted console recordings
 	consoleEventService = svc // lets the session-change hooks push live updates to console-events subscribers
 	startRecordJanitor()      // console recordings: delete past console_record_days (now + every 6h)
 	return svc, nil
@@ -604,6 +605,12 @@ func ensureSchema(db *sql.DB) error {
 			load_avg REAL, load_max REAL,
 			samples  INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (machine_id, bucket)
+		)`,
+		// Per-recording data keys (console recordings are encrypted at rest; see console_record_crypt.go).
+		`CREATE TABLE IF NOT EXISTS fleet_console_rec_keys (
+			name       TEXT PRIMARY KEY,
+			key_enc    TEXT NOT NULL,
+			created_at INTEGER NOT NULL
 		)`,
 	}
 	for _, q := range stmts {

@@ -36,6 +36,7 @@ var columns = []encCol{
 	{"vpn_clients", "preshared_key_enc", true},
 	{"users", "totp_secret_enc", true},
 	{"fleet_ca", "key_enc", true},
+	{"fleet_console_rec_keys", "key_enc", true}, // console recording data keys
 	{"users_push_subscriptions", "key_p256dh", true},
 	{"users_push_subscriptions", "key_auth", true},
 	{"vpn_router_config", "authkey_enc", false}, // ephemeral, write-only
