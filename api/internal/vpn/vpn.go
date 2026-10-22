@@ -712,27 +712,31 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 	}
 
 	// Get existing clients
-	existing := make(map[string]int) // ip -> id
-	rows, err := db.Query(`SELECT id, ip FROM vpn_clients`)
+	existing := make(map[string]int)  // ip -> id
+	typeOf := make(map[string]string) // ip -> client type
+	rows, err := db.Query(`SELECT id, ip, type FROM vpn_clients`)
 	if err != nil {
 		return 0, 0, err
 	}
 	for rows.Next() {
 		var id int
-		var ip string
-		if err := rows.Scan(&id, &ip); err != nil {
+		var ip, t string
+		if err := rows.Scan(&id, &ip, &t); err != nil {
 			continue
 		}
 		existing[ip] = id
+		typeOf[ip] = t
 	}
 	rows.Close()
 
 	seen := make(map[string]bool)
+	listed := make(map[string]int) // client type -> clients its source returned; absent = source didn't answer
 
 	// Sync WireGuard peers with full data
 	wgSvc := wireguard.GetService()
 	if wgSvc != nil {
 		peers := wgSvc.ListPeersWithStatus()
+		listed["wireguard"] = len(peers)
 		for _, peer := range peers {
 			// Strip sensitive keys before storing in database
 			peerCopy := *peer
@@ -749,25 +753,26 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 		log.Printf("Warning: failed to get Headscale nodes: %v", err)
 	} else {
 		routerName := helper.GetEnvOptional("VPN_ROUTER_NAME", "vpn-router")
+		listed["headscale"] = 0
 		for i, node := range hsNodes {
 			// Skip router node
 			if node.Name == routerName {
 				continue
 			}
+			listed["headscale"]++
 			syncClient(db, existing, seen, node.Name, node.IP, "headscale", node.ID, rawNodes[i], &added)
 		}
 	}
 
-	// Remove stale clients (no longer in WireGuard or Headscale)
-	for ip, id := range existing {
-		if !seen[ip] {
-			// Delete domain routes for this client first
-			domains.DeleteClientRoutes(id)
-			// ACL rules are automatically deleted via ON DELETE CASCADE
-			_, err := db.Exec(`DELETE FROM vpn_clients WHERE id = ?`, id)
-			if err == nil {
-				removed++
-			}
+	// Remove stale clients (no longer in WireGuard or Headscale) — only of a type whose source answered
+	// (see staleClients: deleting a client also deletes its ACL rules, virtual IPs and keys).
+	for _, ip := range staleClients(typeOf, seen, listed) {
+		id := existing[ip]
+		// Delete domain routes for this client first
+		domains.DeleteClientRoutes(id)
+		// ACL rules are automatically deleted via ON DELETE CASCADE
+		if _, err := db.Exec(`DELETE FROM vpn_clients WHERE id = ?`, id); err == nil {
+			removed++
 		}
 	}
 
@@ -777,6 +782,40 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 	}
 
 	return added, removed, nil
+}
+
+// staleClients returns the IPs of stored clients to delete because their source no longer lists
+// them. A type is pruned only when its source answered this round (listed has it): if Headscale is
+// briefly unreachable (a restart during an update) or WireGuard failed to start, "not seen" means
+// "unknown", not "gone" — and deleting the row would cascade away its ACL rules, virtual IPs, network
+// permissions and (for WireGuard) its encrypted keys, for good. A source that suddenly answers with
+// NO clients while some are stored is treated the same way (a wiped/reset backend, not a deliberate
+// mass delete — deleting in the panel removes the row itself); the leftovers are logged instead.
+func staleClients(typeOf map[string]string, seen map[string]bool, listed map[string]int) []string {
+	stored := map[string]int{}
+	for _, t := range typeOf {
+		stored[t]++
+	}
+	var out []string
+	warned := map[string]bool{}
+	for ip, t := range typeOf {
+		if seen[ip] {
+			continue
+		}
+		n, answered := listed[t]
+		if !answered {
+			continue
+		}
+		if n == 0 && stored[t] > 0 {
+			if !warned[t] {
+				log.Printf("vpn sync: %s returned no clients but %d are stored — keeping them (not pruning)", t, stored[t])
+				warned[t] = true
+			}
+			continue
+		}
+		out = append(out, ip)
+	}
+	return out
 }
 
 type hsNode struct {

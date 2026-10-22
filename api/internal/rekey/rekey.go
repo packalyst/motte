@@ -37,6 +37,8 @@ var columns = []encCol{
 	{"users", "totp_secret_enc", true},
 	{"fleet_ca", "key_enc", true},
 	{"fleet_console_rec_keys", "key_enc", true}, // console recording data keys
+	{"notification_channels", "webhook_url_enc", true},
+	{"backup_offhost_config", "config_enc", true}, // S3/SFTP credentials for off-host backups
 	{"users_push_subscriptions", "key_p256dh", true},
 	{"users_push_subscriptions", "key_auth", true},
 	{"vpn_router_config", "authkey_enc", false}, // ephemeral, write-only
