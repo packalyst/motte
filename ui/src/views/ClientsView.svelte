@@ -17,6 +17,7 @@
   import Toolbar from '../components/Toolbar.svelte'
   import Segmented from '../components/Segmented.svelte'
   import EmptyState from '../components/EmptyState.svelte'
+  import ClientCard from '../components/ClientCard.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
 
   let { loading = $bindable(true) } = $props()
@@ -28,7 +29,7 @@
     lan: { label: 'LAN device', group: 'LAN devices', icon: 'router', color: 'var(--client-lan)' },
   }
   const tint = (color, pct = 14) => `background: color-mix(in oklch, ${color} ${pct}%, transparent); color: ${color}`
-  const TONE = { destructive: 'bg-destructive/10 text-destructive', warning: 'bg-warning/15 text-warning' }
+  const SUBTITLE_ICON = { wireguard: 'user', tailscale: 'user', machine: 'device-desktop', lan: 'network' }
 
   let clients = $state([])
   let unavailable = $state([])
@@ -176,49 +177,38 @@
         {g.meta.group}
         <span class="font-normal normal-case tracking-normal">{on}/{g.items.length} online</span>
       </h2>
-      <div class="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]">
+      <div class="grid-cards">
         {#each g.items as c (c.key)}
-          <article class="relative flex min-h-16 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 transition hover:border-foreground/20 hover:shadow-sm has-[.open-link:focus-visible]:ring-2 has-[.open-link:focus-visible]:ring-primary/40
-            {c.pending ? 'border-warning/50' : 'border-border'}">
-            <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg {c.online ? '' : 'opacity-60 grayscale'}" style={tint(g.meta.color)}>
-              <Icon name={g.meta.icon} size={18} />
-              <span class="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card {c.online ? 'bg-success' : 'bg-muted-foreground/50'}"
-                title={c.online ? 'Online' : 'Offline'}></span>
-            </span>
-            <div class="min-w-0 flex-1 space-y-0.5">
-              <div class="flex min-w-0 items-center gap-2">
-                <!-- The name is the card's link: its ::after covers the card, so the whole card opens it. -->
-                <button type="button" onclick={() => open(c)} title={'Open in ' + KINDS[c.kind].label}
-                  class="open-link min-w-0 truncate text-left text-sm font-semibold text-foreground cursor-pointer outline-none after:absolute after:inset-0 after:rounded-xl">{c.name}</button>
-                {#each c.flags || [] as f (f.label)}
-                  <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {TONE[f.tone] || TONE.warning}">{f.label}</span>
-                {/each}
-                <span class="ml-auto shrink-0 text-[11px] text-muted-foreground">{c.online ? 'Active now' : timeAgo(c.last_seen)}</span>
-              </div>
-              <div class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                <code class="shrink-0 font-mono text-foreground">{c.ip || '—'}</code>
-                {#if c.meta}
-                  <span class="h-1 w-1 shrink-0 rounded-full bg-muted-foreground/40"></span>
-                  <span class="truncate">{c.meta}</span>
-                {/if}
-                {#if c.machine}
-                  <button type="button" onclick={() => open(c, 'machine')} title="Open the machine page"
-                    class="relative z-10 inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium cursor-pointer hover:underline" style={tint(KINDS.machine.color)}>
-                    <Icon name="device-desktop" size={11} /> Machine
-                  </button>
-                {/if}
-                {#if c.tx != null}
-                  <span class="ml-auto flex shrink-0 gap-2 tabular-nums text-[11px] text-foreground/80">
-                    <span><span class="text-success" aria-hidden="true">↑</span><span class="sr-only">Sent </span>{formatBytes(c.tx)}</span>
-                    <span><span class="text-info" aria-hidden="true">↓</span><span class="sr-only">Received </span>{formatBytes(c.rx)}</span>
-                  </span>
-                {/if}
-              </div>
-            </div>
-            {#if c.pending && isAdmin}
-              <Button class="relative z-10 shrink-0" variant="primary" size="xs" icon="check" loading={approving === c.key} onclick={() => approve(c)}>Approve</Button>
+          <ClientCard
+            name={c.name}
+            icon={g.meta.icon}
+            color={g.meta.color}
+            online={c.online}
+            subtitle={c.meta}
+            subtitleIcon={SUBTITLE_ICON[c.kind]}
+            flags={c.flags || []}
+            highlight={c.pending}
+            onopen={() => open(c)}
+            openTitle={'Open in ' + KINDS[c.kind].label}
+            info={[
+              { icon: 'network', text: c.ip || '—', mono: true },
+              { icon: g.meta.icon, text: KINDS[c.kind].label },
+              { icon: 'clock', text: c.online ? 'Active now' : timeAgo(c.last_seen) },
+              c.tx != null && { icon: 'arrows-vertical', text: `↑ ${formatBytes(c.tx)}  ↓ ${formatBytes(c.rx)}` },
+            ].filter(Boolean)}
+            footer={c.machine || (c.pending && isAdmin) ? cardFooter : undefined}
+          />
+          {#snippet cardFooter()}
+            {#if c.machine}
+              <button type="button" onclick={() => open(c, 'machine')} title="Open the machine page"
+                class="relative z-10 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium cursor-pointer hover:underline" style={tint(KINDS.machine.color)}>
+                <Icon name="device-desktop" size={11} /> Machine
+              </button>
             {/if}
-          </article>
+            {#if c.pending && isAdmin}
+              <Button class="relative z-10 ml-auto" variant="primary" size="xs" icon="check" loading={approving === c.key} onclick={() => approve(c)}>Approve</Button>
+            {/if}
+          {/snippet}
         {/each}
       </div>
     </section>
