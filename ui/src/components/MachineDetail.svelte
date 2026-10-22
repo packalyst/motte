@@ -31,8 +31,14 @@
   const ROLE_RANK = { viewer: 1, operator: 2, admin: 3, owner: 4 }
   const canOpenConsole = $derived((ROLE_RANK[$currentUser?.role] || 0) >= ROLE_RANK.operator)
   const canManageConsole = $derived((ROLE_RANK[$currentUser?.role] || 0) >= ROLE_RANK.admin)
-  let consoleEnabled = $state(machine.console_enabled)
-  let consoleRecord = $state(machine.console_record)
+  // Local mirrors (toggled optimistically from the API response), re-synced when the parent hands
+  // in a fresher machine.
+  let consoleEnabled = $state(false)
+  let consoleRecord = $state(false)
+  $effect.pre(() => {
+    consoleEnabled = machine.console_enabled
+    consoleRecord = machine.console_record
+  })
   let consoleBusy = $state(false)
   // openConsole navigates to the standalone console page (not an overlay), opening the given session
   // as a tab there — or a fresh session when none is passed. The target is a one-shot the console
@@ -170,7 +176,8 @@
   }
 
   // Machine tags — drive operator/viewer scoping. Editing is admin+ (backend-enforced).
-  let tags = $state([...(machine.tags || [])])
+  let tags = $state([])
+  $effect.pre(() => { tags = [...(machine.tags || [])] })
   let newTag = $state('')
   async function saveTags(next) {
     try {

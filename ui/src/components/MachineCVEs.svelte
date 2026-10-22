@@ -49,7 +49,7 @@
   const isKernelCve = (items) => items.length > 0 && items.every((c) => isKernelPkg(c.pkg))
   const pageCount = $derived(Math.max(1, Math.ceil(total / PAGE)))
 
-  const FKEY = 'cveflt:' + machine.id
+  const FKEY = $derived('cveflt:' + machine.id)
   function saveFilters() {
     try { localStorage.setItem(FKEY, JSON.stringify({ severity, project, fixable, q, page })) } catch {}
   }
