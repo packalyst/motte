@@ -19,6 +19,7 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import Tabs from '../components/Tabs.svelte'
   import OptionCard from '../components/OptionCard.svelte'
+  import ClientCard from '../components/ClientCard.svelte'
   import BarList from '../components/BarList.svelte'
 
   let { loading = $bindable(true) } = $props()
@@ -797,118 +798,33 @@
     </div>
 
     {#each filteredNodes as node (node.id)}
-      {@const isKeyExpired = node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001') && new Date(node.expiry) < new Date()}
-      <div
-        onclick={() => selectNode(node)}
-        onkeydown={(e) => e.key === 'Enter' && selectNode(node)}
-        role="button"
-        tabindex="0"
-        class="group flex cursor-pointer flex-col rounded-lg border shadow-sm transition hover:shadow-md bg-card
-          {node._online
-            ? 'border-success/30'
-            : 'border-border'}"
-      >
-        <!-- Header: Icon + Name + Status -->
-        <div class="flex items-center gap-2.5 p-3">
-          <!-- Device icon -->
-          <div class="flex h-9 w-9 items-center justify-center rounded-lg shrink-0
-            {node._online
-              ? 'bg-success/10 text-success'
-              : 'bg-muted text-muted-foreground'}">
-            <Icon name={getDeviceIcon(node)} size={18} />
-          </div>
-
-          <!-- Name -->
-          <div class="flex-1 min-w-0">
-            <h2 class="truncate text-sm font-semibold text-foreground">{node._displayName}</h2>
-            <div class="flex items-center gap-1 mt-0.5 text-[11px] text-muted-foreground">
-              <Icon name="user" size={11} class="shrink-0" />
-              <span class="truncate">{node.user?.name || 'Unassigned'}</span>
-            </div>
-          </div>
-
-          <!-- Status indicator -->
-          <div class="flex flex-col items-end gap-1 shrink-0">
-            <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium
-              {node._online
-                ? 'bg-success/10 text-success'
-                : 'bg-muted text-muted-foreground'}">
-              <span class="status-dot {node._online ? 'status-dot-success' : 'status-dot-muted'}"></span>
-              {node._online ? 'Online' : 'Offline'}
-            </span>
-            {#if isKeyExpired}
-              <span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-destructive/10 text-destructive">
-                Key Expired
-              </span>
-            {:else if node._type === 'wireguard' && !node.enabled}
-              <span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-warning/10 text-warning">
-                Disabled
-              </span>
-            {/if}
-            {#if node._type === 'wireguard' && node.blockInternet}
-              <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-destructive/10 text-destructive">
-                <Icon name="world-off" size={10} />
-                No Internet
-              </span>
-            {/if}
-          </div>
-        </div>
-
-        <!-- Info grid: 2 columns -->
-        <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-border/50 px-3 py-2.5 text-[11px]">
-          <!-- IP -->
-          <div class="flex items-center gap-1.5">
-            <Icon name="network" size={12} class="text-dim shrink-0" />
-            <code class="text-foreground font-mono truncate">{node._ip || '—'}</code>
-          </div>
-          <!-- Type -->
-          <div class="flex items-center gap-1.5">
-            <Icon name={node._type === 'wireguard' ? 'shield' : 'cloud'} size={12} class="text-dim shrink-0" />
-            <span class="text-muted-foreground">{node._type === 'wireguard' ? 'WireGuard' : 'Tailscale'}</span>
-          </div>
-          <!-- Last seen -->
-          <div class="flex items-center gap-1.5">
-            <Icon name="clock" size={12} class="text-dim shrink-0" />
-            <span class="text-muted-foreground truncate">{timeAgo(node.lastHandshake || node.lastSeen)}</span>
-          </div>
-          <!-- Key expiry or enabled status -->
-          {#if node._type === 'tailscale' && node.expiry && !node.expiry.startsWith('0001')}
-            <div class="flex items-center gap-1.5">
-              <Icon name="key" size={12} class="{isKeyExpired ? 'text-destructive' : 'text-dim'} shrink-0" />
-              <span class="{isKeyExpired ? 'text-destructive' : 'text-muted-foreground'} truncate">
-                {isKeyExpired ? 'Expired' : timeAgo(node.expiry)}
-              </span>
-            </div>
-          {:else if node._type === 'wireguard'}
-            <div class="flex items-center gap-1.5">
-              <Icon name={node.enabled ? 'check' : 'ban'} size={12} class="{node.enabled ? 'text-success' : 'text-warning'} shrink-0" />
-              <span class="{node.enabled ? 'text-success' : 'text-warning'}">
-                {node.enabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </div>
-          {:else}
-            <div></div>
-          {/if}
-        </div>
-
-        <!-- Tags footer -->
-        <div class="flex flex-wrap gap-1 border-t border-border/50 px-3 py-2 min-h-[32px]">
-          {#if node._type === 'tailscale' && (node.forcedTags?.length || node.validTags?.length)}
-            {#each [...(node.forcedTags || []), ...(node.validTags || [])].slice(0, 3) as tag}
-              <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                {tag.replace('tag:', '')}
-              </span>
-            {/each}
-            {#if [...(node.forcedTags || []), ...(node.validTags || [])].length > 3}
-              <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                +{[...(node.forcedTags || []), ...(node.validTags || [])].length - 3}
-              </span>
-            {/if}
-          {:else}
-            <span class="text-[10px] text-muted-foreground">No tags</span>
-          {/if}
-        </div>
-      </div>
+      {@const isWG = node._type === 'wireguard'}
+      {@const isKeyExpired = !isWG && node.expiry && !node.expiry.startsWith('0001') && new Date(node.expiry) < new Date()}
+      <ClientCard
+        name={node._displayName}
+        icon={getDeviceIcon(node)}
+        color={isWG ? 'var(--client-wg)' : 'var(--client-ts)'}
+        online={node._online}
+        subtitle={node.user?.name || 'Unassigned'}
+        onopen={() => selectNode(node)}
+        flags={[
+          isKeyExpired && { label: 'Key expired', tone: 'destructive' },
+          isWG && !node.enabled && !isKeyExpired && { label: 'Disabled', tone: 'warning' },
+          isWG && node.blockInternet && { label: 'No internet', tone: 'destructive', icon: 'world-off' },
+        ].filter(Boolean)}
+        info={[
+          { icon: 'network', text: node._ip || '—', mono: true },
+          { icon: isWG ? 'shield' : 'cloud', text: isWG ? 'WireGuard' : 'Tailscale' },
+          { icon: 'clock', text: timeAgo(node.lastHandshake || node.lastSeen) },
+          isKeyExpired || (!isWG && node.expiry && !node.expiry.startsWith('0001'))
+            ? { icon: 'key', text: isKeyExpired ? 'Expired' : timeAgo(node.expiry), tone: isKeyExpired ? 'destructive' : undefined }
+            : isWG
+              ? { icon: node.enabled ? 'check' : 'ban', text: node.enabled ? 'Enabled' : 'Disabled', tone: node.enabled ? 'success' : 'warning' }
+              : null,
+        ].filter(Boolean)}
+        tags={isWG ? [] : [...(node.forcedTags || []), ...(node.validTags || [])].map((t) => t.replace('tag:', ''))}
+        emptyTags="No tags"
+      />
     {/each}
   </div>
   {/if}
