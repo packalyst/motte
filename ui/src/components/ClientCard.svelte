@@ -31,6 +31,10 @@
 
   const TONE_PILL = { destructive: 'bg-destructive/10 text-destructive', warning: 'bg-warning/10 text-warning' }
   const TONE_TEXT = { destructive: 'text-destructive', warning: 'text-warning', success: 'text-success' }
+
+  // A tag can arrive twice (set by an admin and advertised by the device, or a Tailscale tag that
+  // matches a machine tag once its prefix is stripped).
+  const shownTags = $derived(tags && [...new Set(tags)])
 </script>
 
 <article class="relative flex flex-col rounded-lg border bg-card shadow-sm transition hover:shadow-md
@@ -57,7 +61,7 @@
         <span class="status-dot {online ? 'status-dot-success' : 'status-dot-muted'}"></span>
         {online ? 'Online' : 'Offline'}
       </span>
-      {#each flags as f (f.label)}
+      {#each flags as f, i (i)}
         <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium {TONE_PILL[f.tone] || TONE_PILL.warning}">
           {#if f.icon}<Icon name={f.icon} size={10} />{/if}{f.label}
         </span>
@@ -82,12 +86,12 @@
 
   {#if tags !== null || footer}
     <div class="flex min-h-[32px] flex-wrap items-center gap-1 border-t border-border/50 px-3 py-2">
-      {#if tags?.length}
-        {#each tags.slice(0, 3) as tag (tag)}
+      {#if shownTags?.length}
+        {#each shownTags.slice(0, 3) as tag (tag)}
           <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{tag}</span>
         {/each}
-        {#if tags.length > 3}
-          <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">+{tags.length - 3}</span>
+        {#if shownTags.length > 3}
+          <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">+{shownTags.length - 3}</span>
         {/if}
       {:else if tags !== null && emptyTags}
         <span class="text-[10px] text-muted-foreground">{emptyTags}</span>

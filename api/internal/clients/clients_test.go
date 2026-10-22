@@ -17,7 +17,7 @@ func TestFromVPNFlagsAndIDs(t *testing.T) {
 		t.Fatalf("wireguard client mapped wrong: %+v", wg)
 	}
 	ts := fromVPN(vpn.VPNClient{Type: "headscale", ExternalID: "7", Name: "x", IP: "100.64.0.1",
-		RawData: json.RawMessage(`{"givenName":"phone","user":{"name":"ana"},"expiry":"2001-01-01T00:00:00Z","forcedTags":["tag:a"],"validTags":["tag:b"]}`)})
+		RawData: json.RawMessage(`{"givenName":"phone","user":{"name":"ana"},"expiry":"2001-01-01T00:00:00Z","forcedTags":["tag:a"],"validTags":["tag:b","tag:a"]}`)})
 	if ts.Name != "phone" || ts.Meta != "ana" || ts.Open.Node != "7" || len(ts.Flags) != 1 || ts.Flags[0].Label != "Key expired" ||
 		len(ts.Tags) != 2 || ts.Tags[1] != "tag:b" {
 		t.Fatalf("tailscale client mapped wrong: %+v", ts)

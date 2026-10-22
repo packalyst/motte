@@ -120,7 +120,7 @@ func (s *Service) build(machines []fleet.Machine, machinesErr error) ([]Client, 
 					e.Meta = m.Summary.OS
 				}
 				e.Flags = append(e.Flags, machineFlags(m)...)
-				e.Tags = append(e.Tags, m.Tags...)
+				e.Tags = uniq(append(e.Tags, m.Tags...))
 			}
 			out = append(out, e)
 		}
@@ -192,7 +192,7 @@ func fromVPN(c vpn.VPNClient) Client {
 		e.Open.Node = c.ExternalID
 		e.LastSeen = raw.LastSeen
 		e.Meta = raw.User.Name
-		e.Tags = append(raw.ForcedTags, raw.ValidTags...)
+		e.Tags = uniq(append(raw.ForcedTags, raw.ValidTags...))
 		if t, err := time.Parse(time.RFC3339, raw.Expiry); err == nil && t.Year() > 1 && t.Before(time.Now()) {
 			e.Flags = append(e.Flags, Flag{"Key expired", "destructive"})
 		}
@@ -285,6 +285,19 @@ func digest(list []Client) [32]byte {
 	}
 	b, _ := json.Marshal(ks)
 	return sha256.Sum256(b)
+}
+
+// uniq drops repeated strings, keeping the first occurrence's order.
+func uniq(v []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range v {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func firstNonEmpty(v ...string) string {
