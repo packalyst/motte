@@ -223,20 +223,10 @@
                 </td>
                 <td class="px-4 py-3">
                   <div class="flex items-center justify-end gap-1">
-                    <button
-                      onclick={() => toggleRoute(route)}
-                      class="icon-btn"
-                      title={route.enabled ? 'Disable route' : 'Enable route'}
-                    >
-                      <Icon name={route.enabled ? 'x' : 'check'} size={14} />
-                    </button>
-                    <button
-                      onclick={() => confirmDelete(route)}
-                      class="icon-btn-destructive"
-                      title="Delete route"
-                    >
-                      <Icon name="trash" size={14} />
-                    </button>
+                    <Button variant="ghost" size="xs" iconOnly icon={route.enabled ? 'x' : 'check'} onclick={() => toggleRoute(route)}
+           title={route.enabled ? 'Disable route' : 'Enable route'} />
+                    <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => confirmDelete(route)}
+           title="Delete route" />
                   </div>
                 </td>
               </tr>

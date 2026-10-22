@@ -6,6 +6,7 @@
   import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
+  import Segmented from '../components/Segmented.svelte'
   import Badge from '../components/Badge.svelte'
   import Modal from '../components/Modal.svelte'
   import Toolbar from '../components/Toolbar.svelte'
@@ -1024,14 +1025,8 @@
           <div class="space-y-3">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs text-muted-foreground">Where this peer's traffic went, by bytes.</div>
-              <div class="flex items-center gap-1">
-                {#each ['hour','day','week'] as p}
-                  <button
-                    class="px-2 py-0.5 text-[11px] rounded capitalize {peerUsagePeriod === p ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}"
-                    onclick={() => peerUsagePeriod = p}
-                  >{p}</button>
-                {/each}
-              </div>
+              <Segmented label="Period" bind:value={peerUsagePeriod}
+                options={[{ value: 'hour', label: 'Hour' }, { value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }]} />
             </div>
 
             <!-- conntrack watcher status: explains why the list may be empty -->

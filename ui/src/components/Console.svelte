@@ -1093,7 +1093,7 @@
         <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
           <Icon name="pencil" size={14} class="text-[#58a6ff]" />
           <span class="font-mono text-xs truncate flex-1" title={editPath}>{editPath}</span>
-          <Button size="xs" variant="primary" icon="device-floppy" onclick={saveEdit}>Save</Button>
+          <Button variant="primary" icon="device-floppy" onclick={saveEdit}>Save</Button>
           <button onclick={() => (editPath = null)} class="p-1 text-white/60 hover:text-white"><Icon name="x" size={16} /></button>
         </div>
         {#if editLoading}

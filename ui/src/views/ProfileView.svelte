@@ -312,7 +312,7 @@
             Active Sessions
           </h3>
           {#if sessions.length > 1}
-            <Button size="xs" icon="logout" onclick={revokeAllOtherSessions}>
+            <Button icon="logout" onclick={revokeAllOtherSessions}>
               Revoke All Others
             </Button>
           {/if}

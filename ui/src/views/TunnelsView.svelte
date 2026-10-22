@@ -557,13 +557,13 @@
   <Toolbar bind:search={searchQuery} placeholder="Search tunnels...">
     <div class="kt-btn-group">
       {#if running}
-        <Button size="xs" variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
-        <Button size="xs" variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
+        <Button variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
+        <Button variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
       {:else}
-        <Button size="xs" variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
+        <Button variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
       {/if}
-      <Button size="xs" variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
-      <Button size="xs" icon="plus" onclick={openCreate}>Add tunnel</Button>
+      <Button variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
+      <Button icon="plus" onclick={openCreate}>Add tunnel</Button>
     </div>
   </Toolbar>
 
@@ -832,7 +832,7 @@
             <span class="text-sm font-medium text-foreground">Webhooks</span>
             <p class="text-xs text-muted-foreground">Public trigger endpoints. Declared params are validated then forwarded to the target URL; the URL and keys are never exposed.</p>
           </div>
-          <Button size="xs" variant="outline" icon="plus" onclick={addWebhook}>Add</Button>
+          <Button variant="outline" icon="plus" onclick={addWebhook}>Add</Button>
         </div>
 
         {#if form.webhooks.length === 0}
@@ -894,7 +894,7 @@
                   <div class="col-span-4 sm:col-span-2"><Input type="number" placeholder="maxLen" bind:value={p.maxLen} /></div>
                   <div class="col-span-5 sm:col-span-2 flex items-center"><Checkbox bind:checked={p.required} label="req" /></div>
                   <div class="col-span-3 sm:col-span-1 flex justify-end">
-                    <button onclick={() => removeParam(wh, pi)} class="text-destructive p-1" title="Remove param"><Icon name="trash" size={14} /></button>
+                    <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => removeParam(wh, pi)} title="Remove param" />
                   </div>
                 </div>
               {/each}
@@ -914,7 +914,7 @@
                   <div class="col-span-5 sm:col-span-4"><Input placeholder="field" bind:value={f.key} /></div>
                   <div class="col-span-6 sm:col-span-7"><Input placeholder="value" bind:value={f.value} /></div>
                   <div class="col-span-1 flex justify-end">
-                    <button onclick={() => removeFixed(wh, fi)} class="text-destructive p-1" title="Remove"><Icon name="trash" size={14} /></button>
+                    <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => removeFixed(wh, fi)} title="Remove" />
                   </div>
                 </div>
               {/each}

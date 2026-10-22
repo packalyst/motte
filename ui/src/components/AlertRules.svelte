@@ -94,7 +94,7 @@
 <div class="space-y-3">
   <div class="flex items-center justify-between">
     <h4 class="text-sm font-medium flex items-center gap-1.5"><Icon name="bell-ringing" size={14} /> Resource alert rules</h4>
-    <Button variant="outline" size="xs" icon="plus" onclick={addRule}>Add rule</Button>
+    <Button variant="outline" icon="plus" onclick={addRule}>Add rule</Button>
   </div>
   <p class="text-xs text-muted-foreground">
     Fire when CPU, memory or disk stays over a threshold — on this panel and/or fleet machines. Uses the channels above.

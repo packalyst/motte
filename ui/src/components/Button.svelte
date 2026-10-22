@@ -27,6 +27,7 @@
     success: 'kt-btn-success',
     outline: 'kt-btn-outline',
     ghost: 'kt-btn-ghost',
+    'ghost-danger': 'kt-btn-ghost text-muted-foreground hover:text-destructive hover:bg-destructive/10', // row delete/remove icons
     mono: 'kt-btn-mono'
   };
 

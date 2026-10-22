@@ -18,6 +18,7 @@
   import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
   import Modal from './Modal.svelte'
+  import Segmented from './Segmented.svelte'
   import Gauge from './Gauge.svelte'
   import SessionCard from './SessionCard.svelte'
   import RecordingPlayer from './RecordingPlayer.svelte'
@@ -731,17 +732,9 @@
             <div class="text-[11px] text-muted-foreground truncate">CPU · memory · disk over time</div>
           </div>
           <!-- average vs peak (both stored; no refetch) -->
-          <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs shrink-0">
-            {#each [['avg', 'Avg'], ['max', 'Peak']] as [v, l]}
-              <button onclick={() => histStat = v} class="px-2.5 py-1 rounded-md transition cursor-pointer {histStat === v ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">{l}</button>
-            {/each}
-          </div>
+          <Segmented label="Statistic" bind:value={histStat} options={[{ value: 'avg', label: 'Avg' }, { value: 'max', label: 'Peak' }]} />
           <!-- time range -->
-          <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs shrink-0">
-            {#each ['24h', '7d', '30d'] as r}
-              <button onclick={() => histRange = r} class="px-2.5 py-1 rounded-md transition cursor-pointer {histRange === r ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">{r}</button>
-            {/each}
-          </div>
+          <Segmented label="Time range" bind:value={histRange} options={['24h', '7d', '30d'].map((r) => ({ value: r, label: r }))} />
         </div>
         {#if histLoading && histPoints.length === 0}
           <div class="h-[188px] grid place-items-center text-xs text-muted-foreground">Loading history…</div>
@@ -798,14 +791,8 @@
               <!-- Recording policy: Off / Always (every session on this machine), never per session. -->
               <div class="flex items-center gap-1.5 ml-auto text-[11px] text-muted-foreground">
                 <span>Recording</span>
-                <div class="inline-flex rounded-lg border border-border overflow-hidden">
-                  {#each [[false, 'Off'], [true, 'Always']] as [val, label] (label)}
-                    <button type="button" disabled={consoleBusy} onclick={() => setRecording(val)}
-                      class="px-2.5 py-1 cursor-pointer transition {consoleRecord === val ? (val ? 'bg-destructive/15 text-destructive font-medium' : 'bg-muted text-foreground font-medium') : 'hover:bg-muted/60'}">
-                      {#if val}<span class="inline-block w-1.5 h-1.5 rounded-full bg-destructive mr-1 align-middle"></span>{/if}{label}
-                    </button>
-                  {/each}
-                </div>
+                <Segmented label="Recording" value={consoleRecord} disabled={consoleBusy} onchange={setRecording}
+                  options={[{ value: false, label: 'Off' }, { value: true, label: 'Always', tone: 'destructive' }]} />
               </div>
             {/if}
             {#if !consoleEnabled && !canManageConsole}
@@ -836,7 +823,7 @@
               <div class="flex items-center gap-2 mb-2">
                 <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Recordings</span>
                 <span class="text-[10px] text-muted-foreground/70">· kept {retentionDays} days · output only, keystrokes are never recorded</span>
-                <button type="button" onclick={loadRecordings} title="Refresh" class="ml-auto p-1 rounded text-muted-foreground hover:text-foreground cursor-pointer"><Icon name="refresh" size={13} /></button>
+                <Button variant="ghost" size="xs" iconOnly icon="refresh" onclick={loadRecordings} title="Refresh" />
               </div>
               {#if recordings.length}
                 <div class="divide-y divide-border border border-border rounded-lg overflow-hidden">
@@ -855,12 +842,10 @@
                         </div>
                       </div>
                       <Button variant="ghost" size="xs" icon="player-play" onclick={() => (playingRec = rec)}>Play</Button>
-                      <button type="button" onclick={() => downloadRecording(rec)} title="Download .cast"
-                        class="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"><Icon name="download" size={14} /></button>
+                      <Button variant="ghost" size="xs" iconOnly icon="download" onclick={() => downloadRecording(rec)} title="Download .cast" />
                       {#if canManageConsole}
-                        <button type="button" onclick={() => deleteRecording(rec)} disabled={rec.live}
-                          title={rec.live ? 'Still recording — stop the session first' : 'Delete recording'}
-                          class="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"><Icon name="trash" size={14} /></button>
+                        <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => deleteRecording(rec)} disabled={rec.live}
+             title={rec.live ? 'Still recording — stop the session first' : 'Delete recording'} />
                       {/if}
                     </div>
                   {/each}
@@ -1064,9 +1049,9 @@
             <span class="text-muted-foreground">{dryRun ? '— logs actions' : '— enforcing'}</span>
           </span>
           {#if dryRun}
-            <Button variant="destructive" size="xs" icon="bolt" onclick={() => setDryRun(false)}>Go live</Button>
+            <Button variant="destructive" icon="bolt" onclick={() => setDryRun(false)}>Go live</Button>
           {:else}
-            <Button variant="outline" size="xs" icon="player-pause" onclick={() => setDryRun(true)}>Dry-run</Button>
+            <Button variant="outline" icon="player-pause" onclick={() => setDryRun(true)}>Dry-run</Button>
           {/if}
         </div>
 
@@ -1089,21 +1074,21 @@
           <div>
             <div class="text-[10px] text-muted-foreground mb-1">Patching</div>
             <div class="flex flex-wrap gap-1.5">
-              <Button variant="outline" size="xs" icon="download" onclick={applyUpdates}>Apply updates</Button>
-              <Button variant="outline" size="xs" icon="cpu" onclick={updateKernel}>Update kernel</Button>
-              <Button variant="outline" size="xs" icon="scan" onclick={rescan}>Rescan</Button>
+              <Button variant="outline" icon="download" onclick={applyUpdates}>Apply updates</Button>
+              <Button variant="outline" icon="cpu" onclick={updateKernel}>Update kernel</Button>
+              <Button variant="outline" icon="scan" onclick={rescan}>Rescan</Button>
             </div>
           </div>
           <div>
             <div class="text-[10px] text-muted-foreground mb-1">Lifecycle</div>
             <div class="flex flex-wrap gap-1.5">
-              <Button variant="outline" size="xs" icon="refresh" onclick={restartAgents}>Restart agents</Button>
+              <Button variant="outline" icon="refresh" onclick={restartAgents}>Restart agents</Button>
               {#if report?.log_level === 'debug'}
-                <Button variant="outline" size="xs" icon="file-text" onclick={() => setLogLevel('quiet')}>Quiet logs</Button>
+                <Button variant="outline" icon="file-text" onclick={() => setLogLevel('quiet')}>Quiet logs</Button>
               {:else if report?.log_level}
-                <Button variant="outline" size="xs" icon="file-text" onclick={() => setLogLevel('debug')}>Debug logs</Button>
+                <Button variant="outline" icon="file-text" onclick={() => setLogLevel('debug')}>Debug logs</Button>
               {/if}
-              <Button variant="destructive" size="xs" icon="power" onclick={rebootHost}>Reboot host</Button>
+              <Button variant="destructive" icon="power" onclick={rebootHost}>Reboot host</Button>
             </div>
           </div>
         </div>
@@ -1165,7 +1150,7 @@
           {#each tags as t (t)}
             <span class="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
               {t}
-              <button onclick={() => removeTag(t)} class="hover:text-destructive cursor-pointer" title="Remove tag"><Icon name="x" size={11} /></button>
+              <button type="button" onclick={() => removeTag(t)} class="hover:text-destructive cursor-pointer" title="Remove tag" aria-label="Remove tag {t}"><Icon name="x" size={11} /></button>
             </span>
           {/each}
           <input bind:value={newTag} onkeydown={(e) => e.key === 'Enter' && addTag()} placeholder="add tag…"

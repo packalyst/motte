@@ -8,6 +8,7 @@
   import { apiPost } from '../stores/app.js'
   import { statsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
+  import Segmented from './Segmented.svelte'
   import Button from './Button.svelte'
   import Tabs from './Tabs.svelte'
   import CountryFlag from './CountryFlag.svelte'
@@ -62,14 +63,7 @@
       <Icon name="users" size={16} class="text-muted-foreground" />
       <h3 class="text-sm font-semibold">Peers</h3>
     </div>
-    <div class="inline-flex items-center gap-0.5 rounded-lg bg-muted/60 border border-border p-0.5 text-xs shrink-0">
-      <button onclick={() => activeTab = 'online'} class="px-2.5 py-1 rounded-md transition cursor-pointer {activeTab === 'online' ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">
-        Online now
-      </button>
-      <button onclick={() => activeTab = 'traffic'} class="px-2.5 py-1 rounded-md transition cursor-pointer {activeTab === 'traffic' ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}">
-        Top traffic
-      </button>
-    </div>
+    <Segmented label="Peers view" bind:value={activeTab} options={[{ value: 'online', label: 'Online now' }, { value: 'traffic', label: 'Top traffic' }]} />
   </div>
 
   <div class="p-2 sm:p-3">

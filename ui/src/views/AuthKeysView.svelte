@@ -232,29 +232,15 @@
             </div>
             <div class="flex items-center gap-0.5">
               {#if !key._expired && (!isUsed || key.reusable)}
-                <button
-                  onclick={() => copyToClipboard(`tailscale up --login-server=${serverUrl} --authkey=${key.key}`)}
-                  class="icon-btn"
-                  data-kt-tooltip
-                >
-                  <Icon name="copy" size={14} />
-                  <span data-kt-tooltip-content class="kt-tooltip hidden">Copy command</span>
-                </button>
+                <Button variant="ghost" size="xs" iconOnly icon="copy" tooltip="Copy command" onclick={() => copyToClipboard(`tailscale up --login-server=${serverUrl} --authkey=${key.key}`)} />
               {:else}
-                <span class="icon-btn cursor-not-allowed" data-kt-tooltip>
+                <span class="kt-btn kt-btn-ghost kt-btn-xs kt-btn-icon opacity-50 cursor-not-allowed" data-kt-tooltip>
                   <Icon name="copy-off" size={14} />
                   <span data-kt-tooltip-content class="kt-tooltip hidden">{key._expired ? 'Key expired' : 'Key already used'}</span>
                 </span>
               {/if}
               {#if isActive}
-                <button
-                  onclick={() => confirmExpireKey(key)}
-                  class="icon-btn-destructive"
-                  data-kt-tooltip
-                >
-                  <Icon name="ban" size={14} />
-                  <span data-kt-tooltip-content class="kt-tooltip hidden">Expire key</span>
-                </button>
+                <Button variant="ghost-danger" size="xs" iconOnly icon="ban" tooltip="Expire key" onclick={() => confirmExpireKey(key)} />
               {/if}
             </div>
           </div>

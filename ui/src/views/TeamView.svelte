@@ -238,13 +238,9 @@
                           onchange={(e) => changeRole(u, e.target.value)}
                         />
                         {#if u.role === 'operator' || u.role === 'viewer'}
-                          <button onclick={() => openScope(u)} class="custom_btns" title="Set fleet machine scope">
-                            <Icon name="filter" size={14} />
-                          </button>
+                          <Button variant="ghost" size="xs" iconOnly icon="filter" onclick={() => openScope(u)} title="Set fleet machine scope" />
                         {/if}
-                        <button onclick={() => removeUser(u)} class="custom_btns text-destructive hover:bg-destructive/10" title="Delete user">
-                          <Icon name="trash" size={14} />
-                        </button>
+                        <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => removeUser(u)} title="Delete user" />
                       {:else}
                         <span class="text-[11px] text-muted-foreground">—</span>
                       {/if}

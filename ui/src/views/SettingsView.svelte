@@ -1161,7 +1161,6 @@
           <Button
             onclick={regenerateAdguardCredentials}
             variant="outline"
-            size="xs"
             icon="wand"
             title="Generate random secure credentials"
           >
@@ -1469,10 +1468,10 @@
             Jails
           </h3>
           <div class="kt-btn-group">
-            <Button onclick={openSSHModal} variant="outline" size="xs" icon="key">
+            <Button onclick={openSSHModal} variant="outline" icon="key">
               SSH: {sshPort}
             </Button>
-            <Button onclick={openCreateJail} variant="outline" size="xs" icon="plus">
+            <Button onclick={openCreateJail} variant="outline" icon="plus">
               Add Jail
             </Button>
           </div>
@@ -1789,9 +1788,7 @@
               {#each traefikForm.ipAllowlist as ip}
                 <div class="flex items-center gap-1 px-2 py-0.5 bg-muted rounded text-xs">
                   <code>{ip}</code>
-                  <button onclick={() => removeTraefikIP(ip)} class="p-0.5 hover:text-destructive">
-                    <Icon name="x" size={10} class="cursor-pointer"/>
-                  </button>
+                  <button type="button" onclick={() => removeTraefikIP(ip)} class="p-0.5 hover:text-destructive cursor-pointer" title="Remove" aria-label="Remove {ip}"><Icon name="x" size={12} /></button>
                 </div>
               {/each}
             </div>

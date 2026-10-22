@@ -5,6 +5,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { requestSnapshot, openConsoleEvents } from '../lib/consoleEvents.js'
   import Icon from './Icon.svelte'
+  import Button from './Button.svelte'
 
   let { session, machine, onresume, onkill } = $props()
 
@@ -78,9 +79,6 @@
         <Icon name="eye" size={12} />{session.viewers}
       </span>
     {/if}
-    <button type="button" onclick={() => onkill?.(session)} title="Close session"
-      class="shrink-0 p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition cursor-pointer">
-      <Icon name="x" size={14} />
-    </button>
+    <Button variant="ghost-danger" size="xs" iconOnly icon="x" onclick={() => onkill?.(session)} title="Close session" />
   </div>
 </div>

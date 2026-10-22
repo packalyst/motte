@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>All clients · WirePanel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F6F7F9; --surface:#FFFFFF; --line:#E5E7EB; --line-soft:#EEF0F3; --hover:#F8FAFC;
+  --text:#0F172A; --muted:#556070; --icon:#64748B; --ink:#0F172A;
+  --ok:#16A34A; --off:#A3ACB9;
+  --wg:#15803D; --wg-t:#EAF6EF; --ts:#6D28D9; --ts-t:#F2EEFE;
+  --mc:#1D4ED8; --mc-t:#EAF0FC; --lan:#B45309; --lan-t:#FDF2E4;
+  --r:12px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;cursor:pointer}
+svg{flex:none}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- shell ---------- */
+.app{display:grid;grid-template-columns:256px minmax(0,1fr);min-height:100vh}
+.side{background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
+.brand{display:flex;align-items:center;gap:10px;height:56px;padding:0 18px;border-bottom:1px solid var(--line-soft);font-weight:700;font-size:16px;letter-spacing:-.01em}
+.logo{width:30px;height:30px;border-radius:9px;background:#1E3A5F;color:#fff;display:grid;place-items:center}
+.nav{padding:10px;display:flex;flex-direction:column;gap:2px}
+.nav hr{border:0;border-top:1px solid var(--line-soft);margin:8px 6px}
+.ni{display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border-radius:9px;color:#334155;font-weight:500}
+.ni:hover{background:var(--hover);color:var(--text)}
+.ni .chev{margin-left:auto;color:var(--icon)}
+.ni.open{color:var(--text)}
+.sub{display:flex;flex-direction:column;gap:2px;margin:2px 0 4px 21px;padding-left:10px;border-left:1px solid var(--line)}
+.sub .ni{height:34px;font-size:13.5px}
+.sub .ni.active{background:var(--ink);color:#fff}
+.sub .ni.active svg{color:#fff}
+.ni svg{color:var(--icon)}
+
+.main{display:flex;flex-direction:column;min-width:0}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;height:56px;padding:0 20px;background:rgba(255,255,255,.88);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.crumb{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);min-width:0}
+.crumb b{color:var(--text);font-weight:600}
+.top .acts{margin-left:auto;display:flex;align-items:center;gap:2px}
+.ib{width:40px;height:40px;border:0;background:transparent;border-radius:9px;display:grid;place-items:center;color:var(--icon)}
+.ib:hover{background:var(--hover);color:var(--text)}
+.vsep{width:1px;height:20px;background:var(--line);margin:0 6px}
+.menu-btn{display:none}
+.scrim{display:none}
+
+/* ---------- content ---------- */
+.content{padding:24px clamp(16px,3vw,32px) 48px;display:flex;flex-direction:column;gap:16px;max-width:1440px;width:100%}
+
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 24px}
+.head h1{margin:0;font-size:22px;font-weight:700;letter-spacing:-.02em}
+.head p{margin:2px 0 0;color:var(--muted);font-size:13.5px}
+.health{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:13px;color:var(--muted)}
+.health strong{color:var(--text);font-weight:600}
+.bar{width:120px;height:6px;border-radius:99px;background:var(--line-soft);overflow:hidden;display:flex}
+.bar i{display:block;height:100%;background:var(--ok)}
+
+/* stats strip: one surface, hairline dividers */
+.stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.stat{display:flex;align-items:center;gap:12px;padding:12px 16px;min-width:0}
+.stat+.stat{border-left:1px solid var(--line-soft)}
+.stat .v{font-size:20px;font-weight:700;letter-spacing:-.02em;line-height:1}
+.stat .l{font-size:12px;color:var(--muted);margin-top:3px}
+.si{width:32px;height:32px;border-radius:9px;display:grid;place-items:center}
+
+/* attention */
+.notice{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 12px;border:1px solid #F6D7B0;background:#FFF8EF;border-radius:10px;font-size:13.5px;color:#7C2D12}
+.notice .grow{flex:1;min-width:0}
+.btn{height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:13px;font-weight:600}
+.btn.warn{background:#C2410C;border-color:#C2410C;color:#fff}
+.btn.warn:hover{background:#9A3412}
+
+/* toolbar */
+.tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.search{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;background:var(--surface);border:1px solid var(--line);border-radius:9px;flex:0 1 300px;max-width:320px}
+.search:focus-within{border-color:#94A3B8;box-shadow:0 0 0 3px rgba(148,163,184,.25)}
+.search input{border:0;outline:0;background:transparent;font:inherit;font-size:13.5px;flex:1;min-width:0;color:var(--text)}
+.filt{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1 1 auto;min-width:0}
+.seg{display:inline-flex;padding:2px;background:#EDEFF2;border-radius:9px;gap:2px;flex:none}
+.seg button{position:relative;height:30px;padding:0 10px;border:0;border-radius:7px;background:transparent;font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+.seg .k{margin-left:5px;font-weight:500}
+.seg button[aria-pressed=true]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(15,23,42,.08)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 4px 0 10px;border:1px solid var(--line);border-radius:99px;background:var(--surface);font-size:12.5px;font-weight:600;white-space:nowrap;flex:none}
+.chip::after,.seg button::after{content:"";position:absolute;inset:-6px -2px}
+.chip:hover{border-color:#CBD5E1}
+.chip .sw{width:8px;height:8px;border-radius:3px}
+.chip .n{min-width:20px;height:20px;padding:0 5px;border-radius:99px;background:#F1F3F6;font-size:11px;display:grid;place-items:center;color:#334155}
+.chip[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.chip[aria-pressed=true] .n{background:rgba(255,255,255,.18);color:#fff}
+.count{margin-left:auto;font-size:12.5px;color:var(--muted)}
+
+/* groups */
+.group{display:flex;flex-direction:column;gap:8px}
+.gh{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:6px 2px 0}
+.gh::after{content:"";flex:1;height:1px;background:var(--line)}
+.gh .gn{font-weight:500;letter-spacing:0;text-transform:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:8px}
+
+/* client chip */
+.cc{position:relative;display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);min-height:64px;transition:border-color .12s,box-shadow .12s}
+.cc:hover{border-color:#CBD5E1;box-shadow:0 2px 8px -4px rgba(15,23,42,.12)}
+.cc.pending{border-color:#F3C99A;background:linear-gradient(#FFFDF9,#FFFDF9)}
+.av{position:relative;width:36px;height:36px;border-radius:10px;display:grid;place-items:center}
+.av .d{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--surface);background:var(--ok)}
+.cc.off .d{background:var(--off)}
+.cc.off .av{filter:saturate(.15);opacity:.8}
+.body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.r1,.r2{display:flex;align-items:center;gap:8px;min-width:0}
+.name{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.name::after{content:"";position:absolute;inset:0;border-radius:inherit}
+.name:focus-visible{outline:none}
+.cc:has(.name:focus-visible){box-shadow:0 0 0 3px rgba(37,99,235,.35)}
+.seen{margin-left:auto;font-size:12px;color:var(--muted);white-space:nowrap}
+.cc.off .name{color:#334155}
+.r2{font-size:12.5px;color:var(--muted)}
+.r2 .meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.r2 .dot{width:3px;height:3px;border-radius:50%;background:#C3C9D2;flex:none}
+.tr{margin-left:auto;display:flex;gap:8px;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:12px;color:#334155}
+.tr span{display:inline-flex;align-items:center;gap:2px}
+.tr .u{color:var(--wg)} .tr .dn{color:var(--mc)}
+.badge{flex:none;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;background:#FDF2E4;color:#9A3412}
+.cc .approve{position:relative;z-index:1;flex:none}
+
+.empty{padding:40px 16px;text-align:center;border:1px dashed #CBD5E1;border-radius:var(--r);color:var(--muted)}
+
+/* ---------- responsive ---------- */
+@media (max-width:1100px){
+  .stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .stat:nth-child(4){border-left:0}
+  .stat:nth-child(n+4){border-top:1px solid var(--line-soft)}
+}
+@media (max-width:900px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .side{position:fixed;inset:0 auto 0 0;width:280px;z-index:20;transform:translateX(-100%);transition:transform .2s;box-shadow:0 10px 40px rgba(15,23,42,.18)}
+  .app.nav-open .side{transform:none}
+  .scrim{display:none;position:fixed;inset:0;z-index:15;background:rgba(15,23,42,.35)}
+  .app.nav-open .scrim{display:block}
+  .menu-btn{display:grid}
+  .top{padding:0 8px 0 4px}
+  .top .opt{display:none}
+}
+@media (max-width:640px){
+  .content{gap:12px;padding-top:12px}
+  .head>div:first-child{display:none}
+  .health{margin-left:0;width:100%}
+  .health .bar{flex:1;width:auto}
+  .stats{display:none}
+  .notice{padding:6px 6px 6px 10px;font-size:13px}
+  .notice .grow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tools{position:sticky;top:56px;z-index:4;margin:0 -16px;padding:8px 16px 4px;background:rgba(246,247,249,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:4px}
+  .search{max-width:none;flex:none;height:40px}
+  .filt{flex-wrap:nowrap;overflow-x:auto;margin:0 -16px;padding:6px 16px;scrollbar-width:none}
+  .filt::-webkit-scrollbar{display:none}
+  .chips{flex-wrap:nowrap}
+  .count{display:none}
+  .grid{grid-template-columns:minmax(0,1fr);gap:6px}
+  .cc{padding:9px 10px;min-height:58px;gap:10px}
+  .av{width:32px;height:32px;border-radius:9px}
+  .cc .approve{display:none}
+  .tr{gap:6px}
+  .gh{padding-top:2px}
+}
+@media (max-width:380px){ .tr .dn{display:none} }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="scrim" id="scrim"></div>
+
+  <!-- ===== Sidebar ===== -->
+  <aside class="side" aria-label="Main navigation">
+    <div class="brand">
+      <span class="logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/></svg></span>
+      WirePanel
+    </div>
+    <nav class="nav">
+      <a class="ni" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m12 12 4-3"/></svg>Overview</a>
+      <hr>
+      <a class="ni open" href="#" aria-expanded="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="12" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-4"/></svg>Clients<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></a>
+      <div class="sub">
+        <a class="ni active" href="#" aria-current="page"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>All clients</a>
+        <a class="ni" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>Nodes</a>
+        <a class="ni" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>Machines</a>
+        <a class="ni" href="#"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M8.5 9.5a5 5 0 0 1 7 0M6 7a8.5 8.5 0 0 1 12 0"/></svg>Networks</a>
+      </div>
+      <a class="ni" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3"/></svg>Headscale<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a>
+      <hr>
+      <a class="ni" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/></svg>Firewall</a>
+      <a class="ni" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>Host</a>
+      <hr>
+      <a class="ni" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"/></svg>Web &amp; Proxy<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a>
+      <a class="ni" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .6-8A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18Z"/></svg>Services<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a>
+      <hr>
+      <a class="ni" href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>Monitoring<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a>
+    </nav>
+  </aside>
+
+  <!-- ===== Main ===== -->
+  <div class="main">
+    <header class="top">
+      <button class="ib menu-btn" id="menuBtn" aria-label="Open navigation"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      <div class="crumb"><span class="opt">Clients</span><svg class="opt" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg><b>All clients</b></div>
+      <div class="acts">
+        <button class="ib opt" aria-label="Network map"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"/></svg></button>
+        <button class="ib opt" aria-label="Servers"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg></button>
+        <button class="ib" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
+        <button class="ib opt" aria-label="About"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></button>
+        <span class="vsep opt"></span>
+        <a class="ib opt" href="#" aria-label="Source code"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg></a>
+      </div>
+    </header>
+
+    <main class="content">
+      <div class="head">
+        <div>
+          <h1>All clients</h1>
+          <p>WireGuard peers, Tailscale nodes, agent machines and LAN devices in one place.</p>
+        </div>
+        <div class="health" aria-label="7 of 10 clients online">
+          <span><strong id="hOn">7</strong> of <span id="hAll">10</span> online</span>
+          <span class="bar"><i id="hBar" style="width:70%"></i></span>
+        </div>
+      </div>
+
+      <section class="stats" aria-label="Summary">
+        <div class="stat"><span class="si" style="background:#F1F3F6;color:#334155"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="12" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-4"/></svg></span><div><div class="v">10</div><div class="l">Clients</div></div></div>
+        <div class="stat"><span class="si" style="background:var(--wg-t);color:var(--wg)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg></span><div><div class="v">7</div><div class="l">Online</div></div></div>
+        <div class="stat"><span class="si" style="background:var(--wg-t);color:var(--wg)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/></svg></span><div><div class="v">7</div><div class="l">VPN</div></div></div>
+        <div class="stat"><span class="si" style="background:var(--mc-t);color:var(--mc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span><div><div class="v">2</div><div class="l">Machines</div></div></div>
+        <div class="stat"><span class="si" style="background:var(--lan-t);color:var(--lan)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M8.5 9.5a5 5 0 0 1 7 0M6 7a8.5 8.5 0 0 1 12 0"/></svg></span><div><div class="v">1</div><div class="l">LAN devices</div></div></div>
+      </section>
+
+      <div class="notice" id="notice" role="status">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C2410C" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5h.01"/></svg>
+        <span class="grow"><strong>cp</strong> is waiting for approval before it can join 10.70.70.0/24.</span>
+        <button class="btn warn" data-approve="cp">Approve</button>
+      </div>
+
+      <div class="tools">
+        <label class="search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <span class="sr">Search clients</span>
+          <input id="q" type="search" placeholder="Search name, IP, user, OS or network…" autocomplete="off">
+        </label>
+        <div class="filt">
+          <div class="seg" role="group" aria-label="Status">
+            <button data-status="all" aria-pressed="true">All<span class="k" id="kAll">10</span></button>
+            <button data-status="online" aria-pressed="false">Online<span class="k" id="kOn">7</span></button>
+            <button data-status="offline" aria-pressed="false">Offline<span class="k" id="kOff">3</span></button>
+          </div>
+          <div class="chips" role="group" aria-label="Type" id="chips"></div>
+        </div>
+        <span class="count" id="count"></span>
+      </div>
+
+      <div id="list" style="display:flex;flex-direction:column;gap:14px"></div>
+    </main>
+  </div>
+</div>
+
+<script>
+const TYPES = {
+  wg:      { label:'WireGuard',   group:'WireGuard peers', c:'var(--wg)',  t:'var(--wg-t)',
+             icon:'<path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/>' },
+  ts:      { label:'Tailscale',   group:'Tailscale nodes', c:'var(--ts)',  t:'var(--ts-t)',
+             icon:'<path d="M7 18h10a4 4 0 0 0 .6-8A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18Z"/>' },
+  machine: { label:'Machine',     group:'Machines',        c:'var(--mc)',  t:'var(--mc-t)',
+             icon:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>' },
+  lan:     { label:'LAN device',  group:'LAN devices',     c:'var(--lan)', t:'var(--lan-t)',
+             icon:'<rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M8.5 9.5a5 5 0 0 1 7 0M6 7a8.5 8.5 0 0 1 12 0"/>' }
+};
+// Sample data — replace with your API response.
+let DATA = [
+  { name:'cp',          kind:'lan',     online:true,  pending:true, ip:'10.70.70.70',  meta:'ens19 · 10.70.70.0/24', seen:'now',     up:null,       down:null },
+  { name:'macbookPro',  kind:'wg',      online:true,  ip:'10.8.0.7',   meta:'',                 seen:'now',     up:'37.7 GB',  down:'12.2 GB' },
+  { name:'olares',      kind:'wg',      online:true,  ip:'10.8.0.2',   meta:'',                 seen:'now',     up:'811.3 GB', down:'48.1 GB' },
+  { name:'iphone15',    kind:'wg',      online:true,  ip:'10.8.0.3',   meta:'',                 seen:'now',     up:'1.2 GB',   down:'310 MB' },
+  { name:'pixel8',      kind:'wg',      online:false, ip:'10.8.0.4',   meta:'',                 seen:'2h ago',  up:'880 MB',   down:'96 MB' },
+  { name:'work-laptop', kind:'wg',      online:false, ip:'10.8.0.5',   meta:'',                 seen:'3d ago',  up:'6.4 GB',   down:'1.1 GB' },
+  { name:'ipad',        kind:'wg',      online:false, ip:'10.8.0.6',   meta:'',                 seen:'5d ago',  up:'420 MB',   down:'58 MB' },
+  { name:'ubuntu22',    kind:'ts',      online:true,  ip:'100.64.0.1', meta:'user olares',      seen:'now',     up:'0 B',      down:'0 B' },
+  { name:'olares-host', kind:'machine', online:true,  ip:'192.168.1.10', meta:'Ubuntu 22.04',   seen:'now',     up:'2.1 GB',   down:'640 MB' },
+  { name:'edge-vps',    kind:'machine', online:true,  ip:'203.0.113.24', meta:'Debian 12',      seen:'now',     up:'14.8 GB',  down:'9.3 GB' }
+];
+
+const state = { status:'all', type:null, q:'' };
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const svg = (inner, size=18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+
+function renderChips(){
+  $('#chips').innerHTML = Object.entries(TYPES).map(([k,t]) => {
+    const n = DATA.filter(d => d.kind === k).length;
+    return `<button class="chip" data-type="${k}" aria-pressed="${state.type===k}"><span class="sw" style="background:${t.c}"></span>${t.label}<span class="n">${n}</span></button>`;
+  }).join('');
+}
+
+function chip(d){
+  const t = TYPES[d.kind];
+  const traffic = d.up == null
+    ? `<span class="tr" aria-label="No traffic data">—</span>`
+    : `<span class="tr"><span><span class="u" aria-hidden="true">↑</span><span class="sr">Up </span>${d.up}</span><span class="dn"><span aria-hidden="true">↓</span><span class="sr">Down </span><span style="color:#334155">${d.down}</span></span></span>`;
+  return `
+  <article class="cc${d.online?'':' off'}${d.pending?' pending':''}">
+    <span class="av" style="background:${t.t};color:${t.c}">${svg(t.icon)}<span class="d"></span></span>
+    <div class="body">
+      <div class="r1">
+        <a class="name" href="#/clients/${encodeURIComponent(d.name)}">${esc(d.name)}</a>
+        <span class="sr">${d.online?'online':'offline'}, ${t.label}</span>
+        ${d.pending?'<span class="badge">Not approved</span>':''}
+        <span class="seen">${d.seen==='now' ? 'Active now' : esc(d.seen)}</span>
+      </div>
+      <div class="r2">
+        <span class="mono" style="color:var(--text)">${esc(d.ip)}</span>
+        ${d.meta?`<span class="dot"></span><span class="meta">${esc(d.meta)}</span>`:''}
+        ${traffic}
+      </div>
+    </div>
+    ${d.pending?`<button class="btn warn approve" data-approve="${esc(d.name)}">Approve</button>`:''}
+  </article>`;
+}
+
+function render(){
+  const q = state.q.trim().toLowerCase();
+  const rows = DATA.filter(d =>
+    (state.status==='all' || (state.status==='online') === d.online) &&
+    (!state.type || state.type === d.kind) &&
+    (!q || [d.name,d.ip,d.meta,TYPES[d.kind].label].join(' ').toLowerCase().includes(q)));
+
+  const out = Object.entries(TYPES).map(([k,t]) => {
+    const g = rows.filter(d => d.kind===k).sort((a,b) => (b.pending|0)-(a.pending|0) || (b.online|0)-(a.online|0));
+    if (!g.length) return '';
+    const on = g.filter(d=>d.online).length;
+    return `<section class="group" aria-label="${t.group}">
+      <h2 class="gh">${t.group}<span class="gn">${on}/${g.length} online</span></h2>
+      <div class="grid">${g.map(chip).join('')}</div></section>`;
+  }).join('');
+
+  $('#list').innerHTML = out || '<div class="empty">No clients match these filters.</div>';
+  $('#count').textContent = `${rows.length} of ${DATA.length}`;
+  const on = DATA.filter(d=>d.online).length;
+  $('#hOn').textContent = on; $('#hAll').textContent = DATA.length;
+  $('#kAll').textContent=DATA.length; $('#kOn').textContent=on; $('#kOff').textContent=DATA.length-on;
+  $('#hBar').style.width = (on/DATA.length*100)+'%';
+  $('#notice').style.display = DATA.some(d=>d.pending) ? '' : 'none';
+}
+
+document.addEventListener('click', e => {
+  const s = e.target.closest('[data-status]');
+  if (s){ state.status = s.dataset.status;
+    document.querySelectorAll('[data-status]').forEach(b => b.setAttribute('aria-pressed', b===s)); render(); return; }
+  const t = e.target.closest('[data-type]');
+  if (t){ state.type = state.type===t.dataset.type ? null : t.dataset.type; renderChips(); render(); return; }
+  const a = e.target.closest('[data-approve]');
+  if (a){ const d = DATA.find(x => x.name===a.dataset.approve); if (d) d.pending=false; render(); return; }
+});
+$('#q').addEventListener('input', e => { state.q = e.target.value; render(); });
+
+const app = $('#app');
+$('#menuBtn').addEventListener('click', () => app.classList.add('nav-open'));
+$('#scrim').addEventListener('click', () => app.classList.remove('nav-open'));
+document.addEventListener('keydown', e => { if (e.key==='Escape') app.classList.remove('nav-open'); });
+
+renderChips(); render();
+</script>
+</body>
+</html>
