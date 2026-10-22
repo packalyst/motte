@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"api/internal/helper"
 )
 
 const maxReportBody = 1 << 20 // 1 MiB
@@ -25,8 +27,8 @@ func (s *Service) HandleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := s.db.Exec(
-		`UPDATE fleet_machines SET last_report = ?, last_seen = ?, status = 'online' WHERE id = ?`,
-		string(body), now, m.ID,
+		`UPDATE fleet_machines SET last_report = ?, last_seen = ?, status = 'online', last_ip = ? WHERE id = ?`,
+		string(body), now, helper.GetClientIP(r), m.ID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "store failed")
 		return
