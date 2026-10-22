@@ -39,19 +39,20 @@ type Flag struct {
 
 // Client is one device in the unified list.
 type Client struct {
-	Key      string  `json:"key"`     // stable unique id across kinds
-	Kind     string  `json:"kind"`    // wireguard | tailscale | machine | lan
-	Machine  bool    `json:"machine"` // a VPN client that is also an agent machine
-	Name     string  `json:"name"`
-	IP       string  `json:"ip"`
-	Online   bool    `json:"online"`
-	LastSeen string  `json:"last_seen,omitempty"`
-	Meta     string  `json:"meta,omitempty"` // Tailscale user, machine OS, or LAN network
-	Tx       *int64  `json:"tx,omitempty"`   // bytes sent/received (VPN clients only)
-	Rx       *int64  `json:"rx,omitempty"`
-	Flags    []Flag  `json:"flags,omitempty"`
-	Pending  bool    `json:"pending,omitempty"` // LAN device waiting for approval
-	Open     OpenRef `json:"open"`              // where each part of this client is managed
+	Key      string   `json:"key"`     // stable unique id across kinds
+	Kind     string   `json:"kind"`    // wireguard | tailscale | machine | lan
+	Machine  bool     `json:"machine"` // a VPN client that is also an agent machine
+	Name     string   `json:"name"`
+	IP       string   `json:"ip"`
+	Online   bool     `json:"online"`
+	LastSeen string   `json:"last_seen,omitempty"`
+	Meta     string   `json:"meta,omitempty"` // Tailscale user, machine OS, or LAN network
+	Tx       *int64   `json:"tx,omitempty"`   // bytes sent/received (VPN clients only)
+	Rx       *int64   `json:"rx,omitempty"`
+	Flags    []Flag   `json:"flags,omitempty"`
+	Tags     []string `json:"tags,omitempty"`    // Tailscale ACL tags and/or machine scoping tags
+	Pending  bool     `json:"pending,omitempty"` // LAN device waiting for approval
+	Open     OpenRef  `json:"open"`              // where each part of this client is managed
 }
 
 // OpenRef identifies the client on its own pages.
@@ -119,6 +120,7 @@ func (s *Service) build(machines []fleet.Machine, machinesErr error) ([]Client, 
 					e.Meta = m.Summary.OS
 				}
 				e.Flags = append(e.Flags, machineFlags(m)...)
+				e.Tags = append(e.Tags, m.Tags...)
 			}
 			out = append(out, e)
 		}
@@ -159,13 +161,15 @@ func (s *Service) build(machines []fleet.Machine, machinesErr error) ([]Client, 
 
 // vpnRaw is the subset of a VPN client's stored source data the list shows.
 type vpnRaw struct {
-	Online        bool   `json:"online"`
-	Enabled       *bool  `json:"enabled"`
-	LastHandshake string `json:"lastHandshake"`
-	LastSeen      string `json:"lastSeen"`
-	GivenName     string `json:"givenName"`
-	Name          string `json:"name"`
-	Expiry        string `json:"expiry"`
+	Online        bool     `json:"online"`
+	Enabled       *bool    `json:"enabled"`
+	LastHandshake string   `json:"lastHandshake"`
+	LastSeen      string   `json:"lastSeen"`
+	GivenName     string   `json:"givenName"`
+	Name          string   `json:"name"`
+	Expiry        string   `json:"expiry"`
+	ForcedTags    []string `json:"forcedTags"`
+	ValidTags     []string `json:"validTags"`
 	User          struct {
 		Name string `json:"name"`
 	} `json:"user"`
@@ -188,6 +192,7 @@ func fromVPN(c vpn.VPNClient) Client {
 		e.Open.Node = c.ExternalID
 		e.LastSeen = raw.LastSeen
 		e.Meta = raw.User.Name
+		e.Tags = append(raw.ForcedTags, raw.ValidTags...)
 		if t, err := time.Parse(time.RFC3339, raw.Expiry); err == nil && t.Year() > 1 && t.Before(time.Now()) {
 			e.Flags = append(e.Flags, Flag{"Key expired", "destructive"})
 		}
@@ -200,7 +205,7 @@ func fromVPN(c vpn.VPNClient) Client {
 
 func fromMachine(m *fleet.Machine) Client {
 	e := Client{Key: "m:" + m.ID, Kind: "machine", Name: firstNonEmpty(m.Name, m.ID), IP: m.LastIP,
-		Open: OpenRef{MachineID: m.ID}, Flags: machineFlags(m)}
+		Open: OpenRef{MachineID: m.ID}, Flags: machineFlags(m), Tags: m.Tags}
 	if m.LastSeen != nil {
 		e.LastSeen = m.LastSeen.UTC().Format(time.RFC3339)
 		e.Online = !m.Revoked && time.Since(*m.LastSeen) < machineOnline
@@ -272,10 +277,11 @@ func digest(list []Client) [32]byte {
 		On, Pend, M       bool
 		F                 []Flag
 		Meta              string
+		T                 []string
 	}
 	ks := make([]key, len(list))
 	for i, c := range list {
-		ks[i] = key{c.Key, c.Kind, c.Name, c.IP, c.Online, c.Pending, c.Machine, c.Flags, c.Meta}
+		ks[i] = key{c.Key, c.Kind, c.Name, c.IP, c.Online, c.Pending, c.Machine, c.Flags, c.Meta, c.Tags}
 	}
 	b, _ := json.Marshal(ks)
 	return sha256.Sum256(b)

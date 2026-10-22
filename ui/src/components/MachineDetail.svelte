@@ -9,7 +9,7 @@
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser, currentView, consoleTarget, consoleReturn } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser, hasRole, currentView, consoleTarget, consoleReturn } from '../stores/app.js'
   import { consoleSessions, openConsoleEvents, refreshSessions } from '../lib/consoleEvents.js'
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
@@ -21,6 +21,7 @@
   import Segmented from './Segmented.svelte'
   import Gauge from './Gauge.svelte'
   import SessionCard from './SessionCard.svelte'
+  import TagEditor from './TagEditor.svelte'
   import RecordingPlayer from './RecordingPlayer.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
@@ -29,9 +30,8 @@
   let { machine, latestAgent = null, onback, ondeleted, onviewcves } = $props()
 
   // --- Browser console (point 7) ---
-  const ROLE_RANK = { viewer: 1, operator: 2, admin: 3, owner: 4 }
-  const canOpenConsole = $derived((ROLE_RANK[$currentUser?.role] || 0) >= ROLE_RANK.operator)
-  const canManageConsole = $derived((ROLE_RANK[$currentUser?.role] || 0) >= ROLE_RANK.admin)
+  const canOpenConsole = $derived(hasRole($currentUser, 'operator'))
+  const isAdmin = $derived(hasRole($currentUser, 'admin'))
   // Local mirrors (toggled optimistically from the API response), re-synced when the parent hands
   // in a fresher machine.
   let consoleEnabled = $state(false)
@@ -179,23 +179,10 @@
   // Machine tags — drive operator/viewer scoping. Editing is admin+ (backend-enforced).
   let tags = $state([])
   $effect.pre(() => { tags = [...(machine.tags || [])] })
-  let newTag = $state('')
   async function saveTags(next) {
-    try {
-      await apiPost('/api/fleet/machine/tags', { machine_id: machine.id, tags: next })
-      tags = next
-      toast('Tags updated', 'success')
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
+    await apiPost('/api/fleet/machine/tags', { machine_id: machine.id, tags: next })
+    tags = next
   }
-  function addTag() {
-    const t = newTag.trim()
-    newTag = ''
-    if (!t || tags.includes(t)) return
-    saveTags([...tags, t])
-  }
-  const removeTag = (t) => saveTags(tags.filter((x) => x !== t))
 
   // Self-update landed in agent 0.1.20; older agents can't be updated from the panel.
   const MIN_SELFUPDATE = '0.1.20'
@@ -597,7 +584,7 @@
     {#if canOpenConsole && consoleEnabled}
       <p class="text-sm text-muted-foreground mb-3">{desc}</p>
       <Button variant="primary" size="sm" {icon} onclick={() => openConsole(liveSessions[0]?.id ?? null, panel)}>{label}</Button>
-    {:else if canManageConsole && !consoleEnabled}
+    {:else if isAdmin && !consoleEnabled}
       <p class="text-sm text-muted-foreground">Enable the console (on the Sessions tab) first — this runs over the same gated channel.</p>
     {:else if !consoleEnabled}
       <p class="text-sm text-muted-foreground">The console is disabled for this machine, so this is off.</p>
@@ -723,6 +710,13 @@
         <Icon name="chevron-right" size={16} class="text-muted-foreground shrink-0" />
       </button>
 
+      <!-- Tags -->
+      <div class="bg-card border border-border rounded-xl p-4">
+        {@render head('tag', 'Tags', 'who can see this machine')}
+        <TagEditor {tags} canEdit={isAdmin} onsave={saveTags} />
+        {@render note('Operators and viewers can be limited to machines with given tags (Team page → filter icon on a user). Only admins can change tags.')}
+      </div>
+
       <!-- Usage history -->
       <div class="bg-card border border-border rounded-xl p-4">
         <div class="flex items-center gap-2.5 mb-3 flex-wrap">
@@ -778,13 +772,13 @@
     {#if activeTab === 'sessions'}
       <div class="bg-card border border-border rounded-xl p-4">
         {@render head('terminal-2', 'Console', 'interactive shell to this machine', 'text-primary')}
-        {#if canOpenConsole || canManageConsole}
+        {#if canOpenConsole || isAdmin}
           <div class="flex flex-wrap items-center gap-2">
             {#if canOpenConsole && consoleEnabled}
               <Button variant="primary" size="sm" icon="terminal-2" onclick={() => openConsole()}>New session</Button>
               <Button variant="ghost" size="sm" icon="refresh" onclick={refreshSessions}>Refresh</Button>
             {/if}
-            {#if canManageConsole}
+            {#if isAdmin}
               <Button variant={consoleEnabled ? 'outline' : 'primary'} size="sm" icon="power" loading={consoleBusy} onclick={() => setConsole(!consoleEnabled)}>
                 {consoleEnabled ? 'Disable console' : 'Enable console'}
               </Button>
@@ -795,7 +789,7 @@
                   options={[{ value: false, label: 'Off' }, { value: true, label: 'Always', tone: 'destructive' }]} />
               </div>
             {/if}
-            {#if !consoleEnabled && !canManageConsole}
+            {#if !consoleEnabled && !isAdmin}
               <span class="text-sm text-muted-foreground">Console is disabled for this machine.</span>
             {/if}
           </div>
@@ -843,7 +837,7 @@
                       </div>
                       <Button variant="ghost" size="xs" icon="player-play" onclick={() => (playingRec = rec)}>Play</Button>
                       <Button variant="ghost" size="xs" iconOnly icon="download" onclick={() => downloadRecording(rec)} title="Download .cast" />
-                      {#if canManageConsole}
+                      {#if isAdmin}
                         <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => deleteRecording(rec)} disabled={rec.live}
              title={rec.live ? 'Still recording — stop the session first' : 'Delete recording'} />
                       {/if}
@@ -1141,22 +1135,6 @@
             {/each}
           </div>
         {/if}
-      </div>
-
-      <!-- Tags -->
-      <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('tag', 'Tags', 'access scoping')}
-        <div class="flex items-center gap-2 flex-wrap text-xs">
-          {#each tags as t (t)}
-            <span class="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-              {t}
-              <button type="button" onclick={() => removeTag(t)} class="hover:text-destructive cursor-pointer" title="Remove tag" aria-label="Remove tag {t}"><Icon name="x" size={11} /></button>
-            </span>
-          {/each}
-          <input bind:value={newTag} onkeydown={(e) => e.key === 'Enter' && addTag()} placeholder="add tag…"
-            class="bg-transparent border-b border-dashed border-border text-xs w-24 focus:outline-none focus:border-primary" />
-        </div>
-        {@render note('Tags scope operator/viewer access — an operator can be limited to machines carrying a given tag. Editing tags is admin-only (enforced on the panel).')}
       </div>
     {/if}
 

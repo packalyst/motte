@@ -4,6 +4,11 @@ import { writable, get } from 'svelte/store'
 // idle lock so they know the caller's 2FA status and idle-lock policy without prop threading.
 export const currentUser = writable(null)
 
+// hasRole mirrors the server's role order; it only decides what the UI shows — every action is
+// still checked on the server.
+const ROLE_RANK = { viewer: 1, operator: 2, admin: 3, owner: 4 }
+export const hasRole = (user, min) => (ROLE_RANK[user?.role] || 0) >= ROLE_RANK[min]
+
 // Theme
 const savedTheme = typeof localStorage !== 'undefined' ? localStorage.getItem('hs_theme') : 'dark'
 export const theme = writable(savedTheme || 'dark')

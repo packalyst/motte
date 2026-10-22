@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/events"
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -84,9 +87,17 @@ func (s *Service) handleSetMachineTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.SetMachineTags(req.MachineID, req.Tags); err != nil {
-		router.JSONError(w, "machine not found", http.StatusNotFound)
+		var ve *helper.ValidationError
+		if errors.As(err, &ve) {
+			router.JSONError(w, ve.Message, http.StatusBadRequest)
+		} else {
+			router.JSONError(w, "machine not found", http.StatusNotFound)
+		}
 		return
 	}
+	actor, _ := s.actingAdmin(r)
+	events.Audit("fleet", "machine_tags", events.SeverityInfo, actor, helper.GetClientIP(r),
+		fmt.Sprintf("Machine %s tags set to [%s]", req.MachineID, strings.Join(req.Tags, ", ")))
 	router.JSON(w, map[string]bool{"ok": true})
 }
 
