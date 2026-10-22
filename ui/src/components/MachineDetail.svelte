@@ -141,6 +141,27 @@
       recordings = []
     }
   }
+  // Admin only. One prompt is both the confirmation and the re-authentication (the server asks for it
+  // every time — no grace window for erasing a recording); the deletion itself is audited.
+  async function deleteRecording(rec) {
+    const r = await stepUpConfirm({
+      title: 'Delete recording',
+      message: `Delete ${rec.title} by ${rec.user} on ${machine.name}?`,
+      description: 'It is gone for good — copies of the file left anywhere become unreadable. The deletion is kept in the audit log. Re-authenticate to confirm.',
+      confirmText: 'Delete', variant: 'destructive',
+    })
+    if (!r?.confirmed) return
+    try {
+      await apiPost('/api/fleet/console/recording/delete', {
+        machine_id: machine.id, name: rec.name, currentPassword: r.password, totpCode: r.totp || '',
+      })
+      recordings = recordings.filter((x) => x.name !== rec.name)
+      toast('Recording deleted', 'success')
+    } catch (e) {
+      toast(e.message || 'Could not delete the recording', 'error')
+    }
+  }
+
   function downloadRecording(rec) {
     const a = document.createElement('a') // same-origin GET: the session cookie authenticates it
     a.href = `/api/fleet/console/recording?machine_id=${encodeURIComponent(machine.id)}&name=${encodeURIComponent(rec.name)}`
@@ -829,6 +850,11 @@
                       <Button variant="ghost" size="xs" icon="player-play" onclick={() => (playingRec = rec)}>Play</Button>
                       <button type="button" onclick={() => downloadRecording(rec)} title="Download .cast"
                         class="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"><Icon name="download" size={14} /></button>
+                      {#if canManageConsole}
+                        <button type="button" onclick={() => deleteRecording(rec)} disabled={rec.live}
+                          title={rec.live ? 'Still recording — stop the session first' : 'Delete recording'}
+                          class="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"><Icon name="trash" size={14} /></button>
+                      {/if}
                     </div>
                   {/each}
                 </div>
@@ -840,7 +866,7 @@
         {:else}
           <div class="text-sm text-muted-foreground">You don't have permission to use the console.</div>
         {/if}
-        {@render note('A remote interactive shell is gated: enable per-machine (admin, re-authenticate), then open (operator+). Sessions resume server-side (tmux) — reattach from the list above after a reload. With recording set to Always, every session is recorded (output only) for audit; operators see their own recordings, admins see everyone’s, and each playback is logged.')}
+        {@render note('A remote interactive shell is gated: enable per-machine (admin, re-authenticate), then open (operator+). Sessions resume server-side (tmux) — reattach from the list above after a reload. With recording set to Always, every session is recorded (output only) for audit; operators see their own recordings, admins see everyone’s, and each playback is logged. Recordings are encrypted on disk; only an admin can delete one (re-authenticated, logged).')}
       </div>
     {/if}
     {#if playingRec}
