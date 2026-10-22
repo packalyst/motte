@@ -28,7 +28,8 @@
         "fleet",
         "server_stats",
         "container_stats",
-        "routines"
+        "routines",
+        "clients"
       ]
     }
   },
@@ -1261,6 +1262,20 @@
           ],
           "handler": "DeleteClient",
           "description": "Delete a DHCP client"
+        }
+      ]
+    },
+    "clients": {
+      "prefix": "/api/clients",
+      "enabled": true,
+      "endpoints": [
+        {
+          "path": "",
+          "methods": [
+            "GET"
+          ],
+          "handler": "List",
+          "description": "All clients (VPN, machines, LAN devices) merged and scope-filtered"
         }
       ]
     },

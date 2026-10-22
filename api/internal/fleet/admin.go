@@ -324,13 +324,22 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleListMachines(w http.ResponseWriter, r *http.Request) {
-	ms, err := s.ListMachines()
+	ms, err := s.MachinesFor(r)
 	if err != nil {
 		router.JSONError(w, "could not list machines", http.StatusInternalServerError)
 		return
 	}
-	// Scope: operator/viewer only see machines in their scope; owner/admin see all.
-	router.JSON(w, s.filterMachines(r, ms))
+	router.JSON(w, ms)
+}
+
+// MachinesFor lists the machines the request's caller may see: operator/viewer only those in
+// their scope, owner/admin all.
+func (s *Service) MachinesFor(r *http.Request) ([]Machine, error) {
+	ms, err := s.ListMachines()
+	if err != nil {
+		return nil, err
+	}
+	return s.filterMachines(r, ms), nil
 }
 
 // handleListTokens (GET /api/fleet/tokens) — outstanding enrollment tokens waiting

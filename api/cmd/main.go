@@ -18,6 +18,7 @@ import (
 	"api/internal/backup"
 	"api/internal/config"
 	"api/internal/database"
+	"api/internal/clients"
 	"api/internal/dhcp"
 	"api/internal/docker"
 	"api/internal/domains"
@@ -274,11 +275,12 @@ func main() {
 	// DHCP (managed private networks): gateways isolated LAN segments, runs DHCP-only dnsmasq,
 	// and gates VPN reachability through the nft forward chain. Needs the nftables service for
 	// the reachability table (nil → reachability not enforced, logged at apply).
+	var dhcpSvc *dhcp.Service
 	if config.IsServiceEnabled("dhcp") {
 		if dhcpDB, err := database.GetDB(); err != nil {
 			log.Printf("Warning: Failed to initialize dhcp service: %v", err)
 		} else {
-			dhcpSvc := dhcp.New(dhcpDB, nftSvc)
+			dhcpSvc = dhcp.New(dhcpDB, nftSvc)
 			r.RegisterService("dhcp", dhcpSvc.Handlers())
 			// Re-apply live state (interface, dnsmasq, FORWARD punch-through, reachability) on boot:
 			// a plain restart otherwise leaves Docker's flushed FORWARD chain dropping segment traffic.
@@ -523,6 +525,15 @@ func main() {
 				log.Printf("Fleet service registered (CA %s)", flSvc.CA().Fingerprint())
 			}
 		}
+	}
+
+	// All clients: VPN clients, fleet machines and LAN devices as one merged, scope-filtered list,
+	// with a "changed" signal on the clients WS channel while the page is open.
+	if config.IsServiceEnabled("clients") {
+		clSvc := clients.New(vpnSvc, flSvc, dhcpSvc)
+		r.RegisterService("clients", clSvc.Handlers())
+		clSvc.Watch()
+		routines.RegisterDaemon("clients-watch", "Signal the All clients page when a client appears, disappears or changes state (idles when no page is watching)")
 	}
 
 	// Backup & migrate: passphrase-encrypted export + faithful-replace import of the

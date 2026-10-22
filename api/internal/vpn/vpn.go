@@ -223,11 +223,20 @@ func (s *Service) Handlers() router.ServiceHandlers {
 func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 	// Auto-sync to get fresh data from WireGuard and Headscale
 	s.SyncClients()
-
-	db, err := database.GetDB()
+	clients, err := s.ListClients()
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	router.JSON(w, clients)
+}
+
+// ListClients returns every stored VPN client (WireGuard peers and Headscale nodes, with their
+// raw source data and ACL rule count) as last synced — it does not sync first.
+func (s *Service) ListClients() ([]VPNClient, error) {
+	db, err := database.GetDB()
+	if err != nil {
+		return nil, err
 	}
 	// Use LEFT JOIN with subquery to avoid N+1 query problem
 	rows, err := db.Query(`
@@ -244,8 +253,7 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 		ORDER BY c.type, c.name
 	`)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -264,8 +272,7 @@ func (s *Service) handleGetClients(w http.ResponseWriter, r *http.Request) {
 		}
 		clients = append(clients, c)
 	}
-
-	router.JSON(w, clients)
+	return clients, rows.Err()
 }
 
 func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
