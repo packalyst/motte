@@ -1124,13 +1124,7 @@
                   <Icon name="alert-circle" size={14} class="text-destructive" />
                   <span class="text-destructive">Not configured</span>
                 {/if}
-                <input
-                  id=""
-                  type=""
-                  placeholder=""
-                  class="kt-input w-full text-xs"
-                  disabled
-                />
+                <span class="flex-1"></span>
                 <Button
                   onclick={regenerateHeadscaleKey}
                   loading={regeneratingKey}

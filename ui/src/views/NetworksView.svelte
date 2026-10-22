@@ -310,9 +310,9 @@
                             <span class="inline-block w-2 h-2 rounded-full {c.online ? 'bg-success' : 'bg-muted-foreground/30'}" title={c.online ? 'online' : 'offline'}></span>
                           </td>
                           {#if editClientId === c.id}
-                            <td class="py-1.5 pr-3"><input class="kt-input kt-input-sm w-28" bind:value={resName} placeholder="name" /></td>
+                            <td class="py-1.5 pr-3"><Input class="w-28" bind:value={resName} placeholder="name" /></td>
                             <td class="py-1.5 pr-3 font-mono text-xs">{c.mac}</td>
-                            <td class="py-1.5 pr-3"><input class="kt-input kt-input-sm w-28 font-mono" bind:value={resIP} placeholder="reserved IP" /></td>
+                            <td class="py-1.5 pr-3"><Input class="w-28 font-mono" bind:value={resIP} placeholder="reserved IP" /></td>
                             <td class="py-1.5 pr-3 text-right whitespace-nowrap">
                               <Button variant="primary" size="sm" icon="check" iconOnly onclick={() => saveReservation(c)} tooltip="Save" />
                               <Button variant="ghost" size="sm" icon="x" iconOnly onclick={() => editClientId = null} tooltip="Cancel" />
