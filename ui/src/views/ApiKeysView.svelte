@@ -211,7 +211,7 @@
       </div>
 
       <div>
-        <label class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 block">API Key</label>
+        <span class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 block">API Key</span>
         <code class="block text-xs font-mono break-all p-3 bg-muted rounded-lg border border-border">{newKey}</code>
       </div>
     </div>

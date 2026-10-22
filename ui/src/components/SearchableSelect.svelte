@@ -22,7 +22,7 @@
   let highlighted = $state(0)
   let rootEl
   let btnEl
-  let inputEl
+  let inputEl = $state()
   let itemEls = $state([])
   // The menu is position:fixed (positioned from the button's viewport rect) so a card's
   // overflow:hidden or a sibling card's stacking context can't clip or cover it.

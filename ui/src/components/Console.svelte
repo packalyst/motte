@@ -3,7 +3,7 @@
   // tab (session), rendered with xterm.js. Supports multiple tabs, reattach to a resumable session
   // (tmux survives a disconnect), resize, copy/paste (xterm), scrollback search, file
   // upload/download, a read-only share link, and shows a recording badge.
-  import { onMount, onDestroy, tick } from 'svelte'
+  import { onMount, onDestroy, tick, untrack } from 'svelte'
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
   import { SearchAddon } from '@xterm/addon-search'
@@ -54,7 +54,7 @@
   let splitView = $state(false) // false = one session shown (tabs); true = all sessions in a grid
 
   // --- File browser (slide-in panel over the active session) ---
-  let filesVisible = $state(startFiles)
+  let filesVisible = $state(untrack(() => startFiles)) // mount-time option
   let filesCwd = $state('/root')
   let filesList = $state([])
   let filesLoading = $state(false)
@@ -72,7 +72,7 @@
 
   // One grant per machine, reused across that machine's tabs/reconnects until the server rejects it.
   const grants = new Map()
-  if (shareGrant && shareMachine) grants.set(shareMachine.id, shareGrant)
+  untrack(() => { if (shareGrant && shareMachine) grants.set(shareMachine.id, shareGrant) }) // a share link's grant, fixed at mount
   let filesUploadInput
 
   // The machine whose name/badges the header shows and the + button opens onto.
@@ -856,7 +856,7 @@
     style={inSplit ? `grid-template-columns: repeat(${splitCols}, minmax(0,1fr)); grid-auto-rows: minmax(0,1fr)` : ''}>
     {#each tabs as tab (tab.id)}
       {@const shown = maximizedId ? maximizedId === tab.id : splitView || activeId === tab.id}
-      <div onclick={() => activate(tab.id)}
+      <div onfocusin={() => activeId !== tab.id && activate(tab.id)}
         style:border-color={inSplit ? (activeId === tab.id ? sessionColor(tab.id) : 'rgba(255,255,255,0.1)') : undefined}
         class="flex flex-col min-h-0 {inSplit ? 'rounded border-2' : 'absolute inset-0'}"
         style:display={shown ? 'flex' : 'none'}>

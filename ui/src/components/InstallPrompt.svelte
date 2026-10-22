@@ -72,10 +72,10 @@
 
 {#if show}
   <!-- Backdrop with blur -->
-  <div
-    class="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-50 animate-fade-in"
+  <button type="button" aria-label="Dismiss"
+    class="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-50 animate-fade-in cursor-default"
     onclick={dismiss}
-  ></div>
+  ></button>
 
   <!-- Modal -->
   <div class="fixed inset-x-4 bottom-4 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[420px] z-50 animate-slide-up">
