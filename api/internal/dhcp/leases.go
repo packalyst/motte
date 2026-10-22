@@ -100,14 +100,14 @@ func (s *Service) clientsWithLive(n *Network) ([]Client, error) {
 		return nil, err
 	}
 	now := time.Now().Unix()
-	online := map[string]bool{}
+	active := map[string]int64{} // MAC → lease end (0 = never expires)
 	for _, l := range parseLeases(n.Iface) {
 		if l.Expiry == 0 || l.Expiry > now {
-			online[l.MAC] = true
+			active[l.MAC] = l.Expiry
 		}
 	}
 	for i := range clients {
-		clients[i].Online = online[strings.ToLower(clients[i].MAC)]
+		clients[i].LeaseExpires, clients[i].Online = active[strings.ToLower(clients[i].MAC)]
 	}
 	return clients, nil
 }

@@ -11,7 +11,7 @@
     size = 'md',
     headerClass = '',
     bodyClass = '',
-    dismissible = true, // when false, clicking the backdrop does NOT close the modal
+    dismissible = true, // when false, neither a backdrop click nor Escape closes the modal
     showClose = true,   // when false, the header X is hidden (e.g. gate close until an action)
     children,
     header,
@@ -32,13 +32,22 @@
     if (modalElement && KTModal) {
       ktModal = KTModal.getOrCreateInstance(modalElement)
 
-      // Listen for KTUI hide events (both hide and hidden)
-      modalElement.addEventListener('hide.kt.modal', handleHideEvent)
-      modalElement.addEventListener('hidden.kt.modal', handleHideEvent)
+      // KTUI closes the modal itself on Escape and dispatches a plain 'hidden' event; sync `open`
+      // from it so the modal can be opened again.
+      modalElement.addEventListener('hidden', handleHideEvent)
+      // KTUI's Escape handler closes any open modal; a non-dismissible one cancels that here.
+      modalElement.addEventListener('hide', blockUnwantedHide)
     }
   })
 
-  function handleHideEvent() {
+  // Only while still meant to be open: closing through `open` (our own hide()) is never blocked.
+  function blockUnwantedHide(e) {
+    if (e.target === modalElement && open && !dismissible) e.detail.payload.cancel = true
+  }
+
+  function handleHideEvent(e) {
+    // KTUI events bubble: a tooltip inside the modal fires 'hidden' too — only the modal's own counts
+    if (e.target !== modalElement) return
     if (open) {
       if (onclose) {
         onclose()
@@ -50,8 +59,8 @@
 
   onDestroy(() => {
     if (modalElement) {
-      modalElement.removeEventListener('hide.kt.modal', handleHideEvent)
-      modalElement.removeEventListener('hidden.kt.modal', handleHideEvent)
+      modalElement.removeEventListener('hidden', handleHideEvent)
+      modalElement.removeEventListener('hide', blockUnwantedHide)
     }
     if (ktModal) {
       ktModal.hide()

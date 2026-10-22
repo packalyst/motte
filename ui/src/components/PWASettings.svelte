@@ -4,7 +4,6 @@
   import Button from './Button.svelte'
   import Checkbox from './Checkbox.svelte'
   import Input from './Input.svelte'
-  import AlertRules from './AlertRules.svelte'
   import ContentBlock from './ContentBlock.svelte'
   import Badge from './Badge.svelte'
   import { toast, apiGet, apiPut, apiPost } from '../stores/app.js'
@@ -16,12 +15,10 @@
     permissions,
     pushEnabled,
     pushSubscription,
-    notificationPreferences,
     loading,
     refreshPermissions,
     requestAndRefresh,
-    refreshPushState,
-    refreshPreferences
+    refreshPushState
   } from '../stores/pwa.js'
   import {
     PermissionType,
@@ -37,7 +34,6 @@
     subscribeToPush,
     unsubscribeFromPush,
     getSubscriptions,
-    updatePreferences,
     deleteSubscription,
     getCurrentSubscription,
     sendTestNotification,
@@ -51,7 +47,6 @@
   let currentEndpoint = $state(null)
   let loadingSubscriptions = $state(false)
   let togglingPush = $state(false)
-  let savingPrefs = $state(false)
   let revokingId = $state(null)
   let testingNotification = $state(false)
   let requestingLocation = $state(false)
@@ -59,25 +54,6 @@
   let currentLocation = $state(null)
   let loadingLocation = $state(false)
 
-  // Local copy of preferences for editing (keys match API: snake_case)
-  let prefs = $state({
-    node_offline: true,
-    node_online: false,
-    firewall_alert: true,
-    login_new_device: true,
-    system_alert: true,
-    resource_alert: true
-  })
-
-  // Track if preferences have changed
-  const prefsChanged = $derived.by(() => {
-    return prefs.node_offline !== $notificationPreferences.node_offline ||
-           prefs.node_online !== $notificationPreferences.node_online ||
-           prefs.firewall_alert !== $notificationPreferences.firewall_alert ||
-           prefs.login_new_device !== $notificationPreferences.login_new_device ||
-           prefs.system_alert !== $notificationPreferences.system_alert ||
-           prefs.resource_alert !== $notificationPreferences.resource_alert
-  })
 
   // Delivery channels (webhook/email) — shared by every notification type. Push is the panel above
   // (subscription-based). Webhook URL is write-only.
@@ -90,7 +66,9 @@
 
   // At least one delivery channel exists → preferences are meaningful. With none, the preference
   // card is disabled (as it was before, when it gated on push alone).
-  const anyChannel = $derived($pushEnabled || channels.webhookEnabled || channels.emailEnabled)
+  // Whether any delivery channel is on — the preferences panel (NotificationPrefs) needs it.
+  let { anyChannel = $bindable(false) } = $props()
+  $effect(() => { anyChannel = !!($pushEnabled || channels.webhookEnabled || channels.emailEnabled) })
 
   async function loadChannels() {
     try {
@@ -133,10 +111,6 @@
     }
   }
 
-  // Sync local prefs with store
-  $effect(() => {
-    prefs = { ...$notificationPreferences }
-  })
 
   // React to WebSocket subscription updates
   $effect(() => {
@@ -228,19 +202,6 @@
       toast(e.message || 'Failed to toggle push notifications', 'error')
     } finally {
       togglingPush = false
-    }
-  }
-
-  async function savePreferences() {
-    savingPrefs = true
-    try {
-      await updatePreferences(prefs)
-      await refreshPreferences()
-      toast('Notification preferences saved', 'success')
-    } catch (e) {
-      toast('Failed to save preferences: ' + e.message, 'error')
-    } finally {
-      savingPrefs = false
     }
   }
 
@@ -360,7 +321,6 @@
   onMount(async () => {
     await refreshPermissions()
     await refreshPushState()
-    await refreshPreferences()
     await loadSubscriptions()
     await loadChannels()
   })
@@ -567,52 +527,6 @@
         </div>
       </div>
     {/if}
-  </div>
-</div>
-
-<!-- Notification Preferences -->
-<div class="kt-panel {!anyChannel ? 'opacity-50 pointer-events-none' : ''}">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title">
-      <Icon name="settings" size={16} />
-      Notification Preferences
-    </h3>
-    {#if !anyChannel}
-      <Badge variant="muted" size="xs">Enable a channel first</Badge>
-    {/if}
-  </div>
-  <div class="kt-panel-body space-y-4">
-    <p class="text-[10px] text-muted-foreground">
-      Choose which events notify you — on every channel you've enabled (push, plus anything under “Deliver via” above).
-    </p>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      <ContentBlock title="Node Offline" description="When a VPN node goes offline">
-        <Checkbox variant="switch" bind:checked={prefs.node_offline} />
-      </ContentBlock>
-      <ContentBlock title="Node Online" description="When a VPN node comes back online">
-        <Checkbox variant="switch" bind:checked={prefs.node_online} />
-      </ContentBlock>
-      <ContentBlock title="Firewall Alerts" description="Blocked connections and security events">
-        <Checkbox variant="switch" bind:checked={prefs.firewall_alert} />
-      </ContentBlock>
-      <ContentBlock title="New Device Login" description="Login from a new device or location">
-        <Checkbox variant="switch" bind:checked={prefs.login_new_device} />
-      </ContentBlock>
-      <ContentBlock title="System Alerts" description="Important system notifications">
-        <Checkbox variant="switch" bind:checked={prefs.system_alert} />
-      </ContentBlock>
-      <ContentBlock title="Resource Alerts" description="CPU/memory/disk threshold rules (below)">
-        <Checkbox variant="switch" bind:checked={prefs.resource_alert} />
-      </ContentBlock>
-    </div>
-    <div>
-      <Button onclick={savePreferences} loading={savingPrefs} disabled={!prefsChanged} size="sm" icon="device-floppy">Save Preferences</Button>
-    </div>
-
-    <!-- Resource alert rules — same card, below the event preferences -->
-    <div class="border-t border-border pt-4">
-      <AlertRules />
-    </div>
   </div>
 </div>
 

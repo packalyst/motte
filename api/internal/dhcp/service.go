@@ -32,18 +32,22 @@ func New(db *database.DB, nft *nftables.Service) *Service {
 // methods. Session-gated like the rest of the admin API.
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
-		"ListInterfaces": s.handleListInterfaces,
-		"ListNetworks":   s.handleListNetworks,
-		"CreateNetwork":  s.handleCreateNetwork,
-		"GetNetwork":     s.handleGetNetwork,
-		"UpdateNetwork":  s.handleUpdateNetwork,
-		"DeleteNetwork":  s.handleDeleteNetwork,
-		"ListClients":    s.handleListClients,
-		"AddACL":         s.handleAddACL,
-		"RemoveACL":      s.handleRemoveACL,
-		"ApproveClient":  s.handleApproveClient,
-		"UpdateClient":   s.handleUpdateClient,
-		"DeleteClient":   s.handleDeleteClient,
+		"ListInterfaces":  s.handleListInterfaces,
+		"ListNetworks":    s.handleListNetworks,
+		"CreateNetwork":   s.handleCreateNetwork,
+		"GetNetwork":      s.handleGetNetwork,
+		"UpdateNetwork":   s.handleUpdateNetwork,
+		"DeleteNetwork":   s.handleDeleteNetwork,
+		"ListClients":     s.handleListClients,
+		"GetClient":       s.handleGetClient,
+		"ApproveClient":   s.handleApproveClient,
+		"BlockClient":     s.handleBlockClient,
+		"UnblockClient":   s.handleUnblockClient,
+		"SetInternet":     s.handleSetInternet,
+		"AddDeviceACL":    s.handleAddDeviceACL,
+		"RemoveDeviceACL": s.handleRemoveDeviceACL,
+		"UpdateClient":    s.handleUpdateClient,
+		"DeleteClient":    s.handleDeleteClient,
 	}
 }
 
@@ -67,13 +71,20 @@ func (s *Service) Reconcile(n *Network) error {
 	if err := s.InterfaceReady(n); err != nil {
 		return err // fail closed: no DHCP on an interface that isn't actually up
 	}
-	ensureIPForward()     // routing between wg0 and the segment needs IPv4 forwarding
-	syncSegmentForward(n) // open/close the scoped segment↔WAN punch-through past Docker's FORWARD drop
+	ensureIPForward() // routing between wg0 and the segment needs IPv4 forwarding
 	if err := s.writeDnsmasqConfig(n); err != nil {
 		return err
 	}
-	s.reapplyReachability()
+	s.applyDevices(n)
 	return nil
+}
+
+// applyDevices re-applies what depends on a network's devices: the Docker segment↔WAN
+// punch-through (open only while a device has internet) and the reachability rules.
+func (s *Service) applyDevices(n *Network) {
+	p, err := s.networkPolicy(n)
+	syncSegmentForward(n, err == nil && p.hasInternet())
+	s.reapplyReachability()
 }
 
 // ReconcileAll re-applies every enabled network at startup. Reconcile otherwise runs only on a

@@ -15,6 +15,8 @@ func bulkReq(t *testing.T, body string) *http.Request {
 
 func TestBulkCommand(t *testing.T) {
 	svc := newTestService(t)
+	addMachine(t, svc, "m1", 0)
+	addMachine(t, svc, "m2", 0)
 
 	// Allow-tier command across two machines: no step-up, both queued.
 	rr := httptest.NewRecorder()

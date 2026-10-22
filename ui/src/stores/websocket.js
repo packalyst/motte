@@ -14,7 +14,6 @@ export const wsUserStore = writable(null)
 
 // Data stores for each channel
 export const generalInfoStore = writable(null) // General info channel (stats, firewall events, etc.)
-export const nodesUpdatedStore = writable(0) // Counter that increments on nodes_updated
 export const dockerStore = writable(null)
 export const dockerLogsStore = writable([]) // Array of log entries for live streaming
 export const statsStore = writable(null) // Overview dashboard stats
@@ -28,7 +27,6 @@ export const clientsStore = writable(0) // counter bumped on each clients "chang
 // Channel to store mapping
 const storeMap = {
   general_info: generalInfoStore,
-  nodes_updated: nodesUpdatedStore,
   docker: dockerStore,
   docker_logs: dockerLogsStore,
   stats: statsStore,
@@ -140,8 +138,8 @@ function handleMessage(msg) {
 
   const store = storeMap[type]
   if (store) {
-    // nodes_updated / clients are change signals without data - increment a counter
-    if (type === 'nodes_updated' || type === 'clients') {
+    // clients is a change signal without data - increment a counter
+    if (type === 'clients') {
       store.update(n => n + 1)
     } else if (type === 'docker_logs') {
       // Append log entry to array

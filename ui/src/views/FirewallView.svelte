@@ -724,7 +724,7 @@
             <div class="data-table-header">
               <div class="data-table-header-start">
                 <!-- Deny / Allow view toggle (full-width 50/50 on mobile) -->
-                <Segmented label="Rule type" stretch value={viewAction} onchange={setViewAction}
+                <Segmented size="sm" label="Rule type" stretch value={viewAction} onchange={setViewAction}
                   options={[{ value: 'block', label: 'Deny', tone: 'destructive' }, { value: 'allow', label: 'Allow', tone: 'success' }]} />
                 <Input
                   type="search"

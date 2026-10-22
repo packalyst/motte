@@ -1,14 +1,12 @@
 <script>
+  // TeamSettings — panel accounts and roles (Settings → Team, admin-only; the server enforces it).
   import { apiGet, apiPost, toast, stepUpConfirm, currentUser } from '../stores/app.js'
-  import InfoCard from '../components/InfoCard.svelte'
-  import Button from '../components/Button.svelte'
-  import Select from '../components/Select.svelte'
-  import Icon from '../components/Icon.svelte'
-  import Modal from '../components/Modal.svelte'
-  import Input from '../components/Input.svelte'
-  import StepUpFields from '../components/StepUpFields.svelte'
-
-  let { loading = $bindable(true) } = $props()
+  import Button from './Button.svelte'
+  import Select from './Select.svelte'
+  import Icon from './Icon.svelte'
+  import Modal from './Modal.svelte'
+  import Input from './Input.svelte'
+  import StepUpFields from './StepUpFields.svelte'
 
   let me = $state(null)      // current operator (for role-gated options)
   let users = $state([])
@@ -68,7 +66,6 @@
   }
 
   async function load() {
-    loading = true
     try {
       me = await apiGet('/api/auth/me')
       const res = await apiGet('/api/auth/users')
@@ -76,8 +73,6 @@
       error = ''
     } catch (e) {
       error = e?.message || 'Failed to load users'
-    } finally {
-      loading = false
     }
   }
 
@@ -185,12 +180,6 @@
 </script>
 
 <div class="space-y-4">
-  <InfoCard
-    icon="users"
-    title="Panel users & roles"
-    description="Accounts that can sign in to this panel. Roles set what each may do; owner is the break-glass role and can't be the last one removed."
-  />
-
   <div class="kt-panel">
     <div class="kt-panel-header">
       <h3 class="kt-panel-title">

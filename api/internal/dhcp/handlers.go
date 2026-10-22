@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"api/internal/events"
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -33,8 +35,7 @@ func (s *Service) handleGetNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clients, _ := s.clientsWithLive(n)
-	acl, _ := s.listNetworkACL(id)
-	router.JSON(w, map[string]any{"network": n, "clients": clients, "acl": acl})
+	router.JSON(w, map[string]any{"network": n, "clients": clients})
 }
 
 func (s *Service) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
@@ -147,62 +148,21 @@ func (s *Service) handleListClients(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]any{"clients": clients})
 }
 
-func (s *Service) handleAddACL(w http.ResponseWriter, r *http.Request) {
-	id, ok := router.ExtractPathParamInt(r, netPrefix)
-	if !ok {
-		router.JSONError(w, "invalid id", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		ClientID int64 `json:"client_id"`
-	}
-	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-	if _, err := s.clientIPByID(req.ClientID); err != nil {
-		router.JSONError(w, "unknown VPN client", http.StatusBadRequest)
-		return
-	}
-	if err := s.addNetworkACL(id, req.ClientID); err != nil {
-		router.JSONError(w, "could not grant access", http.StatusInternalServerError)
-		return
-	}
-	s.reapplyReachability()
-	router.JSON(w, map[string]any{"ok": true})
-}
-
-func (s *Service) handleRemoveACL(w http.ResponseWriter, r *http.Request) {
-	id, ok := router.ExtractPathParamInt(r, netPrefix)
-	if !ok {
-		router.JSONError(w, "invalid id", http.StatusBadRequest)
-		return
-	}
-	// path: /api/dhcp/networks/{id}/acl/{clientId}
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	clientID, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
-	if err != nil {
-		router.JSONError(w, "invalid client id", http.StatusBadRequest)
-		return
-	}
-	if err := s.removeNetworkACL(id, clientID); err != nil {
-		router.JSONError(w, "could not revoke access", http.StatusInternalServerError)
-		return
-	}
-	s.reapplyReachability()
-	router.JSON(w, map[string]any{"ok": true})
-}
-
 func (s *Service) handleApproveClient(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
 	if !ok {
+		return
+	}
+	if c.Blocked {
+		router.JSONError(w, "device is blocked — unblock it first", http.StatusConflict)
 		return
 	}
 	if err := s.setClientApproved(c.ID, true); err != nil {
 		router.JSONError(w, "could not approve", http.StatusInternalServerError)
 		return
 	}
-	s.reconcileDnsmasqFor(c.NetworkID) // pin the approved device's IP
-	s.reapplyReachability()            // open the firewall gate for it
+	audit(r, "lan_device_approve", "Approved LAN device "+c.label())
+	s.devicesChanged(c.NetworkID) // pin its IP and open its firewall gate
 	router.JSON(w, map[string]any{"ok": true})
 }
 
@@ -236,22 +196,170 @@ func (s *Service) handleUpdateClient(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not save reservation", http.StatusInternalServerError)
 		return
 	}
-	s.reconcileDnsmasqFor(c.NetworkID)
-	s.reapplyReachability() // a changed reservation IP moves the per-device gate
+	s.devicesChanged(c.NetworkID) // a changed reservation IP moves the per-device gate
 	router.JSON(w, map[string]any{"ok": true})
 }
 
+// handleGetClient returns one LAN device with its live state and the VPN clients allowed to
+// reach it. GET /api/dhcp/clients/{id}
+func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.clientFromPath(w, r)
+	if !ok {
+		return
+	}
+	if n, err := s.getNetwork(c.NetworkID); err == nil {
+		if live, err := s.clientsWithLive(n); err == nil {
+			for i := range live {
+				if live[i].ID == c.ID {
+					c = &live[i]
+				}
+			}
+		}
+	}
+	allowed, err := s.listDeviceACL(c.ID)
+	if err != nil {
+		router.JSONError(w, "could not read access", http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, map[string]any{"client": c, "allowed": allowed})
+}
+
+// handleBlockClient denies a device an address and drops its traffic by MAC (it also loses its
+// approval). POST /api/dhcp/clients/{id}/block
+func (s *Service) handleBlockClient(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.clientFromPath(w, r)
+	if !ok {
+		return
+	}
+	if err := s.setClientBlocked(c.ID, true, false); err != nil {
+		router.JSONError(w, "could not block", http.StatusInternalServerError)
+		return
+	}
+	audit(r, "lan_device_block", "Blocked LAN device "+c.label())
+	s.devicesChanged(c.NetworkID)
+	router.JSON(w, map[string]any{"ok": true})
+}
+
+// handleUnblockClient lifts a block. In "approve" mode the device then waits for approval again;
+// in "auto" mode it is approved as any new device would be. POST /api/dhcp/clients/{id}/unblock
+func (s *Service) handleUnblockClient(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.clientFromPath(w, r)
+	if !ok {
+		return
+	}
+	n, err := s.getNetwork(c.NetworkID)
+	if err != nil {
+		router.JSONError(w, "network not found", http.StatusNotFound)
+		return
+	}
+	if err := s.setClientBlocked(c.ID, false, n.Mode == "auto"); err != nil {
+		router.JSONError(w, "could not unblock", http.StatusInternalServerError)
+		return
+	}
+	audit(r, "lan_device_unblock", "Unblocked LAN device "+c.label())
+	s.devicesChanged(c.NetworkID)
+	router.JSON(w, map[string]any{"ok": true})
+}
+
+// handleSetInternet turns a device's internet access on or off.
+// PUT /api/dhcp/clients/{id}/internet {"enabled":bool}
+func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.clientFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	if err := s.setClientInternet(c.ID, req.Enabled); err != nil {
+		router.JSONError(w, "could not save", http.StatusInternalServerError)
+		return
+	}
+	state := "off"
+	if req.Enabled {
+		state = "on"
+	}
+	audit(r, "lan_device_internet", "Internet "+state+" for LAN device "+c.label())
+	s.devicesChanged(c.NetworkID)
+	router.JSON(w, map[string]any{"ok": true})
+}
+
+// handleAddDeviceACL lets a VPN client reach a device (and the device it).
+// POST /api/dhcp/clients/{id}/acl {"client_id":n}
+func (s *Service) handleAddDeviceACL(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.clientFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ClientID int64 `json:"client_id"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	vpnIP, err := s.clientIPByID(req.ClientID)
+	if err != nil {
+		router.JSONError(w, "unknown VPN client", http.StatusBadRequest)
+		return
+	}
+	if err := s.addDeviceACL(c.ID, req.ClientID); err != nil {
+		router.JSONError(w, "could not grant access", http.StatusInternalServerError)
+		return
+	}
+	audit(r, "lan_device_access", "Granted VPN client "+vpnIP+" access to LAN device "+c.label())
+	s.devicesChanged(c.NetworkID)
+	router.JSON(w, map[string]any{"ok": true})
+}
+
+// handleRemoveDeviceACL revokes a VPN client's access to a device.
+// DELETE /api/dhcp/clients/{id}/acl/{clientId}
+func (s *Service) handleRemoveDeviceACL(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.clientFromPath(w, r)
+	if !ok {
+		return
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	clientID, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+	if err != nil {
+		router.JSONError(w, "invalid client id", http.StatusBadRequest)
+		return
+	}
+	if err := s.removeDeviceACL(c.ID, clientID); err != nil {
+		router.JSONError(w, "could not revoke access", http.StatusInternalServerError)
+		return
+	}
+	audit(r, "lan_device_access", "Revoked VPN client #"+strconv.FormatInt(clientID, 10)+" access to LAN device "+c.label())
+	s.devicesChanged(c.NetworkID)
+	router.JSON(w, map[string]any{"ok": true})
+}
+
+// handleDeleteClient forgets a device — only while it's offline: a connected device still holds a
+// lease and would come straight back as a new device (block it instead).
+// DELETE /api/dhcp/clients/{id}
 func (s *Service) handleDeleteClient(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
 	if !ok {
 		return
 	}
+	if n, err := s.getNetwork(c.NetworkID); err == nil {
+		if live, err := s.clientsWithLive(n); err == nil {
+			for _, l := range live {
+				if l.ID == c.ID && l.Online {
+					router.JSONError(w, "device is connected — it would come back right away; block it instead", http.StatusConflict)
+					return
+				}
+			}
+		}
+	}
 	if err := s.deleteClient(c.ID); err != nil {
-		router.JSONError(w, "could not delete client", http.StatusInternalServerError)
+		router.JSONError(w, "could not forget device", http.StatusInternalServerError)
 		return
 	}
-	s.reconcileDnsmasqFor(c.NetworkID)
-	s.reapplyReachability() // revoke the deleted device's gate
+	audit(r, "lan_device_forget", "Forgot LAN device "+c.label())
+	s.devicesChanged(c.NetworkID) // drop its reservation, block entry and firewall gate
 	router.JSON(w, map[string]any{"ok": true})
 }
 
@@ -270,17 +378,36 @@ func (s *Service) clientFromPath(w http.ResponseWriter, r *http.Request) (*Clien
 	return c, true
 }
 
-// reconcileDnsmasqFor rewrites + reloads a network's dnsmasq config after a reservation change
-// (best-effort; only when the network is enabled and its interface is live).
-func (s *Service) reconcileDnsmasqFor(networkID int64) {
+// devicesChanged re-applies everything that depends on a network's devices after one changes:
+// the dnsmasq config (reservations, blocked MACs; best-effort, only while the network is enabled
+// and its interface is live), the WAN punch-through and the firewall rules.
+func (s *Service) devicesChanged(networkID int64) {
 	n, err := s.getNetwork(networkID)
-	if err != nil || !n.Enabled {
+	if err != nil {
+		s.reapplyReachability()
 		return
 	}
-	if err := s.InterfaceReady(n); err != nil {
-		return
+	if n.Enabled && s.InterfaceReady(n) == nil {
+		if err := s.writeDnsmasqConfig(n); err != nil {
+			logReconcile(n.Iface, err)
+		}
 	}
-	if err := s.writeDnsmasqConfig(n); err != nil {
-		logReconcile(n.Iface, err)
+	s.applyDevices(n)
+}
+
+// label names a device in audit messages.
+func (c *Client) label() string {
+	if c.Name != "" {
+		return c.Name + " (" + c.MAC + ")"
 	}
+	return c.MAC
+}
+
+// audit records a LAN device change with who made it and from where.
+func audit(r *http.Request, event, msg string) {
+	actor := ""
+	if p := router.CurrentUser(r); p != nil {
+		actor = p.Username
+	}
+	events.Audit("dhcp", event, events.SeverityInfo, actor, helper.GetClientIP(r), msg)
 }

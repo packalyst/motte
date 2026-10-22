@@ -1,9 +1,10 @@
 <script>
   // Global SMTP settings (admin) — the mail server used to deliver per-user alert emails. The
-  // password is write-only: a redacted placeholder is kept on save unless changed. Per-user alert
-  // rules and the choice to receive email live in Profile → Notifications.
+  // password is write-only: a redacted placeholder is kept on save unless changed. A test email
+  // uses the SAVED settings, so it's offered once changes are saved. Per-user alert rules and the
+  // choice to receive email live in Profile → Notifications.
   import { onMount } from 'svelte'
-  import { apiGet, apiPut, toast } from '../stores/app.js'
+  import { apiGet, apiPut, apiPost, toast } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Input from './Input.svelte'
@@ -12,24 +13,33 @@
   const REDACTED = '__stored__'
 
   let cfg = $state({ host: '', port: '587', user: '', pass: '', from: '', tls: 'starttls' })
+  let saved = $state('') // the saved form, to tell unsaved changes apart
   let passInput = $state('')
   let hasStoredPass = $state(false)
   let loading = $state(true)
   let saving = $state(false)
+  let testTo = $state('')
+  let testing = $state(false)
+  let testResult = $state(null) // { ok, text }
 
   const tlsOptions = [
     { value: 'starttls', label: 'STARTTLS (587)' },
     { value: 'tls', label: 'TLS (465)' },
     { value: 'none', label: 'None (plaintext)' },
   ]
+  const snapshot = () => JSON.stringify({ ...cfg, pass: '' })
+  const dirty = $derived(!loading && (snapshot() !== saved || passInput !== ''))
+  const configured = $derived(!!(cfg.host && cfg.from))
 
   onMount(async () => {
     try {
-      const c = await apiGet('/api/pwa/smtp')
+      const [c, ch] = await Promise.all([apiGet('/api/pwa/smtp'), apiGet('/api/pwa/channels').catch(() => null)])
       if (c) {
         cfg = { ...cfg, ...c, pass: '' }
         hasStoredPass = c.pass === REDACTED
       }
+      testTo = ch?.email || ''
+      saved = snapshot()
     } catch (e) {
       toast(e.message || 'Could not load SMTP settings', 'error')
     } finally {
@@ -44,43 +54,76 @@
       await apiPut('/api/pwa/smtp', { ...cfg, pass })
       hasStoredPass = hasStoredPass || passInput !== ''
       passInput = ''
-      toast('SMTP settings saved', 'success')
+      saved = snapshot()
+      toast('Email settings saved', 'success')
     } catch (e) {
       toast(e.message || 'Save failed', 'error')
     } finally {
       saving = false
     }
   }
+
+  async function sendTest() {
+    testing = true
+    testResult = null
+    try {
+      const r = await apiPost('/api/pwa/smtp/test', { to: testTo.trim() })
+      testResult = { ok: true, text: `Sent to ${r.sent_to} — check the inbox (and spam folder).` }
+    } catch (e) {
+      testResult = { ok: false, text: e.message || 'Sending failed' }
+    } finally {
+      testing = false
+    }
+  }
 </script>
 
 <div class="kt-panel">
   <div class="kt-panel-header">
-    <h3 class="kt-panel-title"><Icon name="mail" size={16} /> Email (SMTP)</h3>
+    <h3 class="kt-panel-title"><Icon name="server" size={16} /> Mail server</h3>
   </div>
   <div class="kt-panel-body space-y-3">
-    <p class="text-xs text-muted-foreground">
-      Mail server for alert emails. Each person chooses whether to receive email (and their address) in Profile → Notifications.
-    </p>
     {#if loading}
       <div class="text-sm text-muted-foreground">Loading…</div>
     {:else}
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label class="space-y-1"><span class="text-xs font-medium">Host</span>
-          <Input bind:value={cfg.host} placeholder="smtp.example.com" /></label>
-        <label class="space-y-1"><span class="text-xs font-medium">Port</span>
-          <Input bind:value={cfg.port} placeholder="587" /></label>
-        <label class="space-y-1"><span class="text-xs font-medium">Username</span>
-          <Input bind:value={cfg.user} placeholder="(optional)" autocomplete="off" /></label>
-        <label class="space-y-1"><span class="text-xs font-medium">Password</span>
-          <Input type="password" bind:value={passInput} placeholder={hasStoredPass ? 'stored — leave blank to keep' : '(optional)'} autocomplete="off" /></label>
-        <label class="space-y-1"><span class="text-xs font-medium">From address</span>
-          <Input type="email" bind:value={cfg.from} placeholder="panel@example.com" /></label>
-        <label class="space-y-1"><span class="text-xs font-medium">Encryption</span>
-          <Select bind:value={cfg.tls} options={tlsOptions} /></label>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_8rem]">
+        <Input label="Host" bind:value={cfg.host} placeholder="smtp.example.com" prefixIcon="server" />
+        <Input label="Port" bind:value={cfg.port} placeholder="587" prefixIcon="plug" />
       </div>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Select label="Encryption" bind:value={cfg.tls} options={tlsOptions} />
+        <Input label="From address" type="email" bind:value={cfg.from} placeholder="panel@example.com" prefixIcon="mail" />
+        <Input label="Username" bind:value={cfg.user} placeholder="optional" prefixIcon="user" autocomplete="off" />
+        <Input label="Password" type="password" bind:value={passInput} placeholder={hasStoredPass ? 'stored — leave blank to keep' : 'optional'} prefixIcon="lock" autocomplete="new-password" />
+      </div>
+      <p class="text-[11px] text-muted-foreground">Each person chooses whether to receive alert emails, and their address, in Profile → Notifications.</p>
     {/if}
   </div>
   <div class="kt-panel-footer flex justify-end">
-    <Button variant="primary" icon="device-floppy" loading={saving} disabled={loading} onclick={save}>Save SMTP</Button>
+    <Button variant="primary" icon="device-floppy" loading={saving} disabled={loading || !dirty} onclick={save}>Save</Button>
+  </div>
+</div>
+
+<div class="kt-panel">
+  <div class="kt-panel-header">
+    <h3 class="kt-panel-title"><Icon name="send" size={16} /> Send a test email</h3>
+  </div>
+  <div class="kt-panel-body space-y-3">
+    <form class="flex flex-col gap-2 sm:flex-row sm:items-end" onsubmit={(e) => { e.preventDefault(); sendTest() }}>
+      <div class="min-w-0 flex-1">
+        <Input label="Send to" type="email" bind:value={testTo} placeholder="you@example.com" prefixIcon="mail" />
+      </div>
+      <Button type="submit" variant="outline" icon="send" loading={testing} disabled={loading || dirty || !configured || !testTo.trim()}>Send test</Button>
+    </form>
+    {#if dirty}
+      <p class="text-[11px] text-warning flex items-center gap-1.5"><Icon name="alert-triangle" size={12} />Save your changes first — the test uses the saved settings.</p>
+    {:else if !configured}
+      <p class="text-[11px] text-muted-foreground">Set a host and a From address first.</p>
+    {/if}
+    {#if testResult}
+      <div class="flex items-start gap-2 rounded-lg px-3 py-2 text-xs {testResult.ok ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}">
+        <Icon name={testResult.ok ? 'circle-check' : 'alert-circle'} size={14} class="mt-0.5 shrink-0" />
+        <span class="min-w-0 break-words">{testResult.text}</span>
+      </div>
+    {/if}
   </div>
 </div>

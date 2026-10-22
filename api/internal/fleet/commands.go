@@ -133,9 +133,12 @@ func (s *Service) verifyCommandStepUp(r *http.Request, ctype, currentPassword, c
 	return 0, nil
 }
 
-// enqueueCore applies the per-machine scope check + allowlist (block tier) + audit, then enqueues.
+// enqueueCore applies the per-machine scope check + online check + allowlist (block tier) + audit,
+// then enqueues. The online check keeps a person's command from waiting in the queue and running
+// whenever an offline machine reconnects; the panel's own messages (set-console, set-panel-port)
+// call Enqueue directly and do wait for the machine.
 // It does NOT do step-up — callers verify that first (enqueueGuarded for one machine, the bulk
-// handler once for many). Returns 403 (out of scope), 400 (not allowlisted) or 200.
+// handler once for many). Returns 403 (out of scope), 409 (offline), 400 (not allowlisted) or 200.
 func (s *Service) enqueueCore(r *http.Request, machineID, ctype string, payload json.RawMessage) (string, int, error) {
 	actor, _ := s.actingAdmin(r)
 	ip := helper.GetClientIP(r)
@@ -144,7 +147,10 @@ func (s *Service) enqueueCore(r *http.Request, machineID, ctype string, payload 
 			fmt.Sprintf("Command %q on %s denied: outside the operator's machine scope", ctype, machineID))
 		return "", http.StatusForbidden, fmt.Errorf("your scope does not include this machine")
 	}
-	id, err := s.Enqueue(machineID, ctype, payload)
+	if !s.recentlySeen(machineID) {
+		return "", http.StatusConflict, fmt.Errorf("the machine is offline — commands can only be sent to machines that are online")
+	}
+	id, err := s.enqueue(machineID, ctype, payload, commandTTL)
 	if err != nil {
 		events.Audit("fleet", "command_blocked", events.SeverityWarning, actor, ip,
 			fmt.Sprintf("Command %q on %s rejected: %v", ctype, machineID, err))
@@ -187,24 +193,53 @@ func newCommandID() string {
 	return hex.EncodeToString(b)
 }
 
-// Enqueue adds an allowlisted command for a machine.
+// commandTTL: a command a person runs must reach the machine within this, or it expires and never
+// runs — so it can't fire by surprise when an offline machine reconnects much later.
+const commandTTL = 15 * time.Minute
+
+// Enqueue adds an allowlisted command for a machine that waits until the machine picks it up, with
+// no expiry. For the panel's own messages (set-console, set-panel-port) that an offline machine must
+// still get when it returns; a person's command goes through enqueueCore, which sets commandTTL.
 func (s *Service) Enqueue(machineID, ctype string, payload json.RawMessage) (string, error) {
+	return s.enqueue(machineID, ctype, payload, 0)
+}
+
+// enqueue inserts the command; ttl > 0 sets when it expires if still undelivered.
+func (s *Service) enqueue(machineID, ctype string, payload json.RawMessage, ttl time.Duration) (string, error) {
 	if !allowedCommands[ctype] {
 		return "", fmt.Errorf("command %q not allowed", ctype)
 	}
+	now := time.Now().UTC()
+	var expires any // NULL: never expires
+	if ttl > 0 {
+		expires = now.Add(ttl).Format(time.RFC3339)
+	}
 	id := newCommandID()
 	_, err := s.db.Exec(
-		`INSERT INTO fleet_commands (id, machine_id, type, payload, status, created_at) VALUES (?,?,?,?, 'pending', ?)`,
-		id, machineID, ctype, string(payload), time.Now().UTC().Format(time.RFC3339),
+		`INSERT INTO fleet_commands (id, machine_id, type, payload, status, created_at, expires_at) VALUES (?,?,?,?, 'pending', ?, ?)`,
+		id, machineID, ctype, string(payload), now.Format(time.RFC3339), expires,
 	)
 	return id, err
+}
+
+// expirePending marks a machine's undelivered commands whose time ran out as expired. It reports
+// whether any changed.
+func (s *Service) expirePending(machineID string) bool {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.Exec(`UPDATE fleet_commands SET status='expired', done_at=?
+		WHERE machine_id = ? AND status = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?`, now, machineID, now)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
 }
 
 // MachineCommand is one queued command with its lifecycle, for the admin command log.
 type MachineCommand struct {
 	ID        string `json:"id"`
 	Type      string `json:"type"`
-	Status    string `json:"status"` // pending | delivered | done | error
+	Status    string `json:"status"` // pending | delivered | done | error | expired
 	Result    string `json:"result,omitempty"`
 	CreatedAt string `json:"created_at"`
 	DoneAt    string `json:"done_at,omitempty"`
@@ -215,6 +250,7 @@ func (s *Service) ListMachineCommands(machineID string, limit int) ([]MachineCom
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
+	s.expirePending(machineID) // an offline machine never polls, so expire here too for the log
 	rows, err := s.db.Query(
 		`SELECT id, type, status, result, created_at, done_at FROM fleet_commands
 		 WHERE machine_id = ? ORDER BY created_at DESC LIMIT ?`, machineID, limit)
@@ -280,8 +316,12 @@ func (s *Service) HandleDeregister(w http.ResponseWriter, r *http.Request) {
 // them delivered. The machine comes from the client cert.
 func (s *Service) HandleCommands(w http.ResponseWriter, r *http.Request) {
 	m := machineFrom(r)
+	if s.expirePending(m.ID) {
+		s.broadcastCommands(m.ID)
+	}
 	rows, err := s.db.Query(
-		`SELECT id, type, payload FROM fleet_commands WHERE machine_id = ? AND status = 'pending' ORDER BY created_at`, m.ID)
+		`SELECT id, type, payload FROM fleet_commands WHERE machine_id = ? AND status = 'pending'
+		 AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at`, m.ID, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return

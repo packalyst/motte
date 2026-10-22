@@ -1,6 +1,7 @@
 <script>
   // Passkeys (WebAuthn) — passwordless sign-in. Register device-bound credentials and manage them.
   // Additive: password + 2FA still work; a passkey is just a faster, phishing-resistant way in.
+  // A modal opened from Profile → Security; `count` reports how many exist for that card.
   import { onMount } from 'svelte'
   import { apiGet, apiDelete, toast, confirm, stepUpConfirm } from '../stores/app.js'
   import { passkeyRegister, passkeysSupported } from '../lib/webauthn.js'
@@ -8,6 +9,9 @@
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Input from './Input.svelte'
+  import Modal from './Modal.svelte'
+
+  let { open = $bindable(false), count = $bindable(0) } = $props()
 
   let passkeys = $state([])
   let loading = $state(true)
@@ -21,6 +25,7 @@
     loading = true
     try {
       passkeys = (await apiGet('/api/auth/passkeys')) || []
+      count = passkeys.length
     } catch (e) {
       toast(e.message || 'Could not load passkeys', 'error')
     } finally {
@@ -58,14 +63,8 @@
   }
 </script>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title">
-      <Icon name="key" size={16} />
-      Passkeys
-    </h3>
-  </div>
-  <div class="kt-panel-body space-y-4">
+<Modal bind:open title="Passkeys" size="md">
+  <div class="space-y-4">
     {#if !supported}
       <p class="text-sm text-muted-foreground">
         This browser or connection doesn't support passkeys. They need the panel to be opened over HTTPS on its domain.
@@ -107,4 +106,4 @@
       {/if}
     {/if}
   </div>
-</div>
+</Modal>

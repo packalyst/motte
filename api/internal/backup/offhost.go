@@ -14,11 +14,11 @@ import (
 
 // RunStatus is a lightweight, in-memory view of the most recent scheduled/manual run for the UI.
 type RunStatus struct {
-	Running   bool      `json:"running"`
-	LastTime  time.Time `json:"lastTime,omitempty"`
-	LastOK    bool      `json:"lastOK"`
-	LastError string    `json:"lastError,omitempty"`
-	LastSize  int64     `json:"lastSize,omitempty"`
+	Running   bool       `json:"running"`
+	LastTime  *time.Time `json:"lastTime,omitempty"` // nil until a run has happened (a zero time.Time isn't omitted)
+	LastOK    bool       `json:"lastOK"`
+	LastError string     `json:"lastError,omitempty"`
+	LastSize  int64      `json:"lastSize,omitempty"`
 }
 
 var (
@@ -50,7 +50,8 @@ func (s *Service) runOffhost(ctx context.Context, actor string) error {
 	defer func() {
 		offhostMu.Lock()
 		offhost.Running = false
-		offhost.LastTime = time.Now()
+		now := time.Now()
+		offhost.LastTime = &now
 		offhost.LastOK = runErr == nil
 		offhost.LastSize = size
 		offhost.LastError = ""

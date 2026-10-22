@@ -30,7 +30,11 @@ type Client struct {
 	IP        string `json:"ip"`
 	Name      string `json:"name"`
 	Approved  bool   `json:"approved"`
+	Blocked   bool   `json:"blocked"`  // no address (dnsmasq ignore) and dropped by MAC in the firewall
+	Internet  bool   `json:"internet"` // may route out the WAN; seeded from the network's nat_enabled
 	LastSeen  string `json:"last_seen,omitempty"`
-	// Online is derived at read time from the live dnsmasq lease file, not stored.
-	Online bool `json:"online"`
+	// Online and LeaseExpires are derived at read time from the live dnsmasq lease file, not
+	// stored. LeaseExpires is the active lease's end (unix seconds); 0 = none or never expires.
+	Online       bool  `json:"online"`
+	LeaseExpires int64 `json:"lease_expires,omitempty"`
 }

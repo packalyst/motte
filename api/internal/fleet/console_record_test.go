@@ -245,3 +245,28 @@ func TestRecordingDeleteAdminOnly(t *testing.T) {
 		t.Fatalf("operator delete: want 403, got %d", w.Code)
 	}
 }
+
+// The list across machines keeps only the given (in-scope) machines, and an operator sees only
+// their own recordings while an admin sees everyone's.
+func TestListRecordingsScopeAndOwner(t *testing.T) {
+	useRecordStore(t)
+	rec := func(machine string, uid int64, sess string) {
+		r, _, err := openRecorder(&Machine{ID: machine}, sess, 80, 24, recMeta{MachineID: machine, UserID: uid, Session: sess})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.close()
+	}
+	rec("m1", 7, "7_a")
+	rec("m1", 8, "8_b")
+	rec("m2", 7, "7_c")
+	inScope := map[string]Machine{"m1": {ID: "m1", Name: "web-01"}}
+
+	own := listRecordings(inScope, 7, false)
+	if len(own) != 1 || own[0].MachineID != "m1" || own[0].MachineName != "web-01" || own[0].Session != "a" {
+		t.Fatalf("operator: want only their own m1 recording, got %+v", own)
+	}
+	if all := listRecordings(inScope, 7, true); len(all) != 2 {
+		t.Fatalf("admin: want both m1 recordings and none from m2, got %+v", all)
+	}
+}

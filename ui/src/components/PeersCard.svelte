@@ -63,7 +63,7 @@
       <Icon name="users" size={16} class="text-muted-foreground" />
       <h3 class="text-sm font-semibold">Peers</h3>
     </div>
-    <Segmented label="Peers view" bind:value={activeTab} options={[{ value: 'online', label: 'Online now' }, { value: 'traffic', label: 'Top traffic' }]} />
+    <Segmented size="sm" label="Peers view" bind:value={activeTab} options={[{ value: 'online', label: 'Online now' }, { value: 'traffic', label: 'Top traffic' }]} />
   </div>
 
   <div class="p-2 sm:p-3">

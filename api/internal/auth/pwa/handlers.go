@@ -59,6 +59,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"Channels":         s.handleChannels,
 		"TestChannels":     s.handleTestChannels,
 		"SMTP":             s.handleSMTP,
+		"SMTPTest":         s.handleSMTPTest,
 	}
 }
 

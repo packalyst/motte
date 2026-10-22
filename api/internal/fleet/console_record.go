@@ -402,6 +402,9 @@ type recordingInfo struct {
 	Session string `json:"session"` // client-facing id (no owner prefix)
 	Width   int    `json:"width"`
 	Height  int    `json:"height"`
+	// The machine it was recorded on, so a list across machines can play and delete each one.
+	MachineID   string `json:"machine_id"`
+	MachineName string `json:"machine_name"`
 }
 
 // recordingAccess resolves the caller + machine and decides whether they may see a recording:
@@ -424,13 +427,42 @@ func (s *Service) recordingAccess(w http.ResponseWriter, r *http.Request) (*rout
 	return p, m, auth.RoleAtLeast(p.Role, auth.RoleAdmin), true
 }
 
-// handleConsoleRecordings lists a machine's recordings the caller may see, newest first.
-// GET /api/fleet/console/recordings?machine_id=
+// handleConsoleRecordings lists the recordings the caller may see, newest first: one machine's with
+// ?machine_id=, otherwise every machine in the caller's scope (the Sessions page).
+// GET /api/fleet/console/recordings[?machine_id=]
 func (s *Service) handleConsoleRecordings(w http.ResponseWriter, r *http.Request) {
-	p, m, admin, ok := s.recordingAccess(w, r)
-	if !ok {
-		return
+	var p *router.Principal
+	machines := map[string]Machine{}
+	if r.URL.Query().Get("machine_id") != "" {
+		caller, m, _, ok := s.recordingAccess(w, r)
+		if !ok {
+			return
+		}
+		p = caller
+		machines[m.ID] = *m
+	} else {
+		if p = router.CurrentUser(r); p == nil {
+			router.JSONError(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		all, err := s.ListMachines()
+		if err != nil {
+			router.JSONError(w, "could not list machines", http.StatusInternalServerError)
+			return
+		}
+		for _, m := range all {
+			if !m.Revoked && scopeAllows(p, m) { // same set machineByID + recordingAccess allow
+				machines[m.ID] = m
+			}
+		}
 	}
+	out := listRecordings(machines, p.UserID, auth.RoleAtLeast(p.Role, auth.RoleAdmin))
+	router.JSON(w, map[string]any{"recordings": out, "retentionDays": int(recordRetention().Hours() / 24)})
+}
+
+// listRecordings returns the recordings of the given machines, newest first; a non-admin sees only
+// their own. The machine comes from the header, never the filename (one id can prefix another's).
+func listRecordings(machines map[string]Machine, userID int64, admin bool) []recordingInfo {
 	dir := recordDir()
 	entries, _ := os.ReadDir(dir)
 	out := []recordingInfo{}
@@ -438,12 +470,12 @@ func (s *Service) handleConsoleRecordings(w http.ResponseWriter, r *http.Request
 		if e.IsDir() || !recNameRe.MatchString(e.Name()) {
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
-		h, err := readRecHeader(path)
-		if err != nil || h.Meta.MachineID != m.ID {
-			continue // other machine (trust the header, never a filename prefix)
+		h, err := readRecHeader(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
 		}
-		if !admin && h.Meta.UserID != p.UserID {
+		m, ok := machines[h.Meta.MachineID]
+		if !ok || (!admin && h.Meta.UserID != userID) {
 			continue
 		}
 		info, err := e.Info()
@@ -454,11 +486,11 @@ func (s *Service) handleConsoleRecordings(w http.ResponseWriter, r *http.Request
 		out = append(out, recordingInfo{
 			Name: e.Name(), Title: h.Title, User: h.Meta.User, Started: h.Timestamp, Ended: info.ModTime().Unix(),
 			Size: info.Size(), Live: isRecording(m.ID, h.Meta.Session), Capped: info.Size() >= recordMaxBytes,
-			Session: client, Width: h.Width, Height: h.Height,
+			Session: client, Width: h.Width, Height: h.Height, MachineID: m.ID, MachineName: m.Name,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ended > out[j].Ended })
-	router.JSON(w, map[string]any{"recordings": out, "retentionDays": int(recordRetention().Hours() / 24)})
+	return out
 }
 
 // handleConsoleRecording streams one recording (.cast) for in-app playback or download. Audited.

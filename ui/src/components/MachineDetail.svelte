@@ -9,8 +9,8 @@
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser, hasRole, currentView, consoleTarget, consoleReturn } from '../stores/app.js'
-  import { consoleSessions, openConsoleEvents, refreshSessions } from '../lib/consoleEvents.js'
+  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser, hasRole, hashParam, setHashParam } from '../stores/app.js'
+  import { consoleSessions, openConsoleEvents, refreshSessions, closeSession, openConsoleAt } from '../lib/consoleEvents.js'
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
@@ -22,7 +22,8 @@
   import Gauge from './Gauge.svelte'
   import SessionCard from './SessionCard.svelte'
   import TagEditor from './TagEditor.svelte'
-  import RecordingPlayer from './RecordingPlayer.svelte'
+  import SectionNav from './SectionNav.svelte'
+  import RecordingList from './RecordingList.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
   import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
@@ -50,36 +51,21 @@
       toast('Console is disabled for this machine', 'error')
       return
     }
-    consoleTarget.set({
+    openConsoleAt({
       machine_id: machine.id,
       machine_name: machine.name,
       session,
       label: session ? liveSessions.find((s) => s.id === session)?.label : null,
       fresh: !session,
       panel,
-    })
-    consoleReturn.set({ view: 'fleet', hash: 'm=' + encodeURIComponent(machine.id) }) // close → back to this machine
-    currentView.set('console')
+    }, { view: 'clients', hash: 'm=' + encodeURIComponent(machine.id) }) // close → back to this machine
   }
 
   // Resumable sessions (tmux) the caller owns on this host — drives the Sessions tab's reattach
   // list. A session survives a browser drop, so this lets you climb back into it after a reload.
   // This machine's live sessions come from the shared console-events WS (pushed, no polling).
   const liveSessions = $derived($consoleSessions.filter((s) => s.machine_id === machine.id))
-  async function killSession(s) {
-    const ok = await confirm({
-      title: 'Close session',
-      message: `Close Session ${s.label || ''} on ${machine.name}? Anything running in it is terminated.`,
-      variant: 'destructive', confirmText: 'Close',
-    })
-    if (!ok) return
-    try {
-      await apiPost('/api/fleet/console/kill', { machine_id: machine.id, session: s.id })
-      toast('Session closed', 'success') // the WS pushes the updated list
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
-  }
+  const killSession = (s) => closeSession({ ...s, machine_id: machine.id }, machine.name)
 
   async function setConsole(enabled) {
     let password = '', totp = ''
@@ -132,48 +118,6 @@
     } finally {
       consoleBusy = false
     }
-  }
-
-  // Session recordings on this machine (own; admins see everyone's). Reloaded when the Sessions tab
-  // opens and whenever the live-session set changes (a session ending finalizes its recording).
-  let recordings = $state([])
-  let retentionDays = $state(30)
-  let playingRec = $state(null)
-  async function loadRecordings() {
-    try {
-      const res = await apiGet('/api/fleet/console/recordings?machine_id=' + encodeURIComponent(machine.id))
-      recordings = res.recordings || []
-      retentionDays = res.retentionDays || retentionDays
-    } catch {
-      recordings = []
-    }
-  }
-  // Admin only. One prompt is both the confirmation and the re-authentication (the server asks for it
-  // every time — no grace window for erasing a recording); the deletion itself is audited.
-  async function deleteRecording(rec) {
-    const r = await stepUpConfirm({
-      title: 'Delete recording',
-      message: `Delete ${rec.title} by ${rec.user} on ${machine.name}?`,
-      description: 'It is gone for good — copies of the file left anywhere become unreadable. The deletion is kept in the audit log. Re-authenticate to confirm.',
-      confirmText: 'Delete', variant: 'destructive',
-    })
-    if (!r?.confirmed) return
-    try {
-      await apiPost('/api/fleet/console/recording/delete', {
-        machine_id: machine.id, name: rec.name, currentPassword: r.password, totpCode: r.totp || '',
-      })
-      recordings = recordings.filter((x) => x.name !== rec.name)
-      toast('Recording deleted', 'success')
-    } catch (e) {
-      toast(e.message || 'Could not delete the recording', 'error')
-    }
-  }
-
-  function downloadRecording(rec) {
-    const a = document.createElement('a') // same-origin GET: the session cookie authenticates it
-    a.href = `/api/fleet/console/recording?machine_id=${encodeURIComponent(machine.id)}&name=${encodeURIComponent(rec.name)}`
-    a.download = rec.name
-    a.click()
   }
 
   // Machine tags — drive operator/viewer scoping. Editing is admin+ (backend-enforced).
@@ -237,22 +181,13 @@
   const navIds = ['overview', 'sessions', 'files', 'docker', 'diagnostics', 'forwards', 'services', 'network', 'security', 'maintenance', 'host', 'ai']
 
   // Remember the open sub-page in the URL hash (#m=<id>&s=<sub>) so a refresh lands back on it.
-  // We only touch the `s` param (MachinesView owns `m`) and use replaceState so switching
+  // We only touch the `s` param (the clients page owns `m`) and use replaceState so switching
   // sub-pages doesn't fire hashchange — that would re-run the parent's hash reconciler.
-  function readSub() {
-    if (typeof window === 'undefined') return 'overview'
-    const s = new URLSearchParams(window.location.hash.slice(1)).get('s')
-    return s && navIds.includes(s) ? s : 'overview'
-  }
-  let activeTab = $state(readSub())
+  const sub = hashParam('s')
+  let activeTab = $state(sub && navIds.includes(sub) ? sub : 'overview')
   function go(id) {
     activeTab = id
-    if (typeof window === 'undefined') return
-    const p = new URLSearchParams(window.location.hash.slice(1))
-    if (id && id !== 'overview') p.set('s', id)
-    else p.delete('s')
-    const q = p.toString()
-    history.replaceState(history.state, '', window.location.pathname + (q ? '#' + q : ''))
+    setHashParam('s', id === 'overview' ? null : id)
   }
 
   // Keep the resumable-session list fresh while the Sessions tab is open by subscribing to the shared
@@ -263,15 +198,6 @@
     refreshSessions()
     return release
   })
-  // Recordings: load when the Sessions tab opens, and again whenever the live-session set changes —
-  // a session starting or ending flips its recording's "live" state / finalizes it. (Recordings stay
-  // listable after the console is disabled, so this doesn't require consoleEnabled.)
-  $effect(() => {
-    if (activeTab !== 'sessions' || !canOpenConsole) return
-    liveSessions.length
-    loadRecordings()
-  })
-
   // kernel-maintenance job status (absent unless a kernel update has run). Each phase
   // maps to a dot color + human label so a long, reboot-spanning job is legible.
   const kernel = $derived(report?.kernel || null)
@@ -393,7 +319,7 @@
     return () => { unsub(); clearInterval(t); unsubscribe('fleet') }
   })
 
-  const cmdStatus = { pending: 'text-warning', delivered: 'text-info', done: 'text-success', error: 'text-destructive' }
+  const cmdStatus = { pending: 'text-warning', delivered: 'text-info', done: 'text-success', error: 'text-destructive', expired: 'text-muted-foreground' }
 
   async function cmd(type, payload = null, opts = {}) {
     const ok = await confirm({
@@ -608,7 +534,7 @@
 <div class="space-y-4">
   <!-- Header: status · name · live chips · primary actions -->
   <div class="flex items-start gap-3 flex-wrap">
-    <button onclick={onback} title="Back to fleet"
+    <button onclick={onback} title="Back to all clients"
       class="h-8 w-8 grid place-items-center rounded-lg border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer shrink-0">
       <Icon name="arrow-left" size={16} />
     </button>
@@ -657,19 +583,8 @@
         description="This machine hasn't checked in with a report. It appears once the agent's first metrics/scan cycle completes." />
     </div>
   {:else}
-    <div class="flex flex-col lg:flex-row gap-4">
-      <!-- sub-nav: horizontal scroller on mobile, vertical rail on desktop -->
-      <nav class="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible lg:w-52 shrink-0 pb-2 lg:pb-0 border-b lg:border-b-0 lg:border-r border-border lg:pr-3">
-        {#each navList as item}
-          <button type="button" onclick={() => go(item.id)}
-            class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm whitespace-nowrap shrink-0 transition cursor-pointer {activeTab === item.id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}">
-            <Icon name={item.icon} size={16} class="shrink-0" />
-            <span>{item.label}</span>
-            {#if item.badge !== undefined}<span class="lg:ml-auto"><Badge variant="destructive" size="sm">{item.badge}</Badge></span>{/if}
-            {#if item.soon}<span class="lg:ml-auto text-[9px] uppercase tracking-wide text-muted-foreground/70 border border-border rounded px-1 py-0.5">soon</span>{/if}
-          </button>
-        {/each}
-      </nav>
+    <div class="flex flex-col gap-4 lg:min-h-[calc(100dvh-8rem)] lg:flex-row">
+      <SectionNav items={navList} active={activeTab} onselect={go} label="Machine sections" />
 
       <div class="min-w-0 flex-1 space-y-4">
     {#if activeTab === 'overview'}
@@ -726,9 +641,9 @@
             <div class="text-[11px] text-muted-foreground truncate">CPU · memory · disk over time</div>
           </div>
           <!-- average vs peak (both stored; no refetch) -->
-          <Segmented label="Statistic" bind:value={histStat} options={[{ value: 'avg', label: 'Avg' }, { value: 'max', label: 'Peak' }]} />
+          <Segmented size="sm" label="Statistic" bind:value={histStat} options={[{ value: 'avg', label: 'Avg' }, { value: 'max', label: 'Peak' }]} />
           <!-- time range -->
-          <Segmented label="Time range" bind:value={histRange} options={['24h', '7d', '30d'].map((r) => ({ value: r, label: r }))} />
+          <Segmented size="sm" label="Time range" bind:value={histRange} options={['24h', '7d', '30d'].map((r) => ({ value: r, label: r }))} />
         </div>
         {#if histLoading && histPoints.length === 0}
           <div class="h-[188px] grid place-items-center text-xs text-muted-foreground">Loading history…</div>
@@ -785,7 +700,7 @@
               <!-- Recording policy: Off / Always (every session on this machine), never per session. -->
               <div class="flex items-center gap-1.5 ml-auto text-[11px] text-muted-foreground">
                 <span>Recording</span>
-                <Segmented label="Recording" value={consoleRecord} disabled={consoleBusy} onchange={setRecording}
+                <Segmented size="sm" label="Recording" value={consoleRecord} disabled={consoleBusy} onchange={setRecording}
                   options={[{ value: false, label: 'Off' }, { value: true, label: 'Always', tone: 'destructive' }]} />
               </div>
             {/if}
@@ -811,52 +726,17 @@
             </div>
           {/if}
 
-          <!-- Recorded sessions (one continuous recording per session; own, or everyone's for admins). -->
-          {#if canOpenConsole && (consoleRecord || recordings.length)}
-            <div class="mt-3 pt-3 border-t border-border">
-              <div class="flex items-center gap-2 mb-2">
-                <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Recordings</span>
-                <span class="text-[10px] text-muted-foreground/70">· kept {retentionDays} days · output only, keystrokes are never recorded</span>
-                <Button variant="ghost" size="xs" iconOnly icon="refresh" onclick={loadRecordings} title="Refresh" />
-              </div>
-              {#if recordings.length}
-                <div class="divide-y divide-border border border-border rounded-lg overflow-hidden">
-                  {#each recordings as rec (rec.name)}
-                    <div class="flex items-center gap-3 px-3 py-2 text-sm">
-                      <Icon name="player-play" size={14} class="text-muted-foreground shrink-0" />
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-2">
-                          <span class="font-medium truncate">{rec.title}</span>
-                          {#if rec.live}<Badge variant="danger" size="sm">● recording</Badge>{/if}
-                          {#if rec.capped}<Badge variant="warning" size="sm">size limit reached</Badge>{/if}
-                        </div>
-                        <div class="text-[11px] text-muted-foreground truncate">
-                          {rec.user} · {new Date(rec.started * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                          · {fmtUptime(Math.max(0, rec.ended - rec.started))} · {formatBytes(rec.size)}
-                        </div>
-                      </div>
-                      <Button variant="ghost" size="xs" icon="player-play" onclick={() => (playingRec = rec)}>Play</Button>
-                      <Button variant="ghost" size="xs" iconOnly icon="download" onclick={() => downloadRecording(rec)} title="Download .cast" />
-                      {#if isAdmin}
-                        <Button variant="ghost-danger" size="xs" iconOnly icon="trash" onclick={() => deleteRecording(rec)} disabled={rec.live}
-             title={rec.live ? 'Still recording — stop the session first' : 'Delete recording'} />
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              {:else}
-                <div class="text-xs text-muted-foreground py-1">No recordings yet. With recording on, every session on this machine is recorded from the moment it opens.</div>
-              {/if}
-            </div>
+          <!-- Recorded sessions (one continuous recording per session; own, or everyone's for admins).
+               Reloads as the live-session set changes; stays listable after the console is disabled. -->
+          {#if canOpenConsole}
+            <RecordingList machineId={machine.id} live={liveSessions.length} hideEmpty={!consoleRecord} class="mt-3 pt-3 border-t border-border"
+              emptyText="No recordings yet. With recording on, every session on this machine is recorded from the moment it opens." />
           {/if}
         {:else}
           <div class="text-sm text-muted-foreground">You don't have permission to use the console.</div>
         {/if}
         {@render note('A remote interactive shell is gated: enable per-machine (admin, re-authenticate), then open (operator+). Sessions resume server-side (tmux) — reattach from the list above after a reload. With recording set to Always, every session is recorded (output only) for audit; operators see their own recordings, admins see everyone’s, and each playback is logged. Recordings are encrypted on disk; only an admin can delete one (re-authenticated, logged).')}
       </div>
-    {/if}
-    {#if playingRec}
-      <RecordingPlayer machineId={machine.id} rec={playingRec} onclose={() => (playingRec = null)} />
     {/if}
 
     {#if activeTab === 'services'}

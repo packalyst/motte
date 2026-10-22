@@ -1,51 +1,60 @@
 <script>
+  /**
+   * ClientModal — the detail modal for one VPN client (WireGuard peer or Tailscale node):
+   * Overview, Traffic, QR & Config (+ virtual IPs), Access and Actions. Open it by setting `node`
+   * (a toNode() object); closing sets it back to null. onchanged() asks the parent to reload its
+   * data after a change; vpnClients/routes are the parent's current lists.
+   */
   import { onMount, onDestroy, untrack } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetText, apiGetBlob, stepUpConfirm, takeHashParam, currentUser, hasRole } from '../stores/app.js'
-  import { subscribe, unsubscribe, nodesUpdatedStore } from '../stores/websocket.js'
-  import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, apiGetBlob, stepUpConfirm, currentUser, hasRole } from '../stores/app.js'
+  import AdBlockPanel from './AdBlockPanel.svelte'
+  import { copyWithToast } from '../stores/helpers.js'
   import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
-  import { useDataLoader } from '$lib/composables/index.js'
-  import Icon from '../components/Icon.svelte'
-  import Segmented from '../components/Segmented.svelte'
-  import Badge from '../components/Badge.svelte'
-  import Modal from '../components/Modal.svelte'
-  import Toolbar from '../components/Toolbar.svelte'
-  import Input from '../components/Input.svelte'
-  import Button from '../components/Button.svelte'
-  import InfoCard from '../components/InfoCard.svelte'
-  import ContentBlock from '../components/ContentBlock.svelte'
-  import EmptyState from '../components/EmptyState.svelte'
-  import Checkbox from '../components/Checkbox.svelte'
-  import LoadingSpinner from '../components/LoadingSpinner.svelte'
-  import Tabs from '../components/Tabs.svelte'
-  import OptionCard from '../components/OptionCard.svelte'
-  import ClientCard from '../components/ClientCard.svelte'
-  import BarList from '../components/BarList.svelte'
-  import TagEditor from '../components/TagEditor.svelte'
+  import { deviceIcon, downloadPeerConfig, copyPeerConfig } from '$lib/nodes.js'
+  import Icon from './Icon.svelte'
+  import Segmented from './Segmented.svelte'
+  import Badge from './Badge.svelte'
+  import Modal from './Modal.svelte'
+  import Input from './Input.svelte'
+  import Button from './Button.svelte'
+  import ContentBlock from './ContentBlock.svelte'
+  import EmptyState from './EmptyState.svelte'
+  import Checkbox from './Checkbox.svelte'
+  import LoadingSpinner from './LoadingSpinner.svelte'
+  import Tabs from './Tabs.svelte'
+  import OptionCard from './OptionCard.svelte'
+  import BarList from './BarList.svelte'
+  import TagEditor from './TagEditor.svelte'
 
-  let { loading = $bindable(true) } = $props()
+  let { node: selectedNode = $bindable(null), vpnClients = [], routes = [], onchanged = undefined } = $props()
 
-  // Multi-source data loading
-  const loader = useDataLoader([
-    { fn: () => apiGet('/api/vpn/clients'), key: 'clients', isArray: true },
-    { fn: () => apiGet('/api/hs/routes'), key: 'routes', extract: 'routes', isArray: true }
-  ])
-
-  const vpnClients = $derived(loader.data.clients || [])
-
-  // Deep link (#n=<node id>, e.g. from the Clients page): open that node once the list has loaded.
-  let deepLinked = false
+  // Opening: a new node resets the per-node state (tab, rename, QR, ACL) and loads its VPN record.
+  let openedId = null
   $effect(() => {
-    if (deepLinked || !allNodes.length) return
-    deepLinked = true
-    const id = takeHashParam('n')
-    const node = id && allNodes.find((n) => n.id === id)
-    if (node) selectNode(node)
+    const id = selectedNode?.id
+    if (!id || id === openedId) { if (!id) openedId = null; return }
+    openedId = id
+    untrack(() => {
+      activeTab = 'overview'
+      editingName = false
+      tunnelMode = 'full'
+      qrLoadedFor = null
+      newName = selectedNode._displayName
+      selectedVpnClient = null
+      aclPolicy = 'selected'
+      aclView = []
+      hasDNS = false
+      confirmAction = null
+      showNodeModal = true
+      loadVpnClientByIp(selectedNode._ip)
+    })
   })
-  const routes = $derived(loader.data.routes || [])
 
-  // Sync loading state to parent
-  $effect(() => { loading = loader.loading })
+  onMount(checkRouterStatus)
+  onDestroy(() => {
+    mounted = false
+    if (qrUrl) URL.revokeObjectURL(qrUrl)
+  })
 
   // VPN Router state (minimal - for Access tab visibility)
   let routerRunning = $state(false)
@@ -58,17 +67,6 @@
   let aclSyncing = $state(false)
   let hasDNS = $state(false)
 
-  // React to WebSocket nodes_updated notifications
-  // The store is a counter that increments on each notification
-  let lastNodesUpdate = 0
-  $effect(() => {
-    const updateCount = $nodesUpdatedStore
-    if (updateCount > lastNodesUpdate) {
-      lastNodesUpdate = updateCount
-      loader.reload()
-    }
-  })
-
   async function checkRouterStatus() {
     try {
       const status = await apiGet('/api/vpn/router/status')
@@ -78,11 +76,11 @@
     }
   }
 
-  // ACL functions - sync now happens automatically on loader.reload via /api/vpn/clients
+  // ACL functions - the parent reload (onchanged) re-syncs /api/vpn/clients
   async function syncVpnClients() {
     aclSyncing = true
     try {
-      await loader.reload()
+      await onchanged?.()
       toast('VPN clients synced', 'success')
     } catch (e) {
       toast('Failed to sync clients: ' + e.message, 'error')
@@ -129,7 +127,7 @@
       await apiPost('/api/vpn/apply')
       toast('Access rules saved and applied', 'success')
       // Reload data to refresh client list and ACL states
-      await loader.reload()
+      await onchanged?.()
       // Reload current client's ACL data using captured IP
       if (nodeIp) {
         await loadVpnClientByIp(nodeIp)
@@ -164,39 +162,20 @@
     )
   }
 
-  onMount(() => {
-    checkRouterStatus()
-    subscribe('nodes_updated')
-  })
-
-  onDestroy(() => {
-    mounted = false
-    unsubscribe('nodes_updated')
-    // Clean up QR code object URL
-    if (qrUrl) URL.revokeObjectURL(qrUrl)
-  })
-
-  // Load saved filters from localStorage
-  const savedFilters = loadState('nodes')
-
-  let search = $state('')
-  let statusFilter = $state(savedFilters.status || 'all') // 'all' | 'online' | 'offline'
-  let typeFilter = $state(savedFilters.type || 'all') // 'all' | 'tailscale' | 'wireguard'
-  let showFiltersDropdown = $state(false)
-  let selectedNode = $state(null)
-
-  // Save filters to localStorage when they change
-  $effect(() => {
-    saveState('nodes', { status: statusFilter, type: typeFilter })
-  })
   let activeTab = $state('overview')
 
-  // Dynamic tabs based on node type
-  const detailTabs = $derived(
-    selectedNode?._type === 'wireguard'
-      ? [{id:'overview',label:'Overview'},{id:'traffic',label:'Traffic'},{id:'qr',label:'QR & Config'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
-      : [{id:'overview',label:'Overview'},{id:'traffic',label:'Traffic'},{id:'access',label:'Access'},{id:'actions',label:'Actions'}]
-  )
+  // Dynamic tabs based on node type. Ad blocking is admin-only (it shows browsing history).
+  const isAdmin = $derived(hasRole($currentUser, 'admin'))
+  const detailTabs = $derived([
+    { id: 'overview', label: 'Overview' },
+    { id: 'traffic', label: 'Traffic' },
+    ...(selectedNode?._type === 'wireguard' ? [{ id: 'qr', label: 'QR & Config' }] : []),
+    { id: 'access', label: 'Access' },
+    ...(isAdmin ? [{ id: 'adblock', label: 'Ad blocking' }] : []),
+    { id: 'actions', label: 'Actions' },
+  ])
+  // The All clients key AdGuard settings are filed under ("wg:<id>" / "ts:<node id>").
+  const clientKey = $derived(selectedNode ? (selectedNode._type === 'wireguard' ? 'wg:' + selectedNode._wgId : 'ts:' + selectedNode.id) : '')
 
   // Per-peer destination traffic breakdown (conntrack byte accounting)
   let peerUsage = $state(null)
@@ -233,7 +212,7 @@
       if (selectedNode) { selectedNode.totalTx = 0; selectedNode.totalRx = 0 }
       peerUsage = null
       toast('Traffic reset', 'success')
-      loader.reload()
+      onchanged?.()
       if (activeTab === 'traffic') loadPeerUsage()
     } catch (e) {
       toast('Failed to reset: ' + e.message, 'error')
@@ -248,7 +227,6 @@
     }
   })
 
-  let showCreateModal = $state(false)
   let showNodeModal = $state(false)
 
   // Handle node modal close - reset editing states
@@ -259,8 +237,6 @@
     }
   })
 
-  let newPeerName = $state('')
-  let createdPeer = $state(null)
   let tunnelMode = $state('full') // 'full' or 'split'
 
   // Inline editing states
@@ -317,102 +293,11 @@
     }
   })
 
-  // Build unified node list from vpnClients (which contains rawData with full info)
-  const allNodes = $derived(vpnClients.map(client => {
-    const raw = client.rawData || {}
-
-    if (client.type === 'wireguard') {
-      return {
-        id: `wg-${client.externalId}`,
-        _wgId: client.externalId,
-        _type: 'wireguard',
-        _displayName: client.name,
-        _ip: client.ip,
-        _online: raw.online || false,
-        online: raw.online || false,
-        lastHandshake: raw.lastHandshake,
-        name: client.name,
-        givenName: client.name,
-        ipAddresses: [client.ip],
-        createdAt: raw.createdAt || client.createdAt,
-        lastSeen: raw.lastSeen,
-        user: { name: 'WireGuard' },
-        enabled: raw.enabled !== false,
-        blockInternet: client.blockInternet === true,
-        publicKey: raw.publicKey,
-        privateKey: raw.privateKey,
-        presharedKey: raw.presharedKey,
-        totalTx: client.totalTx || 0,
-        totalRx: client.totalRx || 0
-      }
-    } else {
-      // Headscale node
-      return {
-        ...raw,
-        id: client.externalId,
-        _type: 'tailscale',
-        _displayName: raw.givenName || raw.name || client.name,
-        _ip: client.ip,
-        _online: raw.online || false,
-        ipAddresses: raw.ipAddresses || [client.ip],
-        user: raw.user || { name: 'Unknown' }
-      }
-    }
-  }))
-
-  const filteredNodes = $derived(allNodes.filter(n => {
-    // Status filter
-    if (statusFilter === 'online' && !n._online) return false
-    if (statusFilter === 'offline' && n._online) return false
-
-    // Type filter
-    if (typeFilter === 'tailscale' && n._type !== 'tailscale') return false
-    if (typeFilter === 'wireguard' && n._type !== 'wireguard') return false
-
-    // Search filter
-    if (!search) return true
-    const q = search.toLowerCase()
-    return (
-      n.name?.toLowerCase().includes(q) ||
-      n.givenName?.toLowerCase().includes(q) ||
-      n._displayName?.toLowerCase().includes(q) ||
-      n._ip?.includes(q) ||
-      n.user?.name?.toLowerCase().includes(q) ||
-      n._type?.toLowerCase().includes(q)
-    )
-  }))
-
   // Get routes for selected node
   const nodeRoutes = $derived(selectedNode && selectedNode._type === 'tailscale'
     ? routes.filter(r => r.node?.id === selectedNode.id)
     : [])
   const isExitNode = $derived(nodeRoutes.some(r => r.prefix === '0.0.0.0/0'))
-
-  function getDeviceIcon(node) {
-    if (node._type === 'wireguard') return 'lock'
-    const lower = node.name?.toLowerCase() || ''
-    if (lower.includes('iphone') || lower.includes('android') || lower.includes('pixel')) return 'device-mobile'
-    if (lower.includes('ipad') || lower.includes('tablet')) return 'device-tablet'
-    if (lower.includes('macbook') || lower.includes('laptop')) return 'device-laptop'
-    return 'device-desktop'
-  }
-
-  function selectNode(node) {
-    selectedNode = node
-    activeTab = 'overview'
-    editingName = false
-    tunnelMode = 'full'
-    qrLoadedFor = null // Reset so QR loads fresh for new node
-    newName = node._displayName
-    // Reset ACL state
-    selectedVpnClient = null
-    aclPolicy = 'selected'
-    aclView = []
-    hasDNS = false
-    showNodeModal = true
-    // Load VPN client for DNS toggle
-    loadVpnClientByIp(node._ip)
-  }
 
   // Load VPN client when switching to 'access' tab
   $effect(() => {
@@ -565,7 +450,7 @@
       }
       toast('Node renamed', 'success')
       editingName = false
-      loader.reload()
+      onchanged?.()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
@@ -577,7 +462,7 @@
   async function saveNodeTags(next) {
     await apiPut(`/api/hs/nodes/${selectedNode.id}/tags`, { tags: next })
     selectedNode.forcedTags = next
-    loader.reload()
+    onchanged?.()
   }
 
   async function deleteNode() {
@@ -600,7 +485,7 @@
       }
       toast('Node deleted', 'success')
       closeModal()
-      loader.reload()
+      onchanged?.()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
@@ -616,7 +501,7 @@
       await apiPost(`/api/hs/nodes/${selectedNode.id}/expire`)
       toast('Node key expired', 'success')
       confirmAction = null
-      loader.reload()
+      onchanged?.()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
@@ -633,7 +518,7 @@
       toast(block ? 'Internet blocked for peer' : 'Internet restored', 'success')
       selectedNode = { ...selectedNode, blockInternet: block }
       confirmAction = null
-      loader.reload()
+      onchanged?.()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     } finally {
@@ -649,210 +534,12 @@
       toast(newState ? 'Peer enabled' : 'Peer disabled', 'success')
       // Update selectedNode immediately for UI feedback
       selectedNode = { ...selectedNode, enabled: newState }
-      loader.reload()
+      onchanged?.()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
     }
   }
-
-  async function createWgPeer() {
-    if (!newPeerName.trim()) return
-    try {
-      const data = await apiPost('/api/wg/peers', { name: newPeerName })
-      createdPeer = data
-      toast('Peer created', 'success')
-      loader.reload()
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
-  }
-
-  async function downloadConfig() {
-    if (!selectedNode) return
-    try {
-      const config = await apiGetText(`/api/wg/peers/${selectedNode._wgId}/config?mode=${tunnelMode}`)
-      const blob = new Blob([config], { type: 'text/plain' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${selectedNode._displayName}.conf`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast('Configuration downloaded', 'success')
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
-  }
-
-  async function copyConfig() {
-    if (!selectedNode) return
-    try {
-      const config = await apiGetText(`/api/wg/peers/${selectedNode._wgId}/config?mode=${tunnelMode}`)
-      copyToClipboard(config)
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    }
-  }
-
-  const copyToClipboard = (text) => copyWithToast(text, toast)
 </script>
-
-<div class="space-y-4">
-  <InfoCard
-    icon="server"
-    title="Network Nodes"
-    description="Manage all connected devices in your mesh network. Includes both Tailscale/Headscale nodes and standalone WireGuard peers. Monitor status, configure routes, and control access."
-  />
-
-  <Toolbar bind:search placeholder="Search nodes by name, IP or user...">
-    <!-- Mobile: Filter dropdown button -->
-    <div class="relative sm:hidden">
-      <button
-        type="button"
-        onclick={() => showFiltersDropdown = !showFiltersDropdown}
-        class="kt-badge kt-badge-outline kt-badge-secondary cursor-pointer"
-      >
-        <Icon name="filter" size={14} />
-        Filters
-        {#if statusFilter !== 'all' || typeFilter !== 'all'}
-          <span class="kt-badge kt-badge-xs kt-badge-primary">{(statusFilter !== 'all' ? 1 : 0) + (typeFilter !== 'all' ? 1 : 0)}</span>
-        {/if}
-      </button>
-
-      {#if showFiltersDropdown}
-        <div class="absolute right-0 top-full z-20 mt-2 w-48 rounded-lg border border-border bg-card p-2 shadow-lg">
-          <div class="mb-2 text-[10px] font-medium uppercase text-muted-foreground">Status</div>
-          <button type="button" onclick={() => { statusFilter = 'all'; typeFilter = 'all' }} class="kt-badge kt-badge-outline {statusFilter === 'all' && typeFilter === 'all' ? 'kt-badge-primary' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">All ({allNodes.length})</button>
-          <button type="button" onclick={() => statusFilter = 'online'} class="kt-badge kt-badge-outline {statusFilter === 'online' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">Online</button>
-          <button type="button" onclick={() => statusFilter = 'offline'} class="kt-badge kt-badge-outline {statusFilter === 'offline' ? 'kt-badge-warning' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer">Offline</button>
-
-          <div class="my-2 border-t border-border"></div>
-          <div class="mb-2 text-[10px] font-medium uppercase text-muted-foreground">Type</div>
-          <button type="button" onclick={() => typeFilter = 'tailscale'} class="kt-badge kt-badge-outline {typeFilter === 'tailscale' ? 'kt-badge-info' : 'kt-badge-secondary'} w-full justify-center mb-1 cursor-pointer"><Icon name="cloud" size={12} /> Tailscale ({vpnClients.filter(c => c.type === 'headscale').length})</button>
-          <button type="button" onclick={() => typeFilter = 'wireguard'} class="kt-badge kt-badge-outline {typeFilter === 'wireguard' ? 'kt-badge-success' : 'kt-badge-secondary'} w-full justify-center cursor-pointer"><Icon name="shield" size={12} /> WireGuard ({vpnClients.filter(c => c.type === 'wireguard').length})</button>
-        </div>
-      {/if}
-    </div>
-
-    <!-- Desktop: Filter badges -->
-    <div class="hidden flex-wrap items-center gap-2 sm:flex">
-      <!-- All / Reset -->
-      <button
-        type="button"
-        onclick={() => { statusFilter = 'all'; typeFilter = 'all' }}
-        class="kt-badge kt-badge-outline {statusFilter === 'all' && typeFilter === 'all' ? 'kt-badge-primary' : 'kt-badge-secondary'} cursor-pointer"
-      >
-        All
-        <span class="kt-badge kt-badge-xs kt-badge-primary">{allNodes.length}</span>
-      </button>
-
-      <!-- Status filters -->
-      <button
-        type="button"
-        onclick={() => statusFilter = statusFilter === 'online' ? 'all' : 'online'}
-        class="kt-badge kt-badge-outline {statusFilter === 'online' ? 'kt-badge-success' : 'kt-badge-secondary'} cursor-pointer"
-      >
-        Online
-      </button>
-      <button
-        type="button"
-        onclick={() => statusFilter = statusFilter === 'offline' ? 'all' : 'offline'}
-        class="kt-badge kt-badge-outline {statusFilter === 'offline' ? 'kt-badge-warning' : 'kt-badge-secondary'} cursor-pointer"
-      >
-        Offline
-      </button>
-
-      <span class="mx-1 h-4 w-px bg-border"></span>
-
-      <!-- Type filters -->
-      <button
-        type="button"
-        onclick={() => typeFilter = typeFilter === 'tailscale' ? 'all' : 'tailscale'}
-        class="kt-badge kt-badge-outline {typeFilter === 'tailscale' ? 'kt-badge-info' : 'kt-badge-secondary'} cursor-pointer"
-      >
-        <Icon name="cloud" size={14} />
-        Tailscale
-        <span class="kt-badge kt-badge-xs kt-badge-info">{vpnClients.filter(c => c.type === 'headscale').length}</span>
-      </button>
-      <button
-        type="button"
-        onclick={() => typeFilter = typeFilter === 'wireguard' ? 'all' : 'wireguard'}
-        class="kt-badge kt-badge-outline {typeFilter === 'wireguard' ? 'kt-badge-success' : 'kt-badge-secondary'} cursor-pointer"
-      >
-        <Icon name="shield" size={14} />
-        WireGuard
-        <span class="kt-badge kt-badge-xs kt-badge-success">{vpnClients.filter(c => c.type === 'wireguard').length}</span>
-      </button>
-    </div>
-  </Toolbar>
-
-  <!-- Nodes grid -->
-  {#if filteredNodes.length > 0}
-  <div class="mt-4 grid-cards">
-    <!-- Add node card - always first -->
-    <div
-      onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }}
-      onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, newPeerName = '', createdPeer = null)}
-      role="button"
-      tabindex="0"
-      class="add-item-card"
-    >
-      <div class="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground">
-        <Icon name="plus" size={16} />
-      </div>
-      <div class="font-medium text-foreground">Add WireGuard peer</div>
-      <p class="max-w-[200px] text-muted-foreground">
-        Create new WireGuard peers. For Tailscale, <a href="/authkeys" onclick={(e) => e.stopPropagation()} class="text-primary hover:underline">create auth keys</a>
-      </p>
-    </div>
-
-    {#each filteredNodes as node (node.id)}
-      {@const isWG = node._type === 'wireguard'}
-      {@const isKeyExpired = !isWG && node.expiry && !node.expiry.startsWith('0001') && new Date(node.expiry) < new Date()}
-      <ClientCard
-        name={node._displayName}
-        icon={getDeviceIcon(node)}
-        color={isWG ? 'var(--client-wg)' : 'var(--client-ts)'}
-        online={node._online}
-        subtitle={node.user?.name || 'Unassigned'}
-        onopen={() => selectNode(node)}
-        flags={[
-          isKeyExpired && { label: 'Key expired', tone: 'destructive' },
-          isWG && !node.enabled && !isKeyExpired && { label: 'Disabled', tone: 'warning' },
-          isWG && node.blockInternet && { label: 'No internet', tone: 'destructive', icon: 'world-off' },
-        ].filter(Boolean)}
-        info={[
-          { icon: 'network', text: node._ip || '—', mono: true },
-          { icon: isWG ? 'shield' : 'cloud', text: isWG ? 'WireGuard' : 'Tailscale' },
-          { icon: 'clock', text: timeAgo(node.lastHandshake || node.lastSeen) },
-          isKeyExpired || (!isWG && node.expiry && !node.expiry.startsWith('0001'))
-            ? { icon: 'key', text: isKeyExpired ? 'Expired' : timeAgo(node.expiry), tone: isKeyExpired ? 'destructive' : undefined }
-            : isWG
-              ? { icon: node.enabled ? 'check' : 'ban', text: node.enabled ? 'Enabled' : 'Disabled', tone: node.enabled ? 'success' : 'warning' }
-              : null,
-        ].filter(Boolean)}
-        tags={isWG ? [] : [...(node.forcedTags || []), ...(node.validTags || [])].map((t) => t.replace('tag:', ''))}
-        emptyTags="No tags"
-      />
-    {/each}
-  </div>
-  {/if}
-
-  {#if filteredNodes.length === 0}
-    <EmptyState
-      icon="server"
-      title="No nodes found"
-      description={search ? 'Try a different search term' : 'Add a device using the button below'}
-      large
-    >
-      {#if !search}
-        <Button onclick={() => { showCreateModal = true; newPeerName = ''; createdPeer = null }} size="sm" icon="plus">
-          Add Node
-        </Button>
-      {/if}
-    </EmptyState>
-  {/if}
-</div>
 
 <!-- Node Detail Modal -->
 <Modal bind:open={showNodeModal} size="lg" bodyClass="p-0">
@@ -860,7 +547,7 @@
     {#if selectedNode}
       <div class="flex items-center gap-3">
         <div class="w-6 h-6 rounded flex items-center justify-center {selectedNode._online ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}">
-          <Icon name={getDeviceIcon(selectedNode)} size={12} />
+          <Icon name={deviceIcon(selectedNode)} size={12} />
         </div>
         <div class="flex-1 min-w-0">
           {#if editingName}
@@ -879,7 +566,7 @@
               {#if selectedNode._type === 'wireguard' && !selectedNode.enabled}<Badge variant="warning" size="sm">Disabled</Badge>{/if}
               {#if selectedNode._type === 'wireguard' && selectedNode.blockInternet}<Badge variant="destructive" size="sm">No Internet</Badge>{/if}
               {#if isExitNode}<Badge variant="success" size="sm">Exit</Badge>{/if}
-              <button onclick={toggleDNS} class="kt-badge kt-badge-sm {hasDNS ? 'kt-badge-info' : 'kt-badge-outline kt-badge-secondary'} cursor-pointer" title="Toggle DNS rewrite">DNS</button>
+              <button onclick={toggleDNS} class="kt-badge kt-badge-sm {hasDNS ? 'kt-badge-info' : 'kt-badge-outline kt-badge-secondary'} cursor-pointer" title="Toggle the DNS name for this client">DNS name</button>
             </div>
           {/if}
         </div>
@@ -931,7 +618,7 @@
               <!-- Tags -->
               <div class="pt-3 border-t border-border">
                 <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">ACL tags</h4>
-                <TagEditor tags={selectedNode.forcedTags || []} prefix="tag:" canEdit={hasRole($currentUser, 'admin')} onsave={saveNodeTags} />
+                <TagEditor tags={selectedNode.forcedTags || []} prefix="tag:" canEdit={isAdmin} onsave={saveNodeTags} />
                 {#if selectedNode.validTags?.length}
                   <p class="mt-1.5 text-[11px] text-muted-foreground">Advertised by the device: {selectedNode.validTags.map((t) => t.replace('tag:', '')).join(', ')}</p>
                 {/if}
@@ -959,7 +646,7 @@
           <div class="space-y-3">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs text-muted-foreground">Where this peer's traffic went, by bytes.</div>
-              <Segmented label="Period" bind:value={peerUsagePeriod}
+              <Segmented size="sm" label="Period" bind:value={peerUsagePeriod}
                 options={[{ value: 'hour', label: 'Hour' }, { value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }]} />
             </div>
 
@@ -1015,10 +702,10 @@
               </div>
 
               <div class="grid grid-cols-2 gap-2">
-                <Button onclick={downloadConfig} size="sm" icon="download" class="justify-center">
+                <Button onclick={() => downloadPeerConfig(selectedNode._wgId, selectedNode._displayName, tunnelMode)} size="sm" icon="download" class="justify-center">
                   Download
                 </Button>
-                <Button onclick={copyConfig} variant="secondary" size="sm" icon="copy" class="justify-center">
+                <Button onclick={() => copyPeerConfig(selectedNode._wgId, tunnelMode)} variant="secondary" size="sm" icon="copy" class="justify-center">
                   Copy
                 </Button>
               </div>
@@ -1336,6 +1023,8 @@
             {/if}
           </div>
 
+        {:else if activeTab === 'adblock' && isAdmin}
+          <AdBlockPanel {clientKey} />
         {:else if activeTab === 'actions' || activeTab === 'security'}
           <!-- Actions Tab -->
           {#if confirmAction === 'expire'}
@@ -1450,75 +1139,4 @@
         {/if}
       </div>
   {/if}
-</Modal>
-
-<!-- Virtual IP setup-commands Modal -->
-<!-- Create WireGuard Peer Modal -->
-<Modal bind:open={showCreateModal} title="Add WireGuard Node" size="md">
-  {#if createdPeer}
-    <div class="space-y-4">
-      <div class="p-4 bg-success/10 border border-success/20 rounded-lg flex items-center gap-3">
-        <div class="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center shrink-0">
-          <Icon name="check" size={20} class="text-success" />
-        </div>
-        <div>
-          <p class="font-medium text-foreground">Peer created successfully!</p>
-          <p class="text-xs text-muted-foreground mt-0.5">Save this configuration - the private key won't be shown again.</p>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-2 gap-4">
-        <ContentBlock variant="data" label="Name">
-          <Icon name="device-desktop" size={14} class="text-muted-foreground mr-2" />
-          <span class="text-sm font-medium text-foreground">{createdPeer.name}</span>
-        </ContentBlock>
-        <ContentBlock variant="data" label="IP Address">
-          <Icon name="network" size={14} class="text-muted-foreground mr-2" />
-          <code class="text-sm font-mono text-foreground">{createdPeer.ipAddress}</code>
-        </ContentBlock>
-      </div>
-    </div>
-  {:else}
-    <Input
-      label="Device Name"
-      helperText="A friendly name to identify this device"
-      bind:value={newPeerName}
-      placeholder="e.g., iPhone, Laptop, Home Router"
-    />
-  {/if}
-
-  {#snippet footer()}
-    {#if createdPeer}
-      <Button
-        onclick={async () => {
-          const config = await apiGetText(`/api/wg/peers/${createdPeer.id}/config`)
-          const blob = new Blob([config], { type: 'text/plain' })
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = `${createdPeer.name}.conf`
-          a.click()
-          URL.revokeObjectURL(url)
-          toast('Config downloaded', 'success')
-        }}
-        icon="download"
-      >
-        Download
-      </Button>
-      <Button
-        onclick={async () => {
-          const config = await apiGetText(`/api/wg/peers/${createdPeer.id}/config`)
-          copyToClipboard(config)
-        }}
-        variant="secondary"
-        icon="copy"
-      >
-        Copy Config
-      </Button>
-      <Button onclick={() => showCreateModal = false} variant="secondary">Done</Button>
-    {:else}
-      <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
-      <Button onclick={createWgPeer}>Create WireGuard Device</Button>
-    {/if}
-  {/snippet}
 </Modal>

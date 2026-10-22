@@ -49,88 +49,138 @@ func (t *ReachabilityTable) Family() string { return "inet" }
 // (VPN<->VPN vs VPN<->segment).
 func (t *ReachabilityTable) Priority() int { return 15 }
 
+// devicePolicy is one approved, unblocked LAN device's forwarding policy.
+type devicePolicy struct {
+	IP       string   // its IPv4 address inside the network (the firewall gate keys on it)
+	Allowed  []string // VPN client IPs that may reach it, and it them
+	Internet bool     // may route out the WAN
+}
+
+// netPolicy is a network's forwarding policy, resolved from the DB before rendering so the
+// renderer stays pure (no DB, no host calls) and testable.
+type netPolicy struct {
+	Devices []devicePolicy
+	Blocked []string // MACs dropped outright, whatever IP they use
+}
+
 func (t *ReachabilityTable) Build() (string, error) {
 	svc := &Service{db: t.db}
 	nets, err := svc.listNetworks()
 	if err != nil {
 		return "", err
 	}
-	// Resolve each network's opted-in VPN client IPs up front, so the renderer stays pure.
-	allowed := make(map[int64][]string, len(nets))
-	// In "approve" mode the forward gate opens per-device: only approved devices' IPs may be
-	// forwarded (reached by VPN / routed out). Pending devices get an address but no forwarding.
-	approved := make(map[int64][]string, len(nets))
+	pol := make(map[int64]netPolicy, len(nets))
 	for i := range nets {
-		ids, _ := svc.listNetworkACL(nets[i].ID)
-		for _, id := range ids {
-			if ip, err := svc.clientIPByID(id); err == nil {
-				allowed[nets[i].ID] = append(allowed[nets[i].ID], ip)
-			}
-		}
-		if nets[i].Mode == "approve" {
-			_, cnet, _ := net.ParseCIDR(nets[i].CIDR)
-			clients, _ := svc.listClients(nets[i].ID)
-			for _, c := range clients {
-				ip := net.ParseIP(strings.TrimSpace(c.IP))
-				if c.Approved && ip != nil && ip.To4() != nil && cnet != nil && cnet.Contains(ip) {
-					approved[nets[i].ID] = append(approved[nets[i].ID], ip.String())
-				}
-			}
+		if p, err := svc.networkPolicy(&nets[i]); err == nil {
+			pol[nets[i].ID] = p
+		} else {
+			return "", err // fail the build rather than apply a partial (more open) policy
 		}
 	}
 	wan, _ := defaultRouteInterface()
-	return renderReachability(nets, allowed, approved, wan, privateReachRanges()), nil
+	return renderReachability(nets, pol, wan, privateReachRanges()), nil
+}
+
+// networkPolicy resolves a network's devices into forwarding policy. Only approved, unblocked
+// devices with a valid address inside the subnet are forwardable ("auto" mode approves on sight);
+// pending ones get an address but nothing else. Blocked devices are listed by MAC.
+func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
+	var p netPolicy
+	clients, err := s.listClients(n.ID)
+	if err != nil {
+		return p, err
+	}
+	acl, err := s.networkACLIPs(n.ID)
+	if err != nil {
+		return p, err
+	}
+	_, cnet, err := net.ParseCIDR(n.CIDR)
+	if err != nil {
+		return p, nil // an invalid network renders nothing (renderReachability skips it too)
+	}
+	for _, c := range clients {
+		if c.Blocked {
+			p.Blocked = append(p.Blocked, strings.ToLower(c.MAC))
+			continue
+		}
+		ip := net.ParseIP(strings.TrimSpace(c.IP))
+		if !c.Approved || ip == nil || ip.To4() == nil || !cnet.Contains(ip) {
+			continue
+		}
+		p.Devices = append(p.Devices, devicePolicy{IP: ip.String(), Allowed: acl[c.ID], Internet: c.Internet})
+	}
+	return p, nil
+}
+
+// hasInternet reports whether any device in the policy may route out the WAN.
+func (p netPolicy) hasInternet() bool {
+	for _, d := range p.Devices {
+		if d.Internet {
+			return true
+		}
+	}
+	return false
 }
 
 // renderReachability builds the nft script (pure: no DB, no host calls) so it can be unit-tested
-// and syntax-checked with `nft -c`. Every IP/CIDR/iface is validated before emission.
-func renderReachability(nets []Network, allowed map[int64][]string, approved map[int64][]string, wan string, privateRanges []string) string {
-	var fwd strings.Builder
-	var nat strings.Builder
+// and syntax-checked with `nft -c`. Every IP/CIDR/MAC/iface is validated before emission.
+func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, privateRanges []string) string {
+	var blk, fwd, in, nat strings.Builder
 	for i := range nets {
 		n := &nets[i]
-		if !n.Enabled {
+		if !n.Enabled || !validIface(n.Iface) {
 			continue
 		}
 		if _, _, err := net.ParseCIDR(n.CIDR); err != nil {
 			continue // defensive: never emit an unvalidated CIDR
 		}
+		p := pol[n.ID]
 		fmt.Fprintf(&fwd, "        # network %s (%s, %s)\n", n.Iface, n.CIDR, n.Mode)
 
-		// What may be forwarded: the whole subnet in "auto" mode, or only approved devices' IPs in
-		// "approve" mode (pending devices get an address but are gated here). An approve network
-		// with nothing approved yet has no targets, so nothing on it is reachable.
-		targets := []string{n.CIDR}
-		if n.Mode == "approve" {
-			targets = approved[n.ID]
-		}
-
-		// Opted-in VPN clients and the segment reach each OTHER — the grant is symmetric, exactly
-		// like the VPN ACL (so a ticked client can initiate to the device and the device back to
-		// it). Emitted ABOVE the private-range drop below so a ticked client inside a VPN range
-		// stays reachable.
-		for _, ip := range allowed[n.ID] {
-			if net.ParseIP(ip) == nil {
+		// Blocked devices: dropped by MAC — routed traffic and traffic to the box itself (DNS, the
+		// panel) — so a static IP can't get around it, and a later device that inherits the old
+		// address isn't caught by it. These go above the established/related accept, so blocking
+		// also cuts connections that are already open.
+		for _, mac := range p.Blocked {
+			if !validMAC(mac) {
 				continue
 			}
-			for _, t := range targets {
-				for _, rule := range nftables.BidirectionalAccept(ip, t) {
+			rule := fmt.Sprintf("iifname %q ether saddr %s drop", n.Iface, mac)
+			fmt.Fprintf(&blk, "        %s\n", rule)
+			fmt.Fprintf(&in, "        %s\n", rule)
+		}
+
+		// Per-device access: each granted VPN client and that one device reach each OTHER — the grant
+		// is symmetric, like the VPN ACL. Emitted ABOVE the private-range drop below so a granted
+		// client inside a VPN range stays reachable.
+		for _, d := range p.Devices {
+			if net.ParseIP(d.IP) == nil {
+				continue
+			}
+			for _, ip := range d.Allowed {
+				if net.ParseIP(ip) == nil {
+					continue
+				}
+				for _, rule := range nftables.BidirectionalAccept(ip, d.IP) {
 					fmt.Fprintf(&fwd, "        %s\n", rule)
 				}
 			}
 		}
 
-		// Internet-out (off by default): reach the PUBLIC internet only + masquerade the subnet.
-		if n.NATEnabled && validIface(wan) {
+		// Internet-out, per device: only devices with it on reach the PUBLIC internet; the segment is
+		// masqueraded once any of them is.
+		if p.hasInternet() && validIface(wan) {
 			// Leak guard: refuse the segment → private/VPN ranges BEFORE the WAN accept, so a
 			// destination that merely routes via the WAN NIC (e.g. a datacenter 10.0.0.0/8) is
 			// dropped instead of silently masqueraded out. Its own subnet is excluded (local, and
-			// never forwarded anyway); the allow-pairs above already cleared any ticked VPN client.
+			// never forwarded anyway); the access pairs above already cleared any granted VPN client.
 			if len(privateRanges) > 0 {
 				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr @private_ranges ip daddr != %s drop\n", n.CIDR, n.CIDR)
 			}
-			for _, t := range targets {
-				fmt.Fprintf(&fwd, "        ip saddr %s oifname %q accept\n", t, wan)
+			for _, d := range p.Devices {
+				if d.Internet && net.ParseIP(d.IP) != nil {
+					fmt.Fprintf(&fwd, "        ip saddr %s oifname %q accept\n", d.IP, wan)
+				}
 			}
 			fmt.Fprintf(&nat, "        ip saddr %s oifname %q masquerade\n", n.CIDR, wan)
 		}
@@ -148,8 +198,15 @@ func renderReachability(nets []Network, allowed map[int64][]string, approved map
 	sb.WriteString(nftables.BuildSet("private_ranges", "ipv4_addr", []string{"interval", "auto-merge"}, privateRanges))
 	sb.WriteString("    chain forward {\n")
 	sb.WriteString("        type filter hook forward priority 10; policy accept;\n")
+	sb.WriteString(blk.String())
 	sb.WriteString("        ct state established,related accept\n")
 	sb.WriteString(fwd.String())
+	sb.WriteString("    }\n")
+	// Blocked devices must not reach the box itself either. A drop is final across base chains, so
+	// this holds whatever the host firewall's input chain accepts.
+	sb.WriteString("    chain input {\n")
+	sb.WriteString("        type filter hook input priority 10; policy accept;\n")
+	sb.WriteString(in.String())
 	sb.WriteString("    }\n")
 	sb.WriteString("    chain postrouting {\n")
 	sb.WriteString("        type nat hook postrouting priority 100; policy accept;\n")
