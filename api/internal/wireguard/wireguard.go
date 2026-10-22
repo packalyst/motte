@@ -59,16 +59,6 @@ type SimplePeer struct {
 	IPAddress string
 }
 
-// ListPeers returns all peers in a simple format for other services
-func (s *Service) ListPeers() []SimplePeer {
-	peers := s.peerStore.List()
-	result := make([]SimplePeer, len(peers))
-	for i, p := range peers {
-		result[i] = SimplePeer{ID: p.ID, Name: p.Name, IPAddress: p.IPAddress}
-	}
-	return result
-}
-
 // ListPeersWithStatus returns all peers with enriched online status
 func (s *Service) ListPeersWithStatus() []*Peer {
 	peers := s.peerStore.List()

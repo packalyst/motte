@@ -467,17 +467,6 @@ func (s *Service) getSetting(key string) string {
 	return v
 }
 
-// setSetting persists a fleet config value into the shared settings table (same
-// form the settings service uses).
-func (s *Service) setSetting(key, value string) error {
-	_, err := s.db.Exec(`
-		INSERT INTO settings (key, value, encrypted, updated_at)
-		VALUES (?, ?, 0, CURRENT_TIMESTAMP)
-		ON CONFLICT(key) DO UPDATE SET value = ?, encrypted = 0, updated_at = CURRENT_TIMESTAMP`,
-		key, value, value)
-	return err
-}
-
 // setSettingsTx writes several settings in one transaction, so a mid-write failure can't
 // leave a half-applied pair (e.g. the new enabled flag with the old port).
 func (s *Service) setSettingsTx(kv map[string]string) error {

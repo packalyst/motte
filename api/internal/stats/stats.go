@@ -84,8 +84,3 @@ func GetSystemStats() SystemStats {
 		WsClients:    wsClients,
 	}
 }
-
-// GetUptime returns seconds since start
-func GetUptime() int64 {
-	return int64(time.Since(startTime).Seconds())
-}

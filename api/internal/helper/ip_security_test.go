@@ -81,7 +81,7 @@ func TestIsTrustedProxy_BareIPEntry(t *testing.T) {
 	}
 }
 
-func TestIsPrivateIP_BlocksSSRFTargets(t *testing.T) {
+func TestIsPrivateIPOrCIDR_BlocksSSRFTargets(t *testing.T) {
 	blocked := []string{
 		"169.254.169.254", // cloud metadata (link-local) — the classic SSRF target
 		"169.254.0.1",     // link-local
@@ -91,17 +91,17 @@ func TestIsPrivateIP_BlocksSSRFTargets(t *testing.T) {
 		"172.16.0.1",      // private
 	}
 	for _, ip := range blocked {
-		if !IsPrivateIP(ip) {
-			t.Errorf("IsPrivateIP(%q) = false, want true (must be treated as unsafe)", ip)
+		if !IsPrivateIPOrCIDR(ip) {
+			t.Errorf("IsPrivateIPOrCIDR(%q) = false, want true (must be treated as unsafe)", ip)
 		}
 	}
 	allowed := []string{"8.8.8.8", "1.1.1.1", "203.0.113.10"}
 	for _, ip := range allowed {
-		if IsPrivateIP(ip) {
-			t.Errorf("IsPrivateIP(%q) = true, want false (public address)", ip)
+		if IsPrivateIPOrCIDR(ip) {
+			t.Errorf("IsPrivateIPOrCIDR(%q) = true, want false (public address)", ip)
 		}
 	}
-	if IsPrivateIP("not-an-ip") {
-		t.Error("IsPrivateIP on garbage must be false")
+	if IsPrivateIPOrCIDR("not-an-ip") {
+		t.Error("IsPrivateIPOrCIDR on garbage must be false")
 	}
 }

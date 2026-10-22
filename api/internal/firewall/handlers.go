@@ -1,8 +1,6 @@
 package firewall
 
 import (
-	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -10,30 +8,6 @@ import (
 	"api/internal/helper"
 	"api/internal/router"
 )
-
-// validSQLIdentifiers whitelists allowed table and column names for dynamic SQL
-// This prevents SQL injection when interpolating identifiers
-var validSQLIdentifiers = map[string]bool{
-	// Tables
-	"firewall_entries": true,
-	"jails":            true,
-	// Columns
-	"jail_name":  true,
-	"client_ip":  true,
-	"entry_type": true,
-	"source":     true,
-	"protocol":   true,
-	"value":      true,
-}
-
-// isValidSQLIdentifier checks if a table or column name is whitelisted
-func isValidSQLIdentifier(name string) bool {
-	if !validSQLIdentifiers[name] {
-		log.Printf("Warning: invalid SQL identifier rejected: %s", name)
-		return false
-	}
-	return true
-}
 
 // handleStatus returns firewall status summary
 func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -260,30 +234,6 @@ func (s *Service) getDistinctEntrySources(action string) []string {
 		if err := rows.Scan(&v); err == nil && v != "" {
 			values = append(values, v)
 		}
-	}
-	return values
-}
-
-func (s *Service) getDistinctValues(table, column string) []string {
-	if !isValidSQLIdentifier(table) || !isValidSQLIdentifier(column) {
-		return []string{}
-	}
-
-	query := fmt.Sprintf("SELECT DISTINCT %s FROM %s ORDER BY %s", column, table, column)
-
-	rows, err := s.db.Query(query)
-	if err != nil {
-		return []string{}
-	}
-	defer rows.Close()
-
-	values := []string{}
-	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
-			continue
-		}
-		values = append(values, v)
 	}
 	return values
 }

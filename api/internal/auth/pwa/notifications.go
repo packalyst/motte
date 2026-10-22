@@ -42,26 +42,6 @@ func (s *Service) SendNotificationToUser(userID int64, notif *Notification) erro
 	return nil
 }
 
-// SendNotificationToUsers sends a push notification to multiple users
-func (s *Service) SendNotificationToUsers(userIDs []int64, notif *Notification) error {
-	subs, err := s.GetSubscriptionsByUserIDs(userIDs)
-	if err != nil {
-		return err
-	}
-
-	if len(subs) == 0 {
-		return nil
-	}
-
-	payload, err := json.Marshal(notif)
-	if err != nil {
-		return err
-	}
-
-	s.sendToSubscriptions(subs, payload)
-	return nil
-}
-
 // sendToSubscriptions sends payload to multiple subscriptions concurrently
 func (s *Service) sendToSubscriptions(subs []PushSubscription, payload []byte) {
 	// Use buffered channel as semaphore
@@ -162,17 +142,4 @@ func (s *Service) NotifyNewLogin(userID int64, ip, device, currentUserAgent stri
 	if s.prefEnabled(userID, NotifyLoginNewDevice) {
 		s.deliverChannels(userID, NotifyLoginNewDevice, notif)
 	}
-}
-
-// NotifySystemAlert sends a system-wide notification to all users
-func (s *Service) NotifySystemAlert(title, message string) {
-	s.SendNotification(NotifySystemAlert, &Notification{
-		Title: title,
-		Body:  message,
-		Icon:  DefaultNotificationIcon,
-		Tag:   "system",
-		Data: map[string]string{
-			"type": "system_alert",
-		},
-	})
 }

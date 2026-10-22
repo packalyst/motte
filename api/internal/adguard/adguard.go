@@ -38,11 +38,6 @@ type Service struct {
 // Global instance for package-level helper functions
 var serviceInstance *Service
 
-// SetService sets the global service instance
-func SetService(s *Service) {
-	serviceInstance = s
-}
-
 // GetService returns the global service instance
 func GetService() *Service {
 	return serviceInstance

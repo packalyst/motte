@@ -53,7 +53,6 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 
 	svc := &Service{
 		db:           db,
-		dnsCache:     newLRUDNSCache(dnsCacheMaxSize, dnsCacheTTL),
 		blockCache:   &blockCache{ttl: 10 * time.Second},
 		jailMonitors: make(map[int64]*jailMonitor),
 		ctx:          ctx,
@@ -232,14 +231,6 @@ func (s *Service) GetSyncStatus() nftables.SyncStatus {
 		return nftables.SyncStatus{InSync: false, LastApplyError: "nftables service not initialized"}
 	}
 	return s.nft.GetSyncStatus()
-}
-
-// Stop stops the firewall service
-func (s *Service) Stop() {
-	s.cancel()
-	if s.nft != nil {
-		s.nft.Stop()
-	}
 }
 
 // Handlers returns the handler map for the router

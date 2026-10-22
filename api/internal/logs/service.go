@@ -150,13 +150,6 @@ func (s *Service) startWatcher(name string, watcher Watcher) {
 	log.Printf("Started watcher: %s", name)
 }
 
-// Stop stops all watchers and background jobs
-func (s *Service) Stop() {
-	s.cancel()
-	s.wg.Wait()
-	log.Printf("Logs service stopped")
-}
-
 // EnableWatcher enables/disables a watcher
 func (s *Service) EnableWatcher(name string, enable bool) bool {
 	s.mu.Lock()

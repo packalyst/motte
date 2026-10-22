@@ -82,11 +82,6 @@ func UpdateYAMLPath(content string, path string, value interface{}) (string, err
 	return UpdateYAMLPaths(content, []YAMLUpdate{{Path: path, Value: value}})
 }
 
-// UpdateYAMLList updates a single list (convenience wrapper)
-func UpdateYAMLList(content string, path string, values []string) (string, error) {
-	return UpdateYAMLPaths(content, []YAMLUpdate{{Path: path, ListValue: values}})
-}
-
 // GetYAMLPath gets a value at a dot-separated path in YAML content
 // Supports array indexing: "users.0.name"
 func GetYAMLPath(content string, path string) (interface{}, error) {
