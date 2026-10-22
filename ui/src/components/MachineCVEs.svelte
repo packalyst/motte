@@ -399,7 +399,7 @@
                     <tr class="border-b border-border/40 last:border-0">
                       <td class="py-1.5 pr-2 w-8">
                         {#if isOSFixable(c)}
-                          <input type="checkbox" checked={selected.has(c.pkg)} onchange={() => toggleSel(c)} class="w-4 h-4 accent-primary cursor-pointer" title="Select {c.pkg} for fixing" />
+                          <Checkbox checked={selected.has(c.pkg)} onchange={() => toggleSel(c)} title="Select {c.pkg} for fixing" />
                         {:else}
                           <span class="inline-block w-4" title={c.class === 'os-pkgs' ? 'no fix available' : 'app dependency — fix in the project'}></span>
                         {/if}

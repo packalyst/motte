@@ -3,6 +3,7 @@
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Checkbox from './Checkbox.svelte'
+  import Input from './Input.svelte'
   import AlertRules from './AlertRules.svelte'
   import ContentBlock from './ContentBlock.svelte'
   import Badge from './Badge.svelte'
@@ -387,14 +388,14 @@
         <Checkbox variant="switch" bind:checked={channels.webhookEnabled} />
       </ContentBlock>
       {#if channels.webhookEnabled}
-        <input type="password" class="kt-input w-full" bind:value={webhookInput} autocomplete="off"
+        <Input type="password" prefixIcon="link" bind:value={webhookInput} autocomplete="off"
           placeholder={hasStoredWebhook ? 'stored — leave blank to keep' : 'https://hooks.example.com/…'} />
       {/if}
       <ContentBlock title="Email" description="Needs SMTP configured by an admin in Settings">
         <Checkbox variant="switch" bind:checked={channels.emailEnabled} />
       </ContentBlock>
       {#if channels.emailEnabled}
-        <input type="email" class="kt-input w-full" bind:value={channels.email} autocomplete="off" placeholder="you@example.com" />
+        <Input type="email" prefixIcon="mail" bind:value={channels.email} autocomplete="off" placeholder="you@example.com" />
       {/if}
       <div class="flex items-center gap-2">
         <Button onclick={saveChannels} loading={savingChannels} size="sm" icon="device-floppy">Save channels</Button>

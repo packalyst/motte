@@ -5,6 +5,8 @@
   import Select from '../components/Select.svelte'
   import Icon from '../components/Icon.svelte'
   import Modal from '../components/Modal.svelte'
+  import Input from '../components/Input.svelte'
+  import StepUpFields from '../components/StepUpFields.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -261,26 +263,11 @@
 {#if showAdd}
   <Modal open={showAdd} title="Add panel user" size="sm" onclose={() => (showAdd = false)}>
     <div class="space-y-3">
-      <div class="space-y-1">
-        <label class="text-sm font-medium" for="tu-username">Username</label>
-        <div class="kt-input"><Icon name="user" class="text-muted-foreground" /><input id="tu-username" bind:value={addUsername} placeholder="at least 3 characters" autocomplete="off" /></div>
-      </div>
-      <div class="space-y-1">
-        <label class="text-sm font-medium" for="tu-password">Password</label>
-        <div class="kt-input"><Icon name="lock" class="text-muted-foreground" /><input id="tu-password" type="password" bind:value={addPassword} placeholder="8+ chars, mixed case, number, symbol" autocomplete="new-password" /></div>
-      </div>
-      <div class="space-y-1">
-        <label class="text-sm font-medium" for="tu-role">Role</label>
-        <Select id="tu-role" bind:value={addRole} options={roleOptions} />
-        <p class="text-[11px] text-muted-foreground">{ROLE_DESC[addRole]}</p>
-      </div>
-      <div class="space-y-1 pt-1 border-t border-border">
-        <label class="text-sm font-medium" for="tu-stepup">Confirm with your password</label>
-        <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="tu-stepup" type="password" bind:value={addCurrentPw} placeholder="your current password" autocomplete="current-password" /></div>
-        {#if needsTotp}
-          <label class="text-sm font-medium" for="tu-totp">Authenticator code</label>
-          <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="tu-totp" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="123456" value={addTotp} oninput={(e) => (addTotp = e.target.value.replace(/\D/g, ''))} /></div>
-        {/if}
+      <Input id="tu-username" label="Username" prefixIcon="user" bind:value={addUsername} placeholder="at least 3 characters" autocomplete="off" />
+      <Input id="tu-password" label="Password" type="password" prefixIcon="lock" bind:value={addPassword} placeholder="8+ chars, mixed case, number, symbol" autocomplete="new-password" />
+      <Select id="tu-role" label="Role" bind:value={addRole} options={roleOptions} helperText={ROLE_DESC[addRole]} />
+      <div class="pt-3 border-t border-border">
+        <StepUpFields id="tu-stepup" label="Confirm with your password" bind:password={addCurrentPw} bind:totp={addTotp} {needsTotp} onsubmit={addUser} />
       </div>
     </div>
     {#snippet footer()}
@@ -297,23 +284,13 @@
   <Modal open={!!scopeUser} title="Fleet machine scope — {scopeUser.username}" size="sm" onclose={() => (scopeUser = null)}>
     <div class="space-y-3">
       <p class="text-xs text-muted-foreground">Which fleet machines this user may see and act on. Owners and admins always see all machines.</p>
-      <div class="space-y-1">
-        <label class="text-sm font-medium" for="sc-kind">Scope</label>
-        <Select id="sc-kind" bind:value={scopeKind} options={scopeKindOptions} />
-      </div>
+      <Select id="sc-kind" label="Scope" bind:value={scopeKind} options={scopeKindOptions} />
       {#if scopeKind !== 'all'}
-        <div class="space-y-1">
-          <label class="text-sm font-medium" for="sc-values">{scopeKind === 'tag' ? 'Tags' : 'Machine IDs'} (comma-separated)</label>
-          <div class="kt-input"><Icon name="filter" class="text-muted-foreground" /><input id="sc-values" bind:value={scopeValues} placeholder={scopeKind === 'tag' ? 'prod, db' : 'id1, id2'} autocomplete="off" /></div>
-        </div>
+        <Input id="sc-values" label="{scopeKind === 'tag' ? 'Tags' : 'Machine IDs'} (comma-separated)" prefixIcon="filter"
+          bind:value={scopeValues} placeholder={scopeKind === 'tag' ? 'prod, db' : 'id1, id2'} autocomplete="off" />
       {/if}
-      <div class="space-y-1 pt-1 border-t border-border">
-        <label class="text-sm font-medium" for="sc-stepup">Confirm with your password</label>
-        <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="sc-stepup" type="password" bind:value={scopeCurrentPw} placeholder="your current password" autocomplete="current-password" /></div>
-        {#if needsTotp}
-          <label class="text-sm font-medium" for="sc-totp">Authenticator code</label>
-          <div class="kt-input"><Icon name="shield-lock" class="text-muted-foreground" /><input id="sc-totp" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="123456" value={scopeTotp} oninput={(e) => (scopeTotp = e.target.value.replace(/\D/g, ''))} /></div>
-        {/if}
+      <div class="pt-3 border-t border-border">
+        <StepUpFields id="sc-stepup" label="Confirm with your password" bind:password={scopeCurrentPw} bind:totp={scopeTotp} {needsTotp} onsubmit={saveScope} />
       </div>
     </div>
     {#snippet footer()}

@@ -9,6 +9,7 @@
   import { connect as wsConnect, disconnect as wsDisconnect, stopReconnect as wsStopReconnect } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
+  import StepUpFields from './StepUpFields.svelte'
 
   let { onLogout } = $props()
 
@@ -18,7 +19,6 @@
   let error = $state('')
   let busy = $state(false)
   let lastActivity = Date.now()
-  let pwEl = $state(null)
 
   const minutes = $derived($currentUser?.idleLockMinutes || 0)
   const needsTotp = $derived(!!$currentUser?.totpEnabled)
@@ -105,10 +105,6 @@
     }
   })
 
-  // Focus the password field as soon as the lock appears.
-  $effect(() => {
-    if (locked && pwEl) pwEl.focus()
-  })
 </script>
 
 {#if locked}
@@ -124,40 +120,7 @@
         </div>
       </div>
 
-      <div class="space-y-1.5">
-        <label class="text-sm font-medium text-foreground" for="idle-password">Password</label>
-        <div class="kt-input">
-          <Icon name="lock" class="text-muted-foreground" />
-          <input
-            bind:this={pwEl}
-            id="idle-password"
-            type="password"
-            autocomplete="current-password"
-            bind:value={password}
-            onkeydown={(e) => { if (e.key === 'Enter' && canSubmit) unlock() }}
-          />
-        </div>
-      </div>
-
-      {#if needsTotp}
-        <div class="space-y-1.5">
-          <label class="text-sm font-medium text-foreground" for="idle-totp">Authenticator code</label>
-          <div class="kt-input">
-            <Icon name="shield-lock" class="text-muted-foreground" />
-            <input
-              id="idle-totp"
-              type="text"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              maxlength="6"
-              placeholder="123456"
-              value={totp}
-              oninput={(e) => (totp = e.target.value.replace(/\D/g, ''))}
-              onkeydown={(e) => { if (e.key === 'Enter' && canSubmit) unlock() }}
-            />
-          </div>
-        </div>
-      {/if}
+      <StepUpFields id="idle" label="Password" bind:password bind:totp {needsTotp} autofocus onsubmit={unlock} />
 
       {#if error}
         <p class="text-sm text-destructive">{error}</p>
