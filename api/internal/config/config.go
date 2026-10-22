@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"os"
-	"sync"
 )
 
 // EndpointConfig represents a single endpoint configuration
@@ -93,16 +92,10 @@ type Config struct {
 	Middleware MiddlewareConfig         `json:"middleware"`
 }
 
-var (
-	config     *Config
-	configOnce sync.Once
-	configPath string
-)
+var config *Config
 
 // Load loads the configuration from the specified path
 func Load(path string) (*Config, error) {
-	configPath = path
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -137,14 +130,6 @@ func GetService(name string) *ServiceConfig {
 func IsServiceEnabled(name string) bool {
 	svc := GetService(name)
 	return svc != nil && svc.Enabled
-}
-
-// GetApp returns the application configuration
-func GetApp() *AppConfig {
-	if config == nil {
-		return nil
-	}
-	return &config.App
 }
 
 // GetFirewallConfig returns firewall-specific config with defaults

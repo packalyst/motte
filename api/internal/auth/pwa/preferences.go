@@ -1,8 +1,6 @@
 package pwa
 
-import (
-	"database/sql"
-)
+import ()
 
 // GetPreferences returns all notification preferences for a user
 // Returns defaults merged with user overrides
@@ -68,40 +66,4 @@ func (s *Service) UpdatePreferences(userID int64, prefs NotificationPreferences)
 	}
 
 	return tx.Commit()
-}
-
-// SetPreference updates a single preference
-func (s *Service) SetPreference(userID int64, prefKey NotificationType, enabled bool) error {
-	_, err := s.db.Exec(`
-		INSERT INTO users_notification_preferences (user_id, pref_key, enabled, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(user_id, pref_key) DO UPDATE SET
-			enabled = excluded.enabled,
-			updated_at = CURRENT_TIMESTAMP
-	`, userID, string(prefKey), enabled)
-	return err
-}
-
-// IsNotificationEnabled checks if a user has a specific notification type enabled
-func (s *Service) IsNotificationEnabled(userID int64, notifType NotificationType) bool {
-	var enabled bool
-	err := s.db.QueryRow(`
-		SELECT enabled
-		FROM users_notification_preferences
-		WHERE user_id = ? AND pref_key = ?
-	`, userID, string(notifType)).Scan(&enabled)
-
-	if err == sql.ErrNoRows {
-		// No row = use default
-		if defaultVal, ok := PreferenceDefaults[notifType]; ok {
-			return defaultVal
-		}
-		return true // Ultimate fallback
-	}
-
-	if err != nil {
-		return true // On error, default to enabled
-	}
-
-	return enabled
 }

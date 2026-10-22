@@ -97,18 +97,6 @@ var PreferenceDefaults = map[NotificationType]bool{
 	NotifyResourceAlert:  true,  // ON - resource threshold alerts (rules in Profile → Notifications)
 }
 
-// AllNotificationTypes returns all available notification types (for UI)
-func AllNotificationTypes() []NotificationType {
-	return []NotificationType{
-		NotifyNodeOffline,
-		NotifyNodeOnline,
-		NotifyFirewallAlert,
-		NotifyLoginNewDevice,
-		NotifySystemAlert,
-		NotifyResourceAlert,
-	}
-}
-
 // VAPIDKeys holds the VAPID key pair for Web Push
 type VAPIDKeys struct {
 	PublicKey  string `json:"publicKey"`

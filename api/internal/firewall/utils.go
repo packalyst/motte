@@ -1,11 +1,9 @@
 package firewall
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"strings"
-	"time"
 
 	"api/internal/helper"
 )
@@ -116,41 +114,4 @@ func (s *Service) isIgnoredIP(ip string) bool {
 	}
 
 	return false
-}
-
-// isPrivateIP checks if an IP is in private ranges
-func (s *Service) isPrivateIP(ip string) bool {
-	return isPrivateRange(ip)
-}
-
-// reverseDNS performs a reverse DNS lookup with caching
-func (s *Service) reverseDNS(ip string) string {
-	// Check cache first
-	if domain, found := s.dnsCache.get(ip); found {
-		return domain
-	}
-
-	// Do reverse lookup with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.config.DNSLookupTimeout)*time.Second)
-	defer cancel()
-
-	var domain string
-	done := make(chan struct{})
-	go func() {
-		names, err := net.LookupAddr(ip)
-		if err == nil && len(names) > 0 {
-			domain = strings.TrimSuffix(names[0], ".")
-		}
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-ctx.Done():
-		domain = ""
-	}
-
-	// Cache the result (even empty ones to avoid repeated lookups)
-	s.dnsCache.set(ip, domain)
-	return domain
 }

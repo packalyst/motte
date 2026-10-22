@@ -156,31 +156,6 @@ func (h *Hub) BroadcastFiltered(channel string, payload interface{}, allow func(
 	}
 }
 
-// BroadcastToAll sends a message to all connected clients
-func (h *Hub) BroadcastToAll(channel string, payload interface{}) {
-	msg := &Message{
-		Type:    channel,
-		Payload: payload,
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		log.Printf("Error marshaling broadcast message: %v", err)
-		return
-	}
-
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	for client := range h.clients {
-		select {
-		case client.send <- data:
-		default:
-			// Client buffer full, skip
-		}
-	}
-}
-
 // BroadcastToUser sends a message to all connected clients of a specific user
 func (h *Hub) BroadcastToUser(userID int64, channel string, payload interface{}) {
 	msg := &Message{

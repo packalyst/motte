@@ -248,45 +248,6 @@ func (s *Service) GetAllSubscriptionsForNotificationType(notifType NotificationT
 	return subs, nil
 }
 
-// GetSubscriptionsByUserIDs returns subscriptions for specific users
-// Optimized: uses IN clause for batch lookup
-func (s *Service) GetSubscriptionsByUserIDs(userIDs []int64) ([]PushSubscription, error) {
-	if len(userIDs) == 0 {
-		return nil, nil
-	}
-
-	// Build placeholders for IN clause
-	placeholders := make([]string, len(userIDs))
-	args := make([]interface{}, len(userIDs))
-	for i, id := range userIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-
-	query := `
-		SELECT id, user_id, device_name, endpoint, key_p256dh, key_auth, user_agent, created_at, last_used_at
-		FROM users_push_subscriptions
-		WHERE user_id IN (` + strings.Join(placeholders, ",") + `)
-	`
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var subs []PushSubscription
-	for rows.Next() {
-		sub, err := scanSubscription(rows)
-		if err != nil {
-			continue
-		}
-		subs = append(subs, *sub)
-	}
-
-	return subs, nil
-}
-
 // validPushDomains contains allowed push service domains
 var validPushDomains = []string{
 	"fcm.googleapis.com",                // Google/Android/Chrome

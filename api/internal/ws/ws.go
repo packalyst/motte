@@ -25,16 +25,6 @@ type Service struct {
 // Global serviceInstance for broadcasting from other packages
 var serviceInstance *Service
 
-// SetService sets the global service serviceInstance
-func SetService(s *Service) {
-	serviceInstance = s
-}
-
-// GetService returns the global service serviceInstance
-func GetService() *Service {
-	return serviceInstance
-}
-
 // New creates a new WebSocket service
 func New() *Service {
 	// Initialize config values
@@ -107,11 +97,6 @@ func checkOrigin(r *http.Request) bool {
 
 	log.Printf("WebSocket: origin not allowed: %s (allowed: %v)", origin, allowedOrigins)
 	return false
-}
-
-// GetHub returns the hub for external access
-func (s *Service) GetHub() *Hub {
-	return s.hub
 }
 
 // HandleWebSocket handles WebSocket upgrade requests
@@ -207,13 +192,6 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 func Broadcast(channel string, payload interface{}) {
 	if serviceInstance != nil && serviceInstance.hub != nil {
 		serviceInstance.hub.Broadcast(channel, payload)
-	}
-}
-
-// BroadcastAll sends a message to all connected clients
-func BroadcastAll(channel string, payload interface{}) {
-	if serviceInstance != nil && serviceInstance.hub != nil {
-		serviceInstance.hub.BroadcastToAll(channel, payload)
 	}
 }
 

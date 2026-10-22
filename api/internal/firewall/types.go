@@ -43,11 +43,9 @@ type blockCache struct {
 // Service handles firewall operations
 type Service struct {
 	db           *database.DB
-	dbMutex      sync.RWMutex
 	config       Config
 	configMu     sync.RWMutex // guards config writes (see handleUpdateConfig)
-	dnsCache     *lruDNSCache
-	blockCache   *blockCache // cached blocked IPs/ranges for fast lookup
+	blockCache   *blockCache  // cached blocked IPs/ranges for fast lookup
 	ctx          context.Context
 	cancel       context.CancelFunc
 	jailMonitors map[int64]*jailMonitor

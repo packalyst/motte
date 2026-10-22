@@ -91,11 +91,6 @@ func New() *Service {
 	return instance
 }
 
-// GetService returns the singleton instance
-func GetService() *Service {
-	return instance
-}
-
 // Handlers returns the handler map for the router
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{

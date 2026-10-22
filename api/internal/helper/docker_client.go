@@ -49,11 +49,6 @@ func dockerSharedTransport() *http.Transport {
 	return dockerTransport
 }
 
-// NewDockerHTTPClient creates an HTTP client configured to connect to Docker.
-func NewDockerHTTPClient() *http.Client {
-	return NewDockerHTTPClientWithTimeout(DockerClientTimeout)
-}
-
 // NewDockerHTTPClientWithTimeout returns a Docker HTTP client with a custom
 // timeout. The client struct is cheap; the pooled transport is shared.
 func NewDockerHTTPClientWithTimeout(timeout time.Duration) *http.Client {

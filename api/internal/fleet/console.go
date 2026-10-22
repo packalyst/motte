@@ -372,14 +372,6 @@ func (a *agentConn) isOwner(session string, userID int64) bool {
 	return a.owners[session] == userID
 }
 
-// clearOwner drops ownership — only when the shell actually ends (session-exit) or on teardown,
-// NOT on a mere browser detach, so the owner keeps exclusive claim on a resumable session.
-func (a *agentConn) clearOwner(session string) {
-	a.mu.Lock()
-	delete(a.owners, session)
-	a.mu.Unlock()
-}
-
 func (a *agentConn) writeToAgent(f consoleFrame) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()

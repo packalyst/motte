@@ -92,29 +92,6 @@ func (s *Service) GetLatestLocationPerDevice(userID int64) ([]DeviceLocation, er
 	return scanLocations(rows)
 }
 
-// GetLocationsByTimeRange returns locations within a time range
-// Optimized: indexed query with time bounds
-func (s *Service) GetLocationsByTimeRange(userID int64, start, end time.Time, limit int) ([]DeviceLocation, error) {
-	if limit <= 0 || limit > MaxLocationResults {
-		limit = MaxLocationResults
-	}
-
-	rows, err := s.db.Query(`
-		SELECT id, user_id, device_name, latitude, longitude, accuracy, altitude, heading, speed, recorded_at
-		FROM users_device_locations
-		WHERE user_id = ? AND recorded_at BETWEEN ? AND ?
-		ORDER BY recorded_at DESC
-		LIMIT ?
-	`, userID, start, end, limit)
-
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return scanLocations(rows)
-}
-
 // DeleteLocation removes a specific location record
 func (s *Service) DeleteLocation(userID, locationID int64) error {
 	result, err := s.db.Exec(`
@@ -134,21 +111,6 @@ func (s *Service) DeleteLocation(userID, locationID int64) error {
 	return nil
 }
 
-// DeleteOldLocations removes locations older than specified duration
-// Useful for cleanup/retention policy
-func (s *Service) DeleteOldLocations(userID int64, olderThan time.Time) (int64, error) {
-	result, err := s.db.Exec(`
-		DELETE FROM users_device_locations
-		WHERE user_id = ? AND recorded_at < ?
-	`, userID, olderThan)
-
-	if err != nil {
-		return 0, err
-	}
-
-	return result.RowsAffected()
-}
-
 // DeleteAllLocations removes all locations for a user
 func (s *Service) DeleteAllLocations(userID int64) error {
 	_, err := s.db.Exec(`
@@ -156,15 +118,6 @@ func (s *Service) DeleteAllLocations(userID int64) error {
 		WHERE user_id = ?
 	`, userID)
 	return err
-}
-
-// GetLocationCount returns total location records for a user
-func (s *Service) GetLocationCount(userID int64) (int64, error) {
-	var count int64
-	err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM users_device_locations WHERE user_id = ?
-	`, userID).Scan(&count)
-	return count, err
 }
 
 // scanLocations is a helper to scan location rows

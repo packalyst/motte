@@ -42,10 +42,6 @@ func (s *Service) getNetwork(id int64) (*Network, error) {
 	return scanNetwork(s.db.QueryRow(`SELECT `+networkCols+` FROM dhcp_networks WHERE id = ?`, id))
 }
 
-func (s *Service) getNetworkByIface(iface string) (*Network, error) {
-	return scanNetwork(s.db.QueryRow(`SELECT `+networkCols+` FROM dhcp_networks WHERE iface = ?`, iface))
-}
-
 // otherNetworks returns every network except excludeID (0 = none), for overlap validation.
 func (s *Service) otherNetworks(excludeID int64) ([]Network, error) {
 	all, err := s.listNetworks()

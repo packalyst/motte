@@ -11,10 +11,6 @@ import (
 // validMAC/validIface constrain values before they're ever written into a dnsmasq/netplan file
 // or an nft rule. A MAC is six colon-separated hex octets; an interface name is the restrictive
 // Linux set (letters, digits, and . _ - @), length-bounded, no path/space/shell metacharacters.
-var (
-	hexOctet = "[0-9a-fA-F]{2}"
-)
-
 func validMAC(s string) bool {
 	_, err := net.ParseMAC(strings.TrimSpace(s))
 	return err == nil && strings.Count(s, ":") == 5 // require EUI-48, colon form

@@ -148,18 +148,3 @@ func DockerRequest(method, path string, body []byte) (*http.Response, error) {
 
 	return getDockerClient().Do(req)
 }
-
-// DockerGet performs a GET request to Docker API
-func DockerGet(path string) (*http.Response, error) {
-	return DockerRequest("GET", path, nil)
-}
-
-// DockerPost performs a POST request to Docker API
-func DockerPost(path string, body []byte) (*http.Response, error) {
-	return DockerRequest("POST", path, body)
-}
-
-// DockerDelete performs a DELETE request to Docker API
-func DockerDelete(path string) (*http.Response, error) {
-	return DockerRequest("DELETE", path, nil)
-}

@@ -330,13 +330,6 @@ func (ps *PeerStore) List() []*Peer {
 	return list
 }
 
-// AllocateIP allocates a new IP address for a peer.
-func (ps *PeerStore) AllocateIP(ipRange string) string {
-	ps.RLock()
-	defer ps.RUnlock()
-	return ps.allocateIPLocked(ipRange)
-}
-
 // allocateIPLocked returns a free IP (or "" if the pool is exhausted). The caller
 // must hold ps (read or write); it performs no locking of its own so it can be
 // composed with an insert under a single write lock (see AllocateAndAdd).

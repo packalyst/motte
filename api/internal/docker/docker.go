@@ -816,18 +816,6 @@ func formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-// truncateCommand shortens long Docker commands for display
-func truncateCommand(cmd string) string {
-	// Remove common prefixes
-	cmd = strings.TrimPrefix(cmd, "/bin/sh -c ")
-	cmd = strings.TrimPrefix(cmd, "#(nop) ")
-
-	if len(cmd) > 80 {
-		return cmd[:77] + "..."
-	}
-	return cmd
-}
-
 // DockerInfo represents Docker daemon system info
 type DockerInfo struct {
 	Containers        int    `json:"containers"`

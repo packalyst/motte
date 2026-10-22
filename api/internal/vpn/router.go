@@ -113,11 +113,6 @@ func GetRouterStatus() RouterStatus {
 	return status
 }
 
-func checkRouteEnabled() bool {
-	enabled, _, _ := checkRouteEnabledWithInfo()
-	return enabled
-}
-
 func checkRouteEnabledWithInfo() (enabled bool, routerIP string, advertisedRoute string) {
 	routerName := helper.GetRouterName()
 	wgIPRange := helper.GetEnv("WG_IP_RANGE")

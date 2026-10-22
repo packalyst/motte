@@ -256,30 +256,3 @@ func sanitizeHostName(name string) string {
 	}
 	return result
 }
-
-// RemoveHeadscaleACL removes the Headscale ACL policy file
-func RemoveHeadscaleACL() error {
-	// Create a permissive default policy
-	defaultACL := &HeadscaleACL{
-		Hosts: map[string]string{},
-		ACLs: []ACLEntry{
-			{
-				Action: "accept",
-				Src:    []string{"*"},
-				Dst:    []string{"*:*"},
-			},
-		},
-	}
-
-	data, err := json.MarshalIndent(defaultACL, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(getHeadscaleACLPath(), data, 0644); err != nil {
-		return err
-	}
-
-	log.Printf("Reset Headscale ACL to default (allow all)")
-	return nil
-}

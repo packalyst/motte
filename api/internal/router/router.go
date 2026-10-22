@@ -952,17 +952,6 @@ func DecodeJSONOrError(w http.ResponseWriter, r *http.Request, v interface{}) bo
 	return true
 }
 
-// ExtractPathSegment extracts a specific segment from URL path after prefix
-// segmentIndex 0 = first segment after prefix
-func ExtractPathSegment(r *http.Request, prefix string, segmentIndex int) string {
-	path := strings.TrimPrefix(r.URL.Path, prefix)
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if segmentIndex >= 0 && segmentIndex < len(parts) {
-		return parts[segmentIndex]
-	}
-	return ""
-}
-
 // ExtractPathParamInt extracts a path parameter and converts to int
 // Returns the value and true if successful, or 0 and false if not
 func ExtractPathParamInt(r *http.Request, prefix string) (int64, bool) {
@@ -975,24 +964,6 @@ func ExtractPathParamInt(r *http.Request, prefix string) (int64, bool) {
 		return 0, false
 	}
 	return val, true
-}
-
-// QueryParam gets a query parameter with optional default value
-func QueryParam(r *http.Request, name, defaultValue string) string {
-	if val := r.URL.Query().Get(name); val != "" {
-		return val
-	}
-	return defaultValue
-}
-
-// QueryParamInt gets a query parameter as int with optional default value
-func QueryParamInt(r *http.Request, name string, defaultValue int) int {
-	if val := r.URL.Query().Get(name); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil {
-			return parsed
-		}
-	}
-	return defaultValue
 }
 
 // ParseIDOrError parses a string ID and sends JSON error response if invalid

@@ -530,11 +530,6 @@ func GetCurrentOverviewStats() *OverviewStats {
 	return &stats
 }
 
-// BroadcastTraffic broadcasts traffic data to subscribers
-func BroadcastTraffic(traffic interface{}) {
-	Broadcast("traffic", traffic)
-}
-
 // GetCurrentDockerContainers returns current docker containers (for sending on subscribe)
 func GetCurrentDockerContainers() []docker.Container {
 	callbackMu.RLock()

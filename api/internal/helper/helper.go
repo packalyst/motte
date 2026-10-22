@@ -64,18 +64,6 @@ func GetEnvIntOptional(key string, def int) int {
 	return def
 }
 
-// ParsePortList parses a comma-separated list of ports (e.g., "22,80,443")
-func ParsePortList(s string) []int {
-	var ports []int
-	for _, p := range strings.Split(s, ",") {
-		p = strings.TrimSpace(p)
-		if port, err := strconv.Atoi(p); err == nil {
-			ports = append(ports, port)
-		}
-	}
-	return ports
-}
-
 // ParseStringList parses a comma-separated list of strings
 func ParseStringList(s string) []string {
 	var items []string

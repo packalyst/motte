@@ -89,17 +89,7 @@ func GetRouterDataPath() string {
 	return GetEnvOptional("VPN_ROUTER_DATA", DefaultRouterDataPath)
 }
 
-// GetNFTablesACLPath returns the configured nftables ACL path
-func GetNFTablesACLPath() string {
-	return GetEnvOptional("NFTABLES_ACL_PATH", DefaultNFTablesACLPath)
-}
-
 // GetHeadscaleACLPath returns the configured Headscale ACL path
 func GetHeadscaleACLPath() string {
 	return GetEnvOptional("HEADSCALE_ACL_PATH", DefaultHeadscaleACLPath)
-}
-
-// GetOutputInterface returns the configured output interface for NAT
-func GetOutputInterface() string {
-	return GetEnvOptional("OUTPUT_INTERFACE", DefaultOutputInterface)
 }
