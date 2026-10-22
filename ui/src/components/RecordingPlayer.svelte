@@ -143,7 +143,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-2 sm:p-6" role="dialog" aria-modal="true" aria-label={'Playing recording: ' + (rec.title || 'session')}>
+<div class="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-2 sm:p-6 [&_button]:cursor-pointer [&_button:disabled]:cursor-not-allowed" role="dialog" aria-modal="true" aria-label={'Playing recording: ' + (rec.title || 'session')}>
   <div class="w-full max-w-6xl h-full max-h-[90vh] bg-[#12161d] text-[#d7dce2] border border-white/10 rounded-xl flex flex-col overflow-hidden shadow-2xl">
     <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
       <Icon name="player-play" size={14} class="text-[#58a6ff]" />
@@ -155,7 +155,8 @@
         <button onclick={() => (tabName = 'text')} class="px-2 py-1 rounded text-xs {tabName === 'text' ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white'}">Text</button>
         <button onclick={() => save(raw, rec.name, 'application/x-asciicast')} disabled={!raw} title="Download .cast" class="p-1.5 rounded text-white/60 hover:bg-white/5 disabled:opacity-30"><Icon name="download" size={14} /></button>
         <button onclick={() => save(fullText, rec.name.replace(/\.cast$/, '.txt'), 'text/plain')} disabled={!raw} title="Download .txt" class="px-1.5 py-1 rounded text-[11px] text-white/60 hover:bg-white/5 disabled:opacity-30">.txt</button>
-        <button onclick={onclose} title="Close (Esc)" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="x" size={16} /></button>
+        <button onclick={onclose} title="Close (Esc)" aria-label="Close"
+          class="ml-1 grid h-7 w-7 place-items-center rounded-lg border border-white/10 text-white/60 transition hover:border-white/20 hover:bg-white/10 hover:text-white"><Icon name="x" size={15} /></button>
       </div>
     </div>
 

@@ -2,24 +2,20 @@
   import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, confirm, setConfirmLoading } from '../stores/app.js'
   import { copyWithToast } from '../stores/helpers.js'
-  import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
+  import { parseDate, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
+  import { tailscaleUpCommand } from '$lib/nodes.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
-  import Modal from '../components/Modal.svelte'
-  import Select from '../components/Select.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import InfoCard from '../components/InfoCard.svelte'
-  import Checkbox from '../components/Checkbox.svelte'
+  import CreateAuthKeyModal from '../components/CreateAuthKeyModal.svelte'
 
   let { loading = $bindable(true) } = $props()
 
   let users = $state([])
   let authKeys = $state([])
   let showCreateModal = $state(false)
-  let createForm = $state({ user: '', reusable: false, ephemeral: false, expiration: '90' })
-  let creating = $state(false)
-  let createdKey = $state(null)
 
   // Get server URL for command display (from settings)
   let serverUrl = $state('')
@@ -73,33 +69,6 @@
     })
   )
 
-  async function createKey() {
-    if (!createForm.user) {
-      toast('Please select a user', 'error')
-      return
-    }
-    creating = true
-    try {
-      const expiration = new Date()
-      const days = parseInt(createForm.expiration)
-      expiration.setDate(expiration.getDate() + days)
-
-      const res = await apiPost('/api/hs/preauthkeys', {
-        user: createForm.user,
-        reusable: createForm.reusable,
-        ephemeral: createForm.ephemeral,
-        expiration: expiration.toISOString()
-      })
-      createdKey = res.preAuthKey
-      toast('Auth key created', 'success')
-      loadData()
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    } finally {
-      creating = false
-    }
-  }
-
   async function confirmExpireKey(key) {
     const confirmed = await confirm({
       title: 'Expire Auth Key',
@@ -140,7 +109,7 @@
     title="Pre-Authentication Keys"
     description="Generate keys to automatically register devices without manual approval. Perfect for CI/CD pipelines, containerized workloads, or bulk device onboarding."
   >
-    <Button onclick={() => { showCreateModal = true; createdKey = null }} size="sm" class="hidden sm:flex shrink-0">
+    <Button onclick={() => (showCreateModal = true)} size="sm" class="hidden sm:flex shrink-0">
       <Icon name="plus" size={16} />
       Create Key
     </Button>
@@ -152,8 +121,8 @@
     <div class="grid-cards">
       <!-- Add key card - always first -->
       <div
-        onclick={() => { showCreateModal = true; createdKey = null }}
-        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true, createdKey = null)}
+        onclick={() => (showCreateModal = true)}
+        onkeydown={(e) => e.key === 'Enter' && (showCreateModal = true)}
         role="button"
         tabindex="0"
         class="add-item-card"
@@ -232,7 +201,7 @@
             </div>
             <div class="flex items-center gap-0.5">
               {#if !key._expired && (!isUsed || key.reusable)}
-                <Button variant="ghost" size="xs" iconOnly icon="copy" tooltip="Copy command" onclick={() => copyToClipboard(`tailscale up --login-server=${serverUrl} --authkey=${key.key}`)} />
+                <Button variant="ghost" size="xs" iconOnly icon="copy" tooltip="Copy command" onclick={() => copyToClipboard(tailscaleUpCommand(serverUrl, key.key))} />
               {:else}
                 <span class="kt-btn kt-btn-ghost kt-btn-xs kt-btn-icon opacity-50 cursor-not-allowed" data-kt-tooltip>
                   <Icon name="copy-off" size={14} />
@@ -253,7 +222,7 @@
       title="No auth keys"
       description="Create keys to allow devices to join automatically"
     >
-      <Button onclick={() => { showCreateModal = true; createdKey = null }} size="sm">
+      <Button onclick={() => (showCreateModal = true)} size="sm">
         <Icon name="plus" size={14} />
         Create Key
       </Button>
@@ -261,79 +230,4 @@
   {/if}
 </div>
 
-<!-- Create Modal -->
-<Modal bind:open={showCreateModal} title={createdKey ? "Key Created" : "Create Auth Key"} size="sm">
-  {#if createdKey}
-    <div class="space-y-4">
-      <div class="flex items-center gap-3 pb-3 border-b border-border">
-        <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-success/15 text-success">
-          <Icon name="check" size={20} />
-        </div>
-        <div>
-          <p class="font-medium text-foreground">Auth Key Created</p>
-          <p class="text-xs text-muted-foreground">Copy the command below to connect a device</p>
-        </div>
-      </div>
-
-      <div>
-        <span class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 block">Command</span>
-        <code class="block text-xs font-mono break-all p-3 bg-muted rounded-lg border border-border">tailscale up --login-server={serverUrl} --authkey={createdKey.key}</code>
-      </div>
-
-      <div class="grid grid-cols-2 gap-3 text-xs">
-        <div class="p-2 bg-muted/50 rounded">
-          <span class="text-muted-foreground">User:</span>
-          <span class="text-foreground ml-1">{createdKey.user}</span>
-        </div>
-        <div class="p-2 bg-muted/50 rounded">
-          <span class="text-muted-foreground">Expires:</span>
-          <span class="text-foreground ml-1">{formatExpiryDate(createdKey.expiration)}</span>
-        </div>
-      </div>
-    </div>
-  {:else}
-    <div class="space-y-4">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Select label="User" bind:value={createForm.user}>
-          <option value="">Select user...</option>
-          {#each users as user}
-            <option value={user.name}>{user.name}</option>
-          {/each}
-        </Select>
-        <Select
-          label="Expiration"
-          bind:value={createForm.expiration}
-          options={[
-            { value: '1', label: '1 day' },
-            { value: '7', label: '7 days' },
-            { value: '30', label: '30 days' },
-            { value: '90', label: '90 days' },
-            { value: '365', label: '1 year' }
-          ]}
-        />
-      </div>
-      <div class="flex gap-4">
-        <Checkbox variant="chip" bind:checked={createForm.reusable} icon="refresh" label="Reusable" />
-        <Checkbox variant="chip" bind:checked={createForm.ephemeral} icon="clock" label="Ephemeral" color="warning" />
-      </div>
-      <div class="text-xs text-muted-foreground bg-muted/50 p-2 rounded space-y-1">
-        <p><strong>Reusable:</strong> Key can register multiple devices (e.g., CI runners)</p>
-        <p><strong>Ephemeral:</strong> Nodes auto-removed when offline (e.g., containers)</p>
-        <p class="text-[10px] opacity-75">Both can be enabled for short-lived workloads like CI/CD pipelines</p>
-      </div>
-    </div>
-  {/if}
-
-  {#snippet footer()}
-    {#if createdKey}
-      <Button copyText={`tailscale up --login-server=${serverUrl} --authkey=${createdKey.key}`} icon="copy">Copy Command</Button>
-      <Button onclick={() => { showCreateModal = false; createdKey = null; createForm = { user: '', reusable: false, ephemeral: false, expiration: '90' } }} variant="secondary">Done</Button>
-    {:else}
-      <Button onclick={() => showCreateModal = false} variant="secondary">Cancel</Button>
-      <Button onclick={createKey} disabled={creating || !createForm.user}>
-        {creating ? 'Creating...' : 'Create'}
-      </Button>
-    {/if}
-  {/snippet}
-</Modal>
-
+<CreateAuthKeyModal bind:open={showCreateModal} oncreated={loadData} />

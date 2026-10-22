@@ -14,7 +14,9 @@
   import OtpInput from '../components/OtpInput.svelte'
   import CountryFlag from '../components/CountryFlag.svelte'
   import PWASettings from '../components/PWASettings.svelte'
+  import NotificationPrefs from '../components/NotificationPrefs.svelte'
   import Passkeys from '../components/Passkeys.svelte'
+  import { passkeysSupported } from '../lib/webauthn.js'
 
   let { loading = $bindable(true) } = $props()
 
@@ -37,6 +39,10 @@
 
   // 2FA state
   let twoFactorEnabled = $state(false)
+  let anyChannel = $state(false) // a delivery channel is on (from PWASettings, for NotificationPrefs)
+  let showPasskeys = $state(false)
+  let passkeyCount = $state(0)
+  const passkeysOk = passkeysSupported()
   let show2FASetupModal = $state(false)
   let show2FADisableModal = $state(false)
   let twoFASetup = $state({ qrCode: '', secret: '' })
@@ -237,75 +243,88 @@
   {#if loading}
     <LoadingSpinner centered size="lg" />
   {:else}
-    <div class="grid gap-4 lg:grid-cols-2">
-      <!-- Account Info -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="user" size={16} />
-            Account
-          </h3>
-        </div>
-        <div class="kt-panel-body">
-          <div class="grid grid-cols-2 gap-3">
-            <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
-              <div>
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Username</div>
-                <code class="text-sm font-mono text-foreground">{user?.username || 'admin'}</code>
+    <!-- Two columns that stack independently (no gaps under short cards); sessions full width below -->
+    <div class="grid gap-4 lg:grid-cols-2 lg:items-start">
+      <div class="space-y-4">
+        <!-- Account Info -->
+        <div class="kt-panel">
+          <div class="kt-panel-header">
+            <h3 class="kt-panel-title">
+              <Icon name="user" size={16} />
+              Account
+            </h3>
+          </div>
+          <div class="kt-panel-body">
+            <div class="grid grid-cols-2 gap-3">
+              <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
+                <div>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Username</div>
+                  <code class="text-sm font-mono text-foreground">{user?.username || 'admin'}</code>
+                </div>
+                <Icon name="user" size={20} class="text-muted-foreground" />
               </div>
-              <Icon name="user" size={20} class="text-muted-foreground" />
-            </div>
-            <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
-              <div>
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Last Login</div>
-                <span class="text-sm text-foreground">{formatDate(user?.lastLogin)}</span>
+              <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
+                <div>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Last Login</div>
+                  <span class="text-sm text-foreground">{formatDate(user?.lastLogin)}</span>
+                </div>
+                <Icon name="clock" size={20} class="text-muted-foreground" />
               </div>
-              <Icon name="clock" size={20} class="text-muted-foreground" />
             </div>
           </div>
         </div>
+
+        <!-- Push Notifications: delivery channels -->
+        <PWASettings bind:anyChannel />
       </div>
-
-      <!-- Security -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="shield-lock" size={16} />
-            Security
-          </h3>
-        </div>
-        <div class="kt-panel-body grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <ContentBlock title="Password" description="Change your account password">
-            <Button size="sm" variant="secondary" icon="lock" onclick={() => showPasswordModal = true}>
-              Change
-            </Button>
-          </ContentBlock>
-
-          <ContentBlock title="Two-Factor Authentication" description={twoFactorEnabled ? 'Enabled - Your account is protected' : 'Not configured'} activeBorder={twoFactorEnabled} inactiveBorder={!twoFactorEnabled}>
-            {#if twoFactorEnabled}
-              <div class="flex items-center gap-2">
-                <Badge variant="success" size="sm">Enabled</Badge>
-                <Button size="sm" variant="ghost" icon="x" onclick={() => show2FADisableModal = true}>
-                  Disable
-                </Button>
-              </div>
-            {:else}
-              <Button size="sm" variant="secondary" icon="shield-check" onclick={start2FASetup} loading={settingUp2FA}>
-                Enable
+      <div class="space-y-4">
+        <!-- Security -->
+        <div class="kt-panel">
+          <div class="kt-panel-header">
+            <h3 class="kt-panel-title">
+              <Icon name="shield-lock" size={16} />
+              Security
+            </h3>
+          </div>
+          <div class="kt-panel-body grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <ContentBlock title="Password" description="Your sign-in password">
+              <Button size="sm" variant="secondary" icon="lock" onclick={() => showPasswordModal = true}>
+                Change
               </Button>
-            {/if}
-          </ContentBlock>
+            </ContentBlock>
+
+            <ContentBlock title="Two-Factor Authentication" description={twoFactorEnabled ? 'Your account is protected' : 'Not configured'} activeBorder={twoFactorEnabled} inactiveBorder={!twoFactorEnabled}>
+              {#if twoFactorEnabled}
+                <div class="flex items-center gap-2">
+                  <Badge variant="success" size="sm">Enabled</Badge>
+                  <Button size="sm" variant="ghost" icon="x" onclick={() => show2FADisableModal = true}>
+                    Disable
+                  </Button>
+                </div>
+              {:else}
+                <Button size="sm" variant="secondary" icon="shield-check" onclick={start2FASetup} loading={settingUp2FA}>
+                  Enable
+                </Button>
+              {/if}
+            </ContentBlock>
+
+            <ContentBlock title="Passkeys" class="sm:col-span-2" activeBorder={passkeyCount > 0}
+              description={!passkeysOk ? 'Need the panel opened over HTTPS on its domain' : passkeyCount ? `${passkeyCount} added — sign in without a password` : 'None yet — sign in with your fingerprint, face or a security key'}>
+              <Button size="sm" variant="secondary" icon="key" disabled={!passkeysOk} onclick={() => showPasskeys = true}>Manage</Button>
+            </ContentBlock>
+          </div>
         </div>
+
+        <Passkeys bind:open={showPasskeys} bind:count={passkeyCount} />
+
+        <!-- Which events notify you, and resource alert rules -->
+        <NotificationPrefs {anyChannel} />
       </div>
+    </div>
 
-      <!-- Passkeys -->
-      <Passkeys />
-
-      <!-- Push Notifications -->
-      <PWASettings />
-
-      <!-- Active Sessions - Full width -->
-      <div class="kt-panel lg:col-span-2">
+    <!-- Active Sessions - Full width -->
+    <div>
+      <div class="kt-panel">
         <div class="kt-panel-header">
           <h3 class="kt-panel-title">
             <Icon name="device-desktop" size={16} />

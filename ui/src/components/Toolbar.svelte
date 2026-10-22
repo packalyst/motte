@@ -21,7 +21,8 @@
       />
     </div>
 
-    <div class="ml-auto"></div>
+    <!-- pushes filters right on wider screens; hidden on phones so the search keeps the full row -->
+    <div class="ml-auto hidden sm:block"></div>
 
     <!-- Slot for filters/actions -->
     {#if children}

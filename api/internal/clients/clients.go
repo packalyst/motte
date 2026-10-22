@@ -12,12 +12,14 @@ package clients
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
+	"api/internal/adguard"
 	"api/internal/dhcp"
 	"api/internal/fleet"
 	"api/internal/router"
@@ -28,13 +30,16 @@ import (
 const (
 	Channel       = "clients"
 	watchInterval = 10 * time.Second
-	machineOnline = 10 * time.Minute // a machine counts as online while it reported this recently
+	machineOnline = 10 * time.Minute    // a machine counts as online while it reported this recently
+	keyWarnWithin = 14 * 24 * time.Hour // warn this long before a Tailscale node key expires
 )
 
 // Flag is a short state label shown on a client ("Key expired", "Not approved", …).
 type Flag struct {
 	Label string `json:"label"`
-	Tone  string `json:"tone"` // "destructive" | "warning"
+	Tone  string `json:"tone"`            // "destructive" | "warning"
+	Icon  string `json:"icon"`            // the card shows the icon; the label is its tooltip
+	Count int    `json:"count,omitempty"` // shown next to the icon (e.g. number of critical CVEs)
 }
 
 // Client is one device in the unified list.
@@ -49,10 +54,19 @@ type Client struct {
 	Meta     string   `json:"meta,omitempty"` // Tailscale user, machine OS, or LAN network
 	Tx       *int64   `json:"tx,omitempty"`   // bytes sent/received (VPN clients only)
 	Rx       *int64   `json:"rx,omitempty"`
-	Flags    []Flag   `json:"flags,omitempty"`
-	Tags     []string `json:"tags,omitempty"`    // Tailscale ACL tags and/or machine scoping tags
-	Pending  bool     `json:"pending,omitempty"` // LAN device waiting for approval
-	Open     OpenRef  `json:"open"`              // where each part of this client is managed
+	CPU      *float64 `json:"cpu,omitempty"` // busy %, memory and root-disk used % (machines only)
+	Mem      *float64 `json:"mem,omitempty"`
+	Disk     *float64 `json:"disk,omitempty"`
+	MAC      string   `json:"mac,omitempty"` // LAN devices only
+	// LAN devices: the active lease's end (unix seconds) and the network's lease length
+	LeaseExpires int64    `json:"lease_expires,omitempty"`
+	LeaseSecs    int      `json:"lease_secs,omitempty"`
+	Flags        []Flag   `json:"flags,omitempty"`
+	Tags         []string `json:"tags,omitempty"`     // Tailscale ACL tags and/or machine scoping tags
+	Pending      bool     `json:"pending,omitempty"`  // LAN device waiting for approval
+	Blocked      bool     `json:"blocked,omitempty"`  // LAN device blocked (no address, traffic dropped)
+	Internet     *bool    `json:"internet,omitempty"` // LAN device may route out the WAN
+	Open         OpenRef  `json:"open"`               // where each part of this client is managed
 }
 
 // OpenRef identifies the client on its own pages.
@@ -75,7 +89,12 @@ func New(v *vpn.Service, f *fleet.Service, d *dhcp.Service) *Service {
 }
 
 func (s *Service) Handlers() router.ServiceHandlers {
-	return router.ServiceHandlers{"List": s.handleList}
+	return router.ServiceHandlers{
+		"List":         s.handleList,
+		"AdblockGet":   s.handleAdblockGet,
+		"AdblockSet":   s.handleAdblockSet,
+		"AdblockAllow": s.handleAdblockAllow,
+	}
 }
 
 // GET /api/clients → {"clients":[…],"unavailable":["Machines",…]}
@@ -128,7 +147,7 @@ func (s *Service) build(machines []fleet.Machine, machinesErr error) ([]Client, 
 
 	for i := range machines {
 		m := &machines[i]
-		if merged[m.ID] || m.Status == "uninstalled" {
+		if merged[m.ID] {
 			continue
 		}
 		out = append(out, fromMachine(m))
@@ -143,6 +162,12 @@ func (s *Service) build(machines []fleet.Machine, machinesErr error) ([]Client, 
 			for _, d := range byNet[n.ID] {
 				out = append(out, fromLAN(n, d))
 			}
+		}
+	}
+
+	for i := range out {
+		if adguard.BlockingOff(out[i].Key) { // from the last known AdGuard state; no call here
+			out[i].Flags = append(out[i].Flags, Flag{"Ad blocking off", "warning", "shield-off", 0})
 		}
 	}
 
@@ -185,7 +210,7 @@ func fromVPN(c vpn.VPNClient) Client {
 		e.Open.Node = "wg-" + c.ExternalID
 		e.LastSeen = firstNonEmpty(raw.LastHandshake, raw.LastSeen)
 		if raw.Enabled != nil && !*raw.Enabled {
-			e.Flags = append(e.Flags, Flag{"Disabled", "warning"})
+			e.Flags = append(e.Flags, Flag{"Disabled", "warning", "player-pause", 0})
 		}
 	} else {
 		e.Kind, e.Key, e.Name = "tailscale", "ts:"+c.ExternalID, firstNonEmpty(raw.GivenName, raw.Name, c.Name)
@@ -193,14 +218,34 @@ func fromVPN(c vpn.VPNClient) Client {
 		e.LastSeen = raw.LastSeen
 		e.Meta = raw.User.Name
 		e.Tags = uniq(append(raw.ForcedTags, raw.ValidTags...))
-		if t, err := time.Parse(time.RFC3339, raw.Expiry); err == nil && t.Year() > 1 && t.Before(time.Now()) {
-			e.Flags = append(e.Flags, Flag{"Key expired", "destructive"})
-		}
+		e.Flags = append(e.Flags, keyExpiryFlags(raw.Expiry, time.Now())...)
 	}
 	if c.BlockInternet {
-		e.Flags = append(e.Flags, Flag{"No internet", "destructive"})
+		e.Flags = append(e.Flags, Flag{"No internet", "destructive", "world-off", 0})
 	}
 	return e
+}
+
+// keyExpiryFlags flags a Tailscale node key that has expired (the device is cut off) or expires
+// within keyWarnWithin. A zero/unparseable expiry means the key never expires.
+func keyExpiryFlags(expiry string, now time.Time) []Flag {
+	t, err := time.Parse(time.RFC3339, expiry)
+	if err != nil || t.Year() <= 1 {
+		return nil
+	}
+	left := t.Sub(now)
+	switch {
+	case left <= 0:
+		return []Flag{{"Key expired", "destructive", "key-off", 0}}
+	case left <= keyWarnWithin:
+		days := int(math.Ceil(left.Hours() / 24))
+		label := "Key expires in " + strconv.Itoa(days) + " days"
+		if days == 1 {
+			label = "Key expires within a day"
+		}
+		return []Flag{{label, "warning", "key", 0}}
+	}
+	return nil
 }
 
 func fromMachine(m *fleet.Machine) Client {
@@ -212,27 +257,47 @@ func fromMachine(m *fleet.Machine) Client {
 	}
 	if m.Summary != nil {
 		e.Meta = m.Summary.OS
+		e.CPU, e.Mem, e.Disk = &m.Summary.CPU, &m.Summary.Mem, &m.Summary.Disk
 	}
 	return e
 }
 
 func machineFlags(m *fleet.Machine) []Flag {
 	var f []Flag
-	if m.Revoked {
-		f = append(f, Flag{"Revoked", "destructive"})
+	if m.Status == "uninstalled" {
+		f = append(f, Flag{"Agent uninstalled", "warning", "plug", 0})
 	}
-	if m.Summary != nil && m.Summary.CVECritical > 0 {
-		f = append(f, Flag{strconv.Itoa(m.Summary.CVECritical) + " critical CVE", "destructive"})
+	if m.Revoked {
+		f = append(f, Flag{"Revoked", "destructive", "certificate", 0})
+	}
+	if s := m.Summary; s != nil {
+		if s.CVECritical > 0 {
+			f = append(f, Flag{strconv.Itoa(s.CVECritical) + " critical CVE", "destructive", "bug", s.CVECritical})
+		}
+		if s.Bans > 0 {
+			f = append(f, Flag{strconv.Itoa(s.Bans) + " active bans (CrowdSec)", "destructive", "skull", s.Bans})
+		}
+		if s.FIM > 0 {
+			f = append(f, Flag{strconv.Itoa(s.FIM) + " file changes (FIM)", "warning", "file-search", s.FIM})
+		}
 	}
 	return f
 }
 
 func fromLAN(n dhcp.Network, d dhcp.Client) Client {
+	internet := d.Internet
+	if d.Blocked {
+		d.LeaseExpires = 0 // its old lease may linger in the lease file, but it won't be renewed
+	}
 	e := Client{Key: "lan:" + strconv.FormatInt(d.ID, 10), Kind: "lan", Name: firstNonEmpty(d.Name, d.MAC), IP: d.IP,
-		Online: d.Online, LastSeen: d.LastSeen, Meta: n.Iface + " · " + n.CIDR,
-		Pending: !d.Approved, Open: OpenRef{NetworkID: n.ID, LanID: d.ID}}
-	if !d.Approved {
-		e.Flags = []Flag{{"Not approved", "warning"}}
+		Online: d.Online && !d.Blocked, LastSeen: d.LastSeen, Meta: n.Iface + " · " + n.CIDR, MAC: d.MAC,
+		LeaseExpires: d.LeaseExpires, LeaseSecs: n.LeaseSecs, Internet: &internet,
+		Pending: !d.Approved && !d.Blocked, Blocked: d.Blocked, Open: OpenRef{NetworkID: n.ID, LanID: d.ID}}
+	switch {
+	case d.Blocked:
+		e.Flags = []Flag{{"Blocked", "destructive", "ban", 0}}
+	case !d.Approved:
+		e.Flags = []Flag{{"Not approved", "warning", "user-question", 0}}
 	}
 	return e
 }
@@ -274,14 +339,15 @@ func (s *Service) Watch() {
 func digest(list []Client) [32]byte {
 	type key struct {
 		K, Kind, Name, IP string
-		On, Pend, M       bool
+		On, Pend, M, Blk  bool
+		Net               *bool
 		F                 []Flag
 		Meta              string
 		T                 []string
 	}
 	ks := make([]key, len(list))
 	for i, c := range list {
-		ks[i] = key{c.Key, c.Kind, c.Name, c.IP, c.Online, c.Pending, c.Machine, c.Flags, c.Meta, c.Tags}
+		ks[i] = key{c.Key, c.Kind, c.Name, c.IP, c.Online, c.Pending, c.Machine, c.Blocked, c.Internet, c.Flags, c.Meta, c.Tags}
 	}
 	b, _ := json.Marshal(ks)
 	return sha256.Sum256(b)

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"api/internal/events"
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -128,4 +130,39 @@ func (s *Service) handleSMTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		router.JSONError(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleSMTPTest sends one test email with the SAVED mail-server settings (admin). The recipient is
+// the posted address, or the caller's own notification email; sendEmail validates it, so no header
+// can be injected. The mail server's answer is returned so the admin can fix the settings. Audited.
+// POST /api/pwa/smtp/test {"to":"..."}
+func (s *Service) handleSMTPTest(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		To string `json:"to"`
+	}
+	if !router.DecodeJSONOrError(w, r, &in) {
+		return
+	}
+	to := strings.TrimSpace(in.To)
+	if to == "" {
+		if stored, err := s.GetChannels(currentUID(r)); err == nil {
+			to = stored.Email
+		}
+	}
+	if to == "" {
+		router.JSONError(w, "enter an address to send the test to", http.StatusBadRequest)
+		return
+	}
+	actor := ""
+	if p := router.CurrentUser(r); p != nil {
+		actor = p.Username
+	}
+	err := sendEmail(to, "Test email from your panel", "This is a test from your panel. If you can read it, alert emails will arrive.")
+	if err != nil {
+		events.Audit("pwa", "smtp_test_failed", events.SeverityInfo, actor, helper.GetClientIP(r), "Test email to "+to+" failed: "+err.Error())
+		router.JSONError(w, "Sending failed: "+err.Error(), http.StatusFailedDependency)
+		return
+	}
+	events.Audit("pwa", "smtp_test", events.SeverityInfo, actor, helper.GetClientIP(r), "Test email sent to "+to)
+	router.JSON(w, map[string]string{"sent_to": to})
 }

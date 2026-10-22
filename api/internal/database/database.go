@@ -365,8 +365,9 @@ func createSchema(db *sql.DB) error {
 	);
 
 	-- DHCP clients (leases/reservations), keyed by MAC (vpn_clients.name is not unique and the
-	-- name->host mapping is lossy/collision-prone; MAC is the stable key). approved gates the
-	-- 'approve' registration mode — an unapproved MAC is handed no lease.
+	-- name->host mapping is lossy/collision-prone; MAC is the stable key). approved opens the
+	-- device's firewall gate ('approve' mode); blocked denies it an address and drops its traffic
+	-- by MAC; internet lets it route out the WAN (new devices take their network's nat_enabled).
 	CREATE TABLE IF NOT EXISTS dhcp_clients (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		network_id INTEGER NOT NULL,
@@ -374,21 +375,23 @@ func createSchema(db *sql.DB) error {
 		ip TEXT DEFAULT '',
 		name TEXT DEFAULT '',
 		approved INTEGER NOT NULL DEFAULT 0,
+		blocked INTEGER NOT NULL DEFAULT 0,
+		internet INTEGER NOT NULL DEFAULT 0,
 		last_seen DATETIME,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (network_id) REFERENCES dhcp_networks(id) ON DELETE CASCADE
 	);
 
-	-- Which VPN clients may reach a managed network (default-deny: empty = nobody). Mirrors
-	-- vpn_virtual_ip_acl; enforced in the nft forward chain, never the advisory Headscale ACL.
-	CREATE TABLE IF NOT EXISTS dhcp_network_acl (
+	-- Which VPN clients may reach a LAN device, and it them (default-deny: empty = nobody).
+	-- Enforced in the nft forward chain, never the advisory Headscale ACL.
+	CREATE TABLE IF NOT EXISTS dhcp_client_acl (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		network_id INTEGER NOT NULL,
+		device_id INTEGER NOT NULL,
 		source_client_id INTEGER NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (network_id) REFERENCES dhcp_networks(id) ON DELETE CASCADE,
+		FOREIGN KEY (device_id) REFERENCES dhcp_clients(id) ON DELETE CASCADE,
 		FOREIGN KEY (source_client_id) REFERENCES vpn_clients(id) ON DELETE CASCADE,
-		UNIQUE(network_id, source_client_id)
+		UNIQUE(device_id, source_client_id)
 	);
 
 	-- VPN router status tracking
@@ -594,6 +597,29 @@ func createSchema(db *sql.DB) error {
 
 // runMigrations applies schema changes to existing databases
 func runMigrations(db *sql.DB) {
+	// LAN devices: per-device block and internet. Existing devices keep the internet access their
+	// network gave them (internet := nat_enabled), so the upgrade changes nobody's reachability.
+	var dc int
+	for _, c := range []struct{ name, ddl, after string }{
+		{"blocked", `ALTER TABLE dhcp_clients ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`, ""},
+		{"internet", `ALTER TABLE dhcp_clients ADD COLUMN internet INTEGER NOT NULL DEFAULT 0`,
+			`UPDATE dhcp_clients SET internet = COALESCE((SELECT nat_enabled FROM dhcp_networks n WHERE n.id = dhcp_clients.network_id), 0)`},
+	} {
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('dhcp_clients') WHERE name = ?`, c.name).Scan(&dc); err == nil && dc == 0 {
+			if _, err := db.Exec(c.ddl); err == nil {
+				log.Printf("Migration: added %s column to dhcp_clients", c.name)
+				if c.after != "" {
+					_, _ = db.Exec(c.after)
+				}
+			}
+		}
+	}
+	// "Who can reach" moved from whole networks to single devices. Old network-wide grants are
+	// deliberately NOT carried over: every device starts unreachable until access is granted.
+	if _, err := db.Exec(`DROP TABLE IF EXISTS dhcp_network_acl`); err != nil {
+		log.Printf("Migration: drop dhcp_network_acl: %v", err)
+	}
+
 	// Add bidirectional column to vpn_acl_rules if missing
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vpn_acl_rules') WHERE name = 'bidirectional'`).Scan(&count)

@@ -53,10 +53,11 @@ func segmentWANRules(seg, wan string) (out, back []string) {
 }
 
 // syncSegmentForward brings the Docker FORWARD punch-through in line with a network's current
-// state: open the scoped segment↔WAN path only when the network is enabled AND internet-out is on,
-// close it otherwise. It also clears the broad `-i/-o <iface>` rules an earlier version added, so
-// an upgrade tightens an already-running network without a manual cleanup.
-func syncSegmentForward(n *Network) {
+// state: open the scoped segment↔WAN path only when the network is enabled AND at least one of its
+// devices has internet access (which device may actually use it is decided in the nft
+// reachability chain), close it otherwise. It also clears the broad `-i/-o <iface>` rules an
+// earlier version added, so an upgrade tightens an already-running network without a manual cleanup.
+func syncSegmentForward(n *Network, internet bool) {
 	// Migration: drop the first implementation's broad rules if present.
 	delForward("-i", n.Iface)
 	delForward("-o", n.Iface)
@@ -64,12 +65,12 @@ func syncSegmentForward(n *Network) {
 	wan, _ := defaultRouteInterface()
 	out, back := segmentWANRules(n.Iface, wan)
 
-	if n.Enabled && n.NATEnabled && validIface(n.Iface) && validIface(wan) {
+	if n.Enabled && internet && validIface(n.Iface) && validIface(wan) {
 		ensureForward(out...)  // segment → WAN
 		ensureForward(back...) // WAN → segment (replies only)
 		return
 	}
-	// NAT off or disabled: ensure the WAN path is closed.
+	// No device with internet, or disabled: ensure the WAN path is closed.
 	delForward(out...)
 	delForward(back...)
 }

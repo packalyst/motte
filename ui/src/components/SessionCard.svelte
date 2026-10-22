@@ -3,9 +3,9 @@
   // "active sessions"). Clicking it resumes the session; the X kills it. Reused on the machine
   // Sessions tab and the dashboard resume strip. Fetches its own one-shot snapshot.
   import { onMount, onDestroy } from 'svelte'
-  import { requestSnapshot, openConsoleEvents } from '../lib/consoleEvents.js'
+  import { requestSnapshot, openConsoleEvents, sessionColor } from '../lib/consoleEvents.js'
   import Icon from './Icon.svelte'
-  import Button from './Button.svelte'
+  import GroupButton from './GroupButton.svelte'
 
   let { session, machine, onresume, onkill } = $props()
 
@@ -53,32 +53,34 @@
   })
 </script>
 
-<div class="group bg-card border border-border rounded-xl overflow-hidden hover:border-primary/40 transition">
+<!-- The left edge carries the session's colour, the same one its console tab shows. -->
+<div class="group overflow-hidden rounded-xl border border-l-[3px] border-border bg-card transition hover:shadow-md"
+  style:border-left-color={sessionColor(session.id)}>
   <!-- terminal snapshot -->
-  <button type="button" onclick={() => onresume?.(session)} title="Resume this session"
-    class="block w-full text-left bg-[#0f1419] h-28 overflow-hidden cursor-pointer">
+  <button type="button" onclick={() => onresume?.(session)} aria-label="Resume Session {session.label || ''} on {machine.name || machine.id}"
+    class="block h-28 w-full cursor-pointer overflow-hidden bg-[#0f1419] text-left">
     {#if loading}
-      <div class="h-full grid place-items-center text-white/30 text-xs">loading preview…</div>
+      <div class="grid h-full place-items-center text-xs text-white/30">loading preview…</div>
     {:else if preview}
-      <pre class="text-[9px] leading-[1.25] text-[#d7dce2] font-mono p-2 whitespace-pre overflow-hidden">{preview}</pre>
+      <pre class="overflow-hidden whitespace-pre p-2 font-mono text-[9px] leading-[1.25] text-[#d7dce2]">{preview}</pre>
     {:else}
-      <div class="h-full grid place-items-center text-white/25 text-xs">no preview</div>
+      <div class="grid h-full place-items-center text-xs text-white/25">no preview</div>
     {/if}
   </button>
-  <!-- footer -->
-  <div class="flex items-center gap-2 px-3 py-2">
-    <!-- A listed session is always alive (tmux). Green = live; dimmed when no one is attached. -->
-    <span class="w-2 h-2 rounded-full shrink-0 bg-success {session.attached ? '' : 'opacity-40'}"
-      title={session.attached ? `live · ${session.viewers} watching` : 'live · detached'}></span>
-    <button type="button" onclick={() => onresume?.(session)} class="min-w-0 flex-1 text-left cursor-pointer">
-      <div class="text-sm font-medium text-foreground truncate">Session {session.label || '?'}</div>
-      <div class="text-[11px] text-muted-foreground truncate">{machine.name || machine.id}</div>
-    </button>
-    {#if session.viewers > 0}
-      <span class="flex items-center gap-1 text-[11px] text-muted-foreground shrink-0" title="viewers">
-        <Icon name="eye" size={12} />{session.viewers}
-      </span>
-    {/if}
-    <Button variant="ghost-danger" size="xs" iconOnly icon="x" onclick={() => onkill?.(session)} title="Close session" />
+  <div class="flex items-center gap-2.5 px-3 py-2">
+    <span class="h-2 w-2 shrink-0 rounded-full" style:background-color={sessionColor(session.id)}></span>
+    <div class="min-w-0 flex-1">
+      <div class="truncate text-sm font-medium text-foreground">Session {session.label || '?'}</div>
+      <!-- A listed session is always alive (tmux); "watching" means a browser is attached right now. -->
+      <div class="flex items-center gap-1.5 truncate text-[11px] text-muted-foreground">
+        {machine.name || machine.id}
+        <span class="h-1 w-1 rounded-full bg-muted-foreground/50"></span>
+        {#if session.attached}<span class="inline-flex items-center gap-1 text-success"><Icon name="eye" size={11} />{session.viewers} watching</span>{:else}detached{/if}
+      </div>
+    </div>
+    <div class="btn-group shrink-0">
+      <GroupButton icon="terminal-2" tone="primary" tooltip="Resume session" onclick={() => onresume?.(session)} />
+      <GroupButton icon="x" tone="destructive" tooltip="Close session" onclick={() => onkill?.(session)} />
+    </div>
   </div>
 </div>

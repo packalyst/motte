@@ -41,8 +41,8 @@ func dnsmasqConfPath(iface string) (string, error) {
 // hands out addresses in BOTH modes — approval is enforced by the firewall (a per-device
 // reachability gate), NOT by withholding the lease, so a pending device still gets an IP and shows
 // up in the UI. Approved devices additionally get a dhcp-host reservation to pin a stable IP,
-// because the firewall gate keys on that IP.
-func renderDnsmasqConf(n *Network, reservations []Client) string {
+// because the firewall gate keys on that IP. Blocked devices (validated MACs) get no address.
+func renderDnsmasqConf(n *Network, reservations []Client, blocked []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Managed by wgpanel — do not edit. Network: %s (%s)\n", n.Iface, n.CIDR)
 	// Global single-value keywords (port=0, …) live ONLY in the base conf. dnsmasq loads base +
@@ -71,6 +71,9 @@ func renderDnsmasqConf(n *Network, reservations []Client) string {
 			line += "," + name
 		}
 		b.WriteString(line + "\n")
+	}
+	for _, mac := range blocked {
+		fmt.Fprintf(&b, "dhcp-host=%s,ignore\n", mac)
 	}
 	return b.String()
 }
@@ -102,11 +105,11 @@ func (s *Service) writeDnsmasqConfig(n *Network) error {
 	if err != nil {
 		return err
 	}
-	reservations, err := s.approvedReservations(n.ID)
+	reservations, blocked, err := s.dnsmasqHosts(n.ID)
 	if err != nil {
 		return err
 	}
-	content := renderDnsmasqConf(n, reservations)
+	content := renderDnsmasqConf(n, reservations, blocked)
 	if err := dnsmasqTest(content); err != nil {
 		return fmt.Errorf("generated dnsmasq config is invalid (not applied): %w", err)
 	}

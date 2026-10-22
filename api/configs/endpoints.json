@@ -21,7 +21,6 @@
       "statusCheckIntervalSec": 10,
       "channels": [
         "general_info",
-        "nodes_updated",
         "docker",
         "docker_logs",
         "stats",
@@ -1224,28 +1223,60 @@
           "description": "List DHCP clients/leases for a network"
         },
         {
-          "path": "/networks/{id}/acl",
-          "methods": [
-            "POST"
-          ],
-          "handler": "AddACL",
-          "description": "Grant a VPN client reachability to the network"
-        },
-        {
-          "path": "/networks/{id}/acl/{clientId}",
-          "methods": [
-            "DELETE"
-          ],
-          "handler": "RemoveACL",
-          "description": "Revoke a VPN client's reachability"
-        },
-        {
           "path": "/clients/{id}/approve",
           "methods": [
             "POST"
           ],
           "handler": "ApproveClient",
           "description": "Approve a DHCP client (approve mode)"
+        },
+        {
+          "path": "/clients/{id}",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetClient",
+          "description": "Get a LAN device with its live state and the VPN clients allowed to reach it"
+        },
+        {
+          "path": "/clients/{id}/block",
+          "methods": [
+            "POST"
+          ],
+          "handler": "BlockClient",
+          "description": "Block a LAN device (no address, traffic dropped by MAC)"
+        },
+        {
+          "path": "/clients/{id}/unblock",
+          "methods": [
+            "POST"
+          ],
+          "handler": "UnblockClient",
+          "description": "Unblock a LAN device"
+        },
+        {
+          "path": "/clients/{id}/internet",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "SetInternet",
+          "description": "Turn a LAN device's internet access on or off"
+        },
+        {
+          "path": "/clients/{id}/acl",
+          "methods": [
+            "POST"
+          ],
+          "handler": "AddDeviceACL",
+          "description": "Let a VPN client reach a LAN device"
+        },
+        {
+          "path": "/clients/{id}/acl/{clientId}",
+          "methods": [
+            "DELETE"
+          ],
+          "handler": "RemoveDeviceACL",
+          "description": "Revoke a VPN client's access to a LAN device"
         },
         {
           "path": "/clients/{id}",
@@ -1261,7 +1292,7 @@
             "DELETE"
           ],
           "handler": "DeleteClient",
-          "description": "Delete a DHCP client"
+          "description": "Forget an offline LAN device"
         }
       ]
     },
@@ -1276,6 +1307,34 @@
           ],
           "handler": "List",
           "description": "All clients (VPN, machines, LAN devices) merged and scope-filtered"
+        },
+        {
+          "path": "/{key}/adblock",
+          "methods": [
+            "GET"
+          ],
+          "handler": "AdblockGet",
+          "description": "A client's ad & tracker blocking state, recent blocked lookups and allowed domains",
+          "min_role": "admin"
+        },
+        {
+          "path": "/{key}/adblock",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "AdblockSet",
+          "description": "Turn ad & tracker blocking on or off for a client",
+          "min_role": "admin"
+        },
+        {
+          "path": "/{key}/adblock/allow",
+          "methods": [
+            "POST",
+            "DELETE"
+          ],
+          "handler": "AdblockAllow",
+          "description": "Allow a blocked domain for one client, or remove that exception",
+          "min_role": "admin"
         }
       ]
     },
@@ -1847,6 +1906,15 @@
           "min_role": "admin"
         },
         {
+          "path": "/smtp/test",
+          "methods": [
+            "POST"
+          ],
+          "handler": "SMTPTest",
+          "description": "Send a test email with the saved mail-server settings",
+          "min_role": "admin"
+        },
+        {
           "path": "/locations",
           "methods": [
             "GET",
@@ -2227,7 +2295,7 @@
             "GET"
           ],
           "handler": "ConsoleRecordings",
-          "description": "List a machine's session recordings (own; admins see all)",
+          "description": "List session recordings for one machine (?machine_id=) or every machine in scope (own; admins see all)",
           "min_role": "operator"
         },
         {

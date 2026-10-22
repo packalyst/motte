@@ -830,7 +830,8 @@ func checkDatabase() HealthCheck {
 	latency := time.Since(start)
 
 	if err != nil {
-		return HealthCheck{Status: "error", Message: err.Error(), Latency: latency.String()}
+		log.Printf("health: database check failed: %v", err)
+		return HealthCheck{Status: "error", Message: "query failed", Latency: latency.String()}
 	}
 
 	return HealthCheck{Status: "ok", Latency: latency.String()}
@@ -849,7 +850,9 @@ func checkHeadscale() HealthCheck {
 		if strings.Contains(err.Error(), "not configured") {
 			return HealthCheck{Status: "unconfigured", Message: "headscale not configured yet"}
 		}
-		return HealthCheck{Status: "error", Message: err.Error(), Latency: latency.String()}
+		// /health is public: the error names Headscale's internal address, so log it instead
+		log.Printf("health: headscale check failed: %v", err)
+		return HealthCheck{Status: "error", Message: "unreachable", Latency: latency.String()}
 	}
 	defer resp.Body.Close()
 

@@ -61,3 +61,27 @@ func TestDigestIgnoresTraffic(t *testing.T) {
 		t.Error("going offline must change the digest")
 	}
 }
+
+func TestKeyExpiryFlags(t *testing.T) {
+	now := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+	for _, c := range []struct {
+		expiry, want string
+	}{
+		{"0001-01-01T00:00:00Z", ""},
+		{"", ""},
+		{at(-time.Hour), "Key expired"},
+		{at(3 * time.Hour), "Key expires within a day"},
+		{at(4*24*time.Hour - time.Hour), "Key expires in 4 days"},
+		{at(14 * 24 * time.Hour), "Key expires in 14 days"},
+		{at(15 * 24 * time.Hour), ""},
+	} {
+		got := ""
+		if f := keyExpiryFlags(c.expiry, now); len(f) == 1 {
+			got = f[0].Label
+		}
+		if got != c.want {
+			t.Errorf("expiry %q: got %q, want %q", c.expiry, got, c.want)
+		}
+	}
+}

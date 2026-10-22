@@ -85,56 +85,70 @@ func (s *Service) deleteNetwork(id int64) error {
 
 // --- DHCP clients (reservations), keyed by MAC ---
 
+const clientCols = `id, network_id, mac, ip, name, approved, blocked, internet, COALESCE(last_seen,'')`
+
+func scanClient(row interface{ Scan(...any) error }) (*Client, error) {
+	var c Client
+	var approved, blocked, internet int
+	if err := row.Scan(&c.ID, &c.NetworkID, &c.MAC, &c.IP, &c.Name, &approved, &blocked, &internet, &c.LastSeen); err != nil {
+		return nil, err
+	}
+	c.Approved, c.Blocked, c.Internet = approved == 1, blocked == 1, internet == 1
+	return &c, nil
+}
+
 func (s *Service) listClients(networkID int64) ([]Client, error) {
-	rows, err := s.db.Query(`SELECT id, network_id, mac, ip, name, approved,
-		COALESCE(last_seen,'') FROM dhcp_clients WHERE network_id = ? ORDER BY ip, mac`, networkID)
+	rows, err := s.db.Query(`SELECT `+clientCols+` FROM dhcp_clients WHERE network_id = ? ORDER BY ip, mac`, networkID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Client
 	for rows.Next() {
-		var c Client
-		var approved int
-		if err := rows.Scan(&c.ID, &c.NetworkID, &c.MAC, &c.IP, &c.Name, &approved, &c.LastSeen); err != nil {
+		c, err := scanClient(rows)
+		if err != nil {
 			return nil, err
 		}
-		c.Approved = approved == 1
-		out = append(out, c)
+		out = append(out, *c)
 	}
 	return out, rows.Err()
 }
 
 func (s *Service) getClient(id int64) (*Client, error) {
-	var c Client
-	var approved int
-	err := s.db.QueryRow(`SELECT id, network_id, mac, ip, name, approved, COALESCE(last_seen,'')
-		FROM dhcp_clients WHERE id = ?`, id).Scan(&c.ID, &c.NetworkID, &c.MAC, &c.IP, &c.Name, &approved, &c.LastSeen)
-	if err != nil {
-		return nil, err
-	}
-	c.Approved = approved == 1
-	return &c, nil
+	return scanClient(s.db.QueryRow(`SELECT `+clientCols+` FROM dhcp_clients WHERE id = ?`, id))
 }
 
 // upsertClient records a seen MAC (auto-approved in "auto" mode). name is the hostname the device
 // advertised via DHCP; it seeds the display name on first sight and fills a still-empty name later,
-// but NEVER overwrites one set by hand (a reservation). It also never downgrades an approval.
+// but NEVER overwrites one set by hand (a reservation). It also never downgrades an approval and
+// never touches blocked/internet. A new device's internet access starts at its network's default.
 func (s *Service) upsertClient(networkID int64, mac, ip, name string, autoApprove bool) error {
 	mac = strings.ToLower(strings.TrimSpace(mac))
 	name = sanitizeLeaseName(name)
-	_, err := s.db.Exec(`INSERT INTO dhcp_clients (network_id, mac, ip, name, approved, last_seen)
-		VALUES (?,?,?,?,?,?)
+	_, err := s.db.Exec(`INSERT INTO dhcp_clients (network_id, mac, ip, name, approved, last_seen, internet)
+		VALUES (?,?,?,?,?,?, COALESCE((SELECT nat_enabled FROM dhcp_networks WHERE id = ?), 0))
 		ON CONFLICT(mac) DO UPDATE SET
 			ip=excluded.ip,
 			last_seen=excluded.last_seen,
 			name=CASE WHEN dhcp_clients.name IS NULL OR dhcp_clients.name='' THEN excluded.name ELSE dhcp_clients.name END`,
-		networkID, mac, ip, name, b2i(autoApprove), time.Now().UTC().Format(time.RFC3339))
+		networkID, mac, ip, name, b2i(autoApprove), time.Now().UTC().Format(time.RFC3339), networkID)
 	return err
 }
 
 func (s *Service) setClientApproved(id int64, approved bool) error {
 	_, err := s.db.Exec(`UPDATE dhcp_clients SET approved=? WHERE id=?`, b2i(approved), id)
+	return err
+}
+
+// setClientBlocked blocks or unblocks a device. Blocking also revokes its approval; unblocking
+// leaves it pending in "approve" mode (approve=false) or approved again in "auto" mode.
+func (s *Service) setClientBlocked(id int64, blocked, approved bool) error {
+	_, err := s.db.Exec(`UPDATE dhcp_clients SET blocked=?, approved=? WHERE id=?`, b2i(blocked), b2i(approved), id)
+	return err
+}
+
+func (s *Service) setClientInternet(id int64, on bool) error {
+	_, err := s.db.Exec(`UPDATE dhcp_clients SET internet=? WHERE id=?`, b2i(on), id)
 	return err
 }
 
@@ -148,31 +162,35 @@ func (s *Service) deleteClient(id int64) error {
 	return err
 }
 
-// approvedReservations returns the MAC→(ip,name) reservations dnsmasq should honour for a
-// network: approved clients that have a pinned IP. In "auto" mode everything is approved.
-func (s *Service) approvedReservations(networkID int64) ([]Client, error) {
+// dnsmasqHosts returns what a network's dnsmasq config pins per MAC: reservations for approved
+// devices with an IP (a stable address — the firewall gate keys on it), and the blocked MACs that
+// must get no address at all.
+func (s *Service) dnsmasqHosts(networkID int64) (reservations []Client, blocked []string, err error) {
 	all, err := s.listClients(networkID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	out := all[:0]
 	for _, c := range all {
-		if c.Approved && c.IP != "" && validMAC(c.MAC) {
-			out = append(out, c)
+		switch {
+		case !validMAC(c.MAC):
+		case c.Blocked:
+			blocked = append(blocked, strings.ToLower(c.MAC))
+		case c.Approved && c.IP != "":
+			reservations = append(reservations, c)
 		}
 	}
-	return out, nil
+	return reservations, blocked, nil
 }
 
-// --- per-network reachability ACL (which VPN clients may reach the segment) ---
+// --- per-device reachability ACL (which VPN clients may reach a LAN device) ---
 
-func (s *Service) listNetworkACL(networkID int64) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT source_client_id FROM dhcp_network_acl WHERE network_id = ?`, networkID)
+func (s *Service) listDeviceACL(deviceID int64) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT source_client_id FROM dhcp_client_acl WHERE device_id = ?`, deviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []int64
+	ids := []int64{}
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
@@ -183,16 +201,36 @@ func (s *Service) listNetworkACL(networkID int64) ([]int64, error) {
 	return ids, rows.Err()
 }
 
-func (s *Service) addNetworkACL(networkID, clientID int64) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO dhcp_network_acl (network_id, source_client_id)
-		VALUES (?,?)`, networkID, clientID)
+func (s *Service) addDeviceACL(deviceID, clientID int64) error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO dhcp_client_acl (device_id, source_client_id) VALUES (?,?)`, deviceID, clientID)
 	return err
 }
 
-func (s *Service) removeNetworkACL(networkID, clientID int64) error {
-	_, err := s.db.Exec(`DELETE FROM dhcp_network_acl WHERE network_id=? AND source_client_id=?`,
-		networkID, clientID)
+func (s *Service) removeDeviceACL(deviceID, clientID int64) error {
+	_, err := s.db.Exec(`DELETE FROM dhcp_client_acl WHERE device_id=? AND source_client_id=?`, deviceID, clientID)
 	return err
+}
+
+// networkACLIPs maps each device of a network to the IPs of the VPN clients allowed to reach it.
+func (s *Service) networkACLIPs(networkID int64) (map[int64][]string, error) {
+	rows, err := s.db.Query(`SELECT a.device_id, v.ip FROM dhcp_client_acl a
+		JOIN dhcp_clients d ON d.id = a.device_id
+		JOIN vpn_clients v ON v.id = a.source_client_id
+		WHERE d.network_id = ?`, networkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var id int64
+		var ip string
+		if err := rows.Scan(&id, &ip); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], ip)
+	}
+	return out, rows.Err()
 }
 
 // clientIPByID resolves a VPN client's IP for building the forward-chain allow rules.

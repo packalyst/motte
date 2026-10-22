@@ -316,9 +316,7 @@ func checkAndBroadcastOverviewStats() {
 
 // checkAndBroadcastNodes checks node status and broadcasts if changed
 func checkAndBroadcastNodes() {
-	// Skip if no subscribers for either channel
 	hasInfoSubscribers := serviceInstance.hub.ChannelSubscriberCount("general_info") > 0
-	hasNodesSubscribers := serviceInstance.hub.ChannelSubscriberCount("nodes_updated") > 0
 
 	// Call sync to refresh data from Headscale/WireGuard
 	callbackMu.RLock()
@@ -338,7 +336,7 @@ func checkAndBroadcastNodes() {
 	}
 
 	// Skip WebSocket broadcasts if no subscribers
-	if !hasInfoSubscribers && !hasNodesSubscribers {
+	if !hasInfoSubscribers {
 		return
 	}
 
@@ -352,7 +350,6 @@ func checkAndBroadcastNodes() {
 	// Compare with last stats
 	lastNodeStatsMu.RLock()
 	statsChanged := stats != lastNodeStats
-	nodeCountChanged := stats.HsNodes != lastNodeStats.HsNodes || stats.WgPeers != lastNodeStats.WgPeers
 	lastNodeStatsMu.RUnlock()
 
 	if statsChanged {
@@ -360,20 +357,12 @@ func checkAndBroadcastNodes() {
 		lastNodeStats = stats
 		lastNodeStatsMu.Unlock()
 
-		if hasInfoSubscribers {
-			log.Printf("Node status changed, broadcasting: online=%d, offline=%d, hs=%d, wg=%d",
-				stats.Online, stats.Offline, stats.HsNodes, stats.WgPeers)
-			serviceInstance.hub.Broadcast("general_info", map[string]interface{}{
-				"event": "stats",
-				"data":  stats,
-			})
-		}
-
-		// Notify nodes_updated if node counts changed
-		if nodeCountChanged && hasNodesSubscribers {
-			log.Println("Broadcasting nodes_updated notification")
-			serviceInstance.hub.Broadcast("nodes_updated", nil)
-		}
+		log.Printf("Node status changed, broadcasting: online=%d, offline=%d, hs=%d, wg=%d",
+			stats.Online, stats.Offline, stats.HsNodes, stats.WgPeers)
+		serviceInstance.hub.Broadcast("general_info", map[string]interface{}{
+			"event": "stats",
+			"data":  stats,
+		})
 	}
 }
 
@@ -478,11 +467,6 @@ func BroadcastNodeStats() {
 
 	stats := statsFn()
 
-	// Check if node counts changed (not just online/offline status)
-	lastNodeStatsMu.RLock()
-	nodeCountChanged := stats.HsNodes != lastNodeStats.HsNodes || stats.WgPeers != lastNodeStats.WgPeers
-	lastNodeStatsMu.RUnlock()
-
 	// Update last stats
 	lastNodeStatsMu.Lock()
 	lastNodeStats = stats
@@ -496,12 +480,6 @@ func BroadcastNodeStats() {
 			"event": "stats",
 			"data":  stats,
 		})
-	}
-
-	// Notify nodes_updated subscribers if node counts changed
-	if nodeCountChanged && serviceInstance.hub.ChannelSubscriberCount("nodes_updated") > 0 {
-		log.Println("Broadcasting nodes_updated notification")
-		serviceInstance.hub.Broadcast("nodes_updated", nil)
 	}
 }
 

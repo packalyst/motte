@@ -533,7 +533,9 @@ func main() {
 		clSvc := clients.New(vpnSvc, flSvc, dhcpSvc)
 		r.RegisterService("clients", clSvc.Handlers())
 		clSvc.Watch()
+		clSvc.SyncAdGuard()
 		routines.RegisterDaemon("clients-watch", "Signal the All clients page when a client appears, disappears or changes state (idles when no page is watching)")
+		routines.RegisterDaemon("clients-adguard-sync", "Every 5 minutes, remove the AdGuard entries and allow rules the panel made for clients that are gone or moved address")
 	}
 
 	// Backup & migrate: passphrase-encrypted export + faithful-replace import of the

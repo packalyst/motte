@@ -25,7 +25,8 @@
     sm: 'kt-select-sm',
     lg: ''
   };
-  const sizeClass = $derived(sizeClasses[size] || sizeClasses.sm);
+  // `in`, not ||: lg maps to '' (plain kt-select), which || would turn back into sm
+  const sizeClass = $derived(size in sizeClasses ? sizeClasses[size] : sizeClasses.sm);
 </script>
 
 {#if label || helperText}

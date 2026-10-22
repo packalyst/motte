@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, apiPostBlob, generateAdguardCredentials, confirm, stepUpConfirm } from '../stores/app.js'
+  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, apiPostBlob, generateAdguardCredentials, confirm, stepUpConfirm, hashParam, setHashParam, currentUser, hasRole } from '../stores/app.js'
   import { withTz, setDisplayTimezone } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
@@ -10,6 +10,36 @@
   import SearchableSelect from '../components/SearchableSelect.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import InfoCard from '../components/InfoCard.svelte'
+  import SectionNav from '../components/SectionNav.svelte'
+  import AgentListener from '../components/AgentListener.svelte'
+  import NetworkList from '../components/NetworkList.svelte'
+  import TeamSettings from '../components/TeamSettings.svelte'
+  import TraefikOverview from '../components/TraefikOverview.svelte'
+
+  // Left-menu sections; the open one is kept in the URL (#s=…) so a refresh or link lands on it.
+  // Team is admin-only (the server enforces it too).
+  const ALL_SECTIONS = [
+    { id: 'general', label: 'General', icon: 'settings', description: 'Your preferences, log collection and version information.' },
+    { id: 'team', label: 'Team', icon: 'users', description: "Accounts that can sign in to this panel. Roles set what each may do; owner is the break-glass role and can't be the last one removed.", minRole: 'admin' },
+    { id: 'headscale', label: 'Headscale', icon: 'server', description: 'The Headscale connection Tailscale clients use, and the VPN router.' },
+    { id: 'dns', label: 'DNS (AdGuard)', icon: 'shield-check', description: 'The AdGuard connection and DNS settings for VPN clients.' },
+    { id: 'agents', label: 'Agents', icon: 'device-desktop', description: 'The listener that machine agents connect to.' },
+    { id: 'networks', label: 'Networks', icon: 'router', description: 'Private networks the panel serves as gateway and DHCP server.' },
+    { id: 'firewall', label: 'Firewall', icon: 'wall', description: 'Open ports, the port scanner and intrusion-detection jails.' },
+    { id: 'web', label: 'Web access', icon: 'world-www', description: 'Traefik settings and what it is routing right now, plus geolocation and country blocking.' },
+    { id: 'backups', label: 'Backups', icon: 'database', description: 'Encrypted export and restore, and automatic off-host copies.' },
+    { id: 'email', label: 'Email', icon: 'mail', description: 'The mail server used to send alert emails.' },
+  ]
+  const SECTIONS = $derived(ALL_SECTIONS.filter((x) => !x.minRole || hasRole($currentUser, x.minRole)))
+  // Sections that were merged into another one: old links land on the new home.
+  const MERGED = { logs: 'general', geo: 'web' }
+  const initial = MERGED[hashParam('s')] || hashParam('s')
+  let section = $state(ALL_SECTIONS.some((x) => x.id === initial) ? initial : 'general')
+  const current = $derived(SECTIONS.find((x) => x.id === section) || SECTIONS[0])
+  function go(id) {
+    section = id
+    setHashParam('s', id === 'general' ? null : id)
+  }
   import ContentBlock from '../components/ContentBlock.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import Modal from '../components/Modal.svelte'
@@ -120,25 +150,9 @@
   let geoStatus = $state(null)
   let geoProviders = $state(null)  // Provider configs from API
   let enrichment = $state(null)    // ASN + proxy DB status
-  let enrichBusy = $state(null)    // 'asn' | 'proxy' while a download runs
 
   async function loadEnrichment() {
     try { enrichment = await apiGet('/api/geo/enrichment') } catch { enrichment = null }
-  }
-  async function downloadEnrichment(db) {
-    enrichBusy = db
-    try {
-      enrichment = await apiPost(`/api/geo/enrichment/download?db=${db}`, {})
-      toast(`${db.toUpperCase()} database downloaded`, 'success')
-    } catch (e) {
-      toast(e?.message || `Failed to download ${db} database`, 'error')
-    } finally { enrichBusy = null }
-  }
-  async function deleteEnrichment(db) {
-    try {
-      enrichment = await apiDelete(`/api/geo/enrichment?db=${db}`)
-      toast(`${db.toUpperCase()} database removed`, 'success')
-    } catch (e) { toast(e?.message || 'Failed to remove', 'error') }
   }
   let savingGeo = $state(false)
   let originalGeoSettings = $state(null)
@@ -146,13 +160,11 @@
 
   // Jails settings
   let jails = $state([])
-  let loadingJails = $state(false)
   let showJailModal = $state(false)
   let savingJail = $state(false)
 
   // Ports settings
   let ports = $state([])
-  let loadingPorts = $state(false)
   let newPort = $state('')
 
   // SSH port settings
@@ -1071,160 +1083,19 @@
   })
 </script>
 
-<div class="space-y-4">
-  <InfoCard
-    icon="settings"
-    title="Settings"
-    description="Configure your VPN admin panel. Manage Headscale connection, AdGuard integration, session preferences, and interface customization."
-  />
-
+<div>
   {#if loading}
     <LoadingSpinner centered size="lg" />
   {:else}
-    <!-- Two column grid -->
-    <div class="grid gap-4 lg:grid-cols-2">
-      <!-- Headscale Settings -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="server" size={16} />
-            Headscale
-          </h3>
-        </div>
-        <div class="kt-panel-body">
-          <div class="grid grid-cols-2 gap-3">
-            <Input
-              id="headscaleApiUrl"
-              label="Internal API URL"
-              helperText="Auto-detected from Docker"
-              type="url"
-              value={headscaleApiUrl}
-              prefixIcon="link"
-              class="text-xs bg-muted/50"
-              disabled
-            />
-            <Input
-              id="headscaleUrl"
-              label="Public URL"
-              helperText="External URL for Tailscale clients"
-              type="url"
-              bind:value={headscaleUrl}
-              placeholder="http://your-server-ip:8080"
-              prefixIcon="link"
-              class="text-xs"
-            />
-          </div>
-          <div>
-            <span class="block text-xs font-medium text-foreground mb-1">API Key</span>
-            <div class="kt-input">
-                {#if headscaleHasKey}
-                  <Icon name="check" size={14} class="text-success" />
-                  <span class="text-muted-foreground">Configured</span>
-                {:else}
-                  <Icon name="alert-circle" size={14} class="text-destructive" />
-                  <span class="text-destructive">Not configured</span>
-                {/if}
-                <span class="flex-1"></span>
-                <Button
-                  onclick={regenerateHeadscaleKey}
-                  loading={regeneratingKey}
-                  variant="ghost"
-                  size="xs"
-                  iconOnly
-                  icon="refresh"
-                  class="-me-1.5 size-6"
-                  title="Regenerate API key"
-                />
-              </div>
-          </div>
-        </div>
-        <div class="kt-panel-footer">
-          <Button
-            onclick={saveHeadscale}
-            loading={savingHeadscale}
-            disabled={!headscaleUrlChanged}
-            size="sm"
-            icon="device-floppy"
-          >
-            Save
-          </Button>
-        </div>
-      </div>
-
-      <!-- AdGuard Settings -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="shield" size={16} />
-            AdGuard Home
-          </h3>
-          <Button
-            onclick={regenerateAdguardCredentials}
-            variant="outline"
-            icon="wand"
-            title="Generate random secure credentials"
-          >
-            Generate
-          </Button>
-        </div>
-        <div class="kt-panel-body">
-          <div class="grid grid-cols-2 gap-3">
-            <Input
-              id="adguardUsername"
-              label="Username"
-              type="text"
-              bind:value={adguardUsername}
-              placeholder="admin"
-              prefixIcon="user"
-              class="text-xs"
-            />
-            <Input
-              id="adguardPassword"
-              label="Password"
-              type="password"
-              bind:value={adguardPassword}
-              placeholder="Password"
-              prefixIcon="lock"
-              class="text-xs"
-            />
-          </div>
-          <div class="grid grid-cols-2 gap-3 pt-3 border-t border-border">
-            <Input
-              label="Query Log Buffer"
-              type="number"
-              bind:value={adguardQuerylogSize}
-              prefixIcon="database"
-              class="text-xs"
-              min="1"
-            />
-            <div class="flex items-center justify-between">
-              <div>
-                <span class="text-xs font-medium text-foreground">Dashboard Access</span>
-                <p class="text-[10px] text-muted-foreground">External access to AdGuard UI</p>
-              </div>
-              <Checkbox variant="switch" bind:checked={adguardDashboardEnabled} />
-            </div>
-          </div>
-        </div>
-        <div class="kt-panel-footer">
-          <Button
-            onclick={saveAdguard}
-            loading={savingAdguard}
-            disabled={!adguardChanged}
-            size="sm"
-            icon="device-floppy"
-          >
-            Save
-          </Button>
-          {#if adguardDashboardURL}
-            <a href={adguardDashboardURL} target="_blank" rel="noopener noreferrer" class="kt-btn kt-btn-secondary kt-btn-sm">
-              <Icon name="link" size={14} />
-              Open Dashboard
-            </a>
-          {/if}
-        </div>
-      </div>
-
+    <div class="flex flex-col gap-4 lg:min-h-[calc(100dvh-8rem)] lg:flex-row">
+      <SectionNav items={SECTIONS} active={section} onselect={go} label="Settings sections" />
+      <div class="min-w-0 flex-1 space-y-4">
+      <InfoCard icon={current.icon} title={current.label} description={current.description} />
+      {#if section === 'team'}
+        <TeamSettings />
+      {/if}
+      {#if section === 'general'}
+      <div class="space-y-4">
       <!-- Session & Interface Settings -->
       <div class="kt-panel">
         <div class="kt-panel-header">
@@ -1323,7 +1194,77 @@
           </Button>
         </div>
       </div>
-
+      </div>
+      {/if}
+      {#if section === 'headscale'}
+      <div class="space-y-4">
+      <!-- Headscale Settings -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="server" size={16} />
+            Headscale
+          </h3>
+        </div>
+        <div class="kt-panel-body">
+          <div class="grid grid-cols-2 gap-3">
+            <Input
+              id="headscaleApiUrl"
+              label="Internal API URL"
+              helperText="Auto-detected from Docker"
+              type="url"
+              value={headscaleApiUrl}
+              prefixIcon="link"
+              class="text-xs bg-muted/50"
+              disabled
+            />
+            <Input
+              id="headscaleUrl"
+              label="Public URL"
+              helperText="External URL for Tailscale clients"
+              type="url"
+              bind:value={headscaleUrl}
+              placeholder="http://your-server-ip:8080"
+              prefixIcon="link"
+              class="text-xs"
+            />
+          </div>
+          <div>
+            <span class="block text-xs font-medium text-foreground mb-1">API Key</span>
+            <div class="kt-input">
+                {#if headscaleHasKey}
+                  <Icon name="check" size={14} class="text-success" />
+                  <span class="text-muted-foreground">Configured</span>
+                {:else}
+                  <Icon name="alert-circle" size={14} class="text-destructive" />
+                  <span class="text-destructive">Not configured</span>
+                {/if}
+                <span class="flex-1"></span>
+                <Button
+                  onclick={regenerateHeadscaleKey}
+                  loading={regeneratingKey}
+                  variant="ghost"
+                  size="xs"
+                  iconOnly
+                  icon="refresh"
+                  class="-me-1.5 size-6"
+                  title="Regenerate API key"
+                />
+              </div>
+          </div>
+        </div>
+        <div class="kt-panel-footer">
+          <Button
+            onclick={saveHeadscale}
+            loading={savingHeadscale}
+            disabled={!headscaleUrlChanged}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
+        </div>
+      </div>
       <!-- Cross-Network Router -->
       <div class="kt-panel">
         <div class="kt-panel-header">
@@ -1378,7 +1319,453 @@
           {/if}
         </div>
       </div>
+      </div>
+      {/if}
+      {#if section === 'dns'}
+      <div class="space-y-4">
+      <!-- AdGuard Settings -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="shield" size={16} />
+            AdGuard Home
+          </h3>
+          <Button
+            onclick={regenerateAdguardCredentials}
+            variant="outline"
+            icon="wand"
+            title="Generate random secure credentials"
+          >
+            Generate
+          </Button>
+        </div>
+        <div class="kt-panel-body">
+          <div class="grid grid-cols-2 gap-3">
+            <Input
+              id="adguardUsername"
+              label="Username"
+              type="text"
+              bind:value={adguardUsername}
+              placeholder="admin"
+              prefixIcon="user"
+              class="text-xs"
+            />
+            <Input
+              id="adguardPassword"
+              label="Password"
+              type="password"
+              bind:value={adguardPassword}
+              placeholder="Password"
+              prefixIcon="lock"
+              class="text-xs"
+            />
+          </div>
+          <div class="grid grid-cols-2 gap-3 pt-3 border-t border-border">
+            <Input
+              label="Query Log Buffer"
+              type="number"
+              bind:value={adguardQuerylogSize}
+              prefixIcon="database"
+              class="text-xs"
+              min="1"
+            />
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-xs font-medium text-foreground">Dashboard Access</span>
+                <p class="text-[10px] text-muted-foreground">External access to AdGuard UI</p>
+              </div>
+              <Checkbox variant="switch" bind:checked={adguardDashboardEnabled} />
+            </div>
+          </div>
+        </div>
+        <div class="kt-panel-footer">
+          <Button
+            onclick={saveAdguard}
+            loading={savingAdguard}
+            disabled={!adguardChanged}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
+          {#if adguardDashboardURL}
+            <a href={adguardDashboardURL} target="_blank" rel="noopener noreferrer" class="kt-btn kt-btn-secondary kt-btn-sm">
+              <Icon name="link" size={14} />
+              Open Dashboard
+            </a>
+          {/if}
+        </div>
+      </div>
+      </div>
+      {/if}
+      {#if section === 'agents'}
+      <div class="space-y-4">
+      <AgentListener />
+      </div>
+      {/if}
+      {#if section === 'networks'}
+      <div class="space-y-4">
+      <NetworkList />
+      </div>
+      {/if}
+      {#if section === 'firewall'}
+      <div class="space-y-4">
+      <!-- Allowed ports + port scanner side by side on wide screens -->
+      <div class="grid gap-4 xl:grid-cols-2">
+      <!-- Allowed Ports -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="lock" size={16} />
+            Allowed Ports
+          </h3>
+          <Input
+            type="number"
+            bind:value={newPort}
+            placeholder="Port"
+            prefixIcon="plug"
+            suffixAddonBtn={{ icon: "plus", onclick: addPort }}
+            class="w-32"
+            min="1"
+            max="65535"
+            onkeydown={(e) => e.key === 'Enter' && addPort()}
+          />
+        </div>
+        <div class="kt-panel-body">
+          <p class="text-[10px] text-muted-foreground mb-3">
+            Firewall ports allowed for incoming connections.
+          </p>
+          {#if sortedPorts.length > 0}
+            <!-- New input-based layout -->
+            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3">
+              {#each sortedPorts as p}
+                {@const serviceName = p.service || (p.port === 22 ? 'SSH' : p.port === 80 ? 'HTTP' : p.port === 443 ? 'HTTPS' : p.port === 51820 ? 'WireGuard' : '')}
+                {@const isPublic = p.scope !== 'private'}
+                {@const svc = serviceName ? serviceName + ' — ' : ''}
+                {@const lockBtn = {
+                  icon: isPublic ? 'lock-open' : 'lock',
+                  onclick: () => toggleScope(p),
+                  tooltip: isPublic
+                    ? `${svc}Public: reachable from the internet. Click to make private (VPN & LAN only).`
+                    : `${svc}Private: VPN & LAN only. Click to make public (reachable from the internet).`
+                }}
+                {#if !p.lockable}
+                  <!-- Docker-published: reachability is Docker's (DNAT), not our allow-set — static lock. -->
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    suffixAddonIcon={{ icon: "lock", tooltip: `Managed by Docker${serviceName ? ': ' + serviceName : ''}` }}
+                  />
+                {:else if p.essential}
+                  <!-- Essential: can't be removed, but can be made public/private. Group colour shows the state. -->
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    suffixAddonBtn={lockBtn}
+                    class={isPublic ? 'kt-input-group-success' : 'kt-input-group-destructive'}
+                  />
+                {:else}
+                  <!-- Normal: scope lock (right) + remove (left). -->
+                  <Input
+                    value={p.port}
+                    disabled
+                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
+                    prefixAddonBtn={{
+                      icon: "trash",
+                      onclick: () => confirmRemovePort(p.port, p.protocol),
+                      tooltip: "Remove port"
+                    }}
+                    suffixAddonBtn={lockBtn}
+                    class={isPublic ? 'kt-input-group-success' : 'kt-input-group-destructive'}
+                  />
+                {/if}
+              {/each}
+            </div>
+          {:else}
+            <p class="text-xs text-muted-foreground italic">No ports configured</p>
+          {/if}
+        </div>
+      </div>
+      <!-- Port Scanner Settings -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="scan" size={16} />
+            Port Scanner
+          </h3>
+        </div>
+        <div class="kt-panel-body">
+          <p class="text-[10px] text-muted-foreground">
+            Default settings for scanning VPN client ports in Domain Routes.
+          </p>
+          <div class="grid grid-cols-2 gap-3">
+            <Input
+              label="Port Start"
+              type="number"
+              bind:value={scannerSettings.portStart}
+              min="1"
+              max="65535"
+              prefixIcon="player-play"
+              class="text-xs"
+            />
+            <Input
+              label="Port End"
+              type="number"
+              bind:value={scannerSettings.portEnd}
+              min="1"
+              max="65535"
+              prefixIcon="player-stop"
+              class="text-xs"
+            />
+            <Input
+              label="Concurrent"
+              type="number"
+              bind:value={scannerSettings.concurrent}
+              min="10"
+              max="500"
+              prefixIcon="layers-subtract"
+              class="text-xs"
+            />
+            <Input
+              label="Pause (ms)"
+              type="number"
+              bind:value={scannerSettings.pauseMs}
+              min="0"
+              max="1000"
+              prefixIcon="player-pause"
+              class="text-xs"
+            />
+            <Input
+              label="Timeout (ms)"
+              type="number"
+              bind:value={scannerSettings.timeoutMs}
+              min="100"
+              max="5000"
+              prefixIcon="clock"
+              class="text-xs"
+            />
+          </div>
+        </div>
+        <div class="kt-panel-footer">
+          <Button
+            onclick={saveScanner}
+            loading={savingScanner}
+            disabled={!scannerHasChanges}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+      </div>
+      <!-- Jails (Intrusion Detection) -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="shield-lock" size={16} />
+            Jails
+          </h3>
+          <div class="kt-btn-group">
+            <Button onclick={openSSHModal} variant="outline" icon="key">
+              SSH: {sshPort}
+            </Button>
+            <Button onclick={openCreateJail} variant="outline" icon="plus">
+              Add Jail
+            </Button>
+          </div>
+        </div>
+        <div class="kt-panel-body">
+          <p class="text-[10px] text-muted-foreground mb-3">
+            Intrusion detection - automatically block IPs based on log patterns.
+          </p>
+          {#if jails.length > 0}
+            <div class="space-y-2">
+              {#each jails as jail}
+                <div class="flex items-center justify-between p-2 rounded border border-border {!jail.enabled && 'opacity-50'}">
+                  <div class="flex items-center gap-2">
+                    <!-- Status indicator (not clickable) -->
+                    <div class="flex h-6 w-6 items-center justify-center rounded {jail.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
+                      <Icon name={jail.enabled ? 'shield-check' : 'shield'} size={14} />
+                    </div>
+                    <div>
+                      <span class="text-xs font-medium text-foreground capitalize">{jail.name}</span>
+                      <div class="text-[10px] text-muted-foreground">
+                        {jail.maxRetry} retries / {formatBanTime(jail.findTime)} → ban {formatBanTime(jail.banTime)}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    {#if jail.currentlyBanned > 0}
+                      <Badge variant="destructive" size="sm">{jail.currentlyBanned} banned</Badge>
+                    {/if}
+                    <div class="kt-btn-group">
+                      {#if jail.enabled}
+                        <Button onclick={() => toggleJail(jail)} variant="destructive" size="xs" icon="player-stop" tooltip="Stop" />
+                      {:else}
+                        <Button onclick={() => toggleJail(jail)} variant="success" size="xs" icon="player-play" tooltip="Start" />
+                      {/if}
+                      <Button onclick={() => openEditJail(jail)} variant="outline" size="xs" icon="edit" tooltip="Edit" />
+                      <Button onclick={() => deleteJail(jail)} variant="outline" size="xs" icon="trash" tooltip="Delete" />
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-xs text-muted-foreground italic">No jails configured</p>
+          {/if}
+        </div>
+      </div>
+      </div>
+      {/if}
+      {#if section === 'web'}
+      <div class="space-y-4">
+      <!-- Traefik Settings - Full width -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="route" size={16} />
+            Traefik
+          </h3>
+        </div>
+        <div class="kt-panel-body space-y-4">
+          <!-- Rate Limiting -->
+          <div>
+            <ContentBlock variant="header" title="Rate Limiting" />
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <Input
+                  label="Standard (req/s)"
+                  type="number"
+                  bind:value={traefikForm.rateLimitAverage}
+                  prefixIcon="gauge"
+                  class="text-xs"
+                  min="1"
+                />
+                <Input
+                  label="Standard Burst"
+                  type="number"
+                  bind:value={traefikForm.rateLimitBurst}
+                  prefixIcon="bolt"
+                  class="text-xs"
+                  min="1"
+                />
+                <Input
+                  label="Strict (req/s)"
+                  type="number"
+                  bind:value={traefikForm.strictRateAverage}
+                  prefixIcon="gauge"
+                  class="text-xs"
+                  min="1"
+                />
+                <Input
+                  label="Strict Burst"
+                  type="number"
+                  bind:value={traefikForm.strictRateBurst}
+                  prefixIcon="bolt"
+                  class="text-xs"
+                  min="1"
+                />
+              </div>
+            </div>
 
+          <!-- Access Control: two columns so the switches fill the width -->
+          <div>
+            <ContentBlock variant="header" title="Access Control" />
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+              <ContentBlock title="Dashboard" description="Port 8080 (restart required)">
+                <Checkbox variant="switch" bind:checked={traefikForm.dashboardEnabled} />
+              </ContentBlock>
+              <ContentBlock title="VPN-Only Mode" description="Restrict access to VPN clients">
+                <div class="flex items-center gap-2">
+                  {#if vpnOnlyLoading}
+                    <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                  {/if}
+                  <Select
+                    value={vpnOnlyMode}
+                    options={[
+                      { value: 'off', label: 'Disabled' },
+                      { value: '403', label: '403 Forbidden' },
+                      { value: 'silent', label: 'Silent Drop' }
+                    ]}
+                    onchange={(e) => setVPNOnlyMode(e.target.value)}
+                    disabled={vpnOnlyLoading}
+                  />
+                </div>
+              </ContentBlock>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-3 mt-3">
+              <ContentBlock title="Enforce Firewall on Proxied Traffic" description="Apply the firewall block list at the proxy, so blocks work behind Cloudflare too">
+                <div class="flex items-center gap-2">
+                  {#if fwBlockLoading}
+                    <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                  {/if}
+                  <Checkbox variant="switch" bind:checked={fwBlockEnabled} disabled={fwBlockLoading} onchange={() => setFWBlock(fwBlockEnabled)} />
+                </div>
+              </ContentBlock>
+              <ContentBlock title="Direct IP Access" description={apiDirectAccessDomainSet ? "Reach the panel by the server's raw IP. Turn off once you use your domain — drops the panel API port from the public internet (localhost, Traefik and WireGuard still work)." : 'Set up a domain (SSL_DOMAIN or ADMIN_DOMAIN) first — without one, closing IP access would lock you out.'}>
+                <div class="flex items-center gap-2">
+                  {#if apiAccessLoading}
+                    <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                  {/if}
+                  <Checkbox variant="switch" bind:checked={apiDirectAccess} disabled={apiAccessLoading || (!apiDirectAccessDomainSet && apiDirectAccess)} onchange={() => setApiDirectAccess(apiDirectAccess)} />
+                </div>
+              </ContentBlock>
+              <ContentBlock title="Cloudflare-Only Web Access" description={webCloudflareOnlyAvailable ? "Allow only Cloudflare to reach the web ports (80/443). Blocks anyone hitting the raw server IP to bypass Cloudflare (localhost, Traefik and WireGuard still work)." : 'Available only when your domain is proxied through Cloudflare (set at setup).'}>
+                <div class="flex items-center gap-2">
+                  {#if cfOnlyLoading}
+                    <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                  {/if}
+                  <Checkbox variant="switch" bind:checked={webCloudflareOnly} disabled={cfOnlyLoading || (!webCloudflareOnlyAvailable && !webCloudflareOnly)} onchange={() => setWebCloudflareOnly(webCloudflareOnly)} />
+                </div>
+              </ContentBlock>
+            </div>
+          </div>
+
+          <!-- IP Allowlist - Full width -->
+          <div class="border-t border-border pt-3">
+            <h4 class="text-xs font-medium text-foreground mb-2">Sentinel VPN Middleware</h4>
+            <Input
+              type="text"
+              bind:value={traefikForm.newIP}
+              prefixIcon="network"
+              placeholder="e.g., 192.168.1.0/24"
+              class="text-xs"
+              suffixAddonBtn={{ icon: "plus", label: "Add", onclick: addTraefikIP }}
+              onkeydown={(e) => e.key === 'Enter' && addTraefikIP()}
+            />
+            {#if traefikForm.ipAllowlist.length > 0}
+              <div class="flex flex-wrap gap-1.5 pt-2">
+                {#each traefikForm.ipAllowlist as ip}
+                  <div class="flex items-center gap-1 px-2 py-0.5 bg-muted rounded text-xs">
+                    <code>{ip}</code>
+                    <button type="button" onclick={() => removeTraefikIP(ip)} class="p-0.5 hover:text-destructive cursor-pointer" title="Remove" aria-label="Remove {ip}"><Icon name="x" size={12} /></button>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-[10px] text-muted-foreground italic pt-2">No IP ranges configured</p>
+            {/if}
+          </div>
+        </div>
+        <div class="kt-panel-footer justify-end">
+          <Button
+            onclick={saveTraefik}
+            loading={savingTraefik}
+            disabled={!traefikHasChanges}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+      </div>
+      {/if}
+      {#if section === 'general'}
+      <div class="space-y-4">
       <!-- Logs Watchers -->
       <div class="kt-panel">
         <div class="kt-panel-header">
@@ -1459,208 +1846,226 @@
           {/if}
         </div>
       </div>
-
-      <!-- Jails (Intrusion Detection) -->
+      </div>
+      {/if}
+      {#if section === 'general'}
+      <div class="space-y-4">
+      <!-- About - Full width -->
       <div class="kt-panel">
         <div class="kt-panel-header">
           <h3 class="kt-panel-title">
-            <Icon name="shield-lock" size={16} />
-            Jails
+            <Icon name="info-circle" size={16} />
+            About
           </h3>
-          <div class="kt-btn-group">
-            <Button onclick={openSSHModal} variant="outline" icon="key">
-              SSH: {sshPort}
-            </Button>
-            <Button onclick={openCreateJail} variant="outline" icon="plus">
-              Add Jail
-            </Button>
+        </div>
+        <div class="kt-panel-body flex items-center justify-between !py-3">
+          <div class="text-xs text-muted-foreground">
+            <p class="font-medium text-foreground">Wire Panel</p>
+            <p class="mt-0.5">Headscale + WireGuard management interface</p>
+          </div>
+          <div class="text-[10px] text-muted-foreground text-right">
+            <p>Built with Svelte 5</p>
+            <p>Tailwind CSS v4 + KTUI</p>
+            <div class="flex items-center justify-end gap-3 mt-2">
+              <a href="https://www.maxmind.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                <span data-kt-tooltip-content class="kt-tooltip hidden">MaxMind GeoLite2</span>
+              </a>
+              <a href="https://www.ip2location.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                <span data-kt-tooltip-content class="kt-tooltip hidden">IP2Location Lite</span>
+              </a>
+              <a href="https://www.ipdeny.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="8" y1="8" x2="16" y2="16"/><line x1="16" y1="8" x2="8" y2="16"/></svg>
+                <span data-kt-tooltip-content class="kt-tooltip hidden">IPDeny Zone Files</span>
+              </a>
+            </div>
           </div>
         </div>
+      </div>
+      </div>
+      {/if}
+      {#if section === 'web'}
+      <div class="space-y-4">
+      <!-- Geolocation Settings - Full width -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="world" size={16} />
+            Geolocation
+          </h3>
+        </div>
         <div class="kt-panel-body">
-          <p class="text-[10px] text-muted-foreground mb-3">
-            Intrusion detection - automatically block IPs based on log patterns.
-          </p>
-          {#if jails.length > 0}
-            <div class="space-y-2">
-              {#each jails as jail}
-                <div class="flex items-center justify-between p-2 rounded border border-border {!jail.enabled && 'opacity-50'}">
-                  <div class="flex items-center gap-2">
-                    <!-- Status indicator (not clickable) -->
-                    <div class="flex h-6 w-6 items-center justify-center rounded {jail.enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                      <Icon name={jail.enabled ? 'shield-check' : 'shield'} size={14} />
+            <!-- Two columns: IP Lookup + Toggles -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <!-- IP Lookup Provider -->
+              <div>
+                <ContentBlock variant="header" title="IP Lookup Provider" />
+                <Select
+                  label="Provider"
+                  bind:value={geoSettings.lookup_provider}
+                  options={[
+                    { value: 'none', label: 'None (disabled)' },
+                    { value: 'maxmind', label: 'MaxMind GeoLite2' },
+                    { value: 'ip2location', label: 'IP2Location Lite' }
+                  ]}
+                />
+                {#if geoSettings.lookup_provider === 'maxmind'}
+                  <div class="mt-3">
+                    <Input
+                      label="License Key"
+                      type="password"
+                      bind:value={geoSettings.maxmind_license_key}
+                      placeholder="Your MaxMind license key"
+                      prefixIcon="key"
+                      helperText="Free at maxmind.com/en/geolite2/signup"
+                    />
+                  </div>
+                {:else if geoSettings.lookup_provider === 'ip2location'}
+                  <div class="space-y-3 mt-3">
+                    <Select
+                      label="Database Variant"
+                      bind:value={geoSettings.ip2location_variant}
+                      options={geoProviders?.ip2location?.variants?.map(v => ({ value: v.id, label: `${v.name}` })) || [{ value: 'DB1', label: 'DB1 - Country' }]}
+                    />
+                    <Input
+                      label="Download Token"
+                      type="password"
+                      bind:value={geoSettings.ip2location_token}
+                      placeholder="Your IP2Location download token"
+                      prefixIcon="key"
+                      helperText="Required. Get at ip2location.com/register"
+                    />
+                  </div>
+                  <!-- Owner (ASN) enrichment toggle — sits under the Download Token -->
+                  <ContentBlock title="Owner (ASN)" description="Who owns each IP" class="mt-3">
+                    <Checkbox variant="switch" bind:checked={geoSettings.asn_enabled} />
+                  </ContentBlock>
+                {/if}
+
+                <!-- All database statuses in one place -->
+                {#if geoSettings.lookup_provider !== 'none'}
+                  <div class="mt-3 p-2 bg-muted/50 rounded text-[10px] space-y-1">
+                    <div class="font-medium text-muted-foreground uppercase tracking-wide">Databases</div>
+                    <div class="flex items-center justify-between gap-2">
+                      <span>Country</span>
+                      {#if geoStatus?.providers?.[geoSettings.lookup_provider]?.available}
+                        <span class="text-success">{(geoStatus.providers[geoSettings.lookup_provider].file_size / 1024 / 1024).toFixed(1)}MB{#if geoStatus.providers[geoSettings.lookup_provider].last_update} · {geoStatus.providers[geoSettings.lookup_provider].last_update}{/if}</span>
+                      {:else}
+                        <span class="text-warning">not downloaded</span>
+                      {/if}
                     </div>
-                    <div>
-                      <span class="text-xs font-medium text-foreground capitalize">{jail.name}</span>
-                      <div class="text-[10px] text-muted-foreground">
-                        {jail.maxRetry} retries / {formatBanTime(jail.findTime)} → ban {formatBanTime(jail.banTime)}
+                    {#if geoSettings.lookup_provider === 'ip2location' && geoSettings.asn_enabled}
+                      <div class="flex items-center justify-between gap-2">
+                        <span>Owner (ASN)</span>
+                        {#if enrichment?.asn?.available}
+                          <span class="text-success">{(enrichment.asn.file_size / 1024 / 1024).toFixed(1)}MB{#if enrichment.asn.loaded} · {enrichment.asn.ranges.toLocaleString()} ranges{/if}</span>
+                        {:else}
+                          <span class="text-warning">not downloaded</span>
+                        {/if}
+                      </div>
+                    {/if}
+                    {#if geoSettings.lookup_provider === 'ip2location' && geoSettings.proxy_enabled}
+                      <div class="flex items-center justify-between gap-2">
+                        <span>Proxy / VPN</span>
+                        {#if enrichment?.proxy?.available}
+                          <span class="text-success">{(enrichment.proxy.file_size / 1024 / 1024).toFixed(1)}MB{#if enrichment.proxy.loaded} · {enrichment.proxy.ranges.toLocaleString()} ranges{/if}</span>
+                        {:else}
+                          <span class="text-warning">not downloaded</span>
+                        {/if}
+                      </div>
+                    {/if}
+                    <div class="text-muted-foreground pt-0.5">Turn on what you want, Save, then "Update Now" downloads everything enabled.</div>
+                  </div>
+                {/if}
+
+              </div>
+
+              <!-- Toggles -->
+              <div class="space-y-3">
+                <ContentBlock variant="header" title="Options" />
+                <ContentBlock title="Country Blocking" description="Block traffic using IPDeny zone files">
+                  <Checkbox variant="switch" bind:checked={geoSettings.blocking_enabled} />
+                </ContentBlock>
+                {#if !geoSettings.blocking_enabled}
+                  <div class="p-2 bg-info/10 border border-info/20 rounded text-[10px] text-muted-foreground">
+                    <Icon name="info-circle" size={12} class="inline mr-1" />
+                    Firewall country controls hidden when disabled.
+                  </div>
+                {/if}
+                <ContentBlock title="Auto-Update" description="Update databases daily">
+                  <Checkbox variant="switch" bind:checked={geoSettings.auto_update} />
+                </ContentBlock>
+                {#if geoSettings.auto_update}
+                  <div class="grid grid-cols-2 gap-3">
+                    <Select
+                      label="Update Time"
+                      bind:value={geoSettings.update_hour}
+                      options={Array.from({length: 24}, (_, i) => ({ value: i, label: `${i.toString().padStart(2, '0')}:00` }))}
+                    />
+                    <Select
+                      label="Services"
+                      bind:value={geoSettings.update_services}
+                      options={[
+                        { value: 'all', label: 'All services' },
+                        { value: 'lookup', label: 'IP lookup only' },
+                        { value: 'blocking', label: 'Country blocking only' }
+                      ]}
+                    />
+                  </div>
+                {/if}
+
+                <!-- Proxy / VPN enrichment toggle — sits under Update Time (IP2Location only) -->
+                {#if geoSettings.lookup_provider === 'ip2location'}
+                  <ContentBlock title="Proxy / VPN" description="Flag VPN / Tor / data-center">
+                    <Checkbox variant="switch" bind:checked={geoSettings.proxy_enabled} />
+                  </ContentBlock>
+                  {#if geoSettings.proxy_enabled && geoProviders?.ip2location?.proxy_variants}
+                    <div class="pl-1">
+                      <Select
+                        label="Detail level"
+                        bind:value={geoSettings.ip2proxy_variant}
+                        options={geoProviders.ip2location.proxy_variants.map(v => ({ value: v.id, label: v.name }))}
+                      />
+                      <div class="text-[10px] text-muted-foreground mt-1">
+                        {geoProviders.ip2location.proxy_variants.find(v => v.id === geoSettings.ip2proxy_variant)?.description || ''}
                       </div>
                     </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    {#if jail.currentlyBanned > 0}
-                      <Badge variant="destructive" size="sm">{jail.currentlyBanned} banned</Badge>
-                    {/if}
-                    <div class="kt-btn-group">
-                      {#if jail.enabled}
-                        <Button onclick={() => toggleJail(jail)} variant="destructive" size="xs" icon="player-stop" tooltip="Stop" />
-                      {:else}
-                        <Button onclick={() => toggleJail(jail)} variant="success" size="xs" icon="player-play" tooltip="Start" />
-                      {/if}
-                      <Button onclick={() => openEditJail(jail)} variant="outline" size="xs" icon="edit" tooltip="Edit" />
-                      <Button onclick={() => deleteJail(jail)} variant="outline" size="xs" icon="trash" tooltip="Delete" />
-                    </div>
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <p class="text-xs text-muted-foreground italic">No jails configured</p>
-          {/if}
-        </div>
-      </div>
-
-      <!-- Allowed Ports -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="lock" size={16} />
-            Allowed Ports
-          </h3>
-          <Input
-            type="number"
-            bind:value={newPort}
-            placeholder="Port"
-            prefixIcon="plug"
-            suffixAddonBtn={{ icon: "plus", onclick: addPort }}
-            class="w-32"
-            min="1"
-            max="65535"
-            onkeydown={(e) => e.key === 'Enter' && addPort()}
-          />
-        </div>
-        <div class="kt-panel-body">
-          <p class="text-[10px] text-muted-foreground mb-3">
-            Firewall ports allowed for incoming connections.
-          </p>
-          {#if sortedPorts.length > 0}
-            <!-- New input-based layout -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-              {#each sortedPorts as p}
-                {@const serviceName = p.service || (p.port === 22 ? 'SSH' : p.port === 80 ? 'HTTP' : p.port === 443 ? 'HTTPS' : p.port === 51820 ? 'WireGuard' : '')}
-                {@const isPublic = p.scope !== 'private'}
-                {@const svc = serviceName ? serviceName + ' — ' : ''}
-                {@const lockBtn = {
-                  icon: isPublic ? 'lock-open' : 'lock',
-                  onclick: () => toggleScope(p),
-                  tooltip: isPublic
-                    ? `${svc}Public: reachable from the internet. Click to make private (VPN & LAN only).`
-                    : `${svc}Private: VPN & LAN only. Click to make public (reachable from the internet).`
-                }}
-                {#if !p.lockable}
-                  <!-- Docker-published: reachability is Docker's (DNAT), not our allow-set — static lock. -->
-                  <Input
-                    value={p.port}
-                    disabled
-                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    suffixAddonIcon={{ icon: "lock", tooltip: `Managed by Docker${serviceName ? ': ' + serviceName : ''}` }}
-                  />
-                {:else if p.essential}
-                  <!-- Essential: can't be removed, but can be made public/private. Group colour shows the state. -->
-                  <Input
-                    value={p.port}
-                    disabled
-                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    suffixAddonBtn={lockBtn}
-                    class={isPublic ? 'kt-input-group-success' : 'kt-input-group-destructive'}
-                  />
-                {:else}
-                  <!-- Normal: scope lock (right) + remove (left). -->
-                  <Input
-                    value={p.port}
-                    disabled
-                    prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    prefixAddonBtn={{
-                      icon: "trash",
-                      onclick: () => confirmRemovePort(p.port, p.protocol),
-                      tooltip: "Remove port"
-                    }}
-                    suffixAddonBtn={lockBtn}
-                    class={isPublic ? 'kt-input-group-success' : 'kt-input-group-destructive'}
-                  />
+                  {/if}
                 {/if}
-              {/each}
+              </div>
             </div>
-          {:else}
-            <p class="text-xs text-muted-foreground italic">No ports configured</p>
-          {/if}
-        </div>
-      </div>
 
-      <!-- Port Scanner Settings -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="scan" size={16} />
-            Port Scanner
-          </h3>
-        </div>
-        <div class="kt-panel-body">
-          <p class="text-[10px] text-muted-foreground">
-            Default settings for scanning VPN client ports in Domain Routes.
-          </p>
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <Input
-              label="Port Start"
-              type="number"
-              bind:value={scannerSettings.portStart}
-              min="1"
-              max="65535"
-              prefixIcon="player-play"
-              class="text-xs"
-            />
-            <Input
-              label="Port End"
-              type="number"
-              bind:value={scannerSettings.portEnd}
-              min="1"
-              max="65535"
-              prefixIcon="player-stop"
-              class="text-xs"
-            />
-            <Input
-              label="Concurrent"
-              type="number"
-              bind:value={scannerSettings.concurrent}
-              min="10"
-              max="500"
-              prefixIcon="layers-subtract"
-              class="text-xs"
-            />
-            <Input
-              label="Pause (ms)"
-              type="number"
-              bind:value={scannerSettings.pauseMs}
-              min="0"
-              max="1000"
-              prefixIcon="player-pause"
-              class="text-xs"
-            />
-            <Input
-              label="Timeout (ms)"
-              type="number"
-              bind:value={scannerSettings.timeoutMs}
-              min="100"
-              max="5000"
-              prefixIcon="clock"
-              class="text-xs"
-            />
+            {#if geoStatus?.last_update_lookup || geoStatus?.last_update_blocking}
+              <div class="text-[10px] text-muted-foreground pt-3 border-t border-border">
+                {#if geoStatus.last_update_lookup}
+                  <span>Lookup: {geoStatus.last_update_lookup}</span>
+                {/if}
+                {#if geoStatus.last_update_lookup && geoStatus.last_update_blocking}
+                  <span class="mx-2">·</span>
+                {/if}
+                {#if geoStatus.last_update_blocking}
+                  <span>Blocking: {geoStatus.last_update_blocking}</span>
+                {/if}
+              </div>
+            {/if}
           </div>
-        </div>
-        <div class="kt-panel-footer">
+        <div class="kt-panel-footer justify-between">
           <Button
-            onclick={saveScanner}
-            loading={savingScanner}
-            disabled={!scannerHasChanges}
+            onclick={triggerGeoUpdate}
+            loading={triggeringGeoUpdate}
+            disabled={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled}
+            variant="secondary"
+            size="sm"
+            icon="refresh"
+            title={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled ? 'Select a provider or enable blocking first' : 'Update geolocation databases now'}
+          >
+            Update Now
+          </Button>
+          <Button
+            onclick={saveGeoSettings}
+            loading={savingGeo}
+            disabled={!geoHasChanges}
             size="sm"
             icon="device-floppy"
           >
@@ -1668,463 +2073,108 @@
           </Button>
         </div>
       </div>
-    </div>
-
-    <!-- Traefik Settings - Full width -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">
-          <Icon name="route" size={16} />
-          Traefik
-        </h3>
       </div>
-      <div class="kt-panel-body space-y-4">
-        <!-- Rate Limiting -->
-        <div>
-          <ContentBlock variant="header" title="Rate Limiting" />
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <Input
-                label="Standard (req/s)"
-                type="number"
-                bind:value={traefikForm.rateLimitAverage}
-                prefixIcon="gauge"
-                class="text-xs"
-                min="1"
-              />
-              <Input
-                label="Standard Burst"
-                type="number"
-                bind:value={traefikForm.rateLimitBurst}
-                prefixIcon="bolt"
-                class="text-xs"
-                min="1"
-              />
-              <Input
-                label="Strict (req/s)"
-                type="number"
-                bind:value={traefikForm.strictRateAverage}
-                prefixIcon="gauge"
-                class="text-xs"
-                min="1"
-              />
-              <Input
-                label="Strict Burst"
-                type="number"
-                bind:value={traefikForm.strictRateBurst}
-                prefixIcon="bolt"
-                class="text-xs"
-                min="1"
-              />
-            </div>
-          </div>
-
-        <!-- Access Control: two columns so the switches fill the width -->
-        <div>
-          <ContentBlock variant="header" title="Access Control" />
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-            <ContentBlock title="Dashboard" description="Port 8080 (restart required)">
-              <Checkbox variant="switch" bind:checked={traefikForm.dashboardEnabled} />
-            </ContentBlock>
-            <ContentBlock title="VPN-Only Mode" description="Restrict access to VPN clients">
-              <div class="flex items-center gap-2">
-                {#if vpnOnlyLoading}
-                  <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-                {/if}
-                <Select
-                  value={vpnOnlyMode}
-                  options={[
-                    { value: 'off', label: 'Disabled' },
-                    { value: '403', label: '403 Forbidden' },
-                    { value: 'silent', label: 'Silent Drop' }
-                  ]}
-                  onchange={(e) => setVPNOnlyMode(e.target.value)}
-                  disabled={vpnOnlyLoading}
-                />
-              </div>
-            </ContentBlock>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-3 mt-3">
-            <ContentBlock title="Enforce Firewall on Proxied Traffic" description="Apply the firewall block list at the proxy, so blocks work behind Cloudflare too">
-              <div class="flex items-center gap-2">
-                {#if fwBlockLoading}
-                  <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-                {/if}
-                <Checkbox variant="switch" bind:checked={fwBlockEnabled} disabled={fwBlockLoading} onchange={() => setFWBlock(fwBlockEnabled)} />
-              </div>
-            </ContentBlock>
-            <ContentBlock title="Direct IP Access" description={apiDirectAccessDomainSet ? "Reach the panel by the server's raw IP. Turn off once you use your domain — drops the panel API port from the public internet (localhost, Traefik and WireGuard still work)." : 'Set up a domain (SSL_DOMAIN or ADMIN_DOMAIN) first — without one, closing IP access would lock you out.'}>
-              <div class="flex items-center gap-2">
-                {#if apiAccessLoading}
-                  <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-                {/if}
-                <Checkbox variant="switch" bind:checked={apiDirectAccess} disabled={apiAccessLoading || (!apiDirectAccessDomainSet && apiDirectAccess)} onchange={() => setApiDirectAccess(apiDirectAccess)} />
-              </div>
-            </ContentBlock>
-            <ContentBlock title="Cloudflare-Only Web Access" description={webCloudflareOnlyAvailable ? "Allow only Cloudflare to reach the web ports (80/443). Blocks anyone hitting the raw server IP to bypass Cloudflare (localhost, Traefik and WireGuard still work)." : 'Available only when your domain is proxied through Cloudflare (set at setup).'}>
-              <div class="flex items-center gap-2">
-                {#if cfOnlyLoading}
-                  <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-                {/if}
-                <Checkbox variant="switch" bind:checked={webCloudflareOnly} disabled={cfOnlyLoading || (!webCloudflareOnlyAvailable && !webCloudflareOnly)} onchange={() => setWebCloudflareOnly(webCloudflareOnly)} />
-              </div>
-            </ContentBlock>
-          </div>
+      {/if}
+      {#if section === 'web'}
+        <TraefikOverview />
+      {/if}
+      {#if section === 'backups'}
+      <div class="space-y-4">
+      <!-- Backup & migrate - Full width -->
+      <div class="kt-panel">
+        <div class="kt-panel-header">
+          <h3 class="kt-panel-title">
+            <Icon name="database" size={16} />
+            Backup &amp; migrate
+          </h3>
         </div>
-
-        <!-- IP Allowlist - Full width -->
-        <div class="border-t border-border pt-3">
-          <h4 class="text-xs font-medium text-foreground mb-2">Sentinel VPN Middleware</h4>
-          <Input
-            type="text"
-            bind:value={traefikForm.newIP}
-            prefixIcon="network"
-            placeholder="e.g., 192.168.1.0/24"
-            class="text-xs"
-            suffixAddonBtn={{ icon: "plus", label: "Add", onclick: addTraefikIP }}
-            onkeydown={(e) => e.key === 'Enter' && addTraefikIP()}
-          />
-          {#if traefikForm.ipAllowlist.length > 0}
-            <div class="flex flex-wrap gap-1.5 pt-2">
-              {#each traefikForm.ipAllowlist as ip}
-                <div class="flex items-center gap-1 px-2 py-0.5 bg-muted rounded text-xs">
-                  <code>{ip}</code>
-                  <button type="button" onclick={() => removeTraefikIP(ip)} class="p-0.5 hover:text-destructive cursor-pointer" title="Remove" aria-label="Remove {ip}"><Icon name="x" size={12} /></button>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <p class="text-[10px] text-muted-foreground italic pt-2">No IP ranges configured</p>
-          {/if}
-        </div>
-      </div>
-      <div class="kt-panel-footer justify-end">
-        <Button
-          onclick={saveTraefik}
-          loading={savingTraefik}
-          disabled={!traefikHasChanges}
-          size="sm"
-          icon="device-floppy"
-        >
-          Save
-        </Button>
-      </div>
-    </div>
-
-    <!-- Geolocation Settings - Full width -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">
-          <Icon name="world" size={16} />
-          Geolocation
-        </h3>
-      </div>
-      <div class="kt-panel-body">
-          <!-- Two columns: IP Lookup + Toggles -->
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <!-- IP Lookup Provider -->
-            <div>
-              <ContentBlock variant="header" title="IP Lookup Provider" />
-              <Select
-                label="Provider"
-                bind:value={geoSettings.lookup_provider}
-                options={[
-                  { value: 'none', label: 'None (disabled)' },
-                  { value: 'maxmind', label: 'MaxMind GeoLite2' },
-                  { value: 'ip2location', label: 'IP2Location Lite' }
-                ]}
-              />
-              {#if geoSettings.lookup_provider === 'maxmind'}
-                <div class="mt-3">
-                  <Input
-                    label="License Key"
-                    type="password"
-                    bind:value={geoSettings.maxmind_license_key}
-                    placeholder="Your MaxMind license key"
-                    prefixIcon="key"
-                    helperText="Free at maxmind.com/en/geolite2/signup"
-                  />
-                </div>
-              {:else if geoSettings.lookup_provider === 'ip2location'}
-                <div class="space-y-3 mt-3">
-                  <Select
-                    label="Database Variant"
-                    bind:value={geoSettings.ip2location_variant}
-                    options={geoProviders?.ip2location?.variants?.map(v => ({ value: v.id, label: `${v.name}` })) || [{ value: 'DB1', label: 'DB1 - Country' }]}
-                  />
-                  <Input
-                    label="Download Token"
-                    type="password"
-                    bind:value={geoSettings.ip2location_token}
-                    placeholder="Your IP2Location download token"
-                    prefixIcon="key"
-                    helperText="Required. Get at ip2location.com/register"
-                  />
-                </div>
-                <!-- Owner (ASN) enrichment toggle — sits under the Download Token -->
-                <ContentBlock title="Owner (ASN)" description="Who owns each IP" class="mt-3">
-                  <Checkbox variant="switch" bind:checked={geoSettings.asn_enabled} />
-                </ContentBlock>
-              {/if}
-
-              <!-- All database statuses in one place -->
-              {#if geoSettings.lookup_provider !== 'none'}
-                <div class="mt-3 p-2 bg-muted/50 rounded text-[10px] space-y-1">
-                  <div class="font-medium text-muted-foreground uppercase tracking-wide">Databases</div>
-                  <div class="flex items-center justify-between gap-2">
-                    <span>Country</span>
-                    {#if geoStatus?.providers?.[geoSettings.lookup_provider]?.available}
-                      <span class="text-success">{(geoStatus.providers[geoSettings.lookup_provider].file_size / 1024 / 1024).toFixed(1)}MB{#if geoStatus.providers[geoSettings.lookup_provider].last_update} · {geoStatus.providers[geoSettings.lookup_provider].last_update}{/if}</span>
-                    {:else}
-                      <span class="text-warning">not downloaded</span>
-                    {/if}
-                  </div>
-                  {#if geoSettings.lookup_provider === 'ip2location' && geoSettings.asn_enabled}
-                    <div class="flex items-center justify-between gap-2">
-                      <span>Owner (ASN)</span>
-                      {#if enrichment?.asn?.available}
-                        <span class="text-success">{(enrichment.asn.file_size / 1024 / 1024).toFixed(1)}MB{#if enrichment.asn.loaded} · {enrichment.asn.ranges.toLocaleString()} ranges{/if}</span>
-                      {:else}
-                        <span class="text-warning">not downloaded</span>
-                      {/if}
-                    </div>
-                  {/if}
-                  {#if geoSettings.lookup_provider === 'ip2location' && geoSettings.proxy_enabled}
-                    <div class="flex items-center justify-between gap-2">
-                      <span>Proxy / VPN</span>
-                      {#if enrichment?.proxy?.available}
-                        <span class="text-success">{(enrichment.proxy.file_size / 1024 / 1024).toFixed(1)}MB{#if enrichment.proxy.loaded} · {enrichment.proxy.ranges.toLocaleString()} ranges{/if}</span>
-                      {:else}
-                        <span class="text-warning">not downloaded</span>
-                      {/if}
-                    </div>
-                  {/if}
-                  <div class="text-muted-foreground pt-0.5">Turn on what you want, Save, then "Update Now" downloads everything enabled.</div>
-                </div>
-              {/if}
-
-            </div>
-
-            <!-- Toggles -->
+        <div class="kt-panel-body">
+          <p class="text-xs text-muted-foreground mb-4">
+            Export the whole panel configuration as one passphrase-encrypted file, then restore it here or on a fresh host. The file holds your secrets (peer keys, CA, credentials) sealed by the passphrase — keep both safe: there's no recovery without the passphrase.
+          </p>
+          <div class="grid gap-6 lg:grid-cols-2">
+            <!-- EXPORT -->
             <div class="space-y-3">
-              <ContentBlock variant="header" title="Options" />
-              <ContentBlock title="Country Blocking" description="Block traffic using IPDeny zone files">
-                <Checkbox variant="switch" bind:checked={geoSettings.blocking_enabled} />
-              </ContentBlock>
-              {#if !geoSettings.blocking_enabled}
-                <div class="p-2 bg-info/10 border border-info/20 rounded text-[10px] text-muted-foreground">
-                  <Icon name="info-circle" size={12} class="inline mr-1" />
-                  Firewall country controls hidden when disabled.
+              <div class="flex items-center gap-2 text-sm font-medium"><Icon name="download" size={15} class="text-muted-foreground" /> Export</div>
+              <Input label="Passphrase" type="password" prefixIcon="lock" bind:value={bkPass} placeholder="At least 16 characters" />
+              <Input label="Confirm passphrase" type="password" prefixIcon="lock" bind:value={bkPass2} placeholder="Repeat passphrase" />
+              <button type="button" onclick={generateBackupPassphrase}
+                class="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-info/40 text-info text-xs py-2 hover:bg-info/5 transition cursor-pointer">
+                <Icon name="wand" size={14} /> Generate a strong passphrase for me
+              </button>
+              {#if bkGenerated}
+                <div class="rounded-lg border border-info/40 bg-info/5 p-2.5 text-xs">
+                  <div class="text-muted-foreground mb-1">Save this now — it was copied to your clipboard. The backup can't be opened without it:</div>
+                  <code class="block font-mono break-all select-all text-foreground">{bkGenerated}</code>
                 </div>
               {/if}
-              <ContentBlock title="Auto-Update" description="Update databases daily">
-                <Checkbox variant="switch" bind:checked={geoSettings.auto_update} />
-              </ContentBlock>
-              {#if geoSettings.auto_update}
-                <div class="grid grid-cols-2 gap-3">
-                  <Select
-                    label="Update Time"
-                    bind:value={geoSettings.update_hour}
-                    options={Array.from({length: 24}, (_, i) => ({ value: i, label: `${i.toString().padStart(2, '0')}:00` }))}
-                  />
-                  <Select
-                    label="Services"
-                    bind:value={geoSettings.update_services}
-                    options={[
-                      { value: 'all', label: 'All services' },
-                      { value: 'lookup', label: 'IP lookup only' },
-                      { value: 'blocking', label: 'Country blocking only' }
-                    ]}
-                  />
-                </div>
-              {/if}
-
-              <!-- Proxy / VPN enrichment toggle — sits under Update Time (IP2Location only) -->
-              {#if geoSettings.lookup_provider === 'ip2location'}
-                <ContentBlock title="Proxy / VPN" description="Flag VPN / Tor / data-center">
-                  <Checkbox variant="switch" bind:checked={geoSettings.proxy_enabled} />
-                </ContentBlock>
-                {#if geoSettings.proxy_enabled && geoProviders?.ip2location?.proxy_variants}
-                  <div class="pl-1">
-                    <Select
-                      label="Detail level"
-                      bind:value={geoSettings.ip2proxy_variant}
-                      options={geoProviders.ip2location.proxy_variants.map(v => ({ value: v.id, label: v.name }))}
-                    />
-                    <div class="text-[10px] text-muted-foreground mt-1">
-                      {geoProviders.ip2location.proxy_variants.find(v => v.id === geoSettings.ip2proxy_variant)?.description || ''}
-                    </div>
-                  </div>
-                {/if}
-              {/if}
-            </div>
-          </div>
-
-          {#if geoStatus?.last_update_lookup || geoStatus?.last_update_blocking}
-            <div class="text-[10px] text-muted-foreground pt-3 border-t border-border">
-              {#if geoStatus.last_update_lookup}
-                <span>Lookup: {geoStatus.last_update_lookup}</span>
-              {/if}
-              {#if geoStatus.last_update_lookup && geoStatus.last_update_blocking}
-                <span class="mx-2">·</span>
-              {/if}
-              {#if geoStatus.last_update_blocking}
-                <span>Blocking: {geoStatus.last_update_blocking}</span>
-              {/if}
-            </div>
-          {/if}
-        </div>
-      <div class="kt-panel-footer justify-between">
-        <Button
-          onclick={triggerGeoUpdate}
-          loading={triggeringGeoUpdate}
-          disabled={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled}
-          variant="secondary"
-          size="sm"
-          icon="refresh"
-          title={geoSettings.lookup_provider === 'none' && !geoSettings.blocking_enabled ? 'Select a provider or enable blocking first' : 'Update geolocation databases now'}
-        >
-          Update Now
-        </Button>
-        <Button
-          onclick={saveGeoSettings}
-          loading={savingGeo}
-          disabled={!geoHasChanges}
-          size="sm"
-          icon="device-floppy"
-        >
-          Save
-        </Button>
-      </div>
-    </div>
-
-    <!-- Backup & migrate - Full width -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">
-          <Icon name="database" size={16} />
-          Backup &amp; migrate
-        </h3>
-      </div>
-      <div class="kt-panel-body">
-        <p class="text-xs text-muted-foreground mb-4">
-          Export the whole panel configuration as one passphrase-encrypted file, then restore it here or on a fresh host. The file holds your secrets (peer keys, CA, credentials) sealed by the passphrase — keep both safe: there's no recovery without the passphrase.
-        </p>
-        <div class="grid gap-6 lg:grid-cols-2">
-          <!-- EXPORT -->
-          <div class="space-y-3">
-            <div class="flex items-center gap-2 text-sm font-medium"><Icon name="download" size={15} class="text-muted-foreground" /> Export</div>
-            <Input label="Passphrase" type="password" prefixIcon="lock" bind:value={bkPass} placeholder="At least 16 characters" />
-            <Input label="Confirm passphrase" type="password" prefixIcon="lock" bind:value={bkPass2} placeholder="Repeat passphrase" />
-            <button type="button" onclick={generateBackupPassphrase}
-              class="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-info/40 text-info text-xs py-2 hover:bg-info/5 transition cursor-pointer">
-              <Icon name="wand" size={14} /> Generate a strong passphrase for me
-            </button>
-            {#if bkGenerated}
-              <div class="rounded-lg border border-info/40 bg-info/5 p-2.5 text-xs">
-                <div class="text-muted-foreground mb-1">Save this now — it was copied to your clipboard. The backup can't be opened without it:</div>
-                <code class="block font-mono break-all select-all text-foreground">{bkGenerated}</code>
+              <div class="space-y-2 pt-1">
+                <label class="flex items-center justify-between gap-3 text-sm cursor-pointer">
+                  <span><span class="font-medium">Include admin users</span><span class="block text-xs text-muted-foreground">Accounts, password hashes &amp; 2FA</span></span>
+                  <Checkbox variant="switch" bind:checked={bkUsers} />
+                </label>
+                <label class="flex items-center justify-between gap-3 text-sm cursor-pointer">
+                  <span><span class="font-medium">Include fleet</span><span class="block text-xs text-muted-foreground">Agent CA + enrolled machines</span></span>
+                  <Checkbox variant="switch" bind:checked={bkFleet} />
+                </label>
               </div>
-            {/if}
-            <div class="space-y-2 pt-1">
-              <label class="flex items-center justify-between gap-3 text-sm cursor-pointer">
-                <span><span class="font-medium">Include admin users</span><span class="block text-xs text-muted-foreground">Accounts, password hashes &amp; 2FA</span></span>
-                <Checkbox variant="switch" bind:checked={bkUsers} />
-              </label>
-              <label class="flex items-center justify-between gap-3 text-sm cursor-pointer">
-                <span><span class="font-medium">Include fleet</span><span class="block text-xs text-muted-foreground">Agent CA + enrolled machines</span></span>
-                <Checkbox variant="switch" bind:checked={bkFleet} />
-              </label>
+              <p class="text-xs text-muted-foreground">Core config — VPN peers &amp; ACLs, firewall, routes, settings — is always included.</p>
+              <Button variant="primary" icon="download" loading={bkExporting} onclick={exportBackup} disabled={bkPass.length < 12 || bkPass !== bkPass2}>Download backup</Button>
             </div>
-            <p class="text-xs text-muted-foreground">Core config — VPN peers &amp; ACLs, firewall, routes, settings — is always included.</p>
-            <Button variant="primary" icon="download" loading={bkExporting} onclick={exportBackup} disabled={bkPass.length < 12 || bkPass !== bkPass2}>Download backup</Button>
-          </div>
-          <!-- IMPORT -->
-          <div class="space-y-3 lg:border-l lg:border-border lg:pl-6">
-            <div class="flex items-center gap-2 text-sm font-medium"><Icon name="upload" size={15} class="text-muted-foreground" /> Import</div>
-            <div>
-              <span class="kt-label">Backup file</span>
-              <label class="mt-1 flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm cursor-pointer hover:bg-muted transition">
-                <Icon name="file-text" size={15} class="text-muted-foreground shrink-0" />
-                <span class="truncate {impFileName ? 'text-foreground' : 'text-muted-foreground'}">{impFileName || 'Choose .wgbackup file…'}</span>
-                <input type="file" accept=".wgbackup,application/json" class="hidden" onchange={onImportFile} />
-              </label>
-            </div>
-            <Input label="Passphrase" type="password" prefixIcon="lock" bind:value={impPass} placeholder="Backup passphrase" />
-            <Button variant="outline" icon="eye" loading={impLoading} onclick={previewImport} disabled={!impFileText || !impPass}>Preview changes</Button>
+            <!-- IMPORT -->
+            <div class="space-y-3 lg:border-l lg:border-border lg:pl-6">
+              <div class="flex items-center gap-2 text-sm font-medium"><Icon name="upload" size={15} class="text-muted-foreground" /> Import</div>
+              <div>
+                <span class="kt-label">Backup file</span>
+                <label class="mt-1 flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm cursor-pointer hover:bg-muted transition">
+                  <Icon name="file-text" size={15} class="text-muted-foreground shrink-0" />
+                  <span class="truncate {impFileName ? 'text-foreground' : 'text-muted-foreground'}">{impFileName || 'Choose .wgbackup file…'}</span>
+                  <input type="file" accept=".wgbackup,application/json" class="hidden" onchange={onImportFile} />
+                </label>
+              </div>
+              <Input label="Passphrase" type="password" prefixIcon="lock" bind:value={impPass} placeholder="Backup passphrase" />
+              <Button variant="outline" icon="eye" loading={impLoading} onclick={previewImport} disabled={!impFileText || !impPass}>Preview changes</Button>
 
-            {#if impPreview}
-              <div class="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
-                <div class="text-xs text-muted-foreground">
-                  Backup from {impPreview.header?.created_at ? new Date(impPreview.header.created_at).toLocaleString(undefined, withTz()) : 'unknown date'} · includes {(impPreview.header?.includes || []).join(', ')}
-                </div>
-                <div class="divide-y divide-border">
-                  {#each impPreview.plan as p}
-                    <div class="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span class="font-medium">{p.label}</span>
-                      {#if p.missing}
-                        <span class="text-muted-foreground">skipped — not on this host</span>
-                      {:else}
-                        <span class="tabular-nums text-muted-foreground">{p.existing} <Icon name="arrow-right" size={11} class="inline" /> <span class="text-foreground font-medium">{p.incoming}</span></span>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-                {#if impPreview.warnings?.length}
-                  <div class="rounded-md bg-warning/10 border border-warning/30 p-2 text-[11px] text-warning space-y-1">
-                    {#each impPreview.warnings as wmsg}
-                      <div class="flex gap-1.5"><Icon name="alert-triangle" size={12} class="shrink-0 mt-0.5" /><span>{wmsg}</span></div>
+              {#if impPreview}
+                <div class="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                  <div class="text-xs text-muted-foreground">
+                    Backup from {impPreview.header?.created_at ? new Date(impPreview.header.created_at).toLocaleString(undefined, withTz()) : 'unknown date'} · includes {(impPreview.header?.includes || []).join(', ')}
+                  </div>
+                  <div class="divide-y divide-border">
+                    {#each impPreview.plan as p}
+                      <div class="flex items-center justify-between gap-2 py-1 text-xs">
+                        <span class="font-medium">{p.label}</span>
+                        {#if p.missing}
+                          <span class="text-muted-foreground">skipped — not on this host</span>
+                        {:else}
+                          <span class="tabular-nums text-muted-foreground">{p.existing} <Icon name="arrow-right" size={11} class="inline" /> <span class="text-foreground font-medium">{p.incoming}</span></span>
+                        {/if}
+                      </div>
                     {/each}
                   </div>
-                {/if}
-                <Button variant="destructive" icon="refresh-alert" loading={impApplying} onclick={applyImport} class="w-full">Replace &amp; reconcile</Button>
-              </div>
-            {/if}
+                  {#if impPreview.warnings?.length}
+                    <div class="rounded-md bg-warning/10 border border-warning/30 p-2 text-[11px] text-warning space-y-1">
+                      {#each impPreview.warnings as wmsg}
+                        <div class="flex gap-1.5"><Icon name="alert-triangle" size={12} class="shrink-0 mt-0.5" /><span>{wmsg}</span></div>
+                      {/each}
+                    </div>
+                  {/if}
+                  <Button variant="destructive" icon="refresh-alert" loading={impApplying} onclick={applyImport} class="w-full">Replace &amp; reconcile</Button>
+                </div>
+              {/if}
+            </div>
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- Off-host backups - Full width -->
-    <div class="mt-4">
       <OffhostBackup />
-    </div>
-
-    <!-- Email (SMTP) for alerts - Full width. Per-user alert RULES live in Profile → Notifications. -->
-    <div class="mt-4">
-      <SmtpSettings />
-    </div>
-
-    <!-- About - Full width -->
-    <div class="kt-panel">
-      <div class="kt-panel-header">
-        <h3 class="kt-panel-title">
-          <Icon name="info-circle" size={16} />
-          About
-        </h3>
       </div>
-      <div class="kt-panel-body flex items-center justify-between !py-3">
-        <div class="text-xs text-muted-foreground">
-          <p class="font-medium text-foreground">Wire Panel</p>
-          <p class="mt-0.5">Headscale + WireGuard management interface</p>
-        </div>
-        <div class="text-[10px] text-muted-foreground text-right">
-          <p>Built with Svelte 5</p>
-          <p>Tailwind CSS v4 + KTUI</p>
-          <div class="flex items-center justify-end gap-3 mt-2">
-            <a href="https://www.maxmind.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
-              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-              <span data-kt-tooltip-content class="kt-tooltip hidden">MaxMind GeoLite2</span>
-            </a>
-            <a href="https://www.ip2location.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
-              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-              <span data-kt-tooltip-content class="kt-tooltip hidden">IP2Location Lite</span>
-            </a>
-            <a href="https://www.ipdeny.com" target="_blank" rel="noopener noreferrer" class="text-muted-foreground hover:text-foreground transition-colors" data-kt-tooltip>
-              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="8" y1="8" x2="16" y2="16"/><line x1="16" y1="8" x2="8" y2="16"/></svg>
-              <span data-kt-tooltip-content class="kt-tooltip hidden">IPDeny Zone Files</span>
-            </a>
-          </div>
-        </div>
+      {/if}
+      {#if section === 'email'}
+      <div class="space-y-4">
+      <!-- Email (SMTP) for alerts. Per-user alert RULES live in Profile → Notifications. -->
+      <SmtpSettings />
+      </div>
+      {/if}
       </div>
     </div>
   {/if}

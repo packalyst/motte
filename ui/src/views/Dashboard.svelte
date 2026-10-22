@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { slide } from 'svelte/transition'
-  import { theme, currentView, apiGet, hasRole } from '../stores/app.js'
+  import { theme, currentView, hasRole } from '../stores/app.js'
   import { subscribe, unsubscribe, generalInfoStore } from '../stores/websocket.js'
   import { visibilityChangeCount } from '../stores/network.js'
   import { isInstalledPWA } from '../lib/pwa/permissions.js'
@@ -12,18 +12,15 @@
   const views = {
     overview: () => import('./OverviewView.svelte'),
     clients: () => import('./ClientsView.svelte'),
-    nodes: () => import('./NodesView.svelte'),
-    networks: () => import('./NetworksView.svelte'),
     users: () => import('./UsersView.svelte'),
     firewall: () => import('./FirewallView.svelte'),
     server: () => import('./ServerView.svelte'),
-    fleet: () => import('./MachinesView.svelte'),
     console: () => import('./ConsoleView.svelte'),
+    sessions: () => import('./SessionsView.svelte'),
     iplookup: () => import('./IpLookupView.svelte'),
     routes: () => import('./RoutesView.svelte'),
     authkeys: () => import('./AuthKeysView.svelte'),
     apikeys: () => import('./ApiKeysView.svelte'),
-    traefik: () => import('./TraefikView.svelte'),
     domains: () => import('./DomainRoutesView.svelte'),
     tunnels: () => import('./TunnelsView.svelte'),
     adguard: () => import('./AdGuardView.svelte'),
@@ -34,14 +31,11 @@
     routines: () => import('./RoutinesView.svelte'),
     settings: () => import('./SettingsView.svelte'),
     profile: () => import('./ProfileView.svelte'),
-    team: () => import('./TeamView.svelte'),
     about: () => import('./AboutView.svelte')
   }
 
   let { user = null, onLogout, showAdguardBanner = false, onDismissAdguardBanner } = $props()
 
-  // Panel user/role management is an admin+ area.
-  const canManageTeam = $derived(hasRole(user, 'admin'))
 
   let sidebarOpen = $state(false)
   let loading = $state(true)
@@ -59,9 +53,8 @@
   // Submenu groups → their child view ids. Drives auto-expand + collapse so the
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
-    'grp-clients': ['clients', 'nodes', 'fleet', 'networks'],
     'grp-monitoring': ['analytics', 'logs', 'activity', 'routines'],
-    'grp-web': ['traefik', 'domains', 'tunnels'],
+    'grp-web': ['domains', 'tunnels'],
     'grp-services': ['adguard', 'docker'],
     'grp-headscale': ['routes', 'users', 'authkeys', 'apikeys'],
   }
@@ -135,15 +128,8 @@
   const navItems = [
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'divider1', divider: true },
-    {
-      id: 'grp-clients', label: 'Clients', icon: 'devices',
-      children: [
-        { id: 'clients', label: 'All clients', icon: 'list' },
-        { id: 'nodes', label: 'Nodes', icon: 'server' },
-        { id: 'fleet', label: 'Machines', icon: 'device-desktop' },
-        { id: 'networks', label: 'Networks', icon: 'router' },
-      ]
-    },
+    { id: 'clients', label: 'Clients', icon: 'devices' },
+    { id: 'sessions', label: 'Sessions', icon: 'terminal-2', minRole: 'operator' },
     {
       id: 'grp-headscale', label: 'Headscale', icon: 'key',
       children: [
@@ -160,7 +146,6 @@
     {
       id: 'grp-web', label: 'Web & Proxy', icon: 'world-www',
       children: [
-        { id: 'traefik', label: 'Traefik', icon: 'world' },
         { id: 'domains', label: 'Domain Routes', icon: 'world-www' },
         { id: 'tunnels', label: 'Tunnels', icon: 'arrows-right-left' },
       ]
@@ -183,6 +168,9 @@
       ]
     },
   ]
+
+  // Items with a minRole are hidden below it (the page and the server enforce it as well).
+  const visibleNav = $derived(navItems.filter((i) => !i.minRole || hasRole(user, i.minRole)))
 
   // Check if current view is a child of a menu
   function isChildActive(item) {
@@ -226,7 +214,6 @@
     if (viewId === 'console') return 'Console'
     if (viewId === 'iplookup') return 'IP Lookup'
     if (viewId === 'settings') return 'Settings'
-    if (viewId === 'team') return 'Panel Users'
     if (viewId === 'about') return 'About'
     for (const item of navItems) {
       if (item.id === viewId) return item.label
@@ -259,7 +246,7 @@
 
     <!-- Sidebar nav -->
     <nav class="flex-1 space-y-1 overflow-y-auto px-3 py-3 text-sm bg-muted/50">
-      {#each navItems as item}
+      {#each visibleNav as item}
         {#if item.divider}
           <div class="my-2 -mx-3 border-t border-dashed border-border"></div>
         {:else if item.children}
@@ -373,11 +360,6 @@
             {/if}
           </div>
         </button>
-        {#if canManageTeam}
-          <button onclick={() => navigate('team')} class="custom_btns flex-shrink-0" title="Panel users & roles">
-            <Icon name="users" size={14} />
-          </button>
-        {/if}
         <button onclick={toggleTheme} class="custom_btns flex-shrink-0" title="Toggle theme">
           {#if $theme === 'dark'}
             <Icon name="sun" size={14} />
@@ -432,11 +414,11 @@
           <Icon name="world-search" size={16} />
         </button>
         <button
-          onclick={() => navigate('nodes')}
+          onclick={() => navigate('clients')}
           class="custom_btns"
-          title="Nodes"
+          title="All clients"
         >
-          <Icon name="server" size={16} />
+          <Icon name="devices" size={16} />
         </button>
         <button
           onclick={() => navigate('settings')}

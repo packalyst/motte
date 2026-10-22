@@ -10,7 +10,7 @@
   import { WebLinksAddon } from '@xterm/addon-web-links'
   import '@xterm/xterm/css/xterm.css'
   import { apiPost, stepUpConfirm, toast, confirm } from '../stores/app.js'
-  import { consoleSessions } from '../lib/consoleEvents.js'
+  import { consoleSessions, sessionColor } from '../lib/consoleEvents.js'
   import { ConsoleSocket } from '../lib/console.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
@@ -103,13 +103,6 @@
   function setFont(d) { fontSize = Math.min(24, Math.max(9, fontSize + d)); applyTermOpts() }
   function toggleTheme() { termLight = !termLight; applyTermOpts() }
   function tabTitle(tab) { return tab.name || ('Session ' + (tab.label ?? '•')) }
-  // Per-session accent colour (stable hash of the id), mirrored on the tab + split pane like WebTerm,
-  // so each session is recognisable at a glance across tabs and the grid.
-  function sessionColor(id) {
-    let h = 0
-    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
-    return `hsl(${h % 360} 68% 60%)`
-  }
 
   // A small in-console text-input modal (replaces window.prompt), reusable for rename / new file etc.
   let promptState = $state(null) // { title, value, placeholder, onok }

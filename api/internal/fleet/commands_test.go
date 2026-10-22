@@ -33,11 +33,47 @@ func withMachine(r *http.Request, m *Machine) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), machineCtxKey, m))
 }
 
+// addMachine inserts a machine that last reported `ago` ago (online when within commandOnlineWindow).
+func addMachine(t *testing.T, svc *Service, id string, ago time.Duration) {
+	t.Helper()
+	now := time.Now().UTC()
+	if _, err := svc.db.Exec(`INSERT INTO fleet_machines (id, name, enrolled_at, last_seen) VALUES (?, ?, ?, ?)`,
+		id, id, now.Format(time.RFC3339), now.Add(-ago).Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A person's command for an offline machine is refused instead of waiting in the queue to run
+// whenever the machine reconnects. Revoked machines are refused too.
+func TestEnqueueRefusesOfflineMachine(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "gone", 10*time.Minute)
+	addMachine(t, svc, "live", 10*time.Second)
+	addMachine(t, svc, "revoked", 10*time.Second)
+	svc.db.Exec(`UPDATE fleet_machines SET revoked = 1 WHERE id = 'revoked'`)
+	r := httptest.NewRequest("POST", "/api/fleet/command", nil)
+	r = r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
+	for _, id := range []string{"gone", "revoked", "unknown"} {
+		if _, status, err := svc.enqueueCore(r, id, "block", json.RawMessage(`{"ip":"1.2.3.4"}`)); err == nil || status != http.StatusConflict {
+			t.Errorf("%s: status=%d err=%v, want 409", id, status, err)
+		}
+	}
+	if _, status, err := svc.enqueueCore(r, "live", "block", json.RawMessage(`{"ip":"1.2.3.4"}`)); err != nil || status != http.StatusOK {
+		t.Fatalf("online machine: status=%d err=%v, want ok", status, err)
+	}
+	var n int
+	svc.db.QueryRow(`SELECT COUNT(*) FROM fleet_commands`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("want only the online machine's command queued, got %d", n)
+	}
+}
+
 // TestEnqueueGuardrail covers the three guardrail tiers: allow-tier enqueues directly,
 // block-tier (not allowlisted) is refused, and confirm-tier without a verifiable operator
 // demands step-up (428) instead of enqueuing.
 func TestEnqueueGuardrail(t *testing.T) {
 	svc := newTestService(t)
+	addMachine(t, svc, "m1", 0)
 	// An owner principal (unscoped) so the machine-scope check passes and we exercise the
 	// role/step-up/allowlist tiers in isolation.
 	req := func() *http.Request {
@@ -156,5 +192,56 @@ func TestRequireClientCert(t *testing.T) {
 	h(rr3, req3)
 	if rr3.Code != http.StatusUnauthorized {
 		t.Fatalf("unregistered cert should be 401, got %d", rr3.Code)
+	}
+}
+
+// A person's command not picked up within commandTTL expires and is never delivered; the panel's
+// own messages (Enqueue, no expiry) are still delivered however long the machine was away.
+func TestCommandExpiry(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", 0)
+	r := httptest.NewRequest("POST", "/api/fleet/command", nil)
+	r = r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
+	userCmd, _, err := svc.enqueueCore(r, "m1", "block", json.RawMessage(`{"ip":"1.2.3.4"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	panelMsg, err := svc.Enqueue("m1", "set-console", json.RawMessage(`{"enabled":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The machine was away for an hour: both are old, only the person's command had an expiry.
+	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	svc.db.Exec(`UPDATE fleet_commands SET created_at = ?, expires_at = CASE WHEN expires_at IS NULL THEN NULL ELSE ? END`, old, old)
+
+	rr := httptest.NewRecorder()
+	svc.HandleCommands(rr, withMachine(httptest.NewRequest("GET", "/commands", nil), &Machine{ID: "m1"}))
+	var got []Command
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != panelMsg {
+		t.Fatalf("want only the panel message delivered, got %+v", got)
+	}
+	var status string
+	svc.db.QueryRow(`SELECT status FROM fleet_commands WHERE id = ?`, userCmd).Scan(&status)
+	if status != "expired" {
+		t.Fatalf("person's command: status %q, want expired", status)
+	}
+}
+
+// The command log shows an undelivered command as expired even if the machine never polls again.
+func TestCommandLogShowsExpired(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", 0)
+	r := httptest.NewRequest("POST", "/api/fleet/command", nil)
+	r = r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
+	if _, _, err := svc.enqueueCore(r, "m1", "block", json.RawMessage(`{"ip":"1.2.3.4"}`)); err != nil {
+		t.Fatal(err)
+	}
+	svc.db.Exec(`UPDATE fleet_commands SET expires_at = ?`, time.Now().UTC().Add(-time.Minute).Format(time.RFC3339))
+	cmds, err := svc.ListMachineCommands("m1", 20)
+	if err != nil || len(cmds) != 1 || cmds[0].Status != "expired" {
+		t.Fatalf("want one expired command, got %+v (%v)", cmds, err)
 	}
 }

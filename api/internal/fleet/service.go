@@ -559,7 +559,8 @@ func ensureSchema(db *sql.DB) error {
 			result       TEXT,
 			created_at   TEXT NOT NULL,
 			delivered_at TEXT,
-			done_at      TEXT
+			done_at      TEXT,
+			expires_at   TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_fleet_cmd_machine ON fleet_commands(machine_id, status)`,
 		`CREATE TABLE IF NOT EXISTS fleet_cves (
@@ -616,6 +617,7 @@ func ensureSchema(db *sql.DB) error {
 		`ALTER TABLE fleet_machines ADD COLUMN console_enabled INTEGER DEFAULT 0`, // browser console gate (point 7)
 		`ALTER TABLE fleet_machines ADD COLUMN console_record INTEGER DEFAULT 0`,  // per-host session recording
 		`ALTER TABLE fleet_machines ADD COLUMN last_ip TEXT DEFAULT ''`,           // source address of the last report
+		`ALTER TABLE fleet_commands ADD COLUMN expires_at TEXT`,                   // a person's command expires if undelivered
 	} {
 		if _, err := db.Exec(alt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			log.Printf("fleet: migration %q: %v", alt, err)

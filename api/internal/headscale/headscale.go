@@ -283,10 +283,29 @@ func (s *Service) proxyResponse(w http.ResponseWriter, resp *http.Response) {
 }
 
 // proxyGet proxies a GET request to Headscale
+// userIDOr404 resolves a user name for a handler. A failed lookup may be a transport error naming
+// Headscale's internal address, so the detail is logged and the caller only gets a 404.
+func userIDOr404(w http.ResponseWriter, name string) (string, bool) {
+	id, err := getUserIDByName(name)
+	if err != nil {
+		log.Printf("headscale: user lookup %q: %v", name, err)
+		router.JSONError(w, "user not found", http.StatusNotFound)
+		return "", false
+	}
+	return id, true
+}
+
+// headscaleUnreachable answers a failed call to Headscale. The transport error names Headscale's
+// internal address, so it goes to the server log only; the caller gets a generic message.
+func headscaleUnreachable(w http.ResponseWriter, err error) {
+	log.Printf("headscale: request failed: %v", err)
+	router.JSONError(w, "Headscale is unreachable", http.StatusFailedDependency)
+}
+
 func (s *Service) proxyGet(w http.ResponseWriter, path string) {
 	resp, err := helper.HeadscaleGet(path)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusFailedDependency)
+		headscaleUnreachable(w, err)
 		return
 	}
 	s.proxyResponse(w, resp)
@@ -296,7 +315,7 @@ func (s *Service) proxyGet(w http.ResponseWriter, path string) {
 func (s *Service) proxyPost(w http.ResponseWriter, path string, body string) {
 	resp, err := helper.HeadscalePost(path, body)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusFailedDependency)
+		headscaleUnreachable(w, err)
 		return
 	}
 	s.proxyResponse(w, resp)
@@ -306,7 +325,7 @@ func (s *Service) proxyPost(w http.ResponseWriter, path string, body string) {
 func (s *Service) proxyDelete(w http.ResponseWriter, path string) {
 	resp, err := helper.HeadscaleDelete(path)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusFailedDependency)
+		headscaleUnreachable(w, err)
 		return
 	}
 	s.proxyResponse(w, resp)
@@ -342,9 +361,8 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := getUserIDByName(name)
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusNotFound)
+	userID, ok := userIDOr404(w, name)
+	if !ok {
 		return
 	}
 
@@ -364,9 +382,8 @@ func (s *Service) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Lookup user ID by name
-	userID, err := getUserIDByName(parts[0])
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusNotFound)
+	userID, ok := userIDOr404(w, parts[0])
+	if !ok {
 		return
 	}
 
@@ -467,7 +484,7 @@ func (s *Service) handleUpdateNodeTags(w http.ResponseWriter, r *http.Request) {
 	body, _ := json.Marshal(map[string][]string{"tags": tags})
 	resp, err := helper.HeadscalePost("/node/"+id+"/tags", string(body))
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusFailedDependency)
+		headscaleUnreachable(w, err)
 		return
 	}
 	if resp.StatusCode < 300 {

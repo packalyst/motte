@@ -243,6 +243,22 @@ func (s *Service) machineByCertFP(fp string) (*Machine, error) {
 	return &m, nil
 }
 
+// commandOnlineWindow: a machine that reported this recently is online (the agent reports every
+// 15s by default), so a queued command is picked up within seconds. Same cutoff as the UI's
+// "online" label.
+const commandOnlineWindow = 2 * time.Minute
+
+// recentlySeen reports whether a non-revoked machine reported within commandOnlineWindow.
+func (s *Service) recentlySeen(id string) bool {
+	var lastSeen sql.NullString
+	err := s.db.QueryRow(`SELECT last_seen FROM fleet_machines WHERE id = ? AND revoked = 0`, id).Scan(&lastSeen)
+	if err != nil || !lastSeen.Valid {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, lastSeen.String)
+	return err == nil && time.Since(t) < commandOnlineWindow
+}
+
 // machineByID loads one non-revoked machine with the fields the console path needs (tags for
 // scope, console flags). Returns nil if unknown or revoked.
 func (s *Service) machineByID(id string) (*Machine, error) {
