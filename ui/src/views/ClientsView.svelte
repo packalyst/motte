@@ -1,168 +1,162 @@
 <script>
   /**
-   * ClientsView — every client in one list: WireGuard peers and Tailscale (Headscale) nodes, fleet
-   * machines running the agent, and devices on the panel's private networks. Read-only overview; a
-   * row opens the item on its own page (Nodes / Machines / Networks), which still own all actions.
-   * A machine that reports over the VPN (its report's source address is a VPN client's IP) is shown
-   * once, as that client, with a Machine chip.
+   * ClientsView — every client in one place: WireGuard peers, Tailscale nodes, agent machines and
+   * LAN devices, grouped by type. One request (GET /api/clients) returns the merged, scope-filtered
+   * list; the "clients" WS channel signals when something changed and the page refetches — no
+   * polling. Cards open the client on its own page (Nodes / Machines / Networks), which still owns
+   * every action except approving a waiting LAN device.
    */
   import { onMount, onDestroy } from 'svelte'
-  import { apiGet, openView } from '../stores/app.js'
+  import { get } from 'svelte/store'
+  import { apiGet, apiPost, openView, currentUser, toast } from '../stores/app.js'
   import { loadState, saveState } from '../stores/helpers.js'
-  import { subscribe, unsubscribe, nodesUpdatedStore, fleetStore } from '../stores/websocket.js'
+  import { subscribe, unsubscribe, clientsStore } from '../stores/websocket.js'
   import Icon from '../components/Icon.svelte'
+  import Button from '../components/Button.svelte'
   import InfoCard from '../components/InfoCard.svelte'
-  import StatCard from '../components/StatCard.svelte'
   import Toolbar from '../components/Toolbar.svelte'
+  import Segmented from '../components/Segmented.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
-  import { statusInfo } from '$lib/fleet.js'
 
   let { loading = $bindable(true) } = $props()
 
-  // Each kind: label, icon, badge colour, and where its row opens.
   const KINDS = {
-    wireguard: { label: 'WireGuard', icon: 'shield', badge: 'kt-badge-success', open: (r) => openView('nodes', 'n=' + encodeURIComponent(r.nodeId)) },
-    tailscale: { label: 'Tailscale', icon: 'cloud', badge: 'kt-badge-info', open: (r) => openView('nodes', 'n=' + encodeURIComponent(r.nodeId)) },
-    machine: { label: 'Machine', icon: 'device-desktop', badge: 'kt-badge-primary', open: (r) => openView('fleet', 'm=' + encodeURIComponent(r.machineId)) },
-    lan: { label: 'LAN device', icon: 'router', badge: 'kt-badge-warning', open: (r) => openView('networks', 'net=' + r.networkId) },
+    wireguard: { label: 'WireGuard', group: 'WireGuard peers', icon: 'shield', color: 'var(--client-wg)' },
+    tailscale: { label: 'Tailscale', group: 'Tailscale nodes', icon: 'cloud', color: 'var(--client-ts)' },
+    machine: { label: 'Machine', group: 'Machines', icon: 'device-desktop', color: 'var(--client-mc)' },
+    lan: { label: 'LAN device', group: 'LAN devices', icon: 'router', color: 'var(--client-lan)' },
   }
+  const tint = (color, pct = 14) => `background: color-mix(in oklch, ${color} ${pct}%, transparent); color: ${color}`
+  const TONE = { destructive: 'bg-destructive/10 text-destructive', warning: 'bg-warning/15 text-warning' }
 
-  let vpn = $state([])
-  let machines = $state([])
-  let lan = $state([]) // DHCP clients, each with its network attached
-  let unavailable = $state([]) // sources that failed to load (no access / service off)
+  let clients = $state([])
+  let unavailable = $state([])
 
   async function load() {
-    const [v, m, n] = await Promise.allSettled([
-      apiGet('/api/vpn/clients'),
-      apiGet('/api/fleet/machines'),
-      apiGet('/api/dhcp/networks'),
-    ])
-    const missing = []
-    if (v.status === 'fulfilled') vpn = Array.isArray(v.value) ? v.value : v.value?.clients || []
-    else missing.push('VPN clients')
-    if (m.status === 'fulfilled') machines = m.value || []
-    else missing.push('Machines')
-    if (n.status === 'fulfilled') {
-      const nets = n.value?.networks || []
-      const per = await Promise.allSettled(nets.map((net) => apiGet(`/api/dhcp/networks/${net.id}/clients`)))
-      lan = per.flatMap((r, i) => (r.status === 'fulfilled' ? (r.value?.clients || []).map((c) => ({ ...c, net: nets[i] })) : []))
-    } else missing.push('Networks')
-    unavailable = missing
-    loading = false
+    try {
+      const res = await apiGet('/api/clients')
+      clients = res.clients || []
+      unavailable = res.unavailable || []
+    } catch (e) {
+      toast('Could not load clients: ' + e.message, 'error')
+    } finally {
+      loading = false
+    }
   }
 
-  // One normalized row per real device.
-  const rows = $derived.by(() => {
-    const byIP = new Map(machines.filter((m) => m.last_ip).map((m) => [m.last_ip, m]))
-    const merged = new Set()
-    const out = []
-    for (const c of vpn) {
-      const raw = c.rawData || {}
-      const kind = c.type === 'wireguard' ? 'wireguard' : 'tailscale'
-      const m = byIP.get(c.ip)
-      if (m) merged.add(m.id)
-      const expired = kind === 'tailscale' && raw.expiry && !raw.expiry.startsWith('0001') && new Date(raw.expiry) < new Date()
-      out.push({
-        key: 'v' + c.id, kind, kinds: m ? [kind, 'machine'] : [kind],
-        nodeId: kind === 'wireguard' ? 'wg-' + c.externalId : c.externalId,
-        machineId: m?.id,
-        name: kind === 'tailscale' ? raw.givenName || raw.name || c.name : c.name,
-        ip: c.ip,
-        online: !!raw.online,
-        lastSeen: raw.lastHandshake || raw.lastSeen,
-        where: kind === 'tailscale' ? raw.user?.name || '' : m?.summary?.os || '',
-        tx: c.totalTx || 0, rx: c.totalRx || 0,
-        flags: [
-          expired && { label: 'Key expired', tone: 'destructive' },
-          kind === 'wireguard' && raw.enabled === false && { label: 'Disabled', tone: 'warning' },
-          c.blockInternet && { label: 'No internet', tone: 'destructive' },
-          m?.summary?.cve_critical > 0 && { label: `${m.summary.cve_critical} critical CVE`, tone: 'destructive' },
-        ].filter(Boolean),
-      })
-    }
-    for (const m of machines) {
-      if (merged.has(m.id) || m.status === 'uninstalled') continue
-      const st = statusInfo(m)
-      out.push({
-        key: 'm' + m.id, kind: 'machine', kinds: ['machine'], machineId: m.id,
-        name: m.name || m.id, ip: m.last_ip || '', online: st.online, lastSeen: m.last_seen,
-        where: m.summary?.os || '', tx: null, rx: null,
-        flags: [
-          m.revoked && { label: 'Revoked', tone: 'destructive' },
-          m.summary?.cve_critical > 0 && { label: `${m.summary.cve_critical} critical CVE`, tone: 'destructive' },
-        ].filter(Boolean),
-      })
-    }
-    for (const d of lan) {
-      out.push({
-        key: 'd' + d.id, kind: 'lan', kinds: ['lan'], networkId: d.network_id,
-        name: d.name || d.mac, ip: d.ip, online: !!d.online, lastSeen: d.last_seen,
-        where: `${d.net.iface} · ${d.net.cidr}`, tx: null, rx: null,
-        flags: [!d.approved && { label: 'Not approved', tone: 'warning' }].filter(Boolean),
-      })
-    }
-    return out.sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name))
-  })
+  // Open a client on its own page; a VPN client that is also a machine can open either.
+  function open(c, kind = c.kind) {
+    if (kind === 'machine') openView('fleet', 'm=' + encodeURIComponent(c.open.machine))
+    else if (kind === 'lan') openView('networks', 'net=' + c.open.network)
+    else openView('nodes', 'n=' + encodeURIComponent(c.open.node))
+  }
 
+  // Approving a LAN device is admin-only on the server; the button only shows for admins.
+  const isAdmin = $derived(['admin', 'owner'].includes($currentUser?.role))
+  let approving = $state(null)
+  async function approve(c) {
+    approving = c.key
+    try {
+      await apiPost(`/api/dhcp/clients/${c.open.lan}/approve`)
+      toast(`${c.name} approved`, 'success')
+      await load()
+    } catch (e) {
+      toast('Could not approve: ' + e.message, 'error')
+    } finally {
+      approving = null
+    }
+  }
+
+  const isKind = (c, k) => c.kind === k || (k === 'machine' && c.machine)
   const saved = loadState('clients')
   let search = $state('')
-  let kindFilter = $state(saved.kind || 'all')
-  let statusFilter = $state(saved.status || 'all')
-  $effect(() => saveState('clients', { kind: kindFilter, status: statusFilter }))
+  let status = $state(saved.status || 'all')
+  let kind = $state(KINDS[saved.kind] ? saved.kind : null) // ignore stale values from older versions
+  $effect(() => saveState('clients', { status, kind }))
 
-  const counts = $derived(Object.fromEntries(Object.keys(KINDS).map((k) => [k, rows.filter((r) => r.kinds.includes(k)).length])))
-  const online = $derived(rows.filter((r) => r.online).length)
+  const online = $derived(clients.filter((c) => c.online).length)
+  const counts = $derived(Object.fromEntries(Object.keys(KINDS).map((k) => [k, clients.filter((c) => isKind(c, k)).length])))
+  const pending = $derived(clients.filter((c) => c.pending))
   const shown = $derived.by(() => {
     const q = search.trim().toLowerCase()
-    return rows.filter((r) =>
-      (kindFilter === 'all' || r.kinds.includes(kindFilter)) &&
-      (statusFilter === 'all' || (statusFilter === 'online') === r.online) &&
-      (!q || `${r.name} ${r.ip} ${r.where}`.toLowerCase().includes(q)))
+    return clients.filter((c) =>
+      (status === 'all' || (status === 'online') === c.online) &&
+      (!kind || isKind(c, kind)) &&
+      (!q || `${c.name} ${c.ip} ${c.meta || ''} ${KINDS[c.kind].label}`.toLowerCase().includes(q)))
   })
+  const groups = $derived(
+    Object.entries(KINDS)
+      .map(([k, meta]) => ({ k, meta, items: shown.filter((c) => c.kind === k) }))
+      .filter((g) => g.items.length),
+  )
 
-  // Live: VPN changes and agent check-ins refresh the list (debounced — check-ins can burst).
-  let timer
-  function soon() { clearTimeout(timer); timer = setTimeout(load, 1500) }
-  let seenNodes = 0
-  $effect(() => { const n = $nodesUpdatedStore; if (n > seenNodes) { if (seenNodes) soon(); seenNodes = n } })
-  $effect(() => { if ($fleetStore) soon() })
-
-  onMount(() => { load(); subscribe(['nodes_updated', 'fleet']) })
-  onDestroy(() => { clearTimeout(timer); unsubscribe(['nodes_updated', 'fleet']) })
-
-  const toneClass = { destructive: 'bg-destructive/10 text-destructive', warning: 'bg-warning/10 text-warning' }
+  // Live: the server signals changes on the clients channel; refetch on each signal.
+  let seen = get(clientsStore)
+  $effect(() => {
+    const n = $clientsStore
+    if (n > seen) { seen = n; load() }
+  })
+  onMount(() => { load(); subscribe('clients') })
+  onDestroy(() => unsubscribe('clients'))
 </script>
 
 <div class="space-y-4">
-  <InfoCard icon="devices" title="All Clients"
-    description="Every device in one place — WireGuard peers, Tailscale nodes, machines running the agent and devices on your private networks. Open one to manage it on its own page." />
+  <InfoCard icon="devices" title="All clients"
+    description="WireGuard peers, Tailscale nodes, agent machines and LAN devices in one place. Open a client to manage it on its own page." />
 
-  <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
-    <StatCard icon="devices" value={rows.length} label="Clients" />
-    <StatCard icon="circle-check" color="success" value={online} label="Online" />
-    <StatCard icon="shield" color="info" value={counts.wireguard + counts.tailscale} label="VPN" />
-    <StatCard icon="device-desktop" value={counts.machine} label="Machines" />
-    <StatCard icon="router" color="warning" value={counts.lan} label="LAN devices" />
-  </div>
+  <!-- Summary: one surface, hairline dividers -->
+  <section aria-label="Summary" class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-3 lg:grid-cols-5">
+    <div class="col-span-2 flex items-center gap-3 bg-card px-4 py-3 sm:col-span-1">
+      <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-success/10 text-success"><Icon name="circle-check" size={16} /></span>
+      <div class="min-w-0 flex-1">
+        <div class="text-xl font-bold leading-none tabular-nums text-foreground">{online}<span class="text-sm font-medium text-muted-foreground"> / {clients.length}</span></div>
+        <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted" title="{online} of {clients.length} online">
+          <div class="h-full rounded-full bg-success transition-[width]" style="width: {clients.length ? (online / clients.length) * 100 : 0}%"></div>
+        </div>
+        <div class="mt-1 text-[11px] text-muted-foreground">online</div>
+      </div>
+    </div>
+    {#each Object.entries(KINDS) as [k, meta] (k)}
+      <div class="flex items-center gap-3 bg-card px-4 py-3">
+        <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg" style={tint(meta.color)}><Icon name={meta.icon} size={16} /></span>
+        <div>
+          <div class="text-xl font-bold leading-none tabular-nums text-foreground">{counts[k]}</div>
+          <div class="mt-1 text-[11px] text-muted-foreground">{meta.group}</div>
+        </div>
+      </div>
+    {/each}
+  </section>
 
-  <Toolbar bind:search placeholder="Search by name, IP, user, OS or network...">
-    <div class="flex flex-wrap items-center gap-2">
-      <button type="button" onclick={() => { kindFilter = 'all'; statusFilter = 'all' }}
-        class="kt-badge kt-badge-outline {kindFilter === 'all' && statusFilter === 'all' ? 'kt-badge-primary' : 'kt-badge-secondary'} cursor-pointer">
-        All <span class="kt-badge kt-badge-xs kt-badge-primary">{rows.length}</span>
-      </button>
-      <button type="button" onclick={() => (statusFilter = statusFilter === 'online' ? 'all' : 'online')}
-        class="kt-badge kt-badge-outline {statusFilter === 'online' ? 'kt-badge-success' : 'kt-badge-secondary'} cursor-pointer">Online</button>
-      <button type="button" onclick={() => (statusFilter = statusFilter === 'offline' ? 'all' : 'offline')}
-        class="kt-badge kt-badge-outline {statusFilter === 'offline' ? 'kt-badge-warning' : 'kt-badge-secondary'} cursor-pointer">Offline</button>
-      <span class="mx-1 hidden h-4 w-px bg-border sm:block"></span>
+  {#if pending.length}
+    <div role="status" class="flex items-center gap-2.5 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-foreground">
+      <Icon name="alert-circle" size={16} class="shrink-0 text-warning" />
+      <span class="min-w-0 flex-1 truncate">
+        {#if pending.length === 1}
+          <strong>{pending[0].name}</strong> is waiting for approval to join {pending[0].meta}.
+        {:else}
+          <strong>{pending.length} devices</strong> are waiting for approval to join your networks.
+        {/if}
+      </span>
+      {#if isAdmin && pending.length === 1}
+        <Button variant="primary" icon="check" loading={approving === pending[0].key} onclick={() => approve(pending[0])}>Approve</Button>
+      {/if}
+    </div>
+  {/if}
+
+  <Toolbar bind:search placeholder="Search name, IP, user, OS or network…">
+    <div class="flex min-w-0 flex-wrap items-center gap-2">
+      <Segmented label="Status" bind:value={status} options={[
+        { value: 'all', label: 'All', count: clients.length },
+        { value: 'online', label: 'Online', count: online },
+        { value: 'offline', label: 'Offline', count: clients.length - online },
+      ]} />
       {#each Object.entries(KINDS) as [k, meta] (k)}
-        <button type="button" onclick={() => (kindFilter = kindFilter === k ? 'all' : k)}
-          class="kt-badge kt-badge-outline {kindFilter === k ? meta.badge : 'kt-badge-secondary'} cursor-pointer">
-          <Icon name={meta.icon} size={14} /> {meta.label}
-          <span class="kt-badge kt-badge-xs {meta.badge}">{counts[k]}</span>
+        <button type="button" aria-pressed={kind === k} onclick={() => (kind = kind === k ? null : k)}
+          class="kt-badge kt-badge-outline cursor-pointer {kind === k ? 'kt-badge-primary' : 'kt-badge-secondary'}">
+          <span class="h-2 w-2 rounded-sm" style="background: {meta.color}"></span>
+          {meta.label}
+          <span class="kt-badge kt-badge-xs {kind === k ? 'kt-badge-primary' : 'kt-badge-secondary'}">{counts[k]}</span>
         </button>
       {/each}
     </div>
@@ -174,70 +168,64 @@
     </div>
   {/if}
 
-  {#if shown.length}
-    <div class="overflow-hidden rounded-lg border border-border bg-card">
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-muted/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
-            <tr>
-              <th class="px-4 py-3 font-medium">Client</th>
-              <th class="px-4 py-3 font-medium">Type</th>
-              <th class="px-4 py-3 font-medium">IP</th>
-              <th class="hidden px-4 py-3 font-medium md:table-cell">User / OS / Network</th>
-              <th class="hidden px-4 py-3 font-medium sm:table-cell">Last seen</th>
-              <th class="hidden px-4 py-3 text-right font-medium lg:table-cell">Traffic ↑ / ↓</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each shown as r (r.key)}
-              <tr class="cursor-pointer border-t border-border hover:bg-accent/50" tabindex="0"
-                onclick={() => KINDS[r.kind].open(r)} onkeydown={(e) => e.key === 'Enter' && KINDS[r.kind].open(r)}>
-                <td class="px-4 py-2.5">
-                  <div class="flex items-center gap-2.5">
-                    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg {r.online ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-                      <Icon name={KINDS[r.kind].icon} size={16} />
-                    </div>
-                    <div class="min-w-0">
-                      <div class="flex items-center gap-1.5">
-                        <span class="status-dot {r.online ? 'status-dot-success' : 'status-dot-muted'}" title={r.online ? 'Online' : 'Offline'}></span>
-                        <span class="truncate font-medium text-foreground">{r.name}</span>
-                      </div>
-                      {#if r.flags.length}
-                        <div class="mt-0.5 flex flex-wrap gap-1">
-                          {#each r.flags as f (f.label)}
-                            <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {toneClass[f.tone]}">{f.label}</span>
-                          {/each}
-                        </div>
-                      {/if}
-                    </div>
-                  </div>
-                </td>
-                <td class="px-4 py-2.5">
-                  <div class="flex flex-wrap gap-1">
-                    {#each r.kinds as k (k)}
-                      <!-- Each chip opens its own page (a merged machine row has VPN + Machine). -->
-                      <button type="button" title={'Open in ' + KINDS[k].label}
-                        onclick={(e) => { e.stopPropagation(); KINDS[k].open(r) }}
-                        class="kt-badge kt-badge-xs kt-badge-outline {KINDS[k].badge} cursor-pointer">
-                        <Icon name={KINDS[k].icon} size={11} /> {KINDS[k].label}
-                      </button>
-                    {/each}
-                  </div>
-                </td>
-                <td class="px-4 py-2.5"><code class="font-mono text-xs text-foreground">{r.ip || '—'}</code></td>
-                <td class="hidden truncate px-4 py-2.5 text-xs text-muted-foreground md:table-cell">{r.where || '—'}</td>
-                <td class="hidden px-4 py-2.5 text-xs text-muted-foreground sm:table-cell">{r.online ? 'now' : timeAgo(r.lastSeen)}</td>
-                <td class="hidden px-4 py-2.5 text-right text-xs tabular-nums text-muted-foreground lg:table-cell">
-                  {r.tx === null ? '—' : `${formatBytes(r.tx)} / ${formatBytes(r.rx)}`}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+  {#each groups as g (g.k)}
+    {@const on = g.items.filter((c) => c.online).length}
+    <section class="space-y-2" aria-label={g.meta.group}>
+      <h2 class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground after:h-px after:flex-1 after:bg-border">
+        <span class="h-2 w-2 rounded-sm" style="background: {g.meta.color}"></span>
+        {g.meta.group}
+        <span class="font-normal normal-case tracking-normal">{on}/{g.items.length} online</span>
+      </h2>
+      <div class="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]">
+        {#each g.items as c (c.key)}
+          <article class="relative flex min-h-16 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 transition hover:border-foreground/20 hover:shadow-sm has-[.open-link:focus-visible]:ring-2 has-[.open-link:focus-visible]:ring-primary/40
+            {c.pending ? 'border-warning/50' : 'border-border'}">
+            <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg {c.online ? '' : 'opacity-60 grayscale'}" style={tint(g.meta.color)}>
+              <Icon name={g.meta.icon} size={18} />
+              <span class="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card {c.online ? 'bg-success' : 'bg-muted-foreground/50'}"
+                title={c.online ? 'Online' : 'Offline'}></span>
+            </span>
+            <div class="min-w-0 flex-1 space-y-0.5">
+              <div class="flex min-w-0 items-center gap-2">
+                <!-- The name is the card's link: its ::after covers the card, so the whole card opens it. -->
+                <button type="button" onclick={() => open(c)} title={'Open in ' + KINDS[c.kind].label}
+                  class="open-link min-w-0 truncate text-left text-sm font-semibold text-foreground cursor-pointer outline-none after:absolute after:inset-0 after:rounded-xl">{c.name}</button>
+                {#each c.flags || [] as f (f.label)}
+                  <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium {TONE[f.tone] || TONE.warning}">{f.label}</span>
+                {/each}
+                <span class="ml-auto shrink-0 text-[11px] text-muted-foreground">{c.online ? 'Active now' : timeAgo(c.last_seen)}</span>
+              </div>
+              <div class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <code class="shrink-0 font-mono text-foreground">{c.ip || '—'}</code>
+                {#if c.meta}
+                  <span class="h-1 w-1 shrink-0 rounded-full bg-muted-foreground/40"></span>
+                  <span class="truncate">{c.meta}</span>
+                {/if}
+                {#if c.machine}
+                  <button type="button" onclick={() => open(c, 'machine')} title="Open the machine page"
+                    class="relative z-10 inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium cursor-pointer hover:underline" style={tint(KINDS.machine.color)}>
+                    <Icon name="device-desktop" size={11} /> Machine
+                  </button>
+                {/if}
+                {#if c.tx != null}
+                  <span class="ml-auto flex shrink-0 gap-2 tabular-nums text-[11px] text-foreground/80">
+                    <span><span class="text-success" aria-hidden="true">↑</span><span class="sr-only">Sent </span>{formatBytes(c.tx)}</span>
+                    <span><span class="text-info" aria-hidden="true">↓</span><span class="sr-only">Received </span>{formatBytes(c.rx)}</span>
+                  </span>
+                {/if}
+              </div>
+            </div>
+            {#if c.pending && isAdmin}
+              <Button class="relative z-10 shrink-0" variant="primary" size="xs" icon="check" loading={approving === c.key} onclick={() => approve(c)}>Approve</Button>
+            {/if}
+          </article>
+        {/each}
       </div>
-    </div>
-  {:else if !loading}
-    <EmptyState icon="devices" title="No clients found"
-      description={search || kindFilter !== 'all' || statusFilter !== 'all' ? 'Try a different search or filter' : 'Add WireGuard peers or Tailscale nodes, enroll machines, or create a private network'} large />
-  {/if}
+    </section>
+  {:else}
+    {#if !loading}
+      <EmptyState icon="devices" title="No clients found"
+        description={search || kind || status !== 'all' ? 'No clients match these filters.' : 'Add WireGuard peers or Tailscale nodes, enroll machines, or create a private network.'} large />
+    {/if}
+  {/each}
 </div>

@@ -111,3 +111,21 @@ func (s *Service) clientsWithLive(n *Network) ([]Client, error) {
 	}
 	return clients, nil
 }
+
+// AllClients returns every managed network with its known devices, online state taken from the
+// live lease files (as on each network's own page).
+func (s *Service) AllClients() ([]Network, map[int64][]Client, error) {
+	nets, err := s.listNetworks()
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make(map[int64][]Client, len(nets))
+	for i := range nets {
+		cs, err := s.clientsWithLive(&nets[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		out[nets[i].ID] = cs
+	}
+	return nets, out, nil
+}

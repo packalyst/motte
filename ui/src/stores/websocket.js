@@ -23,6 +23,7 @@ export const fleetStore = writable(null) // { machine_id, report } pushed on eac
 export const serverStatsStore = writable(null) // live host /proc stats (cpu, mem, net, load, cores)
 export const containerStatsStore = writable(null) // live per-container docker stats { containers: [...] }
 export const routinesStore = writable(null) // live background-routine list { routines: [...] }
+export const clientsStore = writable(0) // counter bumped on each clients "changed" signal (page refetches)
 
 // Channel to store mapping
 const storeMap = {
@@ -35,7 +36,8 @@ const storeMap = {
   fleet: fleetStore,
   server_stats: serverStatsStore,
   container_stats: containerStatsStore,
-  routines: routinesStore
+  routines: routinesStore,
+  clients: clientsStore
 }
 
 // WebSocket instance
@@ -138,8 +140,8 @@ function handleMessage(msg) {
 
   const store = storeMap[type]
   if (store) {
-    // nodes_updated is a notification without payload - increment counter
-    if (type === 'nodes_updated') {
+    // nodes_updated / clients are change signals without data - increment a counter
+    if (type === 'nodes_updated' || type === 'clients') {
       store.update(n => n + 1)
     } else if (type === 'docker_logs') {
       // Append log entry to array
