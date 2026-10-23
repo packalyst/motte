@@ -28,7 +28,7 @@
   import RecordingList from './RecordingList.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes } from '$lib/utils/format.js'
-  import { usageColor, sevVariant, statusInfo, round, fmtUptime } from '$lib/fleet.js'
+  import { usageColor, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
   let { machine, latestAgent = null, onback, ondeleted, onviewcves } = $props()
 
@@ -237,6 +237,21 @@
   // machine-level CVE roll-up (unique CVEs, affected packages, fixable) — the report's cves
   // summary only has raw findings + severity, so we pull the richer numbers from the panel.
   let cveSummary = $state(null)
+  // Scans are on demand and run in the background on the machine: the report says so while one
+  // runs (older agents instead hold the rescan command open until it finishes).
+  const scanning = $derived(!!report?.scanning || commands.some((c) => c.type === 'rescan' && (c.status === 'pending' || c.status === 'delivered')))
+  // The agent refuses installs, restarts and reboots while a scan runs (security commands still
+  // go through), so those buttons wait for it too.
+  const canMaintain = $derived(st.reachable && !scanning)
+  const scanned = $derived(!!cves?.scanned_at || !!cves?.total || !!cveSummary?.unique_cves)
+  const SEV = [
+    { sev: 'CRITICAL', label: 'critical', bar: 'bg-destructive' },
+    { sev: 'HIGH', label: 'high', bar: 'bg-warning' },
+    { sev: 'MEDIUM', label: 'medium', bar: 'bg-info' },
+    { sev: 'LOW', label: 'low', bar: 'bg-muted-foreground/50' },
+  ]
+  const sevRows = $derived(SEV.map((s) => ({ ...s, n: cves?.counts?.[s.sev] || 0 })).filter((s) => s.n))
+  const sevTotal = $derived(sevRows.reduce((a, s) => a + s.n, 0))
   // One request returns { report, commands } (same shape as the live WS push).
   async function loadReport() {
     try {
@@ -379,7 +394,10 @@
       : `Take ${machine.name} LIVE? It will enforce firewall blocks and apply updates for real.`,
     confirmText: enabled ? 'Dry-run' : 'Go live', variant: enabled ? 'primary' : 'destructive',
   })
-  const rescan = () => cmd('rescan', null, { title: 'Rescan', message: `Re-run the Trivy CVE scan on ${machine.name} now?` })
+  const rescan = () => cmd('rescan', null, {
+    title: 'Scan for vulnerabilities', confirmText: 'Scan',
+    message: `Scan ${machine.name} for known vulnerabilities now? Trivy reads every installed package and app lockfile, so it takes a few minutes and uses some CPU and disk on the machine.`,
+  })
   const updateAgent = () => cmd('update-agent', null, {
     title: 'Update agent',
     message: `Update the wgscout agent on ${machine.name}${agentUpdate.cur && agentUpdate.latest ? ` from ${agentUpdate.cur} to ${agentUpdate.latest}` : ' to the latest release'}? It downloads the release binary, verifies its checksum, checks it runs, swaps it in (keeping a backup), and restarts the agent — a brief reconnect, no reboot.`,
@@ -478,18 +496,29 @@
   </span>
 {/snippet}
 
-<!-- card header: icon tile + title + source subtitle -->
-{#snippet head(icon, title, sub, tint = 'text-muted-foreground')}
+<!-- card header: icon tile + title + source subtitle, optional controls on the right -->
+{#snippet head(icon, title, sub, tint = '', actions)}
   <div class="panel-head">
-    <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 {tint}"><Icon name={icon} size={17} /></span>
-    <div class="min-w-0">
-      <div class="text-[13px] font-semibold text-foreground">{title}</div>
-      {#if sub}<div class="text-[11px] text-muted-foreground truncate">{sub}</div>{/if}
+    <span class="panel-icon {tint}"><Icon name={icon} size={17} /></span>
+    <div class="min-w-0 flex-1">
+      <div class="panel-title">{title}</div>
+      {#if sub}<div class="panel-sub">{sub}</div>{/if}
     </div>
+    {@render actions?.()}
   </div>
 {/snippet}
 
 <!-- persistent plain-language note (mockup's dashed footer) -->
+{#snippet row(title, desc, control)}
+  <div class="flex flex-wrap items-center gap-3 py-2.5 first:pt-0 last:pb-0">
+    <div class="min-w-0 flex-1">
+      <div class="text-sm font-medium text-foreground">{title}</div>
+      <div class="text-[11px] text-muted-foreground">{desc}</div>
+    </div>
+    {@render control()}
+  </div>
+{/snippet}
+
 {#snippet note(text)}
   <div class="panel-note">{text}</div>
 {/snippet}
@@ -512,18 +541,21 @@
       <Icon name="arrow-left" size={16} />
     </button>
     <div class="min-w-0 flex-1">
+      <!-- Up/down is the headline; dry-run is flagged only when on (enforcing is the normal state). -->
       <div class="flex items-center gap-2">
-        <span class="w-2.5 h-2.5 rounded-full shrink-0 {st.dot}" title={st.label}></span>
         <h2 class="truncate text-lg font-semibold leading-tight text-foreground">{machine.name || machine.id}</h2>
-        {#if report}
-          <span class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium {dryRun ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}">{dryRun ? 'Dry-run' : 'Live'}</span>
+        <Badge variant={st.variant} size="sm"><span class="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current"></span><span class="capitalize">{st.label}</span></Badge>
+        {#if scanning}
+          <span title="A vulnerability scan is running. Updates, restarts and reboot wait until it finishes."><Badge variant="info" size="sm"><Icon name="loader-2" size={11} class="mr-1 animate-spin" />Scanning</Badge></span>
+        {/if}
+        {#if report && dryRun}
+          <span title="Dry-run: firewall blocks and updates are only logged, not applied"><Badge variant="warning" size="sm">Dry-run</Badge></span>
         {/if}
       </div>
       <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-        <span>{st.label}</span>
-        {#if machine.last_seen}<span class="inline-flex items-center gap-1"><Icon name="clock" size={11} />seen {timeAgo(machine.last_seen)}</span>{/if}
+        {#if machine.last_seen}<span class="inline-flex items-center gap-1 {st.online ? '' : 'font-medium text-foreground'}"><Icon name="clock" size={11} />{st.online ? 'seen' : 'last seen'} {timeAgo(machine.last_seen)}</span>{/if}
         {#if report?.agent}<span class="inline-flex items-center gap-1"><Icon name="robot" size={11} />agent {report.agent}</span>{/if}
-        {#if report}<span class="hidden items-center gap-1 tabular-nums sm:inline-flex"><Icon name="cpu" size={11} />CPU {round(m.cpu)}% · MEM {round(m.mem)}% · load {(m.load1 ?? 0).toFixed(2)}</span>{/if}
+        {#if report}<span class="hidden items-center gap-1 tabular-nums sm:inline-flex"><Icon name="cpu" size={11} />{st.online ? '' : 'last known · '}CPU {round(m.cpu)}% · MEM {round(m.mem)}% · load {(m.load1 ?? 0).toFixed(2)}</span>{/if}
       </div>
     </div>
     <div class="btn-group shrink-0">
@@ -579,7 +611,7 @@
       <!-- Security glance → Security tab -->
       <button type="button" onclick={() => go('security')}
         class="w-full bg-card border border-border rounded-xl p-3 flex items-center gap-3 text-left hover:bg-muted/30 transition cursor-pointer">
-        <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 {secBadge || feed.length || fimCount ? 'text-warning' : 'text-success'}"><Icon name="shield-lock" size={17} /></span>
+        <span class="panel-icon {secBadge || feed.length || fimCount ? 'text-warning' : 'text-success'}"><Icon name="shield-lock" size={17} /></span>
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1 flex-1 min-w-0 text-sm">
           <span class="flex items-center gap-1.5"><Icon name="package" size={14} class="text-muted-foreground" /><span class="font-medium">{(cves?.total ?? 0).toLocaleString()}</span><span class="text-muted-foreground">CVEs</span>{#if secBadge}<Badge variant="destructive" size="sm">{secBadge} crit/high</Badge>{/if}</span>
           <span class="flex items-center gap-1.5"><Icon name="ban" size={14} class="text-muted-foreground" /><span class="font-medium">{feed.length}</span><span class="text-muted-foreground">bans</span></span>
@@ -590,18 +622,14 @@
 
       <!-- Usage history -->
       <div class="panel">
-        <div class="panel-head flex-wrap">
-          <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-muted-foreground"><Icon name="chart-line" size={17} /></span>
-          <div class="min-w-0 flex-1">
-            <div class="text-[13px] font-semibold text-foreground">Usage history</div>
-            <div class="text-[11px] text-muted-foreground truncate">CPU · memory · disk over time</div>
-          </div>
-          <!-- average vs peak (both stored; no refetch) + time range; their own row on phones -->
+        <!-- average vs peak (both stored; no refetch) + time range; their own row on phones -->
+        {#snippet histControls()}
           <div class="flex w-full gap-2 sm:w-auto">
             <Segmented size="sm" label="Statistic" bind:value={histStat} options={[{ value: 'avg', label: 'Avg' }, { value: 'max', label: 'Peak' }]} />
             <Segmented size="sm" label="Time range" bind:value={histRange} options={['24h', '7d', '30d'].map((r) => ({ value: r, label: r }))} />
           </div>
-        </div>
+        {/snippet}
+        {@render head('chart-line', 'Usage history', 'CPU · memory · disk over time', '', histControls)}
         {#if histLoading && histPoints.length === 0}
           <div class="h-[188px] grid place-items-center text-xs text-muted-foreground">Loading history…</div>
         {:else if histPoints.length < 2}
@@ -764,17 +792,15 @@
 
     {#if activeTab === 'sessions'}
       <div class="panel">
-        <div class="panel-head">
-          <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-primary"><Icon name="terminal-2" size={17} /></span>
-          <div class="min-w-0 flex-1">
-            <div class="text-[13px] font-semibold text-foreground">Console sessions</div>
-            <div class="text-[11px] text-muted-foreground truncate">{consoleEnabled ? `${liveSessions.length} live · they keep running when you close the browser` : 'the console is off for this machine'}</div>
-          </div>
+        {#snippet sessionControls()}
           {#if canOpenConsole && consoleEnabled}
             <button type="button" class="link-action" onclick={() => openConsole()}><Icon name="plus" size={12} />New session</button>
             <Button variant="ghost" size="xs" iconOnly icon="refresh" onclick={refreshSessions} tooltip="Refresh" />
           {/if}
-        </div>
+        {/snippet}
+        {@render head('terminal-2', 'Console sessions',
+          consoleEnabled ? `${liveSessions.length} live · they keep running when you close the browser` : 'the console is off for this machine',
+          'text-primary', sessionControls)}
         {#if !canOpenConsole}
           <div class="text-sm text-muted-foreground">You don't have permission to use the console.</div>
         {:else if !consoleEnabled}
@@ -805,34 +831,64 @@
     {#if activeTab === 'security'}
       <!-- Vulnerabilities -->
       <div class="panel">
-        <div class="panel-head !items-start">
-          <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-warning"><Icon name="package" size={17} /></span>
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <span class="text-[13px] font-semibold text-foreground">Vulnerabilities</span>
-              <span class="ml-auto text-[11px] text-muted-foreground shrink-0">
-                {#if cveSummary}{cveSummary.unique_cves.toLocaleString()} CVEs · {cveSummary.packages.toLocaleString()} pkgs{:else}{(cves?.total ?? 0).toLocaleString()} findings{/if}{cves?.scanned_at ? ` · ${timeAgo(cves.scanned_at)}` : ''}
-              </span>
-            </div>
-            <div class="text-[11px] text-muted-foreground">Trivy · OS packages + app lockfiles</div>
+        {#snippet cveScanned()}
+          <span class="shrink-0 text-[11px] {scanning ? 'text-info' : 'text-muted-foreground'}">
+            {scanning ? 'scanning…' : cves?.scanned_at ? `scanned ${timeAgo(cves.scanned_at)}` : scanned ? '' : 'never scanned'}
+          </span>
+        {/snippet}
+        {@render head('package', 'Vulnerabilities', 'Trivy · OS packages + app lockfiles', 'text-warning', cveScanned)}
+        {#if !scanned}
+          <div class="flex items-start gap-3 rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+            <Icon name="scan" size={16} class="mt-0.5 shrink-0" />
+            <span>Not scanned yet. Scans run only when you ask: they read every installed package, so they take a few minutes and some CPU on the machine.</span>
           </div>
-        </div>
-        {#if cves?.total}
-          <div class="flex flex-wrap items-center gap-1.5">
-            {#each ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as sev}
-              {#if cves?.counts?.[sev]}<Badge variant={sevVariant(sev)} size="sm">{cves.counts[sev].toLocaleString()} {sev.toLowerCase()}</Badge>{/if}
-            {/each}
-            {#if cveSummary?.fixable}
-              <span class="inline-flex items-center gap-1 text-xs ml-1"><Icon name="tool" size={13} class="text-success" /><span class="font-semibold text-foreground">{cveSummary.fixable.toLocaleString()}</span><span class="text-muted-foreground">fixable</span></span>
+        {:else if cves?.total || cveSummary?.unique_cves}
+          <div class="space-y-2.5">
+            <div class="text-sm text-muted-foreground tabular-nums">
+              {#if cveSummary?.unique_cves}
+                <span class="font-semibold text-foreground">{cveSummary.unique_cves.toLocaleString()}</span> CVEs in
+                <span class="font-semibold text-foreground">{cveSummary.packages.toLocaleString()}</span> packages
+                {#if cveSummary.fixable}· <span class="font-semibold text-success">{cveSummary.fixable.toLocaleString()}</span> fixable{/if}
+              {:else}
+                <span class="font-semibold text-foreground">{cves.total.toLocaleString()}</span> findings
+              {/if}
+            </div>
+            {#if sevTotal}
+              <!-- one bar, one segment per severity, sized by its share -->
+              <div class="flex h-2 gap-0.5 overflow-hidden rounded-full bg-muted">
+                {#each sevRows as s (s.sev)}<div class={s.bar} style="width: {(s.n / sevTotal) * 100}%" title="{s.n} {s.label}"></div>{/each}
+              </div>
+              <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                {#each sevRows as s (s.sev)}
+                  <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full {s.bar}"></span><span class="font-medium tabular-nums text-foreground">{s.n.toLocaleString()}</span><span class="text-muted-foreground">{s.label}</span></span>
+                {/each}
+              </div>
             {/if}
           </div>
         {:else}
           <div class="text-sm text-success flex items-center gap-2 py-1"><Icon name="circle-check" size={15} />No known vulnerabilities found.</div>
         {/if}
-        <div class="flex items-center gap-2 mt-3 flex-wrap">
-          {#if cves?.total}<Button variant="primary" size="sm" icon="list-details" onclick={() => onviewcves?.(machine)}>View all & fix</Button>{/if}
+        {#if kernel && kphase}
+          <div class="mt-4 flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2">
+            <span class="w-2 h-2 rounded-full mt-1.5 shrink-0 {kphase.dot} {kernel.phase === 'installing' || kernel.phase === 'cleanup_pending' ? 'animate-pulse' : ''}"></span>
+            <div class="min-w-0">
+              <div class="text-xs font-medium flex items-center gap-1.5"><Icon name="cpu" size={12} /> {kphase.label}{#if kernel.target}<span class="font-mono text-[10px] text-muted-foreground">{kernel.target}</span>{/if}</div>
+              {#if kernel.message}<div class="text-[11px] text-muted-foreground mt-0.5 break-words">{kernel.message}</div>{/if}
+              {#if kernel.removed?.length}<div class="text-[10px] text-muted-foreground mt-0.5">Removed {kernel.removed.length} old package(s)</div>{/if}
+            </div>
+          </div>
+        {/if}
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" icon="scan" loading={scanning} disabled={!st.reachable || scanning} onclick={rescan}>{scanning ? 'Scanning…' : scanned ? 'Scan again' : 'Scan now'}</Button>
+          <Button variant="outline" size="sm" icon="download" disabled={!canMaintain} onclick={applyUpdates}>Apply updates</Button>
+          <Button variant="outline" size="sm" icon="cpu" disabled={!canMaintain} onclick={updateKernel}>Update kernel</Button>
+          {#if cves?.total || cveSummary?.unique_cves}<Button variant="primary" size="sm" icon="list-details" class="sm:ml-auto" onclick={() => onviewcves?.(machine)}>View all & fix</Button>{/if}
         </div>
-        {@render note('Fixable OS-package CVEs clear via “Apply updates” on the Maintenance tab; kernel CVEs via “Update kernel”. “View all & fix” opens the full list grouped by OS/project to upgrade only selected packages.')}
+        {#if report?.scan_error && !scanning}
+          <div class="mt-2 flex items-start gap-1.5 text-[11px] text-destructive"><Icon name="alert-triangle" size={12} class="mt-px shrink-0" /><span class="break-words">Last scan failed: {report.scan_error}</span></div>
+        {/if}
+        {#if !st.reachable}<div class="mt-2 text-[11px] text-muted-foreground">The machine is {st.label}: scans and updates can run once it's back online.</div>{/if}
+        {@render note('“Apply updates” installs pending package updates, which clears fixable OS-package CVEs. “Update kernel” installs the newest kernel and reboots. “View all & fix” lists every finding by OS and project so you can upgrade only the packages you pick.')}
       </div>
 
       <!-- Security events -->
@@ -905,71 +961,59 @@
     {/if}
 
     {#if activeTab === 'maintenance'}
-      <!-- Agent + run state -->
+      <!-- Agent: one row per setting or action (what it does + its control); reboot sits apart. -->
       <div class="panel">
-        {@render head('robot', 'Agent', report?.agent ? `wgscout ${report.agent}` : 'wgscout')}
-        <div class="flex flex-wrap items-center gap-3 text-xs">
-          {#if agentUpdate.state === 'current'}
-            <span class="inline-flex items-center gap-1 text-success"><Icon name="circle-check" size={13} /> up to date</span>
-          {:else if agentUpdate.state === 'updatable'}
-            <button onclick={updateAgent} class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition cursor-pointer font-medium">
-              <Icon name="arrow-up" size={13} /> Update → {agentUpdate.latest}
-            </button>
-          {:else if agentUpdate.state === 'reinstall'}
-            <span class="inline-flex items-center gap-1 text-warning cursor-help" data-kt-tooltip>
-              <Icon name="alert-triangle" size={13} /> {agentUpdate.latest} available — reinstall
-              <span data-kt-tooltip-content class="kt-tooltip hidden">This agent predates in-panel self-update (added in {MIN_SELFUPDATE}). Reinstall once via the install command to enable one-click updates.</span>
-            </span>
+        {@render head('robot', 'Agent', 'version · mode · logging · restart')}
+        <div class="divide-y divide-dashed divide-border">
+          {#snippet version()}
+            {#if agentUpdate.state === 'current'}
+              <span class="inline-flex items-center gap-1 text-xs text-success"><Icon name="circle-check" size={13} />Up to date</span>
+            {:else if agentUpdate.state === 'updatable'}
+              <Button size="sm" icon="arrow-up" disabled={!canMaintain} onclick={updateAgent}>Update to {agentUpdate.latest}</Button>
+            {:else if agentUpdate.state === 'reinstall'}
+              <span class="inline-flex items-center gap-1 text-xs text-warning cursor-help" data-kt-tooltip>
+                <Icon name="alert-triangle" size={13} />{agentUpdate.latest} available: reinstall
+                <span data-kt-tooltip-content class="kt-tooltip hidden">This agent predates in-panel self-update (added in {MIN_SELFUPDATE}). Reinstall once via the install command to enable one-click updates.</span>
+              </span>
+            {/if}
+          {/snippet}
+          {@render row('Version', report?.agent ? `wgscout ${report.agent}` : 'Not reported yet', version)}
+
+          {#snippet mode()}
+            {#if dryRun}
+              <Button variant="destructive" size="sm" icon="bolt" disabled={!st.reachable} onclick={() => setDryRun(false)}>Go live</Button>
+            {:else}
+              <Button variant="outline" size="sm" icon="player-pause" disabled={!st.reachable} onclick={() => setDryRun(true)}>Switch to dry-run</Button>
+            {/if}
+          {/snippet}
+          {@render row(dryRun ? 'Mode: dry-run' : 'Mode: enforcing',
+            dryRun ? 'Firewall blocks and updates are only logged, not applied.' : 'Firewall blocks and updates are applied for real.', mode)}
+
+          {#if report?.log_level}
+            {#snippet logs()}
+              <Button variant="outline" size="sm" icon="file-text" disabled={!canMaintain}
+                onclick={() => setLogLevel(report.log_level === 'debug' ? 'quiet' : 'debug')}>{report.log_level === 'debug' ? 'Back to quiet' : 'Turn on debug'}</Button>
+            {/snippet}
+            {@render row(report.log_level === 'debug' ? 'Logging: debug' : 'Logging: quiet',
+              report.log_level === 'debug' ? 'Verbose logs for troubleshooting. Switch back when done.' : 'Warnings and errors only.', logs)}
           {/if}
-          <span class="inline-flex items-center gap-1.5 ml-auto">
-            <span class="w-2 h-2 rounded-full {dryRun ? 'bg-warning' : 'bg-success'}"></span>
-            <span class="font-medium">{dryRun ? 'Dry-run' : 'Live'}</span>
-            <span class="text-muted-foreground">{dryRun ? '— logs actions' : '— enforcing'}</span>
-          </span>
-          {#if dryRun}
-            <Button variant="destructive" icon="bolt" onclick={() => setDryRun(false)}>Go live</Button>
-          {:else}
-            <Button variant="outline" icon="player-pause" onclick={() => setDryRun(true)}>Dry-run</Button>
-          {/if}
+
+          {#snippet tools()}
+            <Button variant="outline" size="sm" icon="refresh" disabled={!canMaintain} onclick={restartAgents}>Restart</Button>
+          {/snippet}
+          {@render row('Sub-agents', 'CrowdSec and osquery. Restarting is safe, no reboot.', tools)}
         </div>
 
-        {#if kernel && kphase}
-          <div class="mt-3 flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2">
-            <span class="w-2 h-2 rounded-full mt-1.5 shrink-0 {kphase.dot} {kernel.phase === 'installing' || kernel.phase === 'cleanup_pending' ? 'animate-pulse' : ''}"></span>
-            <div class="min-w-0">
-              <div class="text-xs font-medium flex items-center gap-1.5"><Icon name="cpu" size={12} /> {kphase.label}{#if kernel.target}<span class="font-mono text-[10px] text-muted-foreground">{kernel.target}</span>{/if}</div>
-              {#if kernel.message}<div class="text-[11px] text-muted-foreground mt-0.5 break-words">{kernel.message}</div>{/if}
-              {#if kernel.removed?.length}<div class="text-[10px] text-muted-foreground mt-0.5">Removed {kernel.removed.length} old package(s)</div>{/if}
-            </div>
+        <!-- danger zone -->
+        <div class="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5">
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium text-foreground">Reboot host</div>
+            <div class="text-[11px] text-muted-foreground">Restarts the whole machine. It's offline for a minute or two.</div>
           </div>
-        {/if}
-      </div>
-
-      <!-- Actions: patching + lifecycle -->
-      <div class="panel">
-        {@render head('tool', 'Actions', 'patching · lifecycle')}
-        <div class="space-y-2.5">
-          <div>
-            <div class="text-[10px] text-muted-foreground mb-1">Patching</div>
-            <div class="flex flex-wrap gap-1.5">
-              <Button variant="outline" icon="download" onclick={applyUpdates}>Apply updates</Button>
-              <Button variant="outline" icon="cpu" onclick={updateKernel}>Update kernel</Button>
-              <Button variant="outline" icon="scan" onclick={rescan}>Rescan</Button>
-            </div>
-          </div>
-          <div>
-            <div class="text-[10px] text-muted-foreground mb-1">Lifecycle</div>
-            <div class="flex flex-wrap gap-1.5">
-              <Button variant="outline" icon="refresh" onclick={restartAgents}>Restart agents</Button>
-              {#if report?.log_level === 'debug'}
-                <Button variant="outline" icon="file-text" onclick={() => setLogLevel('quiet')}>Quiet logs</Button>
-              {:else if report?.log_level}
-                <Button variant="outline" icon="file-text" onclick={() => setLogLevel('debug')}>Debug logs</Button>
-              {/if}
-              <Button variant="destructive" icon="power" onclick={rebootHost}>Reboot host</Button>
-            </div>
-          </div>
+          <Button variant="destructive" size="sm" icon="power" disabled={!canMaintain} onclick={rebootHost}>Reboot</Button>
         </div>
+        {#if !st.reachable}<div class="mt-2 text-[11px] text-muted-foreground">The machine is {st.label}: these actions can run once it's back online.</div>
+        {:else if scanning}<div class="mt-2 text-[11px] text-muted-foreground">A vulnerability scan is running: updates, restarts and reboot wait until it finishes.</div>{/if}
       </div>
 
       <!-- Recent commands -->

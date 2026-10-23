@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -25,6 +26,10 @@ func (s *Service) HandleReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid report")
 		return
 	}
+	if body, err = s.mergePartialReport(m.ID, body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid report")
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := s.db.Exec(
 		`UPDATE fleet_machines SET last_report = ?, last_seen = ?, status = 'online', last_ip = ? WHERE id = ?`,
@@ -43,4 +48,36 @@ func (s *Service) HandleReport(w http.ResponseWriter, r *http.Request) {
 		s.scopedBroadcast(m.ID, "fleet", map[string]any{"machine_id": m.ID, "report": json.RawMessage(body)})
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// rareSections are the report parts an agent leaves out while they're unchanged.
+var rareSections = []string{"cves", "intrusion", "facts"}
+
+// mergePartialReport fills a partial report's omitted sections from the machine's stored
+// report, so last_report and the live push always carry the full picture. A report without
+// the partial flag (older agents, or the periodic full one) is stored as sent.
+func (s *Service) mergePartialReport(machineID string, body []byte) ([]byte, error) {
+	var in map[string]json.RawMessage
+	if err := json.Unmarshal(body, &in); err != nil {
+		return nil, err
+	}
+	flag, ok := in["partial"]
+	if !ok {
+		return body, nil
+	}
+	delete(in, "partial")
+	if string(flag) == "true" {
+		var prev sql.NullString
+		_ = s.db.QueryRow(`SELECT last_report FROM fleet_machines WHERE id = ?`, machineID).Scan(&prev)
+		var old map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(prev.String), &old) // none stored yet: nothing to fill in
+		for _, k := range rareSections {
+			if _, has := in[k]; !has {
+				if v, ok := old[k]; ok {
+					in[k] = v
+				}
+			}
+		}
+	}
+	return json.Marshal(in)
 }
