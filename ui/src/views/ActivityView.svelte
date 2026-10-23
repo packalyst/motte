@@ -1,32 +1,51 @@
 <script>
+  /**
+   * ActivityView — the panel's activity and audit trail: every subsystem's events, newest first.
+   * Search (message, user, IP), severity and source filters run on the server; "Load older" pages
+   * back through everything kept. The source list comes from the events themselves.
+   */
+  import { onDestroy } from 'svelte'
+  import { createDebouncedSearch } from '../stores/helpers.js'
   import InfoCard from '../components/InfoCard.svelte'
   import Button from '../components/Button.svelte'
   import Select from '../components/Select.svelte'
+  import Input from '../components/Input.svelte'
+  import Segmented from '../components/Segmented.svelte'
   import Icon from '../components/Icon.svelte'
-  import ActivityFeed from '../components/ActivityFeed.svelte'
+  import ActivityFeed, { SOURCES } from '../components/ActivityFeed.svelte'
 
   let { loading = $bindable(true) } = $props()
 
   let feed = $state(null)
+  let sources = $state([])
   let subsystem = $state('')
+  let severity = $state('')
+  let search = $state('')
+  let searchInput = $state('')
 
   // The feed loads on mount; this page has nothing else to fetch.
   $effect(() => { loading = false })
 
-  const sourceOptions = [
-    { value: '', label: 'All sources' },
-    { value: 'auth', label: 'Auth' },
-    { value: 'fleet', label: 'Fleet' },
-    { value: 'firewall', label: 'Firewall' },
-    { value: 'wireguard', label: 'Peers' },
-    { value: 'adguard', label: 'AdGuard' },
-    { value: 'docker', label: 'Docker' },
-    { value: 'settings', label: 'Settings' },
-    { value: 'geolocation', label: 'Geolocation' },
-  ]
+  const { search: debounced, cleanup } = createDebouncedSearch((v) => (search = v.trim()))
+  onDestroy(cleanup)
 
-  async function refresh() {
-    await feed?.reload()
+  const label = (s) => SOURCES[s]?.label || s
+  const totals = $derived(sources.reduce((t, s) => ({ all: t.all + s.total, warning: t.warning + s.warning, critical: t.critical + s.critical }), { all: 0, warning: 0, critical: 0 }))
+  const sourceOptions = $derived([
+    { value: '', label: `All sources (${totals.all})` },
+    ...sources.map((s) => ({ value: s.subsystem, label: `${label(s.subsystem)} (${s.total})` })),
+  ])
+  const severityOptions = $derived([
+    { value: '', label: 'All' },
+    { value: 'warning', label: 'Warnings', count: totals.warning },
+    { value: 'critical', label: 'Critical', count: totals.critical, tone: 'destructive' },
+  ])
+  const filtering = $derived(!!(subsystem || severity || search))
+  function clearFilters() {
+    subsystem = ''
+    severity = ''
+    search = ''
+    searchInput = ''
   }
 </script>
 
@@ -34,22 +53,22 @@
   <InfoCard
     icon="activity"
     title="Activity"
-    description="One chronological feed across the firewall, peers, AdGuard and settings — newest first."
+    description="Everything that happened on the panel, newest first: sign-ins, changes, blocks and alerts, with who did it and from where."
   />
 
-  <div class="kt-panel">
-    <div class="kt-panel-header">
-      <h3 class="kt-panel-title">
-        <Icon name="clock" size={16} class="text-muted-foreground" />
-        Recent events
-      </h3>
-      <div class="flex items-center gap-2">
-        <Select bind:value={subsystem} options={sourceOptions} class="w-40" />
-        <Button onclick={refresh} variant="secondary" size="sm" icon="refresh">Refresh</Button>
+  <div class="panel">
+    <div class="panel-head">
+      <Input type="search" value={searchInput} placeholder="Search message, user or IP…" prefixIcon="search" class="w-full sm:w-64"
+        oninput={(e) => { searchInput = e.target.value; debounced(searchInput) }} />
+      <Segmented options={severityOptions} bind:value={severity} label="Severity" size="sm" />
+      <Select bind:value={subsystem} options={sourceOptions} class="w-48" aria-label="Source" />
+      <div class="ms-auto flex items-center gap-2">
+        {#if filtering}
+          <Button variant="ghost" size="sm" icon="x" onclick={clearFilters}>Clear filters</Button>
+        {/if}
+        <Button variant="outline" size="sm" iconOnly icon="refresh" onclick={() => feed?.reload()} tooltip="Refresh" />
       </div>
     </div>
-    <div class="kt-panel-body">
-      <ActivityFeed bind:this={feed} limit={200} {subsystem} />
-    </div>
+    <ActivityFeed bind:this={feed} bind:sources limit={100} {subsystem} {severity} {search} />
   </div>
 </div>
