@@ -94,7 +94,7 @@
             <Icon name="shield-check" size={32} class="text-success" />
           </div>
           <div>
-            <h2 class="text-xl font-bold text-foreground">Install Wire Panel</h2>
+            <h2 class="text-xl font-bold text-foreground">Install Motte</h2>
             <p class="text-sm text-muted-foreground">Get the full app experience</p>
           </div>
         </div>
