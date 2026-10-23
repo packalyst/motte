@@ -14,6 +14,7 @@
   import EmptyState from './EmptyState.svelte'
   import Badge from './Badge.svelte'
   import GroupButton from './GroupButton.svelte'
+  import { clientsList, openClients } from '$lib/clients.js'
 
   let networks = $state([])
   let interfaces = $state([])
@@ -171,48 +172,136 @@
     }
   }
 
-  function leaseHours(secs) { return Math.round((secs / 3600) * 10) / 10 }
+  // Lease as people say it: the preset's name, else hours.
+  const leaseLabel = (secs) => LEASE_PRESETS.find((o) => o.value === secs)?.label || `${Math.round((secs / 3600) * 10) / 10} hours`
+
+  // Where the gateway and the DHCP pool sit inside the subnet, as % of its address range.
+  const ipInt = (ip) => {
+    const o = (ip || '').split('.').map(Number)
+    return o.length === 4 && o.every((x) => x >= 0 && x <= 255) ? ((o[0] << 24) >>> 0) + (o[1] << 16) + (o[2] << 8) + o[3] : null
+  }
+  const ipStr = (n) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
+  function addressMap(net) {
+    const nb = networkBase(net.cidr || '')
+    if (!nb) return null
+    const base = ipInt(nb.base.join('.'))
+    const size = 2 ** (32 - nb.prefix)
+    const ps = ipInt(net.pool_start), pe = ipInt(net.pool_end), gw = ipInt(net.gateway_ip)
+    if (ps === null || pe === null || pe < ps) return null
+    const pct = (v) => Math.max(0, Math.min(100, ((v - base) / size) * 100))
+    return {
+      size,
+      first: ipStr(base),
+      last: ipStr(base + size - 1),
+      poolSize: pe - ps + 1,
+      poolLeft: pct(ps),
+      poolWidth: Math.max(1, pct(pe + 1) - pct(ps)),
+      gw: gw === null ? null : pct(gw + 0.5),
+    }
+  }
+
+  // Devices per network, from the clients list the app already keeps (sidebar) — no request here.
+  const devices = $derived.by(() => {
+    const out = {}
+    for (const c of $clientsList.clients || []) {
+      const id = c.open?.network
+      if (c.kind !== 'lan' || !id) continue
+      const d = (out[id] ||= { total: 0, online: 0, pending: 0 })
+      d.total++
+      if (c.online) d.online++
+      if (c.pending) d.pending++
+    }
+    return out
+  })
 </script>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title"><Icon name="router" size={16} /> Networks <span class="font-normal text-muted-foreground">{networks.length}</span></h3>
-    <Button icon="plus" size="sm" onclick={openAdd}>Add network</Button>
+<div class="space-y-2">
+  <div class="flex items-center gap-2">
+    <h3 class="flex min-w-0 flex-1 items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground after:h-px after:flex-1 after:bg-border">
+      Networks <span class="font-normal normal-case tracking-normal">{networks.length}</span>
+    </h3>
+    <button type="button" class="link-action" onclick={openAdd}><Icon name="plus" size={12} />Add network</button>
   </div>
-  <div class="kt-panel-body !p-0">
-    {#if !networks.length}
-      <div class="p-6">
-        <EmptyState icon="router" title="No managed networks yet"
-          description="Add one to hand out DHCP addresses on an internal interface." />
-      </div>
-    {:else}
-      <div class="divide-y divide-border">
-        {#each networks as net (net.id)}
-          <div class="flex items-center gap-3 px-4 py-3">
+
+  {#if !networks.length}
+    <div class="panel">
+      <EmptyState icon="router" title="No managed networks yet"
+        description="Add one to hand out DHCP addresses on an internal interface." />
+    </div>
+  {:else}
+    <div class="grid gap-3">
+      {#each networks as net (net.id)}
+        {@const map = addressMap(net)}
+        {@const dev = devices[net.id] || { total: 0, online: 0, pending: 0 }}
+        <div class="panel !p-0 overflow-hidden {net.enabled ? '' : 'opacity-70'}">
+          <!-- Head: interface and subnet, state, actions -->
+          <div class="flex items-center gap-3 border-b border-dashed border-border px-4 py-3">
             <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg {net.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}">
               <Icon name="router" size={17} />
             </span>
             <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="font-medium text-foreground">{net.iface}</span>
-                <span class="font-mono text-sm text-muted-foreground">{net.cidr}</span>
-                {#if !net.enabled}<Badge variant="secondary" size="sm">disabled</Badge>{/if}
-                <Badge variant={net.mode === 'approve' ? 'warning' : 'secondary'} size="sm">{net.mode === 'approve' ? 'approval needed' : 'auto'}</Badge>
-                {#if net.nat_enabled}<Badge variant="info" size="sm">internet for new devices</Badge>{/if}
+              <div class="flex items-center gap-2">
+                <span class="truncate text-sm font-semibold text-foreground">{net.iface}</span>
+                <Badge variant={net.enabled ? 'success' : 'muted'} size="sm">{net.enabled ? 'Serving' : 'Disabled'}</Badge>
               </div>
-              <div class="mt-0.5 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted-foreground">
-                <span>gateway {net.gateway_ip}</span><span>pool {net.pool_start}–{net.pool_end}</span><span>lease {leaseHours(net.lease_secs)}h</span>
-              </div>
+              <div class="font-mono text-xs text-muted-foreground">{net.cidr}</div>
             </div>
             <div class="btn-group shrink-0">
               <GroupButton icon="pencil" tooltip="Edit network" onclick={() => openEdit(net)} />
               <GroupButton icon="trash" tone="destructive" tooltip="Delete network" onclick={() => removeNetwork(net)} />
             </div>
           </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
+
+          <!-- Address map: the subnet's whole range as a strip (first address left, last right),
+               with the part DHCP hands out (the pool) and the gateway's place in it -->
+          <div class="px-4 pt-3">
+            {#if map}
+              <div class="mb-1.5 flex items-baseline justify-between text-[10px] text-muted-foreground">
+                <span class="uppercase tracking-wide">Address range</span>
+                <span>DHCP gives out <span class="font-medium text-foreground">{map.poolSize}</span> of {map.size.toLocaleString()}</span>
+              </div>
+              <div class="relative h-2.5 rounded-full bg-muted" role="img" aria-label="Pool {net.pool_start} to {net.pool_end} of {net.cidr}, gateway {net.gateway_ip}">
+                <span class="absolute inset-y-0 rounded-full bg-primary/60" style="left:{map.poolLeft}%; width:{map.poolWidth}%"></span>
+                {#if map.gw !== null}
+                  <span class="absolute -top-0.5 h-3.5 w-1 -translate-x-1/2 rounded-full bg-foreground" style="left:{map.gw}%" title="Gateway {net.gateway_ip}"></span>
+                {/if}
+              </div>
+              <div class="mt-1 flex justify-between font-mono text-[10px] text-muted-foreground/70"><span>{map.first}</span><span>{map.last}</span></div>
+            {/if}
+            <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground">
+              <span class="inline-flex items-center gap-1.5"><span class="h-2 w-1 rounded-full bg-foreground"></span>gateway <span class="text-foreground">{net.gateway_ip}</span></span>
+              <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-sm bg-primary/60"></span>pool <span class="text-foreground">{net.pool_start} – {net.pool_end}</span></span>
+            </div>
+          </div>
+
+          <!-- What the network does with devices -->
+          <dl class="grid grid-cols-2 gap-px border-y border-border bg-border mt-3 sm:grid-cols-4">
+            {#each [
+              { k: 'New devices', v: net.mode === 'approve' ? 'Wait for approval' : 'Join automatically', tone: net.mode === 'approve' ? 'text-warning' : '' },
+              { k: 'Internet', v: net.nat_enabled ? 'On for new devices' : 'Off (isolated)', tone: net.nat_enabled ? 'text-info' : '' },
+              { k: 'Lease', v: leaseLabel(net.lease_secs) },
+              { k: 'Domain', v: net.domain ? `.${net.domain}` : '—', mono: true },
+            ] as f (f.k)}
+              <div class="min-w-0 bg-card px-4 py-2">
+                <dt class="text-[10px] uppercase tracking-wide text-muted-foreground">{f.k}</dt>
+                <dd class="truncate text-xs font-medium {f.tone || 'text-foreground'} {f.mono ? 'font-mono' : ''}">{f.v}</dd>
+              </div>
+            {/each}
+          </dl>
+
+          <!-- Devices on it (from the shared clients list) → Clients, LAN devices -->
+          <button type="button" onclick={() => openClients('lan')}
+            class="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-xs text-muted-foreground transition hover:bg-muted/30">
+            <Icon name="devices" size={14} />
+            <span><span class="font-semibold text-foreground">{dev.total}</span> device{dev.total === 1 ? '' : 's'}</span>
+            <span class="inline-flex items-center gap-1"><span class="h-1.5 w-1.5 rounded-full bg-success"></span>{dev.online} online</span>
+            {#if dev.pending}<span class="inline-flex items-center gap-1 text-warning"><Icon name="clock" size={12} />{dev.pending} waiting for approval</span>{/if}
+            <Icon name="chevron-right" size={14} class="ms-auto" />
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <!-- Add / edit modal -->

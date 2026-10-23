@@ -7,14 +7,13 @@
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'
   import Modal from '../components/Modal.svelte'
-  import Toolbar from '../components/Toolbar.svelte'
   import Input from '../components/Input.svelte'
   import Select from '../components/Select.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
   import InfoCard from '../components/InfoCard.svelte'
-  import StatCard from '../components/StatCard.svelte'
+  import GroupButton from '../components/GroupButton.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -46,6 +45,20 @@
   const infoById = $derived(
     Object.fromEntries((status?.tunnels || []).map((t) => [t.id, t]))
   )
+
+  // Proxy header: how its state reads, and the 24h usage cells.
+  const proxyState = $derived(
+    running ? { label: 'Running', variant: 'success', tile: 'text-success' }
+    : status?.status === 'error' ? { label: 'Error', variant: 'destructive', tile: 'text-destructive' }
+    : status?.status === 'stopped' ? { label: 'Stopped', variant: 'warning', tile: 'text-warning' }
+    : { label: 'Not running', variant: 'muted', tile: '' }
+  )
+  const usage = $derived([
+    { icon: 'activity', tile: 'bg-success/10 text-success', value: stats?.requests ?? 0, label: 'requests · 24h' },
+    { icon: 'ban', tile: 'bg-destructive/10 text-destructive', value: stats?.failed ?? 0, label: 'failed · 24h' },
+    { icon: 'users', tile: 'bg-info/10 text-info', value: stats?.clients ?? 0, label: 'unique clients' },
+    { icon: 'world', tile: 'bg-primary/10 text-primary', value: stats?.topDest || '—', label: 'top destination', mono: true },
+  ])
 
   // Search / filter by tunnel name.
   let searchQuery = $state('')
@@ -534,70 +547,69 @@
     title="Tunnels"
     description="Authenticated HTTP forward proxies. Direct tunnels exit from this server; chained tunnels forward through another proxy. Config is stored encrypted and applied by (re)starting the proxy."
     descriptionClass="hidden sm:block"
-  >
-    {#if status}
-      <div class="mt-3 flex items-center gap-2 text-xs">
-        <span class="text-muted-foreground">Proxy status:</span>
+  />
+
+  <!-- The proxy: its state and controls, the last 24h across all tunnels, and anything wrong -->
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-icon {proxyState.tile}"><Icon name="server" size={17} /></span>
+      <div class="min-w-0 flex-1">
+        <div class="panel-title flex items-center gap-2">
+          Proxy
+          {#if status}<Badge variant={proxyState.variant} size="sm"><span class="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current"></span>{proxyState.label}</Badge>{/if}
+        </div>
+        <div class="panel-sub">{config.tunnels.length} tunnel{config.tunnels.length === 1 ? '' : 's'}<span class="hidden sm:inline"> · applied when the proxy (re)starts</span></div>
+      </div>
+      <div class="kt-btn-group">
         {#if running}
-          <Badge variant="success" size="sm">Running</Badge>
-        {:else if status.status === 'stopped'}
-          <Badge variant="warning" size="sm">Stopped</Badge>
-        {:else if status.status === 'error'}
-          <Badge variant="destructive" size="sm">Error</Badge>
+          <Button variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
+          <Button variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
         {:else}
-          <Badge variant="muted" size="sm">Not running</Badge>
+          <Button variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
         {/if}
-        {#if config.tunnels.length}
-          <span class="text-muted-foreground">· {config.tunnels.length} tunnel{config.tunnels.length === 1 ? '' : 's'}</span>
-        {/if}
+        <Button variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
+      </div>
+    </div>
+
+    <!-- Usage across all tunnels, last 24h: one surface, hairline dividers -->
+    <div class="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-4">
+      {#each usage as u (u.label)}
+        <div class="flex min-w-0 items-center gap-3 bg-card px-3 py-2.5">
+          <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg {u.tile}"><Icon name={u.icon} size={15} /></span>
+          <div class="min-w-0">
+            <div class="truncate text-base font-bold leading-tight tabular-nums text-foreground {u.mono ? 'font-mono text-sm' : ''}" title={String(u.value)}>{u.value}</div>
+            <div class="truncate text-[11px] text-muted-foreground">{u.label}</div>
+          </div>
+        </div>
+      {/each}
+    </div>
+
+    {#if drift && running}
+      <div class="mt-3 flex items-center gap-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm">
+        <Icon name="alert-triangle" size={16} class="shrink-0 text-warning" />
+        <span class="flex-1">Saved changes aren't live yet: restart to apply.</span>
+        <Button size="sm" variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
       </div>
     {/if}
-  </InfoCard>
-
-  <Toolbar bind:search={searchQuery} placeholder="Search tunnels...">
-    <div class="kt-btn-group">
-      {#if running}
-        <Button variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
-        <Button variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
-      {:else}
-        <Button variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
-      {/if}
-      <Button variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
-      <Button icon="plus" onclick={openCreate}>Add tunnel</Button>
-    </div>
-  </Toolbar>
-
-  <!-- Overall proxy usage (last 24h) -->
-  {#if stats}
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <StatCard icon="activity" color="success" value={stats.requests ?? 0} label="Requests (24h)" />
-      <StatCard icon="ban" color="destructive" value={stats.failed ?? 0} label="Failed (24h)" />
-      <!-- Secondary stats: hidden on mobile to keep the header compact -->
-      <div class="hidden sm:block"><StatCard icon="users" color="info" value={stats.clients ?? 0} label="Unique clients" /></div>
-      <div class="hidden sm:block"><StatCard icon="world" color="primary" value={stats.topDest || '—'} label="Top destination" /></div>
-    </div>
-  {/if}
-
-  <!-- Drift banner: saved config differs from what's running -->
-  {#if drift && running}
-    <div class="flex items-center justify-between gap-3 p-3 rounded-lg bg-warning/10 border border-warning/30">
-      <div class="flex items-center gap-2 text-sm">
-        <Icon name="alert-triangle" size={16} class="text-warning shrink-0" />
-        <span>Saved changes aren't live yet — restart to apply.</span>
+    {#if status?.status === 'error' && status.error}
+      <div class="mt-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2">
+        <Icon name="alert-triangle" size={16} class="mt-0.5 shrink-0 text-destructive" />
+        <div class="break-all text-xs text-foreground">{status.error}</div>
       </div>
-      <Button size="sm" variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
-    </div>
-  {/if}
-
-  <!-- Error surface (e.g. failed start) -->
-  {#if status?.status === 'error' && status.error}
-    <div class="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
-      <Icon name="alert-triangle" size={16} class="text-destructive mt-0.5 shrink-0" />
-      <div class="text-xs text-foreground break-all">{status.error}</div>
-    </div>
-  {/if}
+    {/if}
+  </div>
 
   <!-- Tunnels list -->
+  <section aria-label="Tunnels" class="space-y-2">
+  <div class="flex flex-wrap items-center gap-2">
+    <h2 class="flex min-w-0 flex-1 items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground after:h-px after:flex-1 after:bg-border">
+      Tunnels <span class="font-normal normal-case tracking-normal">{config.tunnels.length}</span>
+    </h2>
+    {#if config.tunnels.length > 3}
+      <Input type="search" bind:value={searchQuery} placeholder="Search tunnels…" prefixIcon="search" class="w-full sm:w-56" />
+    {/if}
+    <button type="button" class="link-action" onclick={openCreate}><Icon name="plus" size={12} />Add tunnel</button>
+  </div>
   {#if config.tunnels.length === 0}
     <EmptyState
       icon="arrows-right-left"
@@ -620,58 +632,61 @@
         {@const info = infoById[t.id]}
         {@const chained = !!(t.upstream && t.upstream.host)}
         {@const isOpen = !!expanded[t.id]}
-        <div class="bg-card border border-border rounded-lg border-l-4 {running ? 'border-l-success' : 'border-l-muted-foreground/30'}">
-          <!-- Header: tap toggles. Row 1 = icon + name + grouped actions;
-               row 2 = badges (from the left edge) with 'via' inline. -->
+        {@const use = stats?.perUser?.[t.user]}
+        <div class="overflow-hidden rounded-xl border border-border bg-card">
+          <!-- Summary row (tap toggles the connection details): what it is, where it listens, its
+               last 24h. Secrets (credentials, keys, URLs) only appear expanded. -->
           <div
-            class="px-3 py-2.5 sm:px-4 sm:py-3 cursor-pointer select-none"
+            class="flex cursor-pointer select-none flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition hover:bg-muted/30"
             role="button" tabindex="0" aria-expanded={isOpen}
             onclick={() => toggleExpand(t.id)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(t.id) } }}
           >
-            <div class="flex items-center gap-3">
-              <div class="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
+            <div class="flex min-w-0 flex-1 basis-64 items-center gap-3">
+              <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
                 <Icon name="arrows-right-left" size={16} />
-              </div>
-              <span class="font-medium truncate flex-1 min-w-0">{t.name}</span>
-              <!-- Edit/Delete grouped + chevron. Don't toggle. -->
-              <div class="flex items-center gap-2 shrink-0" onclick={(e) => e.stopPropagation()} role="presentation">
-                <div class="kt-btn-group">
-                  <Button size="xs" variant="outline" icon="pencil" onclick={() => openEdit(i)}><span class="hidden sm:inline">Edit</span></Button>
-                  <Button size="xs" variant="outline" icon="trash" onclick={() => deleteTunnel(i)}><span class="hidden sm:inline">Delete</span></Button>
+                <span class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card {running ? 'bg-success' : 'bg-muted-foreground/50'}" title={running ? 'Serving' : 'Proxy not running'}></span>
+              </span>
+              <div class="min-w-0">
+                <div class="truncate text-sm font-semibold text-foreground">{t.name}</div>
+                <div class="mt-0.5 flex flex-wrap items-center gap-1">
+                  {#if (t.listeners || []).length}
+                    <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
+                  {/if}
+                  {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating</Badge>{/if}
+                  {#if (t.webhooks || []).length}<Badge variant="primary" size="sm">Webhook</Badge>{/if}
+                  {#if chained}<span class="truncate font-mono text-[11px] text-muted-foreground">via {t.upstream.host}</span>{/if}
                 </div>
-                <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform {isOpen ? 'rotate-180' : ''}" />
               </div>
             </div>
-            <!-- Badges start from the left edge (under the icon); 'via' inline (right on mobile). -->
-            <div class="flex items-center gap-1 flex-wrap mt-2">
+            <!-- listeners: protocol and port -->
+            <div class="flex flex-wrap items-center gap-1.5">
               {#each (t.listeners || []) as l}
-                <Badge variant="info" size="sm">{l.protocol.toUpperCase()}</Badge>
+                <span class="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px]">
+                  <span class="font-semibold text-info">{l.protocol.toUpperCase()}</span><span class="font-mono tabular-nums text-foreground">:{l.port}</span>
+                </span>
               {/each}
-              {#if (t.listeners || []).length}
-                <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
+            </div>
+            <div class="flex w-28 shrink-0 flex-col text-[11px] tabular-nums text-muted-foreground">
+              {#if use}
+                <span><span class="font-semibold text-foreground">{use.requests}</span> req · <span class={use.failed ? 'font-semibold text-destructive' : ''}>{use.failed} failed</span></span>
+                <span>{use.clients} client{use.clients === 1 ? '' : 's'}{formatLastSeen(use.lastSeen) ? ` · ${formatLastSeen(use.lastSeen)}` : ''}</span>
+              {:else}
+                <span>no traffic · 24h</span>
               {/if}
-              {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating</Badge>{/if}
-              {#if (t.webhooks || []).length}<Badge variant="primary" size="sm">Webhook</Badge>{/if}
-              {#if chained}
-                <span class="text-[11px] text-muted-foreground font-mono truncate ml-auto sm:ml-1">via {t.upstream.host}</span>
-              {/if}
+            </div>
+            <div class="flex shrink-0 items-center gap-2" onclick={(e) => e.stopPropagation()} role="presentation">
+              <div class="btn-group">
+                <GroupButton icon="pencil" tooltip="Edit tunnel" onclick={() => openEdit(i)} />
+                <GroupButton icon="trash" tone="destructive" tooltip="Delete tunnel" onclick={() => deleteTunnel(i)} />
+              </div>
+              <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform {isOpen ? 'rotate-180' : ''}" />
             </div>
           </div>
 
-          <!-- Expanded body: usage, endpoints, credentials, rotation URL -->
+          <!-- Expanded body: endpoints, credentials, rotation and webhook URLs -->
           {#if isOpen}
-            <div class="px-3 pb-3 sm:px-4 sm:pb-4 pt-3 border-t border-border/50 space-y-3">
-              {#if stats?.perUser?.[t.user]}
-                {@const ts = stats.perUser[t.user]}
-                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                  <span class="flex items-center gap-1"><Icon name="activity" size={12} /> {ts.requests} req</span>
-                  <span class="flex items-center gap-1 {ts.failed ? 'text-destructive' : ''}"><Icon name="ban" size={12} /> {ts.failed} failed</span>
-                  <span class="flex items-center gap-1"><Icon name="users" size={12} /> {ts.clients} clients</span>
-                  {#if formatLastSeen(ts.lastSeen)}<span class="flex items-center gap-1"><Icon name="clock" size={12} /> {formatLastSeen(ts.lastSeen)}</span>{/if}
-                </div>
-              {/if}
-
+            <div class="space-y-3 border-t border-dashed border-border bg-muted/10 px-4 py-4">
               <!-- Endpoints (one per protocol) -->
               <div class="space-y-2">
                 {#each (t.listeners || []) as l}
@@ -731,6 +746,7 @@
       {/each}
     </div>
   {/if}
+  </section>
 </div>
 
 <!-- Add / edit modal -->
