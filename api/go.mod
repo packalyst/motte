@@ -2,19 +2,23 @@ module api
 
 go 1.26.0
 
+// Patched Go for every build (local, tests, CI); matches the Dockerfile. The standard library
+// is compiled in, so an unpatched toolchain ships its CVEs.
+toolchain go1.26.10
+
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/gorilla/websocket v1.5.3
-	github.com/ip2location/ip2location-go/v9 v9.7.0
-	github.com/mattn/go-sqlite3 v1.14.18
+	github.com/ip2location/ip2location-go/v9 v9.8.0
+	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/minio/minio-go/v7 v7.4.1
-	github.com/oschwald/maxminddb-golang v1.12.0
+	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/pkg/sftp v1.13.11
-	github.com/pquerna/otp v1.4.0
+	github.com/pquerna/otp v1.5.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/crypto v0.58.0
-	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20230429144221-925a1e7659e6
+	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	gopkg.in/yaml.v3 v3.0.1
 )
 

@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"api/internal/database"
 	"compress/gzip"
 	"database/sql"
 	"encoding/csv"
@@ -316,8 +317,9 @@ func (s *Service) ListCVEs(machineID string, f cveFilter) ([]CVE, int, error) {
 		where = append(where, "fixed != '' AND fixed IS NOT NULL")
 	}
 	if f.Q != "" {
-		where = append(where, "(cve_id LIKE ? OR pkg LIKE ?)")
-		args = append(args, "%"+f.Q+"%", "%"+f.Q+"%")
+		clause, qargs := cveSearch(f.Q)
+		where = append(where, clause)
+		args = append(args, qargs...)
 	}
 	if f.CVEID != "" {
 		where = append(where, "cve_id = ?")
@@ -372,6 +374,12 @@ var rankBySev = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, 
 
 const sevRankExpr = `CASE severity WHEN 'CRITICAL' THEN 4 WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 1 ELSE 0 END`
 
+// cveSearch matches q literally (LIKE wildcards escaped) in the CVE id or the package name.
+func cveSearch(q string) (string, []any) {
+	p := "%" + database.EscapeLikePattern(q) + "%"
+	return `(cve_id LIKE ? ESCAPE '\' OR pkg LIKE ? ESCAPE '\')`, []any{p, p}
+}
+
 // ListCVEsByCVE returns unique CVEs (one row per cve_id) for a machine, worst-first
 // then fixable-first, paginated. severity/fixable filter the GROUPED result (a CVE's
 // worst severity / whether any affected package has a fix); q matches the id or any
@@ -380,8 +388,9 @@ func (s *Service) ListCVEsByCVE(machineID string, f cveFilter) ([]CVERow, int, e
 	where := []string{"machine_id = ?"}
 	args := []any{machineID}
 	if f.Q != "" {
-		where = append(where, "(cve_id LIKE ? OR pkg LIKE ?)")
-		args = append(args, "%"+f.Q+"%", "%"+f.Q+"%")
+		clause, qargs := cveSearch(f.Q)
+		where = append(where, clause)
+		args = append(args, qargs...)
 	}
 	// Scope filters apply at the row level (before grouping by cve_id) so a CVE is counted
 	// within the selected scope only.

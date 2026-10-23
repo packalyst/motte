@@ -113,10 +113,10 @@ func (c *agentCache) Get(ctx context.Context, arch string) (bin, manifest, insta
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if manifest, err = c.ensureLocked(ctx, "manifest.json"); err != nil {
+	if manifest, err = c.ensureVerifiedLocked(ctx, "manifest.json"); err != nil {
 		return nil, nil, nil, err
 	}
-	if installSh, err = c.ensureLocked(ctx, "install.sh"); err != nil {
+	if installSh, err = c.ensureVerifiedLocked(ctx, "install.sh"); err != nil {
 		return nil, nil, nil, err
 	}
 	return bin, manifest, installSh, nil
@@ -228,22 +228,9 @@ func (c *agentCache) refreshLocked(ctx context.Context) error {
 	return writeFileAtomic(filepath.Join(c.dir, "checksums.txt"), latest)
 }
 
-// ensureLocked returns a cached asset, fetching it if absent (no checksum — matched to the
-// current version by living under the same purged-on-change cache dir).
-func (c *agentCache) ensureLocked(ctx context.Context, name string) ([]byte, error) {
-	path := filepath.Join(c.dir, name)
-	if b, err := os.ReadFile(path); err == nil {
-		return b, nil
-	}
-	b, err := c.fetch(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	return b, writeFileAtomic(path, b)
-}
-
-// ensureVerifiedLocked returns a cached binary, fetching + checksum-verifying it if absent.
-// A binary whose sha256 doesn't match the release's checksums.txt is never written/served.
+// ensureVerifiedLocked returns a cached release asset (binary, install.sh, manifest.json),
+// fetching + checksum-verifying it if absent. An asset whose sha256 doesn't match the release's
+// signed checksums.txt is never written or served.
 func (c *agentCache) ensureVerifiedLocked(ctx context.Context, name string) ([]byte, error) {
 	path := filepath.Join(c.dir, name)
 	if b, err := os.ReadFile(path); err == nil {
