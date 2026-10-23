@@ -22,37 +22,6 @@ type SystemStats struct {
 	WsClients    int    `json:"ws_clients"`    // connected WebSocket clients
 }
 
-// TrafficStats contains VPN traffic metrics
-type TrafficStats struct {
-	TotalTx int64         `json:"total_tx"` // total bytes sent
-	TotalRx int64         `json:"total_rx"` // total bytes received
-	RateTx  int64         `json:"rate_tx"`  // bytes/sec sent
-	RateRx  int64         `json:"rate_rx"`  // bytes/sec received
-	ByPeer  []PeerTraffic `json:"by_peer"`  // per-peer breakdown
-}
-
-// PeerTraffic contains traffic for a single peer
-type PeerTraffic struct {
-	Name string `json:"name"`
-	IP   string `json:"ip"`
-	Tx   int64  `json:"tx"`
-	Rx   int64  `json:"rx"`
-}
-
-// NodeStats contains VPN node counts
-type NodeStats struct {
-	Online  int `json:"online"`
-	Offline int `json:"offline"`
-	Total   int `json:"total"`
-}
-
-// OverviewStats is the combined stats payload for WebSocket
-type OverviewStats struct {
-	System  SystemStats  `json:"system"`
-	Traffic TrafficStats `json:"traffic"`
-	Nodes   NodeStats    `json:"nodes"`
-}
-
 // Init records the start time (call once at startup)
 func Init() {
 	startOnce.Do(func() {

@@ -8,14 +8,6 @@ import (
 	"api/internal/docker"
 )
 
-// NodeStats represents VPN node statistics for the dashboard
-type NodeStats struct {
-	Online  int `json:"online"`
-	Offline int `json:"offline"`
-	HsNodes int `json:"hsNodes"`
-	WgPeers int `json:"wgPeers"`
-}
-
 // DockerLogEntry represents a single log line from Docker
 type DockerLogEntry struct {
 	Timestamp string `json:"timestamp"`
@@ -32,7 +24,6 @@ type DockerLogStreamer interface {
 type OverviewStats struct {
 	System     SystemStats        `json:"system"`
 	Traffic    TrafficStats       `json:"traffic"`
-	Nodes      NodeStats          `json:"nodes"`
 	Services   []ServiceHealth    `json:"services,omitempty"`
 	DockerInfo *docker.DockerInfo `json:"dockerInfo,omitempty"`
 	DiskUsage  *docker.DiskUsage  `json:"diskUsage,omitempty"`
@@ -108,8 +99,6 @@ type NodeStatusChangeFunc func(nodeName string, online bool)
 var (
 	// syncNodesCallback refreshes node data from Headscale/WireGuard
 	syncNodesCallback func()
-	// getNodeStatsCallback returns current node statistics
-	getNodeStatsCallback func() NodeStats
 	// getNodeStatusListCallback returns individual node status for change detection
 	getNodeStatusListCallback func() []NodeStatusInfo
 	// nodeStatusChangeCallback is called when a node goes online/offline
@@ -123,10 +112,6 @@ var (
 	// dockerLogStreamer for streaming container logs
 	dockerLogStreamer DockerLogStreamer
 	callbackMu        sync.RWMutex
-
-	// lastNodeStats stores previous stats for change detection
-	lastNodeStats   NodeStats
-	lastNodeStatsMu sync.RWMutex
 
 	// lastNodeStatus stores previous individual node status for change detection
 	lastNodeStatus   map[string]bool // node name -> online
@@ -142,13 +127,12 @@ var (
 	stopStatus   chan struct{}
 )
 
-// SetNodeStatsProvider sets the callbacks for syncing and getting node stats
+// SetNodeStatusProvider sets the callbacks for syncing nodes and listing their status
 // This avoids circular imports (vpn -> ws -> vpn)
-func SetNodeStatsProvider(syncFn func(), statsFn func() NodeStats, statusListFn func() []NodeStatusInfo) {
+func SetNodeStatusProvider(syncFn func(), statusListFn func() []NodeStatusInfo) {
 	callbackMu.Lock()
 	defer callbackMu.Unlock()
 	syncNodesCallback = syncFn
-	getNodeStatsCallback = statsFn
 	getNodeStatusListCallback = statusListFn
 }
 
@@ -264,8 +248,8 @@ func checkAndBroadcastStatus() {
 		return
 	}
 
-	// Check node stats
-	checkAndBroadcastNodes()
+	// Sync VPN nodes, notify on status changes
+	checkNodeStatus()
 
 	// Check docker containers
 	checkAndBroadcastDocker()
@@ -314,14 +298,11 @@ func checkAndBroadcastOverviewStats() {
 	serviceInstance.hub.Broadcast("stats", stats)
 }
 
-// checkAndBroadcastNodes checks node status and broadcasts if changed
-func checkAndBroadcastNodes() {
-	hasInfoSubscribers := serviceInstance.hub.ChannelSubscriberCount("general_info") > 0
-
-	// Call sync to refresh data from Headscale/WireGuard
+// checkNodeStatus refreshes VPN node data and reports nodes that went online/offline (push
+// notifications). Client counts live on the "clients" channel, not here.
+func checkNodeStatus() {
 	callbackMu.RLock()
 	syncFn := syncNodesCallback
-	statsFn := getNodeStatsCallback
 	statusListFn := getNodeStatusListCallback
 	statusChangeFn := nodeStatusChangeCallback
 	callbackMu.RUnlock()
@@ -329,40 +310,8 @@ func checkAndBroadcastNodes() {
 	if syncFn != nil {
 		syncFn()
 	}
-
-	// Check individual node status changes for push notifications
 	if statusListFn != nil && statusChangeFn != nil {
 		checkNodeStatusChanges(statusListFn(), statusChangeFn)
-	}
-
-	// Skip WebSocket broadcasts if no subscribers
-	if !hasInfoSubscribers {
-		return
-	}
-
-	if statsFn == nil {
-		return
-	}
-
-	// Get current stats
-	stats := statsFn()
-
-	// Compare with last stats
-	lastNodeStatsMu.RLock()
-	statsChanged := stats != lastNodeStats
-	lastNodeStatsMu.RUnlock()
-
-	if statsChanged {
-		lastNodeStatsMu.Lock()
-		lastNodeStats = stats
-		lastNodeStatsMu.Unlock()
-
-		log.Printf("Node status changed, broadcasting: online=%d, offline=%d, hs=%d, wg=%d",
-			stats.Online, stats.Offline, stats.HsNodes, stats.WgPeers)
-		serviceInstance.hub.Broadcast("general_info", map[string]interface{}{
-			"event": "stats",
-			"data":  stats,
-		})
 	}
 }
 
@@ -448,51 +397,6 @@ func dockerContainersChanged(old, new []docker.Container) bool {
 		}
 	}
 	return false
-}
-
-// BroadcastNodeStats broadcasts current node stats to subscribers
-// Called when nodes change (create, delete, sync)
-func BroadcastNodeStats() {
-	if serviceInstance == nil || serviceInstance.hub == nil {
-		return
-	}
-
-	callbackMu.RLock()
-	statsFn := getNodeStatsCallback
-	callbackMu.RUnlock()
-
-	if statsFn == nil {
-		return
-	}
-
-	stats := statsFn()
-
-	// Update last stats
-	lastNodeStatsMu.Lock()
-	lastNodeStats = stats
-	lastNodeStatsMu.Unlock()
-
-	// Broadcast stats if there are subscribers
-	if serviceInstance.hub.ChannelSubscriberCount("general_info") > 0 {
-		log.Printf("Broadcasting node stats: online=%d, offline=%d, hs=%d, wg=%d",
-			stats.Online, stats.Offline, stats.HsNodes, stats.WgPeers)
-		serviceInstance.hub.Broadcast("general_info", map[string]interface{}{
-			"event": "stats",
-			"data":  stats,
-		})
-	}
-}
-
-// GetCurrentNodeStats returns current node stats (for sending on subscribe)
-func GetCurrentNodeStats() NodeStats {
-	callbackMu.RLock()
-	statsFn := getNodeStatsCallback
-	callbackMu.RUnlock()
-
-	if statsFn == nil {
-		return NodeStats{}
-	}
-	return statsFn()
 }
 
 // GetCurrentOverviewStats returns current overview stats (for sending on subscribe)

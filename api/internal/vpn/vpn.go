@@ -39,45 +39,6 @@ func syncClient(db *database.DB, existing map[string]int, seen map[string]bool,
 	}
 }
 
-// GetNodeStats returns current VPN node statistics from the database
-func GetNodeStats() ws.NodeStats {
-	db, err := database.GetDB()
-	if err != nil {
-		return ws.NodeStats{}
-	}
-
-	var stats ws.NodeStats
-
-	rows, err := db.Query(`SELECT type, raw_data FROM vpn_clients`)
-	if err != nil {
-		return stats
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var clientType string
-		var rawData []byte
-		if err := rows.Scan(&clientType, &rawData); err != nil {
-			continue
-		}
-
-		switch clientType {
-		case "headscale":
-			stats.HsNodes++
-		case "wireguard":
-			stats.WgPeers++
-		}
-
-		if len(rawData) > 0 && isNodeOnline(rawData) {
-			stats.Online++
-		} else {
-			stats.Offline++
-		}
-	}
-
-	return stats
-}
-
 // GetNodeStatusList returns individual node status for change detection
 func GetNodeStatusList() []ws.NodeStatusInfo {
 	db, err := database.GetDB()
@@ -781,11 +742,6 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 		if _, err := db.Exec(`DELETE FROM vpn_clients WHERE id = ?`, id); err == nil {
 			removed++
 		}
-	}
-
-	// Broadcast node stats update if anything changed
-	if added > 0 || removed > 0 {
-		ws.BroadcastNodeStats()
 	}
 
 	return added, removed, nil

@@ -598,9 +598,8 @@ func main() {
 
 	// Set up node status checker for real-time updates
 	if vpnSvc != nil {
-		ws.SetNodeStatsProvider(
+		ws.SetNodeStatusProvider(
 			func() { vpnSvc.SyncClients() },
-			vpn.GetNodeStats,
 			vpn.GetNodeStatusList,
 		)
 	}
@@ -625,9 +624,6 @@ func main() {
 				Rx:   p.Rx,
 			}
 		}
-
-		// Get node stats
-		nodeStats := vpn.GetNodeStats()
 
 		// Get docker stats (if available, uses cache)
 		var dockerInfo *docker.DockerInfo
@@ -704,12 +700,6 @@ func main() {
 				RateTx:  rateTx,
 				RateRx:  rateRx,
 				ByPeer:  peers,
-			},
-			Nodes: ws.NodeStats{
-				Online:  nodeStats.Online,
-				Offline: nodeStats.Offline,
-				HsNodes: nodeStats.HsNodes,
-				WgPeers: nodeStats.WgPeers,
 			},
 			Services:   services,
 			DockerInfo: dockerInfo,
