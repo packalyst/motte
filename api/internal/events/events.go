@@ -112,14 +112,28 @@ func trim(db *database.DB, latestID int64) {
 	}
 }
 
-// List returns the most recent events, newest first. limit is clamped to a sane
-// range; typeFilter and subsystemFilter, when non-empty, restrict the result. Both
-// are applied in SQL so a low-volume subsystem isn't missed just because it fell
-// outside the newest `limit` rows across all subsystems.
-func List(limit int, typeFilter, subsystemFilter string) ([]Event, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
+// Query narrows the feed. Every filter is optional and applied in SQL, so a low-volume
+// subsystem isn't missed just because it fell outside the newest rows across all of them.
+type Query struct {
+	Limit     int    // clamped to 1..500 (default 100)
+	Type      string // exact event type
+	Subsystem string // exact subsystem
+	Severity  string // info | warning | critical
+	Search    string // substring of the message, actor or IP
+	Before    int64  // only events older than this id: the cursor for "load older"
+}
+
+// pageSize clamps a requested page size to 1..500 (default 100).
+func pageSize(n int) int {
+	if n <= 0 || n > 500 {
+		return 100
 	}
+	return n
+}
+
+// List returns events matching q, newest first.
+func List(q Query) ([]Event, error) {
+	q.Limit = pageSize(q.Limit)
 	db, err := database.GetDB()
 	if err != nil {
 		return nil, err
@@ -131,30 +145,42 @@ func List(limit int, typeFilter, subsystemFilter string) ([]Event, error) {
 	const cols = `id, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) AS created_at, type, severity, subsystem, message, COALESCE(actor, '') AS actor, COALESCE(ip, '') AS ip`
 	conds := []string{}
 	args := []interface{}{}
-	if typeFilter != "" {
+	if q.Type != "" {
 		conds = append(conds, "type = ?")
-		args = append(args, typeFilter)
+		args = append(args, q.Type)
 	}
-	if subsystemFilter != "" {
+	if q.Subsystem != "" {
 		conds = append(conds, "subsystem = ?")
-		args = append(args, subsystemFilter)
+		args = append(args, q.Subsystem)
 	}
-	q := `SELECT ` + cols + ` FROM events`
+	if q.Severity != "" {
+		conds = append(conds, "severity = ?")
+		args = append(args, q.Severity)
+	}
+	if q.Search != "" {
+		like := "%" + database.EscapeLikePattern(q.Search) + "%"
+		conds = append(conds, `(message LIKE ? ESCAPE '\' OR actor LIKE ? ESCAPE '\' OR ip LIKE ? ESCAPE '\')`)
+		args = append(args, like, like, like)
+	}
+	if q.Before > 0 {
+		conds = append(conds, "id < ?")
+		args = append(args, q.Before)
+	}
+	query := `SELECT ` + cols + ` FROM events`
 	if len(conds) > 0 {
-		q += " WHERE " + strings.Join(conds, " AND ")
+		query += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += " ORDER BY id DESC LIMIT ?"
-	args = append(args, limit)
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, q.Limit)
 
-	rows, err := db.Query(q, args...)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	// Don't size the prealloc from `limit` (a request value) — grow on append instead, so
-	// the allocation size is input-independent. `limit` is capped at 500 in List() anyway,
-	// so at most 500 small structs are appended.
+	// Don't size the prealloc from the limit (a request value) — grow on append instead, so
+	// the allocation size is input-independent; at most 500 small structs are appended.
 	out := []Event{}
 	for rows.Next() {
 		var e Event
@@ -162,6 +188,39 @@ func List(limit int, typeFilter, subsystemFilter string) ([]Event, error) {
 			return nil, err
 		}
 		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// SourceCount is how many retained events one subsystem has, by severity.
+type SourceCount struct {
+	Subsystem string `json:"subsystem"`
+	Total     int    `json:"total"`
+	Warning   int    `json:"warning"`
+	Critical  int    `json:"critical"`
+}
+
+// Sources lists every subsystem that has events, most active first, so the feed's filter
+// shows what is really there (the table is bounded, so this stays cheap).
+func Sources() ([]SourceCount, error) {
+	db, err := database.GetDB()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT subsystem, COUNT(*),
+		SUM(severity = 'warning'), SUM(severity = 'critical')
+		FROM events WHERE subsystem != '' GROUP BY subsystem ORDER BY COUNT(*) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SourceCount{}
+	for rows.Next() {
+		var c SourceCount
+		if err := rows.Scan(&c.Subsystem, &c.Total, &c.Warning, &c.Critical); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }

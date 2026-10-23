@@ -31,7 +31,7 @@ func TestAuditRecordsActorAndIP(t *testing.T) {
 	Log("firewall", "op", SeverityInfo, "routine op")
 	Audit("auth", "login", SeverityInfo, "alice", "203.0.113.7", "login ok")
 
-	list, err := List(100, "", "")
+	list, err := List(Query{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestTrimKeepsAuditDropsOldOperational(t *testing.T) {
 	}
 	trim(db, maxID+maxRows)
 
-	list, err := List(100, "", "")
+	list, err := List(Query{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,5 +78,38 @@ func TestTrimKeepsAuditDropsOldOperational(t *testing.T) {
 		if e.Actor == "" {
 			t.Fatalf("an operational row survived the trim: %+v", e)
 		}
+	}
+}
+
+// Filters and the "load older" cursor are applied in SQL; search treats % and _ literally.
+func TestListFiltersAndCursor(t *testing.T) {
+	setupDB(t)
+	Log("firewall", "op", SeverityInfo, "routine op")
+	Audit("auth", "login", SeverityWarning, "alice", "203.0.113.7", "login failed")
+	Log("backup", "op", SeverityCritical, "backup at 50% failed")
+
+	if l, _ := List(Query{Severity: SeverityWarning}); len(l) != 1 || l[0].Actor != "alice" {
+		t.Fatalf("severity filter: %+v", l)
+	}
+	if l, _ := List(Query{Search: "203.0.113"}); len(l) != 1 || l[0].Subsystem != "auth" {
+		t.Fatalf("search by IP: %+v", l)
+	}
+	if l, _ := List(Query{Search: "50%"}); len(l) != 1 || l[0].Subsystem != "backup" {
+		t.Fatalf("a literal %% must match only itself: %+v", l)
+	}
+	if l, _ := List(Query{Search: "%"}); len(l) != 1 {
+		t.Fatalf("%% is not a wildcard: %+v", l)
+	}
+	page1, _ := List(Query{Limit: 2})
+	if len(page1) != 2 {
+		t.Fatalf("want 2, got %d", len(page1))
+	}
+	page2, _ := List(Query{Limit: 2, Before: page1[1].ID})
+	if len(page2) != 1 || page2[0].Subsystem != "firewall" {
+		t.Fatalf("cursor page: %+v", page2)
+	}
+	src, err := Sources()
+	if err != nil || len(src) != 3 {
+		t.Fatalf("sources: %+v %v", src, err)
 	}
 }

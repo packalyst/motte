@@ -1,55 +1,70 @@
+<script module>
+  // How each subsystem is shown (icons verified allowlisted in app.css).
+  export const SOURCES = {
+    auth: { icon: 'shield-lock', label: 'Sign-in & accounts' },
+    fleet: { icon: 'device-desktop', label: 'Machines' },
+    firewall: { icon: 'wall', label: 'Firewall' },
+    wireguard: { icon: 'shield', label: 'WireGuard' },
+    headscale: { icon: 'cloud', label: 'Headscale' },
+    dhcp: { icon: 'router', label: 'LAN networks' },
+    adguard: { icon: 'shield-check', label: 'AdGuard' },
+    backup: { icon: 'database', label: 'Backups' },
+    alerts: { icon: 'bell', label: 'Alerts' },
+    pwa: { icon: 'device-mobile', label: 'Notifications' },
+    security: { icon: 'shield-lock', label: 'Security' },
+    docker: { icon: 'box', label: 'Docker' },
+    settings: { icon: 'settings', label: 'Settings' },
+    geolocation: { icon: 'world', label: 'Geolocation' },
+  }
+</script>
+
 <script>
   /**
-   * ActivityFeed - chronological cross-subsystem event feed.
-   * Reusable: a compact widget on the Overview, or the full grouped list on the
-   * Activity page (day headers + severity accents when not compact).
+   * ActivityFeed - chronological cross-subsystem event feed (the panel's activity and audit trail).
+   * Compact: the Overview widget (one line per event, newest few). Full: the Activity page — day
+   * groups, whole messages, who/where, and "Load older" paging. Filters are applied on the server.
    *
    * Props:
-   * - limit: max events to fetch (default 50)
-   * - compact: tighter rows, no subsystem label, no day grouping
+   * - limit: events per page (default 50)
+   * - compact: the one-line widget
+   * - subsystem / severity / search: filters
+   * - sources (bindable, full only): subsystems that have events, with counts, for a filter
    */
   import { apiGet } from '../stores/app.js'
   import Icon from './Icon.svelte'
+  import Button from './Button.svelte'
   import EmptyState from './EmptyState.svelte'
   import LoadingSpinner from './LoadingSpinner.svelte'
-  import { timeAgo, parseDate, withTz } from '$lib/utils/format.js'
+  import { timeAgo, formatTime, formatDate, parseDate, withTz } from '$lib/utils/format.js'
 
-  let { limit = 50, compact = false, subsystem = '' } = $props()
+  let { limit = 50, compact = false, subsystem = '', severity = '', search = '', sources = $bindable([]) } = $props()
 
   let events = $state([])
+  let next = $state(null) // cursor for older events; null when there are none
   let loading = $state(true)
+  let loadingOlder = $state(false)
   let error = $state('')
 
-  // Icon per subsystem (all verified allowlisted in app.css).
-  const SUBSYSTEM_ICON = {
-    firewall: 'shield',
-    wireguard: 'server',
-    settings: 'settings',
-    adguard: 'shield-check',
-    docker: 'box',
-    geolocation: 'world',
-    auth: 'shield-lock',
-    fleet: 'device-desktop',
-  }
-  // Color per severity.
+  const filtering = $derived(!!(subsystem || severity || search))
+
+  const sourceOf = (e) => SOURCES[e.subsystem] || { icon: 'activity', label: e.subsystem || 'Other' }
+
   const SEVERITY = {
-    info:     { icon: 'text-muted-foreground', bg: 'bg-muted',            accent: 'border-transparent',    dot: 'bg-muted-foreground/40' },
-    warning:  { icon: 'text-warning',          bg: 'bg-warning/10',       accent: 'border-warning/60',     dot: 'bg-warning' },
-    critical: { icon: 'text-destructive',      bg: 'bg-destructive/10',   accent: 'border-destructive/60', dot: 'bg-destructive' },
+    info:     { tile: 'bg-muted text-muted-foreground' },
+    warning:  { tile: 'bg-warning/10 text-warning', badge: 'bg-warning/10 text-warning', label: 'Warning' },
+    critical: { tile: 'bg-destructive/10 text-destructive', badge: 'bg-destructive/10 text-destructive', label: 'Critical' },
   }
+  const sevFor = (e) => SEVERITY[e.severity] || SEVERITY.info
 
-  const iconFor = e => SUBSYSTEM_ICON[e.subsystem] || 'activity'
-  const sevFor = e => SEVERITY[e.severity] || SEVERITY.info
+  // Full-view row columns, shared by the header and every row (literal for Tailwind).
+  const ROW = 'grid-cols-[1.75rem_minmax(0,1fr)] sm:grid-cols-[4.5rem_1.75rem_minmax(0,1fr)] lg:grid-cols-[4.5rem_1.75rem_minmax(0,1fr)_10rem_7rem_8.5rem]'
 
-  // Apply the optional subsystem filter.
-  const filtered = $derived(subsystem ? events.filter(e => e.subsystem === subsystem) : events)
-
-  // Group events by day (full view only).
+  // Day groups (full view only).
   const groups = $derived.by(() => {
-    if (compact) return [{ day: '', items: filtered }]
+    if (compact) return [{ day: '', items: events }]
     const out = []
     let cur = null
-    for (const e of filtered) {
+    for (const e of events) {
       const day = dayLabel(e.created_at)
       if (!cur || cur.day !== day) { cur = { day, items: [] }; out.push(cur) }
       cur.items.push(e)
@@ -64,18 +79,26 @@
     const diff = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000)
     if (diff <= 0) return 'Today'
     if (diff === 1) return 'Yesterday'
-    return d.toLocaleDateString(undefined, withTz({ month: 'short', day: 'numeric', year: diff > 300 ? 'numeric' : undefined }))
+    return d.toLocaleDateString(undefined, withTz({ weekday: 'long', month: 'short', day: 'numeric', year: diff > 300 ? 'numeric' : undefined }))
+  }
+
+  function fetchPage(before) {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (subsystem) params.set('subsystem', subsystem)
+    if (severity) params.set('severity', severity)
+    if (search) params.set('q', search)
+    if (before) params.set('before', String(before))
+    else if (!compact) params.set('facets', '1')
+    return apiGet(`/api/events?${params}`)
   }
 
   export async function reload() {
     loading = true
     try {
-      const params = new URLSearchParams({ limit: String(limit) })
-      // Filter by subsystem in SQL, not client-side over a capped fetch — otherwise a
-      // low-volume subsystem outside the newest `limit` rows shows a false "No activity".
-      if (subsystem) params.set('subsystem', subsystem)
-      const res = await apiGet(`/api/events?${params}`)
+      const res = await fetchPage(null)
       events = res.events || []
+      next = res.next || null
+      if (res.sources) sources = res.sources
       error = ''
     } catch (e) {
       error = e?.message || 'Failed to load activity'
@@ -84,57 +107,91 @@
     }
   }
 
-  // Refetch whenever the subsystem filter (or limit) changes; runs on mount too.
+  async function loadOlder() {
+    loadingOlder = true
+    try {
+      const res = await fetchPage(next)
+      events = [...events, ...(res.events || [])]
+      next = res.next || null
+    } catch (e) {
+      error = e?.message || 'Failed to load older activity'
+    } finally {
+      loadingOlder = false
+    }
+  }
+
+  // Refetch whenever a filter (or limit) changes; runs on mount too.
   $effect(() => {
-    subsystem
-    limit
+    subsystem; severity; search; limit
     reload()
   })
 </script>
 
-{#if loading}
+{#if loading && !events.length}
   <div class="flex justify-center py-8"><LoadingSpinner /></div>
-{:else if error}
+{:else if error && !events.length}
   <div class="text-xs text-warning flex items-center gap-1.5 py-4">
     <Icon name="alert-triangle" size={13} />{error}
   </div>
-{:else if filtered.length === 0}
-  <EmptyState icon="activity" title={subsystem ? 'No activity for this filter' : 'No activity yet'} description={subsystem ? 'Try a different source or clear the filter.' : 'Blocks, peer changes and config edits will appear here.'} compact />
+{:else if events.length === 0}
+  <EmptyState icon="activity" title={filtering ? 'Nothing matches' : 'No activity yet'}
+    description={filtering ? 'Try another search, source or severity.' : 'Sign-ins, peer changes, blocks and config edits appear here.'} compact />
+{:else if compact}
+  <ul class="divide-y divide-border">
+    {#each events as e (e.id)}
+      <li class="flex items-center gap-2.5 rounded-md px-2 py-1.5 transition hover:bg-muted/40">
+        <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg {sevFor(e).tile}"><Icon name={sourceOf(e).icon} size={12} /></span>
+        <span class="min-w-0 flex-1 truncate text-[13px] leading-tight text-foreground">{e.message}</span>
+        <span class="w-14 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground" title={e.created_at}>{timeAgo(e.created_at)}</span>
+      </li>
+    {/each}
+  </ul>
 {:else}
-  <div class="space-y-3">
-    {#each groups as group}
-      <div>
-        {#if group.day}
-          <div class="flex items-center gap-2 px-1 pb-1.5">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{group.day}</span>
-            <span class="h-px flex-1 bg-border"></span>
-          </div>
-        {/if}
-        <ul class={compact ? 'divide-y divide-border' : 'space-y-0.5'}>
+  <!-- Wide screens: one row per event in columns (time, event, source, user, IP). Narrower: the
+       source, user and IP move under the message; on phones the time joins them. -->
+  <div class="{loading ? 'opacity-60' : ''}">
+    <div class="hidden gap-x-3 px-2 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground lg:grid {ROW}">
+      <span>Time</span><span class="col-span-2">Event</span><span>Source</span><span>User</span><span>From</span>
+    </div>
+    {#each groups as group (group.day)}
+      <section>
+        <h3 class="sticky top-0 z-10 flex items-center gap-2 bg-card px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground after:h-px after:flex-1 after:bg-border">
+          {group.day}<span class="font-normal normal-case tracking-normal">{group.items.length}</span>
+        </h3>
+        <ul>
           {#each group.items as e (e.id)}
             {@const sev = sevFor(e)}
-            <li class="group flex items-center gap-2.5 rounded-md px-2 hover:bg-muted/40 transition {compact ? 'py-1.5' : 'py-2 border-l-2 ' + sev.accent}">
-              <span class="flex shrink-0 items-center justify-center rounded-lg {sev.bg} {sev.icon} {compact ? 'h-6 w-6' : 'h-7 w-7'}">
-                <Icon name={iconFor(e)} size={compact ? 12 : 14} />
-              </span>
-              <span class="min-w-0 flex-1">
-                <span class="block text-[13px] leading-tight text-foreground truncate">{e.message}</span>
-                {#if !compact && (e.actor || e.ip)}
-                  <!-- Audit attribution: who did it and from where (set only on security events). -->
-                  <span class="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                    {#if e.actor}<span class="inline-flex items-center gap-1"><Icon name="user" size={11} />{e.actor}</span>{/if}
-                    {#if e.ip}<span class="inline-flex items-center gap-1 tabular-nums"><Icon name="map-pin" size={11} />{e.ip}</span>{/if}
-                  </span>
-                {/if}
-              </span>
-              {#if !compact}
-                <span class="hidden sm:inline-flex shrink-0 items-center rounded bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{e.subsystem}</span>
-              {/if}
-              <span class="shrink-0 w-14 text-right text-[11px] text-muted-foreground tabular-nums" title={e.created_at}>{timeAgo(e.created_at)}</span>
+            {@const src = sourceOf(e)}
+            <li class="grid items-start gap-x-3 rounded-md px-2 py-1.5 transition hover:bg-muted/40 lg:items-center {ROW}">
+              <span class="hidden pt-1 text-[11px] tabular-nums text-muted-foreground sm:block lg:pt-0" title={formatDate(e.created_at)}>{formatTime(e.created_at)}</span>
+              <span class="grid h-7 w-7 place-items-center rounded-lg {sev.tile}"><Icon name={src.icon} size={14} /></span>
+              <div class="min-w-0 py-0.5">
+                <p class="break-words text-[13px] leading-snug text-foreground">
+                  {#if sev.label}<span class="me-1.5 inline-block rounded px-1.5 py-px align-[1px] text-[10px] font-semibold {sev.badge}">{sev.label}</span>{/if}{e.message}
+                </p>
+                <div class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground lg:hidden">
+                  <span class="tabular-nums sm:hidden" title={formatDate(e.created_at)}>{formatTime(e.created_at)}</span>
+                  <span>{src.label}</span>
+                  {#if e.actor}<span class="inline-flex items-center gap-1"><Icon name="user" size={11} />{e.actor}</span>{/if}
+                  {#if e.ip}<span class="inline-flex items-center gap-1 font-mono tabular-nums"><Icon name="map-pin" size={11} />{e.ip}</span>{/if}
+                </div>
+              </div>
+              <span class="hidden truncate text-xs text-muted-foreground lg:block">{src.label}</span>
+              <span class="hidden truncate text-xs text-muted-foreground lg:block">{e.actor || '—'}</span>
+              <span class="hidden truncate font-mono text-[11px] tabular-nums text-muted-foreground lg:block">{e.ip || '—'}</span>
             </li>
           {/each}
         </ul>
-      </div>
+      </section>
     {/each}
+
+    <div class="mt-3 flex items-center justify-center gap-3 border-t border-dashed border-border pt-3 text-[11px] text-muted-foreground">
+      <span>{events.length} {events.length === 1 ? 'event' : 'events'} shown</span>
+      {#if next}
+        <Button variant="outline" size="sm" icon="arrow-down" onclick={loadOlder} disabled={loadingOlder}>{loadingOlder ? 'Loading…' : 'Load older'}</Button>
+      {:else}
+        <span>· that's everything kept</span>
+      {/if}
+    </div>
   </div>
 {/if}
