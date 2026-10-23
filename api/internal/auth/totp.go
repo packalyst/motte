@@ -28,30 +28,6 @@ type Disable2FARequest struct {
 	Code     string `json:"code"`
 }
 
-// handleGet2FAStatus returns the 2FA status for current user
-func (s *Service) handleGet2FAStatus(w http.ResponseWriter, r *http.Request) {
-	token := helper.SessionToken(r)
-	if token == "" {
-		router.JSONError(w, "No token provided", http.StatusUnauthorized)
-		return
-	}
-
-	user, err := s.ValidateSession(token)
-	if err != nil {
-		router.JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
-		return
-	}
-
-	var totpEnabled int
-	err = s.db.QueryRow("SELECT COALESCE(totp_enabled, 0) FROM users WHERE id = ?", user.ID).Scan(&totpEnabled)
-	if err != nil {
-		router.JSONError(w, "Failed to get 2FA status", http.StatusInternalServerError)
-		return
-	}
-
-	router.JSON(w, map[string]bool{"enabled": totpEnabled == 1})
-}
-
 // handleSetup2FA generates a new TOTP secret and returns QR code
 func (s *Service) handleSetup2FA(w http.ResponseWriter, r *http.Request) {
 	token := helper.SessionToken(r)

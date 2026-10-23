@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, confirm, stepUpConfirm } from '../stores/app.js'
+  import { toast, apiGet, apiPost, confirm, stepUpConfirm, currentUser } from '../stores/app.js'
   import { lookupIPs } from '../stores/geo.js'
   import { formatDate } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
@@ -23,10 +23,9 @@
   // Geo data for session IPs
   let geoData = $state({})
 
-  // User info
-  let user = $state(null)
+  // The signed-in user (from /api/auth/me, loaded once by the app)
+  const user = $derived($currentUser)
   let sessions = $state([])
-  let loadingSessions = $state(false)
 
   // Password change
   let showPasswordModal = $state(false)
@@ -37,8 +36,10 @@
   })
   let changingPassword = $state(false)
 
-  // 2FA state
-  let twoFactorEnabled = $state(false)
+  // 2FA state: totpEnabled on the app-wide user, which step-up prompts also read, so turning
+  // 2FA on or off here updates that copy too (they then ask for the code right away).
+  const twoFactorEnabled = $derived(!!$currentUser?.totpEnabled)
+  const setTotp = (on) => currentUser.update((u) => (u ? { ...u, totpEnabled: on } : u))
   let anyChannel = $state(false) // a delivery channel is on (from PWASettings, for NotificationPrefs)
   let showPasskeys = $state(false)
   let passkeyCount = $state(0)
@@ -54,14 +55,8 @@
   async function loadProfile() {
     loading = true
     try {
-      const [userData, sessionsData, twoFAStatus] = await Promise.all([
-        apiGet('/api/auth/me'),
-        apiGet('/api/auth/sessions').catch(() => ({ sessions: [] })),
-        apiGet('/api/auth/2fa/status').catch(() => ({ enabled: false }))
-      ])
-      user = userData.user || userData
+      const sessionsData = await apiGet('/api/auth/sessions').catch(() => ({ sessions: [] }))
       sessions = sessionsData.sessions || []
-      twoFactorEnabled = twoFAStatus.enabled || false
 
       // Look up geo data for session IPs
       if (sessions.length > 0) {
@@ -194,7 +189,7 @@
     try {
       await apiPost('/api/auth/2fa/enable', { code: twoFAVerifyCode })
       toast('Two-factor authentication enabled', 'success')
-      twoFactorEnabled = true
+      setTotp(true)
       show2FASetupModal = false
       twoFASetup = { qrCode: '', secret: '' }
       twoFAVerifyCode = ''
@@ -218,7 +213,7 @@
         code: twoFADisableForm.code
       })
       toast('Two-factor authentication disabled', 'success')
-      twoFactorEnabled = false
+      setTotp(false)
       show2FADisableModal = false
       twoFADisableForm = { password: '', code: '' }
     } catch (e) {

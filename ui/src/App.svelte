@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, apiGet, apiPost, currentView, validViews, setGlobalLogoutHandler, clearSessionTokens, currentUser } from './stores/app.js'
+  import { apiGet, apiPost, currentView, validViews, setGlobalLogoutHandler, clearSessionTokens, currentUser } from './stores/app.js'
   import { connect as wsConnect, disconnect as wsDisconnect, wsUserStore, stopReconnect } from './stores/websocket.js'
   import { setDisplayTimezone } from './lib/utils/format.js'
   import Dashboard from './views/Dashboard.svelte'
@@ -92,13 +92,7 @@
     // us signed in across refreshes, a 401 falls through to the login page (apiGet triggers
     // the global logout on 401).
     try {
-      user = await apiGet('/api/auth/me')
-      currentUser.set(user) // policy source (totpEnabled, idleLockMinutes) for step-up + idle lock
-      // Apply the display timezone app-wide before views render (best-effort).
-      try {
-        const s = await apiGet('/api/settings')
-        setDisplayTimezone(s.display_timezone || 'browser')
-      } catch { /* keep browser default */ }
+      user = applyMe(await apiGet('/api/auth/me'))
       // Auth established — connect the WebSocket for live updates.
       wsConnect()
     } catch {
@@ -109,11 +103,18 @@
     }
   })
 
+  // /api/auth/me is the session's source of truth: the policy fields step-up and the idle lock
+  // read (totpEnabled, idleLockMinutes) and the display timezone, applied before views render.
+  function applyMe(me) {
+    currentUser.set(me)
+    setDisplayTimezone(me?.displayTimezone || 'browser')
+    return me
+  }
+
   async function handleSetupComplete(loggedInUser) {
     needsSetup = false
     user = loggedInUser
-    // Pull the full session policy (totpEnabled, idleLockMinutes) for step-up + idle lock.
-    currentUser.set(await apiGet('/api/auth/me').catch(() => loggedInUser))
+    applyMe(await apiGet('/api/auth/me').catch(() => loggedInUser))
     // After setup, AdGuard is not configured yet
     showAdguardBanner = true
     // Connect WebSocket
@@ -123,7 +124,7 @@
   async function handleLogin(loggedInUser) {
     user = loggedInUser
     // The login response may omit policy fields — fetch the authoritative /me for them.
-    currentUser.set(await apiGet('/api/auth/me').catch(() => loggedInUser))
+    applyMe(await apiGet('/api/auth/me').catch(() => loggedInUser))
     // Connect WebSocket
     wsConnect()
   }
