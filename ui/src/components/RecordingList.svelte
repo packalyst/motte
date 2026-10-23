@@ -14,9 +14,10 @@
   import GroupButton from './GroupButton.svelte'
   import Select from './Select.svelte'
   import RecordingPlayer from './RecordingPlayer.svelte'
+  import EmptyState from './EmptyState.svelte'
 
   let {
-    machineId = '', live = 0, hideEmpty = false, emptyText = 'No recordings yet.', class: cls = '',
+    machineId = '', live = 0, hideEmpty = false, emptyText = '', class: cls = '',
     recordings = $bindable([]),
   } = $props()
 
@@ -34,9 +35,12 @@
       recordings = []
     }
   }
+  // A derived only changes when the count does: the session list is re-pushed (a new array, same
+  // length) when the page opens and on every update, which must not refetch the recordings.
+  const liveCount = $derived(live)
   $effect(() => {
     machineId
-    live
+    liveCount
     load()
   })
 
@@ -157,9 +161,7 @@
         </div>
       {/each}
     {:else}
-      <div class="flex items-center gap-3 rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-        <Icon name="player-play" size={18} class="shrink-0" />{emptyText}
-      </div>
+      <EmptyState inline icon="player-record" color="var(--destructive)" title="No recordings yet" description={emptyText} />
     {/if}
   </section>
 {/if}

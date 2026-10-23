@@ -152,6 +152,9 @@
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
+  /* Height of the compact controls (buttons, inputs, selects, segmented, button groups); the
+     h-control / size-control utilities. Change it here and they all move together. */
+  --spacing-control: 2rem;
 }
 
 @custom-variant dark (&:is(.dark *));
@@ -234,6 +237,51 @@ button.kt-badge {
   @apply focus:ring-0 focus:ring-offset-0 outline-none;
 }
 
+/* Native selects, restyled. Every browser gets the box (hover, chevron); browsers with
+   customizable selects (Chromium 135+) also get the open list in the panel's style — a rounded
+   popover, highlighted rows and a check on the chosen one. Elsewhere the browser draws the list.
+   Each pseudo-element has its own rule: an unknown one would drop a combined rule entirely. */
+select.kt-select:not(:disabled):hover {
+  @apply border-muted-foreground/40;
+}
+@supports (appearance: base-select) {
+  select.kt-select {
+    appearance: base-select;
+    background-image: none;
+    @apply pe-2;
+  }
+  select.kt-select::picker-icon {
+    content: '';
+    @apply ms-auto h-3 w-3 shrink-0 bg-muted-foreground transition-transform;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  select.kt-select:open::picker-icon {
+    rotate: 180deg;
+  }
+  select.kt-select::picker(select) {
+    appearance: base-select;
+    @apply mt-1 max-h-72 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg;
+  }
+  select.kt-select option {
+    @apply flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs;
+  }
+  select.kt-select option:hover,
+  select.kt-select option:focus-visible {
+    @apply bg-accent outline-none;
+  }
+  select.kt-select option:checked {
+    @apply font-medium text-foreground;
+  }
+  select.kt-select option::checkmark {
+    content: '';
+    @apply order-1 ms-auto h-3 w-3 bg-primary;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m3 8.5 3.5 3.5L13 5'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  select.kt-select option:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+}
+
 /* Small focus outline for inputs and selects */
 .kt-input:has(input:focus-visible),
 .kt-select:focus,
@@ -255,6 +303,20 @@ input:-webkit-autofill:active {
 }
 
 @layer components {
+  /* Compact control height (--spacing-control) over ktui's h-7. In this layer, after the ktui
+     imports, so these win over ktui but a utility class on one control still wins over them. */
+  .kt-btn-sm,
+  .kt-input-sm,
+  .kt-select-sm {
+    @apply h-control;
+  }
+  .kt-btn-sm.kt-btn-icon {
+    @apply size-control;
+  }
+  .kt-input-addon.kt-input-addon-sm {
+    @apply h-control min-w-control;
+  }
+
   .custom_btns {
     @apply flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer;
   }
@@ -290,7 +352,7 @@ input:-webkit-autofill:active {
     @apply flex items-center rounded-lg border border-border overflow-hidden;
   }
   .btn-group .custom_btns {
-    @apply rounded-none border-0 h-6 w-8;
+    @apply rounded-none border-0 h-[calc(var(--spacing-control)-2px)] w-8; /* inside the group's 1px border */
   }
   .btn-group .custom_btns:not(:last-child) {
     @apply border-r border-border;
@@ -304,7 +366,7 @@ input:-webkit-autofill:active {
 
   /* Custom checkbox */
   .kt-checkbox {
-    @apply appearance-none w-4 h-4 rounded border border-border bg-background cursor-pointer transition-all duration-150;
+    @apply appearance-none w-4 h-4 shrink-0 rounded border border-border bg-background cursor-pointer transition-all duration-150;
     @apply hover:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/10 focus:ring-offset-0;
   }
   .kt-checkbox:checked {
@@ -594,8 +656,9 @@ input:-webkit-autofill:active {
   }
 
   /* Hide select on mobile */
+  /* flex, not block: a customizable select lays out its value and chevron as flex items */
   .pagination-select {
-    @apply hidden sm:block;
+    @apply hidden sm:flex;
   }
   .pagination-btn-active {
     @apply bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground;

@@ -285,8 +285,9 @@
       histPoints = res?.points || []
     } catch { histPoints = [] } finally { histLoading = false }
   }
-  // Refetch when the range (or the machine) changes; runs once on mount too.
-  $effect(() => { histRange; machine.id; loadHistory() })
+  // Refetch when the range (or the machine) changes; runs once on mount too. An uninstalled
+  // machine has no history left to show (its data was deleted), so it loads nothing.
+  $effect(() => { if (st.gone) return; histRange; machine.id; loadHistory() })
 
   const histSeries = [
     { label: 'CPU', stroke: '--cpu' },
@@ -307,6 +308,7 @@
   })
 
   onMount(() => {
+    if (st.gone) { loading = false; return } // nothing left to load or watch
     refresh()             // initial HTTP populate
     subscribe('fleet')    // ask the panel to push this machine's reports over WS
 
@@ -610,6 +612,12 @@
               <div class="text-[11px] tabular-nums text-muted-foreground">{e.at ? `${formatDate(e.at)} · ${timeAgo(e.at)}` : '—'}</div>
             </li>
           {/each}
+          <!-- the possible next step: hollow dot, not an event that happened -->
+          <li class="relative">
+            <span class="absolute -left-[25px] top-1 h-2.5 w-2.5 rounded-full border-2 border-dashed border-muted-foreground bg-card ring-4 ring-card"></span>
+            <div class="text-sm font-medium text-muted-foreground">Bring it back</div>
+            <div class="text-[11px] text-muted-foreground">Install the agent again: it joins as a new machine.</div>
+          </li>
         </ol>
       </div>
       <div>
@@ -632,8 +640,7 @@
       </div>
     </div>
 
-    <div class="flex flex-wrap items-center gap-3 border-t border-dashed border-border px-6 py-4">
-      <p class="min-w-0 flex-1 text-[11px] text-muted-foreground">To bring this server back, install the agent again: it joins as a new machine.</p>
+    <div class="flex justify-end border-t border-dashed border-border px-6 py-4">
       <Button variant="destructive" size="sm" icon="trash" onclick={del}>Remove from panel</Button>
     </div>
   </div>
@@ -641,8 +648,9 @@
 
 <!-- Menu on the left from the top (desktop); everything else, header first, in the right column. -->
 <div class="flex flex-col gap-4 lg:min-h-[calc(100dvh-8rem)] lg:flex-row">
-  {#if report}<SectionNav only="rail" items={navList} active={activeTab} onselect={go} label="Machine sections" />{/if}
-  <div class="min-w-0 flex-1 space-y-4">
+  {#if report && !st.gone}<SectionNav only="rail" items={navList} active={activeTab} onselect={go} label="Machine sections" />{/if}
+  <!-- an uninstalled machine is a single panel: header and panel share one narrower column -->
+  <div class="min-w-0 flex-1 space-y-4 {st.gone ? 'mx-auto w-full max-w-3xl' : ''}">
     {@render header()}
   {#if st.gone}
     {@render uninstalled()}
@@ -895,7 +903,7 @@
         <!-- Recordings stay listable after the console is turned off; reload as sessions change. -->
         {#if canOpenConsole}
           <RecordingList machineId={machine.id} live={liveSessions.length} hideEmpty={!consoleRecord} class="mt-4 border-t border-dashed border-border pt-4"
-            emptyText="No recordings yet. With recording on, every session on this machine is recorded from the moment it opens." />
+            emptyText="With recording on, every session on this machine is recorded from the moment it opens." />
         {/if}
         {@render note('Opening a session may ask for your password again (step-up). Sessions run in tmux on the machine, so they survive a disconnect. Recordings are encrypted on disk, each playback is logged, and only an admin can delete one.')}
       </div>

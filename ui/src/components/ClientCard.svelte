@@ -45,15 +45,24 @@
   const shortName = $derived(name.length > NAME_MAX ? name.slice(0, NAME_MAX - 1).trimEnd() + '…' : name)
 </script>
 
-<article class="relative flex flex-col rounded-lg border bg-card shadow-sm transition hover:shadow-md
+<article class="relative flex flex-col rounded-lg border shadow-sm transition hover:shadow-md
   has-[.card-open:focus-visible]:ring-2 has-[.card-open:focus-visible]:ring-primary/40
-  {highlight ? 'border-warning/50' : online ? 'border-success/30' : gone ? 'border-dashed border-border' : 'border-border'}">
+  {highlight ? 'border-warning/50' : online ? 'border-success/30' : gone ? 'border-dashed border-destructive/40' : 'border-border'}
+  {gone ? 'bg-destructive/5' : 'bg-card'}">
   <div class="flex items-start gap-2.5 p-3">
-    <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg {online ? '' : 'opacity-60 grayscale'}"
-      style="background: color-mix(in oklch, {color} 14%, transparent); color: {color}">
-      <Icon name={icon} size={18} />
-      <span class="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card {online ? 'bg-success' : 'bg-muted-foreground/50'}"></span>
-    </span>
+    {#if gone}
+      <!-- same mark as the machine's uninstalled page -->
+      <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border bg-card text-muted-foreground">
+        <Icon name="plug-connected-x" size={18} />
+        <span class="absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full border-2 border-card bg-destructive text-white"><Icon name="x" size={9} /></span>
+      </span>
+    {:else}
+      <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg {online ? '' : 'opacity-60 grayscale'}"
+        style="background: color-mix(in oklch, {color} 14%, transparent); color: {color}">
+        <Icon name={icon} size={18} />
+        <span class="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card {online ? 'bg-success' : 'bg-muted-foreground/50'}"></span>
+      </span>
+    {/if}
     <div class="min-w-0 flex-1">
       <div class="flex items-center gap-2">
         <button type="button" onclick={onopen} title={openTitle} aria-label={name}
@@ -63,7 +72,7 @@
             <span data-kt-tooltip class="relative z-10">{shortName}<span data-kt-tooltip-content class="kt-tooltip hidden">{name}</span></span>
           {:else}{name}{/if}
         </button>
-        <span class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium {online ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
+        <span class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium {online ? 'bg-success/10 text-success' : gone ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground'}">
           {#if gone}
             <Icon name="plug-connected-x" size={11} />Uninstalled
           {:else}

@@ -121,7 +121,6 @@
           <Icon name="plus" size={12} />New session
         </button>
       {/if}
-      <Button variant="ghost" size="xs" iconOnly icon="refresh" onclick={refreshSessions} tooltip="Refresh" />
     </div>
     {#if $consoleSessions.length}
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -130,19 +129,18 @@
         {/each}
       </div>
     {:else}
-      <div class="flex items-center gap-3 rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-        <Icon name="terminal-2" size={18} class="shrink-0" />
-        {#if consoleMachines.length}
-          No live sessions. A session keeps running after you close the browser, so you can come back to it here.
-        {:else}
-          No machine has the console on yet. An admin turns it on in the machine's Sessions tab under Clients.
-        {/if}
-      </div>
+      {#if consoleMachines.length}
+        <EmptyState inline icon="terminal-2" color="var(--success)" title="No live sessions"
+          description="Open a shell on any machine with the console on. It keeps running after you close the browser, so you can come back to it here." />
+      {:else}
+        <EmptyState inline icon="terminal-2" title="The console is off on every machine"
+          description="An admin turns it on for a machine under Clients, in that machine's Sessions tab." />
+      {/if}
     {/if}
   </section>
 
   <RecordingList bind:recordings live={$consoleSessions.length}
-    emptyText="No recordings yet. Machines set to record keep every console session here." />
+    emptyText="Machines set to record keep every console session here, to play back or download." />
 </div>
 
 <BulkRun bind:open={bulkOpen} machines={active} />

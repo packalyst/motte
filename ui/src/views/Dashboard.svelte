@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from 'svelte'
   import { slide } from 'svelte/transition'
   import { theme, currentView, hasRole } from '../stores/app.js'
-  import { subscribe, unsubscribe, generalInfoStore } from '../stores/websocket.js'
+  import { subscribe, unsubscribe } from '../stores/websocket.js'
+  import { KINDS, clientsList, watchClients, summarize, openClients } from '../lib/clients.js'
   import { visibilityChangeCount } from '../stores/network.js'
   import { isInstalledPWA } from '../lib/pwa/permissions.js'
   import Icon from '../components/Icon.svelte'
@@ -70,18 +71,13 @@
     if (g) expandedMenus[g] = true
   })
 
-  // Stats from WebSocket
-  let stats = $state({ online: 0, offline: 0, hsNodes: 0, wgPeers: 0 })
-
-  // Update stats when WebSocket pushes new data
-  $effect(() => {
-    const info = $generalInfoStore
-    if (info?.event === 'stats') {
-      stats = info.data
-    }
-  })
+  // Every client the user may see, live (same list as the Clients page).
+  const summary = $derived(summarize($clientsList.clients))
+  const SHORT = { wireguard: 'WireGuard', tailscale: 'Tailscale', machine: 'Machines', lan: 'LAN' }
+  let releaseClients
 
   onMount(() => {
+    releaseClients = watchClients()
     // Subscribe to real-time updates
     subscribe('general_info')
     // App-wide live host stats: the Dashboard shell is always mounted, so this
@@ -91,6 +87,7 @@
   })
 
   onDestroy(() => {
+    releaseClients?.()
     unsubscribe('general_info')
     unsubscribe('server_stats')
   })
@@ -309,27 +306,30 @@
 
     <!-- Sidebar footer -->
     <div class="border-t border-border p-3 space-y-3">
-      <!-- Stats section -->
-      <div class="space-y-2">
-        <div class="grid grid-cols-2 gap-2 text-[11px]">
-          <div class="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-2">
+      <!-- Clients: online out of all, then each kind (opens Clients narrowed to it) -->
+      <div class="space-y-2 text-[11px]">
+        <button type="button" onclick={() => openClients('')} title="Open Clients"
+          class="block w-full rounded-md bg-secondary px-2.5 py-2 text-left cursor-pointer hover:bg-muted">
+          <span class="flex items-center gap-2">
             <span class="h-2 w-2 rounded-full bg-success"></span>
-            <span class="text-foreground">{stats.online} online</span>
-          </div>
-          <div class="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-2">
-            <span class="h-2 w-2 rounded-full bg-muted-foreground"></span>
-            <span class="text-muted-foreground">{stats.offline} offline</span>
-          </div>
-        </div>
-        <div class="grid grid-cols-2 gap-2 text-[11px]">
-          <div class="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-2">
-            <Icon name="cloud" size={12} class="text-primary" />
-            <span class="text-foreground">{stats.hsNodes} Tailscale</span>
-          </div>
-          <div class="flex items-center gap-2 rounded-md bg-secondary px-2.5 py-2">
-            <Icon name="shield" size={12} class="text-success" />
-            <span class="text-foreground">{stats.wgPeers} WireGuard</span>
-          </div>
+            <span class="flex-1 text-foreground"><b class="font-semibold tabular-nums">{summary.online}</b><span class="text-muted-foreground tabular-nums"> / {summary.total}</span> online</span>
+            {#if summary.attention.length}
+              <span class="inline-flex items-center gap-0.5 font-medium text-warning" title="{summary.attention.length} need attention"><Icon name="alert-triangle" size={11} />{summary.attention.length}</span>
+            {/if}
+          </span>
+          <span class="mt-1.5 block h-1 overflow-hidden rounded-full bg-muted">
+            <span class="block h-full rounded-full bg-success" style="width: {summary.total ? (summary.online / summary.total) * 100 : 0}%"></span>
+          </span>
+        </button>
+        <div class="grid grid-cols-2 gap-2">
+          {#each Object.entries(KINDS) as [k, meta] (k)}
+            <button type="button" onclick={() => openClients(k)} title="{meta.group}: {summary.kinds[k].online} online of {summary.kinds[k].total}"
+              class="flex min-w-0 items-center gap-1 rounded-md bg-secondary px-1.5 py-1.5 cursor-pointer hover:bg-muted">
+              <span class="grid shrink-0 place-items-center" style="color: {meta.color}"><Icon name={meta.icon} size={12} /></span>
+              <span class="min-w-0 flex-1 truncate text-left text-muted-foreground">{SHORT[k]}</span>
+              <span class="shrink-0 tabular-nums text-foreground">{summary.kinds[k].total}</span>
+            </button>
+          {/each}
         </div>
       </div>
 
