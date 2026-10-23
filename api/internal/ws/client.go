@@ -120,8 +120,6 @@ func (c *Client) ReadPump() {
 					c.hub.Subscribe(c, channel)
 					// Send current data immediately on subscribe
 					switch channel {
-					case "general_info":
-						c.sendCurrentNodeStats()
 					case "docker":
 						c.sendCurrentDockerContainers()
 					case "docker_logs":
@@ -229,14 +227,6 @@ func (c *Client) sendMessage(msgType string, payload interface{}) {
 	default:
 		// Buffer full, skip
 	}
-}
-
-// sendCurrentNodeStats sends current node stats to this client immediately
-func (c *Client) sendCurrentNodeStats() {
-	c.sendMessage("general_info", map[string]interface{}{
-		"event": "stats",
-		"data":  GetCurrentNodeStats(),
-	})
 }
 
 // sendCurrentDockerContainers sends current docker containers to this client immediately

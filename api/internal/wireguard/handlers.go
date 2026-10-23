@@ -10,7 +10,6 @@ import (
 	"api/internal/events"
 	"api/internal/nftables"
 	"api/internal/router"
-	"api/internal/ws"
 
 	"github.com/skip2/go-qrcode"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -97,9 +96,6 @@ func (s *Service) handleCreatePeer(w http.ResponseWriter, r *http.Request) {
 	events.Log("wireguard", "peer_added", events.SeverityInfo,
 		fmt.Sprintf("Peer %q added (%s)", peer.Name, peer.IPAddress))
 
-	// Broadcast node stats update
-	ws.BroadcastNodeStats()
-
 	w.WriteHeader(http.StatusCreated)
 	router.JSON(w, peer)
 }
@@ -168,9 +164,6 @@ func (s *Service) handleDeletePeer(w http.ResponseWriter, r *http.Request) {
 
 	// Drop the peer's IP from any nftables sets (e.g. no_internet_peers).
 	requestFirewallApply()
-
-	// Broadcast node stats update
-	ws.BroadcastNodeStats()
 
 	w.WriteHeader(http.StatusNoContent)
 }
