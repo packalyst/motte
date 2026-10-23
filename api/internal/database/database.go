@@ -476,6 +476,8 @@ func createSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_logs_src ON logs(logs_src_ip, logs_timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_logs_domain ON logs(logs_domain);
 	CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(logs_type, logs_status);
+	-- newest-first browsing with no type filter (the Logs page default)
+	CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(logs_timestamp DESC);
 
 	-- Analytics rollup: hourly per-type counters, so the charts + counter KPIs have real
 	-- history that survives the raw-log row cap. Aggregate-only (no IPs/domains). Filled
@@ -915,6 +917,7 @@ func runMigrations(db *sql.DB) {
 				`CREATE INDEX IF NOT EXISTS idx_logs_src ON logs(logs_src_ip, logs_timestamp DESC)`,
 				`CREATE INDEX IF NOT EXISTS idx_logs_domain ON logs(logs_domain)`,
 				`CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(logs_type, logs_status)`,
+				`CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(logs_timestamp DESC)`,
 			}
 			if tx, err := db.Begin(); err == nil {
 				ok := true

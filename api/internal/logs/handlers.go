@@ -155,8 +155,8 @@ func (s *Service) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 	if query.Search != "" {
 		searchPattern := "%" + database.EscapeLikePattern(query.Search) + "%"
-		baseQuery += " AND (l.logs_domain LIKE ? OR l.logs_src_ip LIKE ? OR l.logs_dest_ip LIKE ?)"
-		countQuery += " AND (logs_domain LIKE ? OR logs_src_ip LIKE ? OR logs_dest_ip LIKE ?)"
+		baseQuery += ` AND (l.logs_domain LIKE ? ESCAPE '\' OR l.logs_src_ip LIKE ? ESCAPE '\' OR l.logs_dest_ip LIKE ? ESCAPE '\')`
+		countQuery += ` AND (logs_domain LIKE ? ESCAPE '\' OR logs_src_ip LIKE ? ESCAPE '\' OR logs_dest_ip LIKE ? ESCAPE '\')`
 		args = append(args, searchPattern, searchPattern, searchPattern)
 	}
 
@@ -760,7 +760,7 @@ func (s *Service) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {
 		args = append(args, status)
 	}
 	if search != "" {
-		query += " AND (logs_domain LIKE ? OR logs_src_ip LIKE ? OR logs_dest_ip LIKE ?)"
+		query += ` AND (logs_domain LIKE ? ESCAPE '\' OR logs_src_ip LIKE ? ESCAPE '\' OR logs_dest_ip LIKE ? ESCAPE '\')`
 		// Escape LIKE wildcards (same as handleGetLogs) so a search containing
 		// % or _ can't match — and delete — far more rows than the preview showed.
 		like := "%" + database.EscapeLikePattern(search) + "%"
