@@ -26,16 +26,15 @@ LOCK_FILE="images.lock"
 PINNED_FILE="docker-compose.pinned.yml"
 POLICY_FILE="cosign-policy.txt"
 
-# External, pullable images keyed by their compose SERVICE name. Build services (api, ui, dnsmasq,
+# External, pullable images by their compose SERVICE name. Build services (api, ui, dnsmasq,
 # turbotunnels) are local and pinned by their source commit, not a registry digest.
 SERVICES=(docker-socket-proxy traefik headscale adguard vpn-router)
-declare -A IMAGE_OF=(
-  [docker-socket-proxy]="tecnativa/docker-socket-proxy:latest"
-  [traefik]="traefik:v3.6"
-  [headscale]="headscale/headscale:0.25"
-  [adguard]="adguard/adguardhome:latest"
-  [vpn-router]="tailscale/tailscale:latest"
-)
+
+# image_of SERVICE: the image tag docker-compose.yml pins for that service — read from the file so
+# this list can never drift from what the stack actually runs.
+image_of() {
+  awk -v s="  $1:" '$0 == s { f = 1; next } f && /^  [^ ]/ { exit } f && $1 == "image:" { print $2; exit }' docker-compose.yml
+}
 
 c_red=$'\e[31m'; c_grn=$'\e[32m'; c_yel=$'\e[33m'; c_cya=$'\e[36m'; c_rst=$'\e[0m'
 info() { echo -e "${c_cya}$*${c_rst}"; }
@@ -74,8 +73,8 @@ cmd_pin() {
   } > "$PINNED_FILE.tmp"
   local svc ref digest failed=0
   for svc in "${SERVICES[@]}"; do
-    ref="${IMAGE_OF[$svc]}"
-    if digest=$(resolve_digest "$ref"); then
+    ref=$(image_of "$svc")
+    if [ -n "$ref" ] && digest=$(resolve_digest "$ref"); then
       echo "$svc $digest" >> "$LOCK_FILE.tmp"
       printf '  %s:\n    image: %s\n' "$svc" "$digest" >> "$PINNED_FILE.tmp"
       ok "  $svc -> $digest"

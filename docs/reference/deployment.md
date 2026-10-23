@@ -51,12 +51,12 @@ run from the project root, so relative bind mounts resolve against the checkout.
 | Service | Image / build | Network mode | Notes |
 |---|---|---|---|
 | `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | `socket-proxy-net` (dedicated) | Filters the Docker API; publishes `127.0.0.1:2375`. |
-| `traefik` | `traefik:v3.6` | `vpn-network` (static IP `${TRAEFIK_CONTAINER_IP}`) | Reverse proxy; ports `${HTTP_PORT}:80`, `${HTTPS_PORT}:443`, `${TRAEFIK_PORT}:8080`. |
+| `traefik` | `traefik:v3.7.16` | `vpn-network` (static IP `${TRAEFIK_CONTAINER_IP}`) | Reverse proxy; ports `${HTTP_PORT}:80`, `${HTTPS_PORT}:443`, `${TRAEFIK_PORT}:8080`. |
 | `headscale` | `headscale/headscale:0.25` | `vpn-network` (`${HEADSCALE_CONTAINER_IP}`) | Tailscale control plane + embedded DERP. `command: serve`, `cap_add: NET_ADMIN`. |
 | `api` | built from `./api` (arg `VERSION`) | **`network_mode: host`, `pid: host`, `privileged: true`** | The unified backend. Reaches Docker via `DOCKER_HOST=tcp://127.0.0.1:2375`. |
-| `adguard` | `adguard/adguardhome:latest` | **`network_mode: host`** | DNS + query logging. |
+| `adguard` | `adguard/adguardhome:v0.107.79` | **`network_mode: host`** | DNS + query logging. |
 | `ui` | built from `./ui` (`target: production`) | `vpn-network` (`${UI_CONTAINER_IP}`) | Svelte dashboard; Traefik routes `PathPrefix('/')` to it. |
-| `vpn-router` | `tailscale/tailscale:latest` | `network_mode: host` | **profile `vpn-router`** — bridges WG ↔ Headscale via subnet routing. |
+| `vpn-router` | `tailscale/tailscale:v1.104.1` | `network_mode: host` | **profile `vpn-router`** — bridges WG ↔ Headscale via subnet routing. |
 | `turbotunnels` | built from `./containers/turbotunnels` | `vpn-network` (`${TURBOTUNNELS_CONTAINER_IP}`) | **profile `turbotunnels`** — image only; runtime container is created by the panel via the Docker API. `restart: "no"`. |
 | `dnsmasq` | built from `./containers/dnsmasq` | **`network_mode: host`**, `NET_ADMIN` | DHCP-only (`port=0`) server for managed private networks; config/leases in the `dhcp_conf` / `dhcp_leases` volumes. Idle until a network is configured. |
 

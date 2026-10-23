@@ -29,7 +29,7 @@ func IsValidACLPolicy(policy string) bool {
 // VPN Router configuration defaults
 const (
 	DefaultRouterName     = "vpn-router"
-	DefaultRouterImage    = "tailscale/tailscale:latest"
+	DefaultRouterImage    = "tailscale/tailscale:v1.104.1"
 	DefaultRouterDataPath = "/var/lib/tailscale-vpn-router"
 )
 
