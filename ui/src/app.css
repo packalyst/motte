@@ -326,6 +326,11 @@ input:-webkit-autofill:active {
   .custom_btns {
     @apply flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer;
   }
+  /* the page it links to is open, or its menu is: keep the hover look */
+  .custom_btns[aria-current='page'],
+  .custom_btns[aria-expanded='true'] {
+    @apply bg-muted text-foreground;
+  }
 
   /* Card with a header band and an optional footer note, each set off by a dashed line (machine
      page; trial for wider use). panel-head / panel-note bleed to the card edges (p-4). */

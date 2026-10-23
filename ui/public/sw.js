@@ -1,20 +1,21 @@
-// Service Worker for Wire Panel PWA
+// Service Worker for Motte PWA
 // Handles push notifications and basic PWA requirements
 
-const CACHE_VERSION = 'v3'
+const CACHE_VERSION = 'v4'
 
-// The app shell. Cached so a failed SPA navigation can still boot the app
-// instead of the browser's network-error page. It only loads the SPA bundle,
-// which then makes its own fresh /api/ calls — no dynamic data is cached.
-const SHELL = '/index.html'
+// The offline page: shown when a page load can't reach the panel (no internet, VPN off, server
+// restarting) instead of a blank screen. Self-contained (inline styles and logo) plus its retry
+// script; it reloads by itself once the panel answers. No app data is ever cached.
+const OFFLINE = '/offline.html'
+const PRECACHE = [OFFLINE, '/offline.js']
 
-// Install - precache the shell, then activate immediately.
+// Install - precache the offline page, then activate immediately.
 self.addEventListener('install', (e) =>
   e.waitUntil(
     caches
       .open(CACHE_VERSION)
-      .then((c) => c.add(SHELL))
-      .catch(() => {}) // offline at install: shell fills in on first online nav
+      .then((c) => c.addAll(PRECACHE))
+      .catch(() => {}) // offline at install: cached on the next install
       .then(() => self.skipWaiting())
   )
 )
@@ -44,21 +45,16 @@ self.addEventListener('fetch', (e) => {
     return // don't call respondWith → default browser handling (fresh connection)
   }
 
-  // SPA navigations: network-first, falling back to the cached shell. A
-  // transient failure (or an IP switch mid-navigation) then boots the app
-  // rather than surfacing a "FetchEvent resulted in a network error" page.
+  // Page loads: network first; if the panel can't be reached, the offline page (which retries,
+  // so a brief blip such as an IP switch recovers on its own).
   if (request.mode === 'navigate') {
-    e.respondWith(
-      fetch(request)
-        .then((res) => {
-          if (res && res.ok) {
-            const copy = res.clone() // keep the cached shell fresh while online
-            caches.open(CACHE_VERSION).then((c) => c.put(SHELL, copy)).catch(() => {})
-          }
-          return res
-        })
-        .catch(() => caches.match(SHELL).then((cached) => cached || Response.error()))
-    )
+    e.respondWith(fetch(request).catch(() => caches.match(OFFLINE).then((cached) => cached || Response.error())))
+    return
+  }
+
+  // The offline page's own script, so it still loads with no connection.
+  if (url.origin === self.location.origin && PRECACHE.includes(url.pathname)) {
+    e.respondWith(fetch(request).catch(() => caches.match(url.pathname).then((cached) => cached || Response.error())))
     return
   }
 
@@ -73,7 +69,7 @@ self.addEventListener('push', (event) => {
   // iOS REQUIRES event.waitUntil() to always be called
   // Parse notification data with fallback
   let data = {
-    title: 'Wire Panel',
+    title: 'Motte',
     body: 'New notification',
     icon: '/icon-192.png'
   }
@@ -91,13 +87,13 @@ self.addEventListener('push', (event) => {
   const options = {
     body: data.body || data.message || '',
     icon: '/icon-192.png', // Always use PNG, iOS doesn't support SVG
-    tag: data.tag || 'wire-panel-notification',
+    tag: data.tag || 'motte-notification',
     data: data.data || {}
   }
 
   // Always call waitUntil - iOS requires this
   event.waitUntil(
-    self.registration.showNotification(data.title || 'Wire Panel', options)
+    self.registration.showNotification(data.title || 'Motte', options)
       .catch(err => console.error('[SW] Notification error:', err))
   )
 })

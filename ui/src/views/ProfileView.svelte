@@ -242,14 +242,15 @@
     <div class="grid gap-4 lg:grid-cols-2 lg:items-start">
       <div class="space-y-4">
         <!-- Account Info -->
-        <div class="kt-panel">
-          <div class="kt-panel-header">
-            <h3 class="kt-panel-title">
-              <Icon name="user" size={16} />
-              Account
-            </h3>
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-icon text-primary"><Icon name="user" size={17} /></span>
+            <div class="min-w-0 flex-1">
+              <div class="panel-title">Account</div>
+              <div class="panel-sub">who you are signed in as</div>
+            </div>
           </div>
-          <div class="kt-panel-body">
+          <div>
             <div class="grid grid-cols-2 gap-3">
               <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
                 <div>
@@ -274,14 +275,15 @@
       </div>
       <div class="space-y-4">
         <!-- Security -->
-        <div class="kt-panel">
-          <div class="kt-panel-header">
-            <h3 class="kt-panel-title">
-              <Icon name="shield-lock" size={16} />
-              Security
-            </h3>
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-icon text-primary"><Icon name="shield-lock" size={17} /></span>
+            <div class="min-w-0 flex-1">
+              <div class="panel-title">Security</div>
+              <div class="panel-sub">password · two-factor · passkeys</div>
+            </div>
           </div>
-          <div class="kt-panel-body grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <ContentBlock title="Password" description="Your sign-in password">
               <Button size="sm" variant="secondary" icon="lock" onclick={() => showPasswordModal = true}>
                 Change
@@ -319,19 +321,18 @@
 
     <!-- Active Sessions - Full width -->
     <div>
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="device-desktop" size={16} />
-            Active Sessions
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="device-desktop" size={17} /></span>
+          <div class="min-w-0 flex-1">
+            <div class="panel-title">Active sessions</div>
+            <div class="panel-sub">{sessions.length} signed in · revoke any you don't recognise</div>
+          </div>
           {#if sessions.length > 1}
-            <Button icon="logout" onclick={revokeAllOtherSessions}>
-              Revoke All Others
-            </Button>
+            <Button size="sm" icon="logout" onclick={revokeAllOtherSessions}>Revoke all others</Button>
           {/if}
         </div>
-        <div class="kt-panel-body">
+        <div>
           {#if sessions.length === 0}
             <div class="text-center py-6 text-muted-foreground text-sm">
               <Icon name="device-desktop" size={24} class="mx-auto mb-2 opacity-50" />
