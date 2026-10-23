@@ -39,6 +39,17 @@ func TestFromMachineOnline(t *testing.T) {
 	}
 }
 
+// An uninstalled machine is marked gone; the card says so, so it carries no duplicate flags.
+func TestFromMachineUninstalled(t *testing.T) {
+	e := fromMachine(&fleet.Machine{ID: "m", Status: "uninstalled", Revoked: true})
+	if !e.Gone || len(e.Flags) != 0 {
+		t.Fatalf("uninstalled machine mapped wrong: %+v", e)
+	}
+	if e := fromMachine(&fleet.Machine{ID: "m", Revoked: true}); e.Gone || len(e.Flags) != 1 {
+		t.Fatalf("a revoked (not uninstalled) machine keeps its flag: %+v", e)
+	}
+}
+
 func TestFromLANPending(t *testing.T) {
 	e := fromLAN(dhcp.Network{ID: 3, Iface: "ens19", CIDR: "10.70.70.0/24"}, dhcp.Client{ID: 9, MAC: "aa:bb:cc:dd:ee:ff"})
 	if !e.Pending || e.Name != "aa:bb:cc:dd:ee:ff" || e.Open.NetworkID != 3 || e.Open.LanID != 9 {

@@ -25,6 +25,7 @@
     tags = null, // string[] for a tags footer; null = no tags footer
     emptyTags = '',
     highlight = false, // e.g. waiting for approval
+    gone = false, // a machine whose agent was uninstalled
     onopen,
     openTitle = undefined,
     footer = undefined, // snippet
@@ -46,7 +47,7 @@
 
 <article class="relative flex flex-col rounded-lg border bg-card shadow-sm transition hover:shadow-md
   has-[.card-open:focus-visible]:ring-2 has-[.card-open:focus-visible]:ring-primary/40
-  {highlight ? 'border-warning/50' : online ? 'border-success/30' : 'border-border'}">
+  {highlight ? 'border-warning/50' : online ? 'border-success/30' : gone ? 'border-dashed border-border' : 'border-border'}">
   <div class="flex items-start gap-2.5 p-3">
     <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg {online ? '' : 'opacity-60 grayscale'}"
       style="background: color-mix(in oklch, {color} 14%, transparent); color: {color}">
@@ -63,8 +64,12 @@
           {:else}{name}{/if}
         </button>
         <span class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium {online ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
-          <span class="status-dot {online ? 'status-dot-success' : 'status-dot-muted'}"></span>
-          {online ? 'Online' : 'Offline'}
+          {#if gone}
+            <Icon name="plug-connected-x" size={11} />Uninstalled
+          {:else}
+            <span class="status-dot {online ? 'status-dot-success' : 'status-dot-muted'}"></span>
+            {online ? 'Online' : 'Offline'}
+          {/if}
         </span>
       </div>
       <!-- always present (even empty) so headers are the same height across a row -->

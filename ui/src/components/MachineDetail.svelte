@@ -582,7 +582,7 @@
 <!-- An uninstalled machine: its agent signed off and its data is gone, so instead of empty tabs
      this says what happened and offers the one thing left to do. -->
 {#snippet uninstalled()}
-  <div class="panel mx-auto max-w-3xl overflow-hidden !p-0">
+  <div class="panel overflow-hidden !p-0">
     <div class="flex flex-col items-center gap-3 border-b border-dashed border-border bg-muted/30 px-6 py-8 text-center">
       <span class="relative grid h-14 w-14 place-items-center rounded-2xl border border-border bg-card text-muted-foreground shadow-sm">
         <Icon name="plug-connected-x" size={26} />
