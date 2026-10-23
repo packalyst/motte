@@ -30,7 +30,6 @@ import (
 const (
 	Channel       = "clients"
 	watchInterval = 10 * time.Second
-	machineOnline = 10 * time.Minute    // a machine counts as online while it reported this recently
 	keyWarnWithin = 14 * 24 * time.Hour // warn this long before a Tailscale node key expires
 )
 
@@ -251,9 +250,9 @@ func keyExpiryFlags(expiry string, now time.Time) []Flag {
 func fromMachine(m *fleet.Machine) Client {
 	e := Client{Key: "m:" + m.ID, Kind: "machine", Name: firstNonEmpty(m.Name, m.ID), IP: m.LastIP,
 		Open: OpenRef{MachineID: m.ID}, Flags: machineFlags(m), Tags: m.Tags}
+	e.Online = m.Online // its link to the panel is up
 	if m.LastSeen != nil {
 		e.LastSeen = m.LastSeen.UTC().Format(time.RFC3339)
-		e.Online = !m.Revoked && time.Since(*m.LastSeen) < machineOnline
 	}
 	if m.Summary != nil {
 		e.Meta = m.Summary.OS

@@ -117,7 +117,9 @@ cert fingerprint, not this hash (documented in the code as a future replay check
 Built from the stored identity (client cert + key + pinned CA pool, `MinVersion
 TLS 1.2`). `Run` drives two tickers:
 - **report** every `metrics_interval` (default 15s): `POST /report` with `col.Latest()` (the snapshot). Panel stores it as `last_report`, bumps `last_seen`, sets `status='online'`, folds metrics into 5-min history buckets, and broadcasts it to any watching browser over WS (`api/.../report.go`, `metrics.go`).
-- **command poll** every 10s: `GET /commands` → run each → `POST /commands/ack`. Also advances a pending kernel-reboot state machine.
+- **link** (`GET /link`, persistent mTLS WebSocket, `agent/link.go` ↔ `api/internal/fleet/link.go`): a doorbell + presence channel. When a command is queued the panel sends `{"t":"commands"}` and the agent fetches at once over the normal `GET /commands` (no command data rides the link). Panel pings every 25s; 70s of silence = dead. The link **is** the machine's online state (`online` on `/api/fleet/machines` and the clients list, pushed on the `fleet` WS; a drop counts as offline after a 20s grace) — never guessed from report age. Commands are only queued for an online machine. Revoke/delete closes it at once.
+- **command fetch**: `GET /commands` → run each → `POST /commands/ack`, on every ring, on every (re)connect, and once a minute as a safety net while the link is up. Nothing polls while it's down (the panel queues nothing for an offline machine). A 10s tick advances a pending kernel-reboot state machine.
+- **report** sections `cves`/`intrusion`/`facts` are sent only when they changed (or every 10 min); otherwise the report is marked `partial` and the panel keeps its stored copy.
 - **CVE report**: once per new scan (keyed by `scanned_at`), the **full** Trivy findings ship gzip-compressed to `POST /cve-report` (the 15s report only carries a summary). `maybeSendCVEs`/`sendCVEReport`.
 
 **401/403 handling:** if the panel rejects the identity (machine deleted/revoked),

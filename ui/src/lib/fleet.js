@@ -18,16 +18,14 @@ export function sevVariant(sev) {
   }
 }
 
-// statusInfo derives a machine's connection state from its last_seen timestamp.
-// online = reported within 2 min; idle = within 10 min; else offline. reachable (online only) is
-// what the server requires before it queues a command (fleet commandOnlineWindow).
+// statusInfo derives a machine's state. online comes from the server: the agent's link to the
+// panel is up — exact, never guessed from report age. reachable mirrors what the server requires
+// before it queues a command.
 export function statusInfo(m) {
   if (m?.status === 'uninstalled') return { dot: 'bg-muted-foreground', variant: 'muted', label: 'uninstalled', online: false, gone: true }
   if (m?.revoked) return { dot: 'bg-destructive', variant: 'danger', label: 'revoked', online: false }
+  if (m?.online) return { dot: 'bg-success', variant: 'success', label: 'online', online: true, reachable: true }
   if (!m?.last_seen) return { dot: 'bg-muted-foreground', variant: 'muted', label: 'never reported', online: false }
-  const mins = (Date.now() - new Date(m.last_seen)) / 60000
-  if (mins < 2) return { dot: 'bg-success', variant: 'success', label: 'online', online: true, reachable: true }
-  if (mins < 10) return { dot: 'bg-warning', variant: 'warning', label: 'idle', online: true }
   return { dot: 'bg-muted-foreground', variant: 'danger', label: 'offline', online: false }
 }
 

@@ -3,14 +3,13 @@ package fleet
 import (
 	"encoding/json"
 	"testing"
-	"time"
 )
 
 // A partial report keeps the sections the agent left out (unchanged) from the stored report;
 // a full report replaces them; the partial flag itself is never stored.
 func TestMergePartialReport(t *testing.T) {
 	svc := newTestService(t)
-	addMachine(t, svc, "m1", time.Second)
+	addMachine(t, svc, "m1", false)
 
 	stored := `{"metrics":{"cpu":1},"cves":{"total":3},"facts":{"kernel":"6.1"},"intrusion":{"n":1}}`
 	if _, err := svc.db.Exec(`UPDATE fleet_machines SET last_report = ? WHERE id = 'm1'`, stored); err != nil {
@@ -38,7 +37,7 @@ func TestMergePartialReport(t *testing.T) {
 	}
 
 	// No stored report yet: the partial one is kept as is, minus the flag.
-	addMachine(t, svc, "m2", time.Second)
+	addMachine(t, svc, "m2", false)
 	if out, _ := svc.mergePartialReport("m2", []byte(`{"metrics":{},"partial":true}`)); string(out) != `{"metrics":{}}` {
 		t.Fatalf("no stored report: %s", out)
 	}
