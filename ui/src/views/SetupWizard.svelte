@@ -1,6 +1,7 @@
 <script>
   import { toast, apiPost, apiGet } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
+  import Logo from '../components/Logo.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
 
@@ -204,12 +205,10 @@
 
     <div class="relative z-10">
       <div class="flex items-center justify-center gap-3 mb-6">
-        <div class="w-12 h-12 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
-          <Icon name="shield" size={24} class="text-white" />
-        </div>
+        <Logo size={44} />
       </div>
       <h1 class="text-2xl font-bold mb-2">Initial Setup</h1>
-      <p class="text-sm text-muted-foreground">Configure Wire Panel</p>
+      <p class="text-sm text-muted-foreground">Configure Motte</p>
     </div>
   </div>
 
@@ -223,16 +222,13 @@
       <!-- Header -->
       <div class="mb-12">
         <div class="flex items-center gap-3 mb-8">
-          <div class="w-11 h-11 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
-            <Icon name="shield" size={22} class="text-white" />
-          </div>
-          <span class="text-lg font-semibold tracking-tight">Wire Panel</span>
+          <Logo size={30} wordmark class="[--primary:#4c9deb]" />
         </div>
 
         <h2 class="text-4xl font-bold mb-3 leading-tight">
-          Welcome to<br/>Wire Panel
+          Welcome to<br/>Motte
         </h2>
-        <p class="text-muted-foreground text-base leading-relaxed">
+        <p class="text-white/60 text-base leading-relaxed">
           Let's get you set up in just a few steps. We'll create your admin account and connect to Headscale.
         </p>
       </div>
@@ -246,7 +242,7 @@
             </div>
             <h3 class="font-semibold text-sm">Admin Account</h3>
           </div>
-          <p class="text-xs text-muted-foreground leading-relaxed">Create your administrator credentials</p>
+          <p class="text-xs text-white/60 leading-relaxed">Create your administrator credentials</p>
         </div>
 
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4">
@@ -256,12 +252,12 @@
             </div>
             <h3 class="font-semibold text-sm">Headscale</h3>
           </div>
-          <p class="text-xs text-muted-foreground leading-relaxed">Connect to your VPN server</p>
+          <p class="text-xs text-white/60 leading-relaxed">Connect to your VPN server</p>
         </div>
       </div>
 
       <!-- Footer -->
-      <div class="flex flex-wrap gap-6 text-xs text-muted-foreground">
+      <div class="flex flex-wrap gap-6 text-xs text-white/60">
         <div class="flex items-center gap-2">
           <div class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
           <span>Secure Setup</span>
@@ -284,7 +280,7 @@
       <!-- Desktop Header -->
       <div class="hidden lg:block mb-8">
         <h1 class="text-2xl font-semibold mb-2">Initial Setup</h1>
-        <p class="text-sm text-muted-foreground">Configure Wire Panel</p>
+        <p class="text-sm text-muted-foreground">Configure Motte</p>
       </div>
 
       <!-- Step Header -->

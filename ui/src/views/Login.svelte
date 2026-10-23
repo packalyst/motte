@@ -2,6 +2,7 @@
   import { theme, toast } from '../stores/app.js'
   import { passkeyLogin, passkeysSupported } from '../lib/webauthn.js'
   import Icon from '../components/Icon.svelte'
+  import Logo from '../components/Logo.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
   import Checkbox from '../components/Checkbox.svelte'
@@ -98,12 +99,10 @@
 
     <div class="relative z-10">
       <div class="flex items-center justify-center gap-3 mb-6">
-        <div class="w-12 h-12 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
-          <Icon name="shield" size={24} class="text-white" />
-        </div>
+        <Logo size={44} />
       </div>
       <h1 class="text-2xl font-bold mb-2">Welcome Back</h1>
-      <p class="text-sm text-muted-foreground">Sign in to Wire Panel</p>
+      <p class="text-sm text-muted-foreground">Sign in to Motte</p>
     </div>
   </div>
 
@@ -117,17 +116,14 @@
       <!-- Header -->
       <div class="mb-12">
         <div class="flex items-center gap-3 mb-8">
-          <div class="w-11 h-11 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
-            <Icon name="shield" size={22} class="text-white" />
-          </div>
-          <span class="text-lg font-semibold tracking-tight">WireGuard Admin</span>
+          <Logo size={30} wordmark class="[--primary:#4c9deb]" />
         </div>
 
         <h2 class="text-4xl font-bold mb-3 leading-tight">
-          Enterprise VPN<br/>Management Platform
+          Your infrastructure.<br/>Your stronghold.
         </h2>
-        <p class="text-muted-foreground text-base leading-relaxed">
-          Secure, scalable infrastructure for modern organizations
+        <p class="text-white/60 text-base leading-relaxed">
+          VPN, firewall, DNS and your whole fleet of machines, self-hosted and run from one place
         </p>
       </div>
 
@@ -138,9 +134,9 @@
             <div class="w-9 h-9 bg-primary/20 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
               <Icon name="network" size={18} class="text-primary" />
             </div>
-            <h3 class="font-semibold text-sm">Dual VPN</h3>
+            <h3 class="font-semibold text-sm">Private network</h3>
           </div>
-          <p class="text-xs text-muted-foreground leading-relaxed">WireGuard + Headscale unified</p>
+          <p class="text-xs text-white/60 leading-relaxed">WireGuard and Headscale in one address space</p>
         </div>
 
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all group">
@@ -148,37 +144,37 @@
             <div class="w-9 h-9 bg-primary/20 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
               <Icon name="shield-lock" size={18} class="text-primary" />
             </div>
-            <h3 class="font-semibold text-sm">Firewall & Jails</h3>
+            <h3 class="font-semibold text-sm">Firewall at the gate</h3>
           </div>
-          <p class="text-xs text-muted-foreground leading-relaxed">nftables with auto-blocking</p>
+          <p class="text-xs text-white/60 leading-relaxed">Country and network blocking, automatic bans</p>
         </div>
 
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all group">
           <div class="flex items-center gap-3 mb-2">
             <div class="w-9 h-9 bg-primary/20 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
-              <Icon name="activity" size={18} class="text-primary" />
+              <Icon name="server" size={18} class="text-primary" />
             </div>
-            <h3 class="font-semibold text-sm">Real-time Status</h3>
+            <h3 class="font-semibold text-sm">Fleet watch</h3>
           </div>
-          <p class="text-xs text-muted-foreground leading-relaxed">Live updates via WebSocket</p>
+          <p class="text-xs text-white/60 leading-relaxed">Machine health, CVE scans and a browser console</p>
         </div>
 
         <div class="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all group">
           <div class="flex items-center gap-3 mb-2">
             <div class="w-9 h-9 bg-primary/20 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
-              <Icon name="layout" size={18} class="text-primary" />
+              <Icon name="world" size={18} class="text-primary" />
             </div>
-            <h3 class="font-semibold text-sm">Unified Dashboard</h3>
+            <h3 class="font-semibold text-sm">DNS and domains</h3>
           </div>
-          <p class="text-xs text-muted-foreground leading-relaxed">VPN, DNS, Proxy, Containers</p>
+          <p class="text-xs text-white/60 leading-relaxed">Ad blocking and HTTPS routes to your services</p>
         </div>
       </div>
 
       <!-- Footer -->
-      <div class="flex flex-wrap gap-6 text-xs text-muted-foreground">
+      <div class="flex flex-wrap gap-6 text-xs text-white/60">
         <div class="flex items-center gap-2">
-          <Icon name="lock" size={12} />
-          <span>AES-256 Encryption</span>
+          <Icon name="key" size={12} />
+          <span>Passkeys and 2FA</span>
         </div>
         <div class="flex items-center gap-2">
           <Icon name="server" size={12} />
@@ -186,7 +182,7 @@
         </div>
         <div class="flex items-center gap-2">
           <Icon name="code" size={12} />
-          <span>Open Source</span>
+          <span>Open source</span>
         </div>
       </div>
     </div>
@@ -316,10 +312,6 @@
         </form>
       </div>
 
-      <!-- Footer -->
-      <p class="text-center text-xs text-muted-foreground mt-6">
-        Protected by enterprise-grade security
-      </p>
     </div>
   </div>
 </div>

@@ -782,12 +782,12 @@ func (r *Router) handleManifest(w http.ResponseWriter, req *http.Request) {
 	// Build manifest with domain-specific name
 	// short_name is used by iOS for home screen icon (keep it short)
 	manifest := map[string]interface{}{
-		"name":             "Wire Panel - " + sslDomain,
+		"name":             "Motte - " + sslDomain,
 		"short_name":       sslDomain,
-		"description":      "WireGuard & Headscale Admin Panel",
+		"description":      "Your infrastructure. Your stronghold.",
 		"start_url":        "/",
 		"display":          "standalone",
-		"background_color": "#16161a",
+		"background_color": "#3e668f", // the icon's ground, so the launch splash matches it
 		"theme_color":      "#16161a",
 		"icons": []map[string]interface{}{
 			{
@@ -800,7 +800,14 @@ func (r *Router) handleManifest(w http.ResponseWriter, req *http.Request) {
 				"src":     "/icon-512.png",
 				"sizes":   "512x512",
 				"type":    "image/png",
-				"purpose": "any maskable",
+				"purpose": "any",
+			},
+			{
+				// the mark sits inside the central 80% circle, so the same art masks cleanly
+				"src":     "/icon-512.png",
+				"sizes":   "512x512",
+				"type":    "image/png",
+				"purpose": "maskable",
 			},
 			{
 				"src":   "/icon.svg",

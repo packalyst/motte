@@ -181,7 +181,7 @@
   <InfoCard
     icon="info-circle"
     title="About"
-    description="Unified admin panel for a full self-hosted networking stack: WireGuard & Headscale VPNs, per-peer virtual IPs & ACLs, AdGuard DNS filtering, Traefik reverse proxy with domain routes, forward proxies (tunnels) with IP rotation, webhooks, firewall/fail2ban, host security, a per-machine fleet agent (with CVE scanning), encrypted backup & migrate, and traffic analytics."
+    description="Motte is one self-hosted panel for a full networking stack: WireGuard & Headscale VPNs, per-peer virtual IPs & ACLs, AdGuard DNS filtering, Traefik reverse proxy with domain routes, forward proxies (tunnels) with IP rotation, webhooks, firewall/fail2ban, host security, a per-machine fleet agent (with CVE scanning), encrypted backup & migrate, and traffic analytics."
   />
 
   {#if panelVersion}
@@ -213,7 +213,7 @@
           <div>
             <h3 class="text-lg font-semibold text-foreground mb-3">What is this?</h3>
             <p class="text-sm text-muted-foreground leading-relaxed">
-              This admin panel provides a unified interface for a complete self-hosted VPN and networking stack. Beyond secure VPN access (WireGuard + Headscale), it adds per-peer virtual IPs with ACL gating, DNS-level ad blocking, reverse-proxy routing to internal services, authenticated forward proxies with IP rotation, validating webhooks for automation, an intrusion-detection firewall, read-only host security telemetry, a per-machine fleet agent with CVE scanning, encrypted backup &amp; migrate, and traffic analytics — all managed from one place.
+              Motte is one interface for a complete self-hosted VPN and networking stack. Beyond secure VPN access (WireGuard + Headscale), it adds per-peer virtual IPs with ACL gating, DNS-level ad blocking, reverse-proxy routing to internal services, authenticated forward proxies with IP rotation, validating webhooks for automation, an intrusion-detection firewall, read-only host security telemetry, a per-machine fleet agent with CVE scanning, encrypted backup &amp; migrate, and traffic analytics — all managed from one place.
             </p>
           </div>
 

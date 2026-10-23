@@ -1838,8 +1838,8 @@
         </div>
         <div class="flex items-center justify-between">
           <div class="text-xs text-muted-foreground">
-            <p class="font-medium text-foreground">Wire Panel</p>
-            <p class="mt-0.5">Headscale + WireGuard management interface</p>
+            <p class="font-medium text-foreground">Motte</p>
+            <p class="mt-0.5">Your infrastructure. Your stronghold.</p>
           </div>
           <div class="text-[10px] text-muted-foreground text-right">
             <p>Built with Svelte 5</p>
