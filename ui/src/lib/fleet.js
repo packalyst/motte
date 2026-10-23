@@ -1,12 +1,15 @@
 // Shared fleet helpers — used by the machine detail page, its CVE drill-down and the clients page
 // so status/severity/usage logic lives in one place.
 
-// usageColor maps a 0–100 utilization to a semantic bar color.
-export function usageColor(pct) {
-  if (pct >= 85) return 'bg-destructive'
-  if (pct >= 60) return 'bg-warning'
-  return 'bg-success'
+// usageTone maps a 0–100 utilization to a semantic tone (also a CSS token: var(--<tone>)).
+export function usageTone(pct) {
+  if (pct >= 85) return 'destructive'
+  if (pct >= 60) return 'warning'
+  return 'success'
 }
+const USAGE_BG = { destructive: 'bg-destructive', warning: 'bg-warning', success: 'bg-success' }
+// usageColor is the bar colour class for that tone.
+export const usageColor = (pct) => USAGE_BG[usageTone(pct)]
 
 // sevVariant maps a Trivy severity to a Badge variant.
 export function sevVariant(sev) {

@@ -67,6 +67,8 @@ type metricPoint struct {
 	MemMax  float64 `json:"mem_max"`
 	DiskAvg float64 `json:"disk_avg"`
 	DiskMax float64 `json:"disk_max"`
+	// nil for buckets stored before load was recorded
+	LoadAvg *float64 `json:"load_avg"`
 }
 
 // metricRange maps a UI range to how far back to look and how coarsely to regroup
@@ -100,7 +102,8 @@ func (s *Service) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 		SELECT (bucket/?)*? AS b,
 			AVG(cpu_avg),  MAX(cpu_max),
 			AVG(mem_avg),  MAX(mem_max),
-			AVG(disk_avg), MAX(disk_max)
+			AVG(disk_avg), MAX(disk_max),
+			AVG(load_avg)
 		FROM fleet_metrics
 		WHERE machine_id = ? AND bucket >= ?
 		GROUP BY b ORDER BY b`, rc.step, rc.step, id, since)
@@ -112,7 +115,7 @@ func (s *Service) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 	pts := []metricPoint{}
 	for rows.Next() {
 		var p metricPoint
-		if err := rows.Scan(&p.T, &p.CPUAvg, &p.CPUMax, &p.MemAvg, &p.MemMax, &p.DiskAvg, &p.DiskMax); err == nil {
+		if err := rows.Scan(&p.T, &p.CPUAvg, &p.CPUMax, &p.MemAvg, &p.MemMax, &p.DiskAvg, &p.DiskMax, &p.LoadAvg); err == nil {
 			pts = append(pts, p)
 		}
 	}
