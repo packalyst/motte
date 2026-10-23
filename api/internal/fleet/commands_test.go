@@ -33,13 +33,20 @@ func withMachine(r *http.Request, m *Machine) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), machineCtxKey, m))
 }
 
-// addMachine inserts a machine that last reported `ago` ago (online when within commandOnlineWindow).
-func addMachine(t *testing.T, svc *Service, id string, ago time.Duration) {
+// addMachine inserts a machine; online gives it a live link (as if it just dropped within the
+// grace period, so no socket is needed), which is what makes a machine accept commands.
+func addMachine(t *testing.T, svc *Service, id string, online bool) {
 	t.Helper()
-	now := time.Now().UTC()
+	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := svc.db.Exec(`INSERT INTO fleet_machines (id, name, enrolled_at, last_seen) VALUES (?, ?, ?, ?)`,
-		id, id, now.Format(time.RFC3339), now.Add(-ago).Format(time.RFC3339)); err != nil {
+		id, id, now, now); err != nil {
 		t.Fatal(err)
+	}
+	t.Cleanup(func() { linkTeardown(id) })
+	if online {
+		links.Lock()
+		links.down[id] = time.Now()
+		links.Unlock()
 	}
 }
 
@@ -47,10 +54,11 @@ func addMachine(t *testing.T, svc *Service, id string, ago time.Duration) {
 // whenever the machine reconnects. Revoked machines are refused too.
 func TestEnqueueRefusesOfflineMachine(t *testing.T) {
 	svc := newTestService(t)
-	addMachine(t, svc, "gone", 10*time.Minute)
-	addMachine(t, svc, "live", 10*time.Second)
-	addMachine(t, svc, "revoked", 10*time.Second)
+	addMachine(t, svc, "gone", false)
+	addMachine(t, svc, "live", true)
+	addMachine(t, svc, "revoked", true)
 	svc.db.Exec(`UPDATE fleet_machines SET revoked = 1 WHERE id = 'revoked'`)
+	linkTeardown("revoked") // what revoking does
 	r := httptest.NewRequest("POST", "/api/fleet/command", nil)
 	r = r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
 	for _, id := range []string{"gone", "revoked", "unknown"} {
@@ -73,7 +81,7 @@ func TestEnqueueRefusesOfflineMachine(t *testing.T) {
 // demands step-up (428) instead of enqueuing.
 func TestEnqueueGuardrail(t *testing.T) {
 	svc := newTestService(t)
-	addMachine(t, svc, "m1", 0)
+	addMachine(t, svc, "m1", true)
 	// An owner principal (unscoped) so the machine-scope check passes and we exercise the
 	// role/step-up/allowlist tiers in isolation.
 	req := func() *http.Request {
@@ -199,7 +207,7 @@ func TestRequireClientCert(t *testing.T) {
 // own messages (Enqueue, no expiry) are still delivered however long the machine was away.
 func TestCommandExpiry(t *testing.T) {
 	svc := newTestService(t)
-	addMachine(t, svc, "m1", 0)
+	addMachine(t, svc, "m1", true)
 	r := httptest.NewRequest("POST", "/api/fleet/command", nil)
 	r = r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
 	userCmd, _, err := svc.enqueueCore(r, "m1", "block", json.RawMessage(`{"ip":"1.2.3.4"}`))
@@ -233,7 +241,7 @@ func TestCommandExpiry(t *testing.T) {
 // The command log shows an undelivered command as expired even if the machine never polls again.
 func TestCommandLogShowsExpired(t *testing.T) {
 	svc := newTestService(t)
-	addMachine(t, svc, "m1", 0)
+	addMachine(t, svc, "m1", true)
 	r := httptest.NewRequest("POST", "/api/fleet/command", nil)
 	r = r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
 	if _, _, err := svc.enqueueCore(r, "m1", "block", json.RawMessage(`{"ip":"1.2.3.4"}`)); err != nil {
@@ -250,11 +258,11 @@ func TestCommandLogShowsExpired(t *testing.T) {
 // machine's name is free again, and the result never passes the 64-character limit.
 func TestUniqueMachineName(t *testing.T) {
 	svc := newTestService(t)
-	addMachine(t, svc, "a", 0)
+	addMachine(t, svc, "a", true)
 	svc.db.Exec(`UPDATE fleet_machines SET name = 'web-01' WHERE id = 'a'`)
-	addMachine(t, svc, "b", 0)
+	addMachine(t, svc, "b", true)
 	svc.db.Exec(`UPDATE fleet_machines SET name = 'web-01-2' WHERE id = 'b'`)
-	addMachine(t, svc, "c", 0)
+	addMachine(t, svc, "c", true)
 	svc.db.Exec(`UPDATE fleet_machines SET name = 'old', revoked = 1 WHERE id = 'c'`)
 	for in, want := range map[string]string{"web-01": "web-01-3", "WEB-01": "WEB-01-3", "db-01": "db-01", "old": "old"} {
 		if got := svc.uniqueMachineName(in); got != want {

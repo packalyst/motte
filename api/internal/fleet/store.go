@@ -30,6 +30,7 @@ type Machine struct {
 	ConsoleEnabled bool            `json:"console_enabled"`
 	ConsoleRecord  bool            `json:"console_record"`
 	LastIP         string          `json:"last_ip,omitempty"` // address its last report came from (matches a VPN client when it reports over the tunnel)
+	Online         bool            `json:"online"`            // its link to the panel is up (see link.go)
 	Summary        *MachineSummary `json:"summary,omitempty"`
 }
 
@@ -136,6 +137,7 @@ func (s *Service) DeleteMachine(id string) error {
 		return err
 	}
 	consoleTeardown(id) // kill any live console channel/sessions for the deleted machine
+	linkTeardown(id)
 	return nil
 }
 
@@ -149,6 +151,7 @@ func (s *Service) MarkUninstalled(id string) error {
 	_, err := s.db.Exec(`UPDATE fleet_machines SET status='uninstalled', revoked=1, last_seen=? WHERE id=?`,
 		time.Now().UTC().Format(time.RFC3339), id)
 	consoleTeardown(id) // drop any live console channel/sessions the moment the machine is revoked
+	linkTeardown(id)
 	return err
 }
 
@@ -243,6 +246,7 @@ func (s *Service) ListMachines() ([]Machine, error) {
 		m.ConsoleEnabled = consoleEnabled == 1
 		m.ConsoleRecord = consoleRecord == 1
 		m.Summary = summarize(report.String)
+		m.Online = !m.Revoked && linkOnline(m.ID)
 		if enrolled.Valid {
 			m.EnrolledAt, _ = time.Parse(time.RFC3339, enrolled.String)
 		}
@@ -273,22 +277,6 @@ func (s *Service) machineByCertFP(fp string) (*Machine, error) {
 		m.EnrolledAt, _ = time.Parse(time.RFC3339, enrolled.String)
 	}
 	return &m, nil
-}
-
-// commandOnlineWindow: a machine that reported this recently is online (the agent reports every
-// 15s by default), so a queued command is picked up within seconds. Same cutoff as the UI's
-// "online" label.
-const commandOnlineWindow = 2 * time.Minute
-
-// recentlySeen reports whether a non-revoked machine reported within commandOnlineWindow.
-func (s *Service) recentlySeen(id string) bool {
-	var lastSeen sql.NullString
-	err := s.db.QueryRow(`SELECT last_seen FROM fleet_machines WHERE id = ? AND revoked = 0`, id).Scan(&lastSeen)
-	if err != nil || !lastSeen.Valid {
-		return false
-	}
-	t, err := time.Parse(time.RFC3339, lastSeen.String)
-	return err == nil && time.Since(t) < commandOnlineWindow
 }
 
 // machineByID loads one non-revoked machine with the fields the console path needs (tags for

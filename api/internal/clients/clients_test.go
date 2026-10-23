@@ -28,16 +28,14 @@ func TestFromVPNFlagsAndIDs(t *testing.T) {
 	}
 }
 
-func TestFromMachineOnlineWindow(t *testing.T) {
-	recent, old := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
-	if !fromMachine(&fleet.Machine{ID: "m", LastSeen: &recent}).Online {
-		t.Error("a machine that reported a minute ago is online")
+// A machine is online exactly when the fleet says its link is up — never from report age.
+func TestFromMachineOnline(t *testing.T) {
+	recent := time.Now().Add(-time.Minute)
+	if !fromMachine(&fleet.Machine{ID: "m", Online: true}).Online {
+		t.Error("a machine whose link is up is online")
 	}
-	if fromMachine(&fleet.Machine{ID: "m", LastSeen: &old}).Online {
-		t.Error("a machine silent for an hour is offline")
-	}
-	if fromMachine(&fleet.Machine{ID: "m", LastSeen: &recent, Revoked: true}).Online {
-		t.Error("a revoked machine is never online")
+	if fromMachine(&fleet.Machine{ID: "m", LastSeen: &recent}).Online {
+		t.Error("a recent report alone does not make a machine online")
 	}
 }
 

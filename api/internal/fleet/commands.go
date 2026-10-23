@@ -147,7 +147,7 @@ func (s *Service) enqueueCore(r *http.Request, machineID, ctype string, payload 
 			fmt.Sprintf("Command %q on %s denied: outside the operator's machine scope", ctype, machineID))
 		return "", http.StatusForbidden, fmt.Errorf("your scope does not include this machine")
 	}
-	if !s.recentlySeen(machineID) {
+	if !linkOnline(machineID) {
 		return "", http.StatusConflict, fmt.Errorf("the machine is offline — commands can only be sent to machines that are online")
 	}
 	id, err := s.enqueue(machineID, ctype, payload, commandTTL)
@@ -219,6 +219,9 @@ func (s *Service) enqueue(machineID, ctype string, payload json.RawMessage, ttl 
 		`INSERT INTO fleet_commands (id, machine_id, type, payload, status, created_at, expires_at) VALUES (?,?,?,?, 'pending', ?, ?)`,
 		id, machineID, ctype, string(payload), now.Format(time.RFC3339), expires,
 	)
+	if err == nil {
+		ringLink(machineID)
+	}
 	return id, err
 }
 

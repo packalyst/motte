@@ -152,7 +152,11 @@
   let loading = $state(true)
   let blockIP = $state('')
 
-  const st = $derived(statusInfo(machine))
+  // Presence pushed live (online when the link connects/drops, last check-in) on top of the record
+  // the page opened with.
+  let live = $state({})
+  const st = $derived(statusInfo({ ...machine, ...live }))
+  const lastSeen = $derived(live.last_seen || machine.last_seen)
   const dryRun = $derived(report?.dry_run ?? true)
   const m = $derived(report?.metrics || {})
   const cves = $derived(report?.cves || null)
@@ -237,9 +241,8 @@
   // machine-level CVE roll-up (unique CVEs, affected packages, fixable) — the report's cves
   // summary only has raw findings + severity, so we pull the richer numbers from the panel.
   let cveSummary = $state(null)
-  // Scans are on demand and run in the background on the machine: the report says so while one
-  // runs (older agents instead hold the rescan command open until it finishes).
-  const scanning = $derived(!!report?.scanning || commands.some((c) => c.type === 'rescan' && (c.status === 'pending' || c.status === 'delivered')))
+  // Scans are on demand and run in the background on the machine; the report says when one runs.
+  const scanning = $derived(!!report?.scanning)
   // The agent refuses installs, restarts and reboots while a scan runs (security commands still
   // go through), so those buttons wait for it too.
   const canMaintain = $derived(st.reachable && !scanning)
@@ -315,6 +318,8 @@
       // Command log now rides the push (report broadcast + queue/ack broadcasts),
       // so no more polling /api/fleet/machine/commands on every check-in.
       if (msg.commands) commands = msg.commands
+      if (typeof msg.online === 'boolean') live.online = msg.online
+      if (msg.last_seen) live.last_seen = msg.last_seen
       if (!msg.report) return
       const prevScan = report?.cves?.scanned_at
       report = msg.report
@@ -332,7 +337,7 @@
   async function cmd(type, payload = null, opts = {}) {
     const ok = await confirm({
       title: `${opts.title || type} · ${machine.name}`,
-      message: opts.message || `Queue "${type}" for ${machine.name}? It runs on the machine's next check-in (~10s).`,
+      message: opts.message || `Queue "${type}" for ${machine.name}? It runs right away.`,
       confirmText: opts.confirmText || 'Queue',
       variant: opts.variant || 'primary',
       alert: opts.alert || false,
@@ -553,7 +558,7 @@
         {/if}
       </div>
       <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-        {#if machine.last_seen}<span class="inline-flex items-center gap-1 {st.online ? '' : 'font-medium text-foreground'}"><Icon name="clock" size={11} />{st.online ? 'seen' : 'last seen'} {timeAgo(machine.last_seen)}</span>{/if}
+        {#if lastSeen}<span class="inline-flex items-center gap-1 {st.online ? '' : 'font-medium text-foreground'}"><Icon name="clock" size={11} />{st.online ? 'seen' : 'last seen'} {timeAgo(lastSeen)}</span>{/if}
         {#if report?.agent}<span class="inline-flex items-center gap-1"><Icon name="robot" size={11} />agent {report.agent}</span>{/if}
         {#if report}<span class="hidden items-center gap-1 tabular-nums sm:inline-flex"><Icon name="cpu" size={11} />{st.online ? '' : 'last known · '}CPU {round(m.cpu)}% · MEM {round(m.mem)}% · load {(m.load1 ?? 0).toFixed(2)}</span>{/if}
       </div>
