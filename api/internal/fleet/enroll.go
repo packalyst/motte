@@ -79,7 +79,13 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		name = "machine-" + id
 	}
 	name = s.uniqueMachineName(name)
+	notAfter, err := certNotAfterPEM(certPEM)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "server error")
+		return
+	}
 	m := Machine{
+		CertExpires: &notAfter,
 		ID:          id,
 		Name:        name,
 		MachineHash: machineIdentityHash(req.MachineID, req.WGPubkey),

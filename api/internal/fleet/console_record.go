@@ -327,6 +327,25 @@ func recordRetention() time.Duration {
 
 // sweepRecordings deletes recordings untouched for longer than the retention. A recording being
 // written is touched on every frame, so it is never old enough to match.
+// purgeRecordings deletes every recording of a machine and its key. The machine is identified from
+// each file's header, never the filename (one machine id can be a prefix of another's).
+func purgeRecordings(machineID string) {
+	dir := recordDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !recNameRe.MatchString(e.Name()) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if h, err := readRecHeader(path); err == nil && h.Meta.MachineID == machineID && os.Remove(path) == nil {
+			deleteRecKey(e.Name())
+		}
+	}
+}
+
 func sweepRecordings() {
 	dir := recordDir()
 	entries, err := os.ReadDir(dir)

@@ -27,7 +27,7 @@
   import SectionNav from './SectionNav.svelte'
   import RecordingList from './RecordingList.svelte'
   import UPlotChart from './UPlotChart.svelte'
-  import { timeAgo, formatBytes } from '$lib/utils/format.js'
+  import { timeAgo, formatBytes, formatDate, formatExpiryDate } from '$lib/utils/format.js'
   import { usageColor, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
   let { machine, latestAgent = null, onback, ondeleted, onviewcves } = $props()
@@ -449,7 +449,8 @@
     ['server', 'Host', report?.host],
     ['activity', 'Last report', report?.time ? timeAgo(report.time) : ''],
     ['calendar', 'Enrolled', machine.enrolled_at ? timeAgo(machine.enrolled_at) : ''],
-    ['certificate', 'Cert', (machine.cert_fp || '').replace('sha256:', '').slice(0, 12)],
+    // The agent renews its certificate by itself well before it expires.
+    ['certificate', 'Cert', [(machine.cert_fp || '').replace('sha256:', '').slice(0, 8), machine.cert_expires ? formatExpiryDate(machine.cert_expires).toLowerCase() : ''].filter(Boolean).join(' · ')],
     ['key', 'WG', wgVal],
   ])
   // IPs this host is currently enforcing a block on (from the live report).
@@ -459,9 +460,14 @@
   const blocklistBusy = $derived(commands.some((c) => (c.type === 'sync-blocks' || c.type === 'clear-blocks') && (c.status === 'pending' || c.status === 'delivered')))
 
   async function del() {
-    await cmd(null, null, {
+    await cmd(null, null, st.gone ? {
+      endpoint: '/api/fleet/machine/delete', title: `Remove ${machine.name}`,
+      message: `Remove ${machine.name} from the panel? Its data was already deleted when the agent was uninstalled; this removes the last trace. The audit log keeps the record.`,
+      confirmText: 'Remove', variant: 'destructive',
+      done: () => `${machine.name} removed`, after: () => ondeleted?.(),
+    } : {
       endpoint: '/api/fleet/machine/delete', title: `Delete ${machine.name}`,
-      message: `Delete ${machine.name} for good? Its certificate is invalidated immediately — the agent can no longer connect and must re-enroll with a fresh token to return. Queued commands are removed too.`,
+      message: `Delete ${machine.name} for good? Its certificate stops working at once — the agent can no longer connect and must be installed again to return — and everything stored for it is deleted: reports, vulnerabilities, history and console recordings.`,
       confirmText: 'Delete machine', variant: 'destructive', alert: true,
       done: () => `${machine.name} deleted`, after: () => ondeleted?.(),
     })
@@ -558,17 +564,77 @@
         {/if}
       </div>
       <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-        {#if lastSeen}<span class="inline-flex items-center gap-1 {st.online ? '' : 'font-medium text-foreground'}"><Icon name="clock" size={11} />{st.online ? 'seen' : 'last seen'} {timeAgo(lastSeen)}</span>{/if}
+        {#if lastSeen}<span class="inline-flex items-center gap-1 {st.online ? '' : 'font-medium text-foreground'}"><Icon name="clock" size={11} />{st.online ? 'seen' : st.gone ? 'uninstalled' : 'last seen'} {timeAgo(lastSeen)}</span>{/if}
         {#if report?.agent}<span class="inline-flex items-center gap-1"><Icon name="robot" size={11} />agent {report.agent}</span>{/if}
         {#if report}<span class="hidden items-center gap-1 tabular-nums sm:inline-flex"><Icon name="cpu" size={11} />{st.online ? '' : 'last known · '}CPU {round(m.cpu)}% · MEM {round(m.mem)}% · load {(m.load1 ?? 0).toFixed(2)}</span>{/if}
       </div>
     </div>
-    <div class="btn-group shrink-0">
+    {#if !st.gone}<div class="btn-group shrink-0">
       <GroupButton icon="refresh" tooltip="Refresh" onclick={refresh} />
       {#if canOpenConsole && consoleEnabled}
         <GroupButton icon="terminal-2" tone="primary" tooltip="Open console" onclick={() => openConsole()} />
       {/if}
       <GroupButton icon="trash" tone="destructive" tooltip="Delete machine" onclick={del} />
+    </div>{/if}
+  </div>
+{/snippet}
+
+<!-- An uninstalled machine: its agent signed off and its data is gone, so instead of empty tabs
+     this says what happened and offers the one thing left to do. -->
+{#snippet uninstalled()}
+  <div class="panel mx-auto max-w-3xl overflow-hidden !p-0">
+    <div class="flex flex-col items-center gap-3 border-b border-dashed border-border bg-muted/30 px-6 py-8 text-center">
+      <span class="relative grid h-14 w-14 place-items-center rounded-2xl border border-border bg-card text-muted-foreground shadow-sm">
+        <Icon name="plug-connected-x" size={26} />
+        <span class="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full border-2 border-card bg-destructive text-white"><Icon name="x" size={11} /></span>
+      </span>
+      <div>
+        <h3 class="text-base font-semibold text-foreground">Agent uninstalled</h3>
+        <p class="mx-auto mt-1 max-w-md text-sm text-balance text-muted-foreground">
+          The agent was removed from <span class="whitespace-nowrap font-medium text-foreground">{machine.name}</span> and signed off from the panel. This server can no longer connect.
+        </p>
+      </div>
+    </div>
+
+    <div class="grid gap-6 px-6 py-5 sm:grid-cols-2">
+      <div>
+        <div class="mb-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Timeline</div>
+        <ol class="relative space-y-4 border-l border-dashed border-border pl-5">
+          {#each [
+            { dot: 'bg-success', label: 'Added to the panel', at: machine.enrolled_at },
+            { dot: 'bg-destructive', label: 'Agent uninstalled', at: machine.last_seen },
+          ] as e (e.label)}
+            <li class="relative">
+              <span class="absolute -left-[25px] top-1 h-2.5 w-2.5 rounded-full ring-4 ring-card {e.dot}"></span>
+              <div class="text-sm font-medium text-foreground">{e.label}</div>
+              <div class="text-[11px] tabular-nums text-muted-foreground">{e.at ? `${formatDate(e.at)} · ${timeAgo(e.at)}` : '—'}</div>
+            </li>
+          {/each}
+        </ol>
+      </div>
+      <div>
+        <div class="mb-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">What happened</div>
+        <ul class="space-y-3">
+          {#each [
+            { icon: 'certificate', title: 'Certificate revoked', text: "The server's identity no longer works, so it can't reconnect." },
+            { icon: 'trash', title: 'Data deleted', text: 'Reports, vulnerabilities, history and console recordings.' },
+            { icon: 'history', title: 'Kept in the audit log', text: 'Activity still shows when it was added and removed.' },
+          ] as f (f.title)}
+            <li class="flex items-start gap-3">
+              <span class="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><Icon name={f.icon} size={14} /></span>
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-foreground">{f.title}</div>
+                <div class="text-[11px] text-muted-foreground">{f.text}</div>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3 border-t border-dashed border-border px-6 py-4">
+      <p class="min-w-0 flex-1 text-[11px] text-muted-foreground">To bring this server back, install the agent again: it joins as a new machine.</p>
+      <Button variant="destructive" size="sm" icon="trash" onclick={del}>Remove from panel</Button>
     </div>
   </div>
 {/snippet}
@@ -578,7 +644,9 @@
   {#if report}<SectionNav only="rail" items={navList} active={activeTab} onselect={go} label="Machine sections" />{/if}
   <div class="min-w-0 flex-1 space-y-4">
     {@render header()}
-  {#if loading && !report}
+  {#if st.gone}
+    {@render uninstalled()}
+  {:else if loading && !report}
     <div class="panel p-8 text-center text-sm text-muted-foreground">Loading report…</div>
   {:else if !report}
     <div class="panel p-8">
