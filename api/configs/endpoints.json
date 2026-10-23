@@ -249,14 +249,6 @@
           "min_role": "viewer"
         },
         {
-          "path": "/2fa/status",
-          "methods": [
-            "GET"
-          ],
-          "handler": "Get2FAStatus",
-          "description": "Get 2FA status"
-        },
-        {
           "path": "/2fa/setup",
           "methods": [
             "POST"

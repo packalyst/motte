@@ -73,7 +73,7 @@ Prefixes and the notable endpoints. All are session-authed unless marked
 Login/session/2FA. `POST /login` (**public**), `POST /logout`, `GET /me`,
 `POST /users` (create admin), `GET /sessions`,
 `POST /sessions/{id}/revoke`, `POST /sessions/revoke-others`,
-`POST /change-password`, and TOTP 2FA: `GET /2fa/status`, `POST /2fa/setup`,
+`POST /change-password`, and TOTP 2FA (status is `totpEnabled` on `GET /me`): `POST /2fa/setup`,
 `POST /2fa/enable`, `POST /2fa/disable`. Web-push/PWA lives under `/api/pwa`
 (vapid key, subscribe/unsubscribe, preferences, device locations, test).
 

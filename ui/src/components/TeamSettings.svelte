@@ -8,7 +8,7 @@
   import Input from './Input.svelte'
   import StepUpFields from './StepUpFields.svelte'
 
-  let me = $state(null)      // current operator (for role-gated options)
+  const me = $derived($currentUser) // current operator (for role-gated options)
   let users = $state([])
   let error = $state('')
   let showAdd = $state(false)
@@ -67,7 +67,6 @@
 
   async function load() {
     try {
-      me = await apiGet('/api/auth/me')
       const res = await apiGet('/api/auth/users')
       users = res.users || []
       error = ''

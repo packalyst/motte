@@ -247,12 +247,7 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 	// Aggregate-metrics retention window (days)
 	result["metrics_retention_days"] = GetRetentionDays()
 
-	// Display timezone (UI only): "browser" (default) or an IANA zone name
-	if tz, err := getSetting("display_timezone"); err == nil && tz != "" {
-		result["display_timezone"] = tz
-	} else {
-		result["display_timezone"] = "browser"
-	}
+	result["display_timezone"] = DisplayTimezone()
 
 	// Scanner
 	result["scanner_port_start"] = getSettingInt("scanner_port_start", 1)
@@ -691,6 +686,15 @@ func SetSettingEncrypted(key, value string) error {
 }
 
 // GetSettingInt exports the integer getter for other packages
+// DisplayTimezone is how the UI shows dates: "browser" (default, each viewer's own zone) or an
+// IANA zone name. Display only; sent to every signed-in user with /api/auth/me.
+func DisplayTimezone() string {
+	if tz, err := getSetting("display_timezone"); err == nil && tz != "" {
+		return tz
+	}
+	return "browser"
+}
+
 func GetSettingInt(key string, defaultVal int) int {
 	return getSettingInt(key, defaultVal)
 }

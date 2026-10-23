@@ -120,7 +120,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"RevokeSession":         s.handleRevokeSession,
 		"RevokeOtherSessions":   s.handleRevokeOtherSessions,
 		"ChangePassword":        s.handleChangePassword,
-		"Get2FAStatus":          s.handleGet2FAStatus,
 		"Setup2FA":              s.handleSetup2FA,
 		"Enable2FA":             s.handleEnable2FA,
 		"Disable2FA":            s.handleDisable2FA,
@@ -506,17 +505,19 @@ func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Embed the user's fields and add session-policy hints the UI needs: whether to collect a
-	// 2FA code on step-up prompts, and the idle-lock timeout (0 = disabled).
+	// 2FA code on step-up prompts, the idle-lock timeout (0 = disabled), and the display timezone.
 	resp := struct {
 		*User
-		TOTPEnabled     bool `json:"totpEnabled"`
-		IdleLockMinutes int  `json:"idleLockMinutes"`
-		Locked          bool `json:"locked"`
+		TOTPEnabled     bool   `json:"totpEnabled"`
+		IdleLockMinutes int    `json:"idleLockMinutes"`
+		Locked          bool   `json:"locked"`
+		DisplayTimezone string `json:"displayTimezone"`
 	}{
 		User:            user,
 		TOTPEnabled:     s.TOTPEnabled(user.ID),
 		IdleLockMinutes: settings.GetSettingInt("idle_lock_minutes", 0),
 		Locked:          s.IsSessionLocked(token),
+		DisplayTimezone: settings.DisplayTimezone(),
 	}
 	router.JSON(w, resp)
 }
