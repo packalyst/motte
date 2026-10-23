@@ -85,7 +85,7 @@ cert its own CA signed and that map to a live, non-revoked machine.
 
 ### Panel side (`api/internal/fleet/`)
 
-- **CA (`ca.go`)** — `loadOrCreateCA` generates a P-256 CA on first use, stores the cert in the clear and the **private key AES-256-GCM-encrypted** with the panel's `ENCRYPTION_SECRET` (`fleet_ca` table). `Fingerprint()` = `sha256:<hex>` of the CA cert (what agents pin). `SignClientCSR` verifies the CSR signature and issues a client cert (`ExtKeyUsageClientAuth`, TTL `clientCertTTL = 90 days`, `service.go:88`). `ServerCertificate` mints an ephemeral in-memory server cert for the listener, SANs = all non-loopback host IPs + the SSL domain, chain includes the CA so a pinning agent can verify it.
+- **CA (`ca.go`)** — `loadOrCreateCA` generates a P-256 CA on first use, stores the cert in the clear and the **private key AES-256-GCM-encrypted** with the panel's `ENCRYPTION_SECRET` (`fleet_ca` table). `Fingerprint()` = `sha256:<hex>` of the CA cert (what agents pin). `SignClientCSR` verifies the CSR signature and issues a client cert (`ExtKeyUsageClientAuth`, TTL `clientCertTTL = 90 days`, `service.go:88`). **Renewal (`renew.go`, agent `renew.go`)**: within 28 days of expiry the agent (checked hourly) generates a new key locally and `POST /renew`s a CSR over its current mTLS identity; the panel only accepts it within 30 days of the presented cert's expiry, signs it for the same machine, and stores it as `cert_fp_next`. Both certs work until the agent first connects with the new one, which promotes it (`syncCert`) and retires the old — so an interrupted renewal can't lock a machine out. The agent accepts the answer only if it chains to its pinned CA, names this machine and carries the new key. `cert_expires` is shown on the machine page. `ServerCertificate` mints an ephemeral in-memory server cert for the listener, SANs = all non-loopback host IPs + the SSL domain, chain includes the CA so a pinning agent can verify it.
 - **Listener (`listener.go`, `service.go`)** — a **managed mTLS HTTPS listener** whose on/off + port come from **Settings** (`fleet_enabled` / `fleet_port`, default port **9443**), not env. Enabling it also **opens its port through the firewall** (via the allowed-ports table) and closing disables + closes it (`applyConfig`/`stopLocked`). TLS `ClientAuth: VerifyClientCertIfGiven` — `/enroll` needs no client cert (token-gated) but any cert presented must be CA-signed, so report/command endpoints reject certless/foreign connections **at the handshake**.
 - **mTLS gate (`mtls.go`)** — `requireClientCert` wraps report/command handlers: requires a peer cert AND that its fingerprint maps to a non-revoked machine (`machineByCertFP`). A valid-but-unregistered or revoked cert → 401. The authenticated `*Machine` is attached to the request context — handlers take the machine from the cert, never the body, so an agent can only act on itself.
 - **Tokens (`tokens.go`)** — `CreateToken` mints a one-time token: 32 random bytes, stored **only as a SHA-256 hash** with a label, `panel_host` (the direct origin IP the agent will dial for mTLS), and expiry (default 1h). `redeemToken` is an **atomic single-`UPDATE`** guarded by `used=0 AND not expired`, so a token can never be used twice. `lookupToken` peeks (does not consume). Pending tokens are listable (metadata only, never the secret) and cancellable by rowid.
@@ -173,14 +173,15 @@ plus CVE handlers (`CVEGroups`, `ListCVEs`, `ListCVEsByCVE`, `ExportCVEs`,
 
 ### The deregister → MarkUninstalled flow
 
-Panel `HandleDeregister` (mTLS, `commands.go:127`) calls `MarkUninstalled(id)`
-(`store.go:118-125`): sets `status='uninstalled'` and bumps `last_seen`. **It only
-marks — it does not delete the row.** The machine then shows in the fleet list as
-"uninstalled" (rather than merely "offline") so the operator can see it and delete
-it deliberately. **Deletion is UI-only** — `DeleteMachine` (`store.go:89`, exposed
-via `handleDeleteMachine`) is what actually removes the row + its queued commands +
-its CVE rows, which invalidates the client cert (mTLS auth requires a live cert_fp
-lookup), so the host must re-enroll with a fresh token to return.
+Panel `HandleDeregister` (mTLS) calls `MarkUninstalled(id)`: the cert is **revoked**
+(`revoked=1`) and **all the machine's data is deleted** — queued commands, CVEs, FIM
+events, usage history (`machineDataTables`), the stored report, tags, and its console
+recordings + their keys (`purgeRecordings`, matched by the recording header, not the
+filename). Only a marker row stays (name, `enrolled_at`, `last_seen` = when it was
+uninstalled); the UI shows a dedicated "Agent uninstalled" page with **Remove from
+panel**. `DeleteMachine` runs the same purge and removes the row too, which invalidates
+the client cert (mTLS auth requires a live cert_fp lookup), so the host must re-enroll
+with a fresh token to return. Both close the live link and console at once.
 
 **Dry-run gotcha:** `deregisterFromPanel` early-returns under `dry_run`
 (`uninstall.go:79-82`) — it logs `[dry-run] deregister from panel` and sends

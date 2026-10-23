@@ -32,6 +32,7 @@ func (s *Service) requireClientCert(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusUnauthorized, "unknown or revoked client certificate")
 			return
 		}
+		s.syncCert(m, r.TLS.PeerCertificates[0], fp)
 		next(w, r.WithContext(context.WithValue(r.Context(), machineCtxKey, m)))
 	}
 }

@@ -503,7 +503,7 @@ func parsePort(v string) (int, error) {
 // the total rows removed so the caller can decide whether to VACUUM.
 func sweepOrphans(db *sql.DB) int64 {
 	var total int64
-	for _, tbl := range []string{"fleet_cves", "fleet_fim", "fleet_metrics", "fleet_commands"} {
+	for _, tbl := range machineDataTables {
 		res, err := db.Exec(`DELETE FROM ` + tbl + ` WHERE NOT EXISTS (` +
 			`SELECT 1 FROM fleet_machines m WHERE m.id = ` + tbl + `.machine_id)`)
 		if err != nil {
@@ -618,6 +618,9 @@ func ensureSchema(db *sql.DB) error {
 		`ALTER TABLE fleet_machines ADD COLUMN console_record INTEGER DEFAULT 0`,  // per-host session recording
 		`ALTER TABLE fleet_machines ADD COLUMN last_ip TEXT DEFAULT ''`,           // source address of the last report
 		`ALTER TABLE fleet_commands ADD COLUMN expires_at TEXT`,                   // a person's command expires if undelivered
+		`ALTER TABLE fleet_machines ADD COLUMN cert_expires TEXT`,                 // current client cert's expiry
+		`ALTER TABLE fleet_machines ADD COLUMN cert_fp_next TEXT`,                 // renewed cert, until first used (renew.go)
+		`ALTER TABLE fleet_machines ADD COLUMN cert_expires_next TEXT`,
 	} {
 		if _, err := db.Exec(alt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			log.Printf("fleet: migration %q: %v", alt, err)

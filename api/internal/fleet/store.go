@@ -31,6 +31,7 @@ type Machine struct {
 	ConsoleRecord  bool            `json:"console_record"`
 	LastIP         string          `json:"last_ip,omitempty"` // address its last report came from (matches a VPN client when it reports over the tunnel)
 	Online         bool            `json:"online"`            // its link to the panel is up (see link.go)
+	CertExpires    *time.Time      `json:"cert_expires,omitempty"`
 	Summary        *MachineSummary `json:"summary,omitempty"`
 }
 
@@ -102,57 +103,74 @@ func summarize(raw string) *MachineSummary {
 	return s
 }
 
-// DeleteMachine removes a machine and everything tied to it: the registry row (which
-// invalidates its client cert, since mTLS auth requires a live, non-revoked cert_fp
-// lookup) and any queued commands. A hard delete — the enrolled agent can no longer
-// authenticate and must re-enroll with a fresh token to return.
-func (s *Service) DeleteMachine(id string) error {
+// machineDataTables hold per-machine data, removed with the machine (and swept for orphans at boot).
+var machineDataTables = []string{"fleet_commands", "fleet_cves", "fleet_fim", "fleet_metrics"}
+
+// purgeMachineData deletes a machine's stored data inside tx: queued commands, vulnerabilities,
+// file-integrity events and usage history. Table names are compile-time constants.
+func purgeMachineData(tx *sql.Tx, id string) error {
+	for _, tbl := range machineDataTables {
+		if _, err := tx.Exec(`DELETE FROM `+tbl+` WHERE machine_id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// withMachineTx runs fn in a transaction, then closes the machine's live channels and deletes its
+// console recordings. Used by delete and uninstall, which both end the machine's data.
+func (s *Service) withMachineTx(id string, fn func(tx *sql.Tx) error) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	// Clear everything tied to the machine: its queued commands and its stored CVE rows.
-	// (The client cert isn't stored on the panel — only its fingerprint in the row below —
-	// so removing the row invalidates it. Tokens are one-time and already consumed.)
-	for _, q := range []string{
-		`DELETE FROM fleet_commands WHERE machine_id = ?`,
-		`DELETE FROM fleet_cves WHERE machine_id = ?`,
-		`DELETE FROM fleet_fim WHERE machine_id = ?`,
-	} {
-		if _, err := tx.Exec(q, id); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-	}
-	res, err := tx.Exec(`DELETE FROM fleet_machines WHERE id = ?`, id)
-	if err != nil {
+	if err := fn(tx); err != nil {
 		_ = tx.Rollback()
 		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		_ = tx.Rollback()
-		return sql.ErrNoRows
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	consoleTeardown(id) // kill any live console channel/sessions for the deleted machine
+	consoleTeardown(id) // drop any live console channel/sessions (and close open recordings) first
 	linkTeardown(id)
+	purgeRecordings(id)
 	return nil
 }
 
-// MarkUninstalled flags a machine as uninstalled — its agent deregistered on the way
-// out — so the panel shows it as gone (list-only, delete to remove) rather than just
-// "offline". Keeps the row so the operator can see + delete it deliberately.
+// DeleteMachine removes a machine and everything tied to it. Removing the row invalidates its
+// client cert (mTLS auth needs a live cert_fp lookup; the panel never stores the cert itself), so
+// the agent must re-enroll with a fresh token to return.
+func (s *Service) DeleteMachine(id string) error {
+	return s.withMachineTx(id, func(tx *sql.Tx) error {
+		if err := purgeMachineData(tx, id); err != nil {
+			return err
+		}
+		res, err := tx.Exec(`DELETE FROM fleet_machines WHERE id = ?`, id)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
+}
+
+// MarkUninstalled handles an agent deregistering on its way out: its cert stops working at once
+// (revoked), and all its data is deleted. Only a marker stays — name, when it was added and when it
+// was uninstalled (last_seen) — so the operator sees it happened until they remove it. Reinstalling
+// enrolls a fresh machine.
 func (s *Service) MarkUninstalled(id string) error {
-	// revoked=1 kills the client cert's mTLS access the moment the agent deregisters —
-	// otherwise a copy of the retired host's cert+key keeps authenticating until its 90-day
-	// TTL or a manual delete. Re-installing enrolls a fresh row, so this doesn't block return.
-	_, err := s.db.Exec(`UPDATE fleet_machines SET status='uninstalled', revoked=1, last_seen=? WHERE id=?`,
-		time.Now().UTC().Format(time.RFC3339), id)
-	consoleTeardown(id) // drop any live console channel/sessions the moment the machine is revoked
-	linkTeardown(id)
-	return err
+	return s.withMachineTx(id, func(tx *sql.Tx) error {
+		if err := purgeMachineData(tx, id); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE fleet_machines SET status='uninstalled', revoked=1, last_seen=?,
+			last_report=NULL, tags='', last_ip='', wg_pubkey='', machine_hash='', console_enabled=0, console_record=0,
+			cert_expires=NULL, cert_fp_next=NULL, cert_expires_next=NULL WHERE id=?`,
+			time.Now().UTC().Format(time.RFC3339), id)
+		return err
+	})
 }
 
 func newMachineID() (string, error) {
@@ -217,9 +235,9 @@ func (s *Service) uniqueMachineName(name string) string {
 
 func (s *Service) registerMachine(m Machine) error {
 	_, err := s.db.Exec(
-		`INSERT INTO fleet_machines (id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, revoked)
-		 VALUES (?, ?, ?, ?, ?, 'enrolled', ?, 0)`,
-		m.ID, m.Name, m.MachineHash, m.CertFP, m.WGPubkey, m.EnrolledAt.UTC().Format(time.RFC3339),
+		`INSERT INTO fleet_machines (id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, revoked, cert_expires)
+		 VALUES (?, ?, ?, ?, ?, 'enrolled', ?, 0, ?)`,
+		m.ID, m.Name, m.MachineHash, m.CertFP, m.WGPubkey, m.EnrolledAt.UTC().Format(time.RFC3339), timeOrNil(m.CertExpires),
 	)
 	return err
 }
@@ -227,7 +245,7 @@ func (s *Service) registerMachine(m Machine) error {
 // ListMachines returns all enrolled machines, newest first, each with an at-a-glance
 // summary parsed from its latest report (for the fleet card grid).
 func (s *Service) ListMachines() ([]Machine, error) {
-	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report, COALESCE(tags, ''), COALESCE(console_enabled, 0), COALESCE(console_record, 0), COALESCE(last_ip, '')
+	rows, err := s.db.Query(`SELECT id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, last_seen, revoked, last_report, COALESCE(tags, ''), COALESCE(console_enabled, 0), COALESCE(console_record, 0), COALESCE(last_ip, ''), cert_expires
 		FROM fleet_machines ORDER BY enrolled_at DESC`)
 	if err != nil {
 		return nil, err
@@ -236,11 +254,12 @@ func (s *Service) ListMachines() ([]Machine, error) {
 	out := []Machine{}
 	for rows.Next() {
 		var m Machine
-		var enrolled, lastSeen, wg, report, tags sql.NullString
+		var enrolled, lastSeen, wg, report, tags, certExpires sql.NullString
 		var consoleEnabled, consoleRecord int
-		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report, &tags, &consoleEnabled, &consoleRecord, &m.LastIP); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.MachineHash, &m.CertFP, &wg, &m.Status, &enrolled, &lastSeen, &m.Revoked, &report, &tags, &consoleEnabled, &consoleRecord, &m.LastIP, &certExpires); err != nil {
 			return nil, err
 		}
+		m.CertExpires = parseTimePtr(certExpires)
 		m.WGPubkey = wg.String
 		m.Tags = splitTags(tags.String)
 		m.ConsoleEnabled = consoleEnabled == 1
@@ -259,14 +278,17 @@ func (s *Service) ListMachines() ([]Machine, error) {
 	return out, rows.Err()
 }
 
-// machineByCertFP looks up a non-revoked machine by its client cert fingerprint
-// (used by the mTLS layer to authorize an agent). Returns nil if none/revoked.
+// machineByCertFP looks up a non-revoked machine by its client cert fingerprint — its current cert
+// or the renewed one it hasn't switched to yet (renew.go). Used by the mTLS layer to authorize an
+// agent. Returns nil if none/revoked.
 func (s *Service) machineByCertFP(fp string) (*Machine, error) {
 	var m Machine
-	var enrolled sql.NullString
+	var enrolled, certExpires sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, name, cert_fp, status, enrolled_at, revoked FROM fleet_machines WHERE cert_fp = ? AND revoked = 0`, fp,
-	).Scan(&m.ID, &m.Name, &m.CertFP, &m.Status, &enrolled, &m.Revoked)
+		`SELECT id, name, cert_fp, status, enrolled_at, revoked, cert_expires FROM fleet_machines
+		 WHERE (cert_fp = ? OR cert_fp_next = ?) AND revoked = 0`, fp, fp,
+	).Scan(&m.ID, &m.Name, &m.CertFP, &m.Status, &enrolled, &m.Revoked, &certExpires)
+	m.CertExpires = parseTimePtr(certExpires)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
