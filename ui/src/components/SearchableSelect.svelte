@@ -88,7 +88,7 @@
       {id}
       {disabled}
       bind:this={btnEl}
-      class="kt-select kt-select-sm w-full text-left flex items-center justify-between gap-2 disabled:opacity-50"
+      class="kt-select kt-select-sm w-full bg-none text-left flex items-center justify-between gap-2 disabled:opacity-50"
       onclick={() => (open ? close() : openList())}
       onkeydown={onKey}
       aria-haspopup="listbox"

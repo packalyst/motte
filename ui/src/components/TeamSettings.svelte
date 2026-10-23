@@ -180,15 +180,13 @@
 </script>
 
 <div class="space-y-4">
-  <div class="kt-panel">
-    <div class="kt-panel-header">
-      <h3 class="kt-panel-title">
-        <Icon name="shield-lock" size={16} class="text-muted-foreground" />
-        Accounts
-      </h3>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="panel-icon text-primary"><Icon name="shield-lock" size={17} /></span>
+      <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Accounts</div>
       <Button onclick={() => (showAdd = true)} variant="primary" size="sm" icon="plus">Add user</Button>
     </div>
-    <div class="kt-panel-body">
+    <div class="space-y-3">
       {#if error}
         <div class="text-xs text-warning flex items-center gap-1.5 py-4">
           <Icon name="alert-triangle" size={13} />{error}

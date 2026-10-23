@@ -71,15 +71,16 @@
   }
 </script>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title"><Icon name="plug-connected" size={16} /> Agent listener</h3>
+<div class="panel">
+  <div class="panel-head">
+    <span class="panel-icon text-primary"><Icon name="plug-connected" size={17} /></span>
+    <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Agent listener</div>
     <span class="inline-flex items-center gap-1.5 text-xs {ep?.listening ? 'text-success' : 'text-muted-foreground'}">
       <span class="h-1.5 w-1.5 rounded-full {ep?.listening ? 'bg-success' : 'bg-muted-foreground'}"></span>
       {ep?.listening ? `Accepting agents on :${ep.port}` : 'Closed'}
     </span>
   </div>
-  <div class="kt-panel-body space-y-4">
+  <div class="space-y-4">
     <div class="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
       <div class="flex min-w-0 items-start gap-2.5">
         <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg {ep?.listening ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
@@ -103,7 +104,7 @@
       </p>
     {/if}
   </div>
-  <div class="kt-panel-footer">
+  <div class="panel-foot">
     <p class="flex items-start gap-1.5 text-[11px] text-muted-foreground">
       <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />Machines are added from Clients → Add client → Machine.
     </p>
