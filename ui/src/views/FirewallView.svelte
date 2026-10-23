@@ -105,7 +105,6 @@
   let asnQuery = $state('')
   let asnResults = $state([])
   let asnSearching = $state(false)
-  let addingAsn = $state(null)
   let selectedAsns = $state([])     // multi-select: AS numbers (as strings) queued to add
   let blockingAsns = $state(false)
   let asnSearchTimer
@@ -128,28 +127,6 @@
   // AS numbers already present in the current (deny/allow) list, so the picker
   // can show "Added" instead of offering to add a duplicate.
   const addedAsns = $derived(new Set((blockedEntries || []).filter(e => e.entryType === 'asn').map(e => String(e.value))))
-
-  async function addAsn(match) {
-    if (addedAsns.has(String(match.asn))) return
-    addingAsn = match.asn
-    try {
-      await apiPost('/api/fw/entries', {
-        type: 'asn',
-        value: String(match.asn),
-        action: viewAction,
-        direction: 'inbound',
-        reason: match.name || `AS${match.asn}`,
-      })
-      toast(`AS${match.asn} ${match.name ? '(' + match.name + ') ' : ''}${viewAction === 'allow' ? 'allowed' : 'blocked'}`, 'success')
-      showAsnModal = false
-      asnQuery = ''; asnResults = []
-      await reloadBlocked()
-    } catch (e) {
-      toast('Failed: ' + e.message, 'error')
-    } finally {
-      addingAsn = null
-    }
-  }
 
   // Group search results by provider so one provider that owns several ASNs
   // (e.g. "Orange Romania" = 2 AS numbers) can be selected in a single tick.
@@ -299,12 +276,6 @@
 
   function setBlockedSourceFilter(source) {
     blocked.setFilter('source', source)
-    loadBlocked()
-  }
-
-  function clearBlockedFilters() {
-    blocked.reset()
-    blockedSearchQuery = ''
     loadBlocked()
   }
 

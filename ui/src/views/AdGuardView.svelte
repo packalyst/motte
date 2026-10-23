@@ -7,14 +7,13 @@
   import Modal from '../components/Modal.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import EmptyState from '../components/EmptyState.svelte'
-  import StatCard from '../components/StatCard.svelte'
+  import StatStrip from '../components/StatStrip.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
   import Select from '../components/Select.svelte'
   import Tabs from '../components/Tabs.svelte'
   import Checkbox from '../components/Checkbox.svelte'
-  import ContentBlock from '../components/ContentBlock.svelte'
   import Explain from '../components/Explain.svelte'
   import blocklists from '../data/blocklists.json'
 
@@ -153,6 +152,15 @@
 
   const blockedQueries = $derived(stats?.num_blocked_filtering || 0)
   const totalQueries = $derived(stats?.num_dns_queries || 0)
+  // The protection switches on the overview, in display order.
+  const protections = $derived([
+    { icon: 'shield-check', title: 'DNS protection', desc: 'Blocks ads, trackers and malware using the blocklists', on: status?.protection_enabled, toggle: toggleProtection },
+    { icon: 'shield', title: 'Safe browsing', desc: 'Blocks known malware and phishing sites', on: safeBrowsing?.enabled, toggle: toggleSafeBrowsing },
+    { icon: 'users', title: 'Parental control', desc: 'Blocks adult content', on: parental?.enabled, toggle: toggleParental },
+    { icon: 'search', title: 'Safe search', desc: 'Forces safe search on search engines', on: safeSearch?.enabled, toggle: toggleSafeSearch },
+    { icon: 'world-off', title: 'Block IPv6 (AAAA)', aaaa: true, on: dnsConfig?.disable_ipv6, toggle: toggleBlockAAAA },
+  ])
+  const protectionsOn = $derived(protections.filter((p) => p.on).length)
   const blockPercent = $derived(totalQueries > 0 ? ((blockedQueries / totalQueries) * 100).toFixed(1) : 0)
   const enabledFilters = $derived(filters.filter(f => f.enabled).length)
 
@@ -411,19 +419,6 @@
     }
   }
 
-  function setPresetFilter(name, url) {
-    newFilterName = name
-    newFilterUrl = url
-  }
-
-  function refreshCurrentTab() {
-    loadedTabs[activeTab] = false
-    if (activeTab === 'filters') loadFilters()
-    else if (activeTab === 'rules') loadFilters()
-    else if (activeTab === 'rewrites') loadRewrites()
-    else loadCoreData()
-  }
-
   onMount(loadCoreData)
 </script>
 
@@ -437,13 +432,12 @@
   {#if loading}
     <LoadingSpinner size="lg" centered />
   {:else}
-    <!-- Stats Grid -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <StatCard icon="activity" color="info" value={formatNumber(totalQueries)} label="DNS Queries" />
-      <StatCard icon="ban" color="destructive" value={formatNumber(blockedQueries)} label="Blocked ({blockPercent}%)" />
-      <StatCard icon="filter" color="primary" value={enabledFilters} label="Active Filters" />
-      <StatCard icon="globe" color="warning" value={blockedServices.length} label="Blocked Services" />
-    </div>
+    <StatStrip label="DNS summary" items={[
+      { icon: 'activity', tone: 'info', value: formatNumber(totalQueries), label: 'DNS queries' },
+      { icon: 'ban', tone: 'destructive', value: formatNumber(blockedQueries), label: 'blocked', sub: `${blockPercent}% of queries` },
+      { icon: 'filter', tone: 'primary', value: enabledFilters, label: 'active blocklists' },
+      { icon: 'globe', tone: 'warning', value: blockedServices.length, label: 'blocked services' },
+    ]} />
 
     <!-- Segmented tab bar — pills on desktop, a select on mobile (matches Analytics) -->
     <div class="space-y-3">
@@ -464,140 +458,80 @@
         </Select>
       </div>
 
-      <div class="bg-card border border-border rounded-lg p-5">
+      <!-- Overview is two panels of its own; the other tabs share one panel -->
+      <div class={activeTab === 'overview' ? 'space-y-4' : 'panel'}>
         <!-- Overview Tab -->
         {#if activeTab === 'overview'}
-          <div class="space-y-6">
-            <!-- Active Protections - 2 per row cards with toggle -->
-            <div>
-              <h4 class="text-sm font-semibold text-foreground mb-3">Active Protections</h4>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- Safe Browsing -->
-                <ContentBlock
-                  icon="shield"
-                  title="Safe Browsing"
-                  description="Block malware & phishing sites"
-                  active={safeBrowsing?.enabled}
-                >
-                  <Checkbox
-                    variant="switch"
-                    checked={safeBrowsing?.enabled}
-                    onchange={() => toggleSafeBrowsing(!safeBrowsing?.enabled)}
-                  />
-                </ContentBlock>
-
-                <!-- Parental Control -->
-                <ContentBlock
-                  icon="users"
-                  title="Parental Control"
-                  description="Block adult content"
-                  active={parental?.enabled}
-                >
-                  <Checkbox
-                    variant="switch"
-                    checked={parental?.enabled}
-                    onchange={() => toggleParental(!parental?.enabled)}
-                  />
-                </ContentBlock>
-
-                <!-- Safe Search -->
-                <ContentBlock
-                  icon="search"
-                  title="Safe Search"
-                  description="Force safe search on engines"
-                  active={safeSearch?.enabled}
-                >
-                  <Checkbox
-                    variant="switch"
-                    checked={safeSearch?.enabled}
-                    onchange={() => toggleSafeSearch(!safeSearch?.enabled)}
-                  />
-                </ContentBlock>
-
-                <!-- DNS Protection -->
-                <ContentBlock
-                  icon="shield-check"
-                  title="DNS Protection"
-                  description="Block ads, trackers & malware"
-                  active={status?.protection_enabled}
-                >
-                  <Checkbox
-                    variant="switch"
-                    checked={status?.protection_enabled}
-                    onchange={() => toggleProtection(!status?.protection_enabled)}
-                  />
-                </ContentBlock>
-
-                <!-- Block IPv6 (AAAA) -->
-                <ContentBlock
-                  icon="world-off"
-                  title="Block IPv6 (AAAA)"
-                  active={dnsConfig?.disable_ipv6}
-                >
-                  {#snippet descriptionSlot()}
-                    <div class="text-xs text-muted-foreground">
-                      Drops <Explain term="AAAA" /> answers — forces IPv4-only DNS
-                    </div>
-                  {/snippet}
-                  <Checkbox
-                    variant="switch"
-                    checked={dnsConfig?.disable_ipv6}
-                    onchange={() => toggleBlockAAAA(!dnsConfig?.disable_ipv6)}
-                  />
-                </ContentBlock>
+          <!-- Protections: one row each, switch on the right -->
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-icon text-primary"><Icon name="shield-check" size={17} /></span>
+              <div class="min-w-0 flex-1">
+                <div class="panel-title">Protections</div>
+                <div class="panel-sub">{protectionsOn} of {protections.length} on · for every device using this DNS</div>
               </div>
             </div>
-
-            <!-- Blocked Services Section -->
-            <div class="rounded-lg border border-border bg-card overflow-hidden">
-              <div class="px-4 py-3 border-b border-border bg-muted/30">
-                <div class="flex items-center justify-between">
-                  <h4 class="text-sm font-semibold text-foreground">Blocked Services</h4>
-                  {#if blockedServices.length > 0}
-                    <span class="kt-badge kt-badge-danger kt-badge-sm">{blockedServices.length} blocked</span>
-                  {/if}
+            <div class="-my-1 grid gap-x-8 gap-y-1 md:grid-cols-2">
+              {#each protections as p (p.title)}
+                <div class="flex items-center gap-3 py-2">
+                  <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg {p.on ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}"><Icon name={p.icon} size={16} /></span>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-medium text-foreground">{p.title}</div>
+                    <div class="text-[11px] text-muted-foreground">
+                      {#if p.aaaa}Drops <Explain term="AAAA" /> answers, so devices only get IPv4 addresses{:else}{p.desc}{/if}
+                    </div>
+                  </div>
+                  <Checkbox variant="switch" checked={!!p.on} onchange={() => p.toggle(!p.on)} aria-label={p.title} />
                 </div>
-              </div>
+              {/each}
+            </div>
+          </div>
 
-              <div class="divide-y divide-border">
-                {#each SERVICE_CATEGORIES as category, i}
-                  {@const categoryServices = getServicesByCategory(category.id)}
-                  {#if categoryServices.length > 0}
-                    {@const blockedInCategory = categoryServices.filter(s => blockedServices.includes(typeof s === 'string' ? s : s.id)).length}
-                    <div class="p-4">
-                      <div class="flex items-center justify-between mb-3">
-                        <span class="text-xs font-medium text-foreground">{category.name}</span>
-                        <span class="text-[10px] text-muted-foreground">
-                          {#if blockedInCategory > 0}
-                            <span class="text-destructive">{blockedInCategory}</span> / {categoryServices.length}
-                          {:else}
-                            {categoryServices.length} services
-                          {/if}
-                        </span>
-                      </div>
-                      <div class="flex flex-wrap gap-2">
-                        {#each categoryServices as service}
-                          {@const serviceId = typeof service === 'string' ? service : service.id}
-                          {@const serviceName = typeof service === 'string' ? service.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : service.name}
-                          {@const serviceIcon = typeof service === 'object' ? service.icon_svg : null}
-                          {@const isBlocked = blockedServices.includes(serviceId)}
-                          <button
-                            onclick={() => toggleService(serviceId, !isBlocked)}
-                            class="kt-badge cursor-pointer transition-colors {isBlocked ? 'kt-badge-danger' : 'kt-badge-outline hover:bg-muted'}"
-                          >
-                            {#if serviceIcon}
-                              <img src="data:image/svg+xml;base64,{serviceIcon}" alt="" class="w-4 h-4 {isBlocked ? '' : 'opacity-60'}" />
-                            {:else}
-                              <Icon name="globe" size={16} class={isBlocked ? '' : 'opacity-60'} />
-                            {/if}
-                            {serviceName}
-                          </button>
-                        {/each}
+          <!-- Blocked services: a row per category, tap a service to block or allow it -->
+          <div class="panel">
+            <div class="panel-head">
+              <span class="panel-icon text-destructive"><Icon name="ban" size={17} /></span>
+              <div class="min-w-0 flex-1">
+                <div class="panel-title">Blocked services</div>
+                <div class="panel-sub">tap a service to block or allow it</div>
+              </div>
+              {#if blockedServices.length > 0}<Badge variant="destructive" size="sm">{blockedServices.length} blocked</Badge>{/if}
+            </div>
+            <div class="-mx-4 -mb-4 -mt-4 divide-y divide-dashed divide-border">
+              {#each SERVICE_CATEGORIES as category (category.id)}
+                {@const categoryServices = getServicesByCategory(category.id)}
+                {#if categoryServices.length > 0}
+                  {@const blockedInCategory = categoryServices.filter((x) => blockedServices.includes(x.id)).length}
+                  <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
+                    <div class="shrink-0 sm:w-36 sm:pt-1">
+                      <div class="text-xs font-medium text-foreground">{category.name}</div>
+                      <div class="text-[11px] tabular-nums text-muted-foreground">
+                        {#if blockedInCategory}<span class="font-medium text-destructive">{blockedInCategory} blocked</span> of {categoryServices.length}{:else}{categoryServices.length} allowed{/if}
                       </div>
                     </div>
-                  {/if}
-                {/each}
-              </div>
+                    <div class="flex flex-1 flex-wrap gap-1.5">
+                      {#each categoryServices as service}
+                        {@const serviceId = service.id}
+                        {@const serviceName = service.name}
+                        {@const serviceIcon = service.icon_svg}
+                        {@const isBlocked = blockedServices.includes(serviceId)}
+                        <button type="button" aria-pressed={isBlocked} onclick={() => toggleService(serviceId, !isBlocked)}
+                          title={isBlocked ? `${serviceName} is blocked: tap to allow` : `Block ${serviceName}`}
+                          class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors
+                            {isBlocked ? 'border-destructive/40 bg-destructive/10 text-destructive' : 'border-border text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground'}">
+                          {#if serviceIcon}
+                            <img src="data:image/svg+xml;base64,{serviceIcon}" alt="" class="h-3.5 w-3.5 {isBlocked ? '' : 'opacity-60 grayscale'}" />
+                          {:else}
+                            <Icon name="globe" size={14} class={isBlocked ? '' : 'opacity-60'} />
+                          {/if}
+                          {serviceName}
+                          {#if isBlocked}<Icon name="ban" size={12} />{/if}
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              {/each}
             </div>
           </div>
 

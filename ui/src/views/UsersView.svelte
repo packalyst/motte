@@ -1,8 +1,7 @@
 <script>
-  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, stepUpConfirm, setConfirmLoading } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, stepUpConfirm, setConfirmLoading } from '../stores/app.js'
   import { formatRelativeDate } from '$lib/utils/format.js'
   import { useDataLoader } from '$lib/composables/index.js'
-  import { filterByFields } from '$lib/utils/data.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'

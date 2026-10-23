@@ -1,4 +1,6 @@
 <script>
+  import Hint from './Hint.svelte';
+
   let {
     value = $bindable(''),
     disabled = false,
@@ -10,7 +12,8 @@
     label = undefined,
     labelClass = 'block text-xs font-medium text-foreground mb-1',
     helperText = undefined,
-    helperClass = 'text-[10px] text-muted-foreground mt-1',
+    helperClass = 'field-hint',
+    hint = undefined, // shown as a tooltip on the label instead of text under the field
 
     // Options - can pass as prop or use slot
     options = [],
@@ -32,7 +35,7 @@
 {#if label || helperText}
   <div>
     {#if label}
-      <label for={restProps.id} class={labelClass}>{label}</label>
+      <label for={restProps.id} class={labelClass}><Hint text={hint}>{label}</Hint></label>
     {/if}
 
     <select

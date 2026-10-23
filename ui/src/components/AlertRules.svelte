@@ -85,10 +85,6 @@
       toast(e.message || 'Delete failed', 'error')
     }
   }
-
-  function nameFor(id) {
-    return machines.find((m) => m.id === id)?.name || id
-  }
 </script>
 
 {#snippet chip(on, label, onclick, icon)}

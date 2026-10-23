@@ -3,7 +3,7 @@
   // manual run and a step-up-guarded restore. Secrets are write-only — the server returns a
   // redacted placeholder for a stored secret and preserves it on save unless the field is changed.
   import { onMount } from 'svelte'
-  import { apiGet, apiPut, apiPost, toast, confirm, stepUpConfirm } from '../stores/app.js'
+  import { apiGet, apiPut, apiPost, toast, stepUpConfirm } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Input from './Input.svelte'

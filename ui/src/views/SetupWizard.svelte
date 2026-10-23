@@ -1,5 +1,5 @@
 <script>
-  import { theme, toast, apiPost, apiGet } from '../stores/app.js'
+  import { toast, apiPost, apiGet } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
@@ -23,10 +23,6 @@
   let generatingKey = $state(false)
   let testingConnection = $state(false)
   let connectionValid = $state(false)
-
-  function toggleTheme() {
-    theme.update(t => t === 'dark' ? 'light' : 'dark')
-  }
 
   // Password strength calculation
   function getPasswordStrength(password) {

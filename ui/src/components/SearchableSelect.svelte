@@ -2,6 +2,7 @@
   // Combobox: a Select with a filter box, for long option lists (e.g. timezones).
   // Mirrors Select's API (value/options/onchange/label/helperText) so it drops in.
   import Icon from './Icon.svelte'
+  import Hint from './Hint.svelte'
 
   let {
     value = $bindable(''),
@@ -11,7 +12,8 @@
     label = undefined,
     labelClass = 'block text-xs font-medium text-foreground mb-1',
     helperText = undefined,
-    helperClass = 'text-[10px] text-muted-foreground mt-1',
+    helperClass = 'field-hint',
+    hint = undefined, // shown as a tooltip on the label instead of text under the field
     placeholder = 'Select…',
     class: className = '',
     id = undefined,
@@ -81,7 +83,7 @@
 <svelte:window onscroll={() => open && positionMenu()} onresize={() => open && positionMenu()} />
 
 <div>
-  {#if label}<label for={id} class={labelClass}>{label}</label>{/if}
+  {#if label}<label for={id} class={labelClass}><Hint text={hint}>{label}</Hint></label>{/if}
   <div class="relative {className}" bind:this={rootEl}>
     <button
       type="button"

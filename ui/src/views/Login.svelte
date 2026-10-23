@@ -1,5 +1,5 @@
 <script>
-  import { theme, toast, apiPost } from '../stores/app.js'
+  import { theme, toast } from '../stores/app.js'
   import { passkeyLogin, passkeysSupported } from '../lib/webauthn.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'

@@ -1108,6 +1108,7 @@
           <div class="grid grid-cols-2 gap-3">
             <Select
               label="Session Timeout"
+              helperText="How long a sign-in lasts before you have to sign in again."
               bind:value={sessionTimeout}
               options={[
                 { value: '1', label: '1 hour' },
@@ -1119,6 +1120,7 @@
             />
             <Select
               label="Idle lock"
+              helperText="Locks the screen for everyone after this long without activity; re-entering the password (and 2FA code) unlocks it."
               bind:value={idleLock}
               options={[
                 { value: '0', label: 'Disabled' },
@@ -1130,6 +1132,7 @@
             />
             <Select
               label="Items per page"
+              helperText="Rows per page in paged lists such as Logs. Applies at once."
               bind:value={itemsPerPage}
               onchange={saveUISettings}
               options={[
@@ -1139,33 +1142,25 @@
                 { value: '100', label: '100' }
               ]}
             />
-            <div>
-              <Select
-                label="Analytics retention"
-                bind:value={metricsRetention}
-                options={[
-                  { value: '30', label: '30 days' },
-                  { value: '60', label: '60 days' },
-                  { value: '90', label: '90 days' },
-                  { value: '180', label: '180 days' },
-                  { value: '365', label: '1 year' }
-                ]}
-              />
-              <div class="text-[10px] text-muted-foreground mt-1">
-                How long analytics history &amp; fleet/firewall metrics are kept. Lowering it prunes older data on save.
-              </div>
-            </div>
-            <div>
-              <SearchableSelect
-                label="Timezone"
-                bind:value={displayTimezone}
-                onchange={() => setDisplayTimezone(displayTimezone)}
-                options={TZ_OPTIONS}
-              />
-              <div class="text-[10px] text-muted-foreground mt-1">
-                How dates &amp; times are shown across the panel. &ldquo;Browser&rdquo; uses each viewer&rsquo;s own zone.
-              </div>
-            </div>
+            <Select
+              label="Analytics retention"
+              helperText="How long analytics history and fleet/firewall metrics are kept. Lowering it prunes older data on save."
+              bind:value={metricsRetention}
+              options={[
+                { value: '30', label: '30 days' },
+                { value: '60', label: '60 days' },
+                { value: '90', label: '90 days' },
+                { value: '180', label: '180 days' },
+                { value: '365', label: '1 year' }
+              ]}
+            />
+            <SearchableSelect
+              label="Timezone"
+              helperText="How dates and times are shown across the panel. “Browser” uses each viewer's own zone."
+              bind:value={displayTimezone}
+              onchange={() => setDisplayTimezone(displayTimezone)}
+              options={TZ_OPTIONS}
+            />
           </div>
           <div class="flex items-center justify-between border-t border-border pt-3">
             <div>

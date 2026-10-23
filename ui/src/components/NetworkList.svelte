@@ -310,10 +310,10 @@
     <!-- Interface -->
     {#if editing}
       <Input label="Interface" value={form.iface} disabled prefixIcon="plug-connected" class="font-mono"
-             helperText="The interface can't be changed after creation." />
+             hint="The interface can't be changed after creation." />
     {:else}
       <Select label="Interface" bind:value={form.iface} onchange={onPickIface}
-              helperText={`Your WAN (${wan || 'unknown'}), docker and VPN interfaces are hidden — they can't be used.`}>
+              hint={`Your WAN (${wan || 'unknown'}), docker and VPN interfaces are hidden — they can't be used.`}>
         <option value="" disabled>Select an internal interface…</option>
         {#each interfaces as i (i.name)}
           <option value={i.name} disabled={i.managed}>
@@ -337,7 +337,7 @@
     <!-- Subnet: pick a safe suggestion or enter a custom one -->
     <div class="grid grid-cols-2 gap-3">
       <Select label="Subnet (CIDR)" bind:value={cidrChoice} onchange={applySuggestion}
-              options={cidrOptions} helperText="Suggestions avoid your VPN and existing networks." />
+              options={cidrOptions} hint="Suggestions avoid your VPN and existing networks." />
       {#if customCidr}
         <Input label="Custom subnet" bind:value={form.cidr} oninput={onCustomCidr}
                prefixIcon="network" placeholder="10.20.20.0/24" class="font-mono" />
@@ -350,7 +350,7 @@
       <Input label="Gateway IP" bind:value={form.gateway_ip} prefixIcon="router"
              placeholder="10.20.20.1" class="font-mono" />
       <Input label="Domain" bind:value={form.domain} prefixIcon="world-www" placeholder="lan"
-             helperText="DNS suffix for clients — a device 'laptop' resolves as laptop.<domain>." />
+             hint="DNS suffix for clients — a device 'laptop' resolves as laptop.<domain>." />
       <Input label="Pool start" bind:value={form.pool_start} prefixIcon="list"
              placeholder="10.20.20.50" class="font-mono" />
       <Input label="Pool end" bind:value={form.pool_end} prefixIcon="list"
@@ -366,7 +366,7 @@
     <div class="flex flex-col gap-2 pt-1">
       <Checkbox variant="switch" bind:checked={form.nat_enabled}
                 label="Internet access for new devices"
-                helperText="The starting value of each new device's internet switch — change it per device on the Clients page. Off = new devices are fully isolated." />
+                hint="The starting value of each new device's internet switch — change it per device on the Clients page. Off = new devices are fully isolated." />
       <Checkbox variant="switch" bind:checked={form.enabled} label="Enabled" />
     </div>
   </div>

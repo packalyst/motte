@@ -198,7 +198,8 @@
   function trend(cur, prev) { if (!prev) return null; const p = ((cur - prev) / prev) * 100; return { pct: p, dir: p >= 0 ? 'up' : 'down' } }
   function fmtNumber(n) { if (n == null) return '—'; n = Math.round(n); if (n < 1000) return String(n); if (n < 1e6) return (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + 'K'; return (n / 1e6).toFixed(1) + 'M' }
   function fmtBytes(b) { if (!b) return '0 B'; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; let v = b; while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ } return v.toFixed(i === 0 ? 0 : 1) + ' ' + u[i] }
-  function pct(part, total) { return total ? Math.round((part / total) * 100) : 0 }
+  // part may be missing: the API omits zero counts (omitempty)
+  function pct(part, total) { return total ? Math.round(((part || 0) / total) * 100) : 0 }
   function maxOf(arr, key = 'count') { return arr && arr.length ? Math.max(...arr.map((x) => x[key] || 0)) : 1 }
   const trGood = (type, tr) => (tr ? (type === 'fw' ? tr.dir === 'down' : tr.dir === 'up') : true)
 
