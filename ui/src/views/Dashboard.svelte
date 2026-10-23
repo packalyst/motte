@@ -7,6 +7,7 @@
   import { visibilityChangeCount } from '../stores/network.js'
   import { isInstalledPWA } from '../lib/pwa/permissions.js'
   import Icon from '../components/Icon.svelte'
+  import Logo from '../components/Logo.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
 
   // Lazy load views - each becomes a separate chunk
@@ -42,6 +43,14 @@
 
   // Topbar dropdown state
   let githubDropdownOpen = $state(false)
+
+  // Top-bar shortcuts: [view, icon, label]; the open one keeps its hover look
+  const quickLinks = [
+    ['iplookup', 'world-search', 'IP Lookup'],
+    ['clients', 'devices', 'All clients'],
+    ['settings', 'settings', 'Settings'],
+    ['about', 'info-circle', 'About'],
+  ]
 
   // Close the GitHub dropdown when clicking outside it
   function handleClickOutside(e) {
@@ -227,10 +236,7 @@
   >
     <!-- Sidebar header (logo) -->
     <div class="flex h-14 items-center gap-3 border-b border-border px-4">
-      <div class="w-8 h-8 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
-        <Icon name="shield" size={16} class="text-white" />
-      </div>
-      <span class="text-base font-semibold tracking-tight">WirePanel</span>
+      <Logo size={28} wordmark tagline />
     </div>
 
     <!-- Sidebar nav -->
@@ -398,34 +404,12 @@
 
       <div class="flex items-center gap-2">
         <!-- Quick actions -->
-        <button
-          onclick={() => navigate('iplookup')}
-          class="custom_btns"
-          title="IP Lookup"
-        >
-          <Icon name="world-search" size={16} />
-        </button>
-        <button
-          onclick={() => navigate('clients')}
-          class="custom_btns"
-          title="All clients"
-        >
-          <Icon name="devices" size={16} />
-        </button>
-        <button
-          onclick={() => navigate('settings')}
-          class="custom_btns"
-          title="Settings"
-        >
-          <Icon name="settings" size={16} />
-        </button>
-        <button
-          onclick={() => navigate('about')}
-          class="custom_btns"
-          title="About"
-        >
-          <Icon name="info-circle" size={16} />
-        </button>
+        {#each quickLinks as [view, icon, label]}
+          <button onclick={() => navigate(view)} class="custom_btns" title={label} aria-label={label}
+            aria-current={$currentView === view ? 'page' : undefined}>
+            <Icon name={icon} size={16} />
+          </button>
+        {/each}
 
         <div class="mx-1 h-5 w-px bg-border"></div>
 
@@ -435,6 +419,7 @@
             onclick={() => { githubDropdownOpen = !githubDropdownOpen }}
             class="custom_btns"
             title="GitHub"
+            aria-expanded={githubDropdownOpen}
           >
             <Icon name="brand-github" size={16} />
           </button>
@@ -443,7 +428,7 @@
               <a href="https://github.com/packalyst/wireguard-admin-panel" target="_blank" rel="noopener noreferrer"
                 class="kt-dropdown-item font-medium">
                 <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
-                Wire Panel
+                Motte
               </a>
               <div class="kt-dropdown-divider"></div>
               <a href="https://github.com/juanfont/headscale" target="_blank" rel="noopener noreferrer"

@@ -462,7 +462,7 @@
       <div class={activeTab === 'overview' ? 'space-y-4' : 'panel'}>
         <!-- Overview Tab -->
         {#if activeTab === 'overview'}
-          <!-- Protections: one row each, switch on the right -->
+          <!-- Protections: a tile each, switch on the right -->
           <div class="panel">
             <div class="panel-head">
               <span class="panel-icon text-primary"><Icon name="shield-check" size={17} /></span>
@@ -471,9 +471,9 @@
                 <div class="panel-sub">{protectionsOn} of {protections.length} on · for every device using this DNS</div>
               </div>
             </div>
-            <div class="-my-1 grid gap-x-8 gap-y-1 md:grid-cols-2">
+            <div class="grid gap-3 md:grid-cols-2">
               {#each protections as p (p.title)}
-                <div class="flex items-center gap-3 py-2">
+                <div class="flex items-center gap-3 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2.5">
                   <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg {p.on ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}"><Icon name={p.icon} size={16} /></span>
                   <div class="min-w-0 flex-1">
                     <div class="text-sm font-medium text-foreground">{p.title}</div>

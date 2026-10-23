@@ -720,12 +720,11 @@
         <Icon name="chevron-right" size={16} class="text-muted-foreground shrink-0" />
       </button>
 
-      <!-- Host facts and settings: side by side on wide screens -->
-      <div class="grid gap-4 xl:grid-cols-2 xl:items-start">
-        <!-- Host facts -->
-        <div class="panel">
-          {@render head('server', 'Host facts', 'os · hardware · identity')}
-          <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3 gap-px bg-border rounded-lg overflow-hidden border border-border">
+      <!-- Host facts, with who is logged in beside them -->
+      <div class="panel">
+        {@render head('server', 'Host facts', 'os · hardware · identity · logins')}
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <div class="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-px bg-border rounded-lg overflow-hidden border border-border self-start">
             {#each hostFacts as [ic, k, v]}
               <div class="bg-card px-2.5 py-2 flex items-center gap-2 min-w-0">
                 <Icon name={ic} size={14} class="text-muted-foreground shrink-0" />
@@ -736,21 +735,27 @@
               </div>
             {/each}
           </div>
-          {#if facts?.sessions?.length}
-            <div class="mt-3 pt-3 border-t border-border">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Login sessions</div>
-              {#each facts.sessions as s}
-                <div class="flex items-center gap-2 py-0.5 text-xs">
-                  <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.active ? 'bg-success' : 'bg-muted-foreground/40'}" title={s.active ? 'active' : 'idle'}></span>
-                  <span class="font-mono text-foreground shrink-0">{s.user}</span>
-                  <span class="text-muted-foreground font-mono truncate">{s.host || s.tty || 'local'}</span>
-                  <span class="text-muted-foreground ml-auto shrink-0">{s.when ? timeAgo(s.when) : ''}</span>
-                </div>
-              {/each}
+          <!-- divider: a rule above on phones, a line on the left beside the facts -->
+          <div class="min-w-0 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+            <div class="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+              Login sessions{#if facts?.sessions?.length}<span class="tabular-nums">· {facts.sessions.length}</span>{/if}
             </div>
-          {/if}
+            {#each facts?.sessions || [] as s}
+              <div class="flex items-center gap-2 py-0.5 text-xs">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.active ? 'bg-success' : 'bg-muted-foreground/40'}" title={s.active ? 'active' : 'idle'}></span>
+                <span class="font-mono text-foreground shrink-0">{s.user}</span>
+                <span class="text-muted-foreground font-mono truncate">{s.host || s.tty || 'local'}</span>
+                <span class="text-muted-foreground ml-auto shrink-0">{s.when ? timeAgo(s.when) : ''}</span>
+              </div>
+            {:else}
+              <div class="py-0.5 text-xs text-muted-foreground">No one is logged in.</div>
+            {/each}
+          </div>
         </div>
+      </div>
 
+      <!-- Settings beside what runs on the machine -->
+      <div class="grid gap-4 xl:grid-cols-2 xl:items-start">
         <!-- Settings: console access, recording and tags (who can see this machine) -->
         <div class="panel">
           {@render head('settings', 'Settings', 'console access · recording · tags')}
@@ -785,58 +790,8 @@
           </div>
           {@render note('Operators and viewers can be limited to machines with given tags (Settings → Team). Only admins change these settings; each change is logged.')}
         </div>
-      </div>
 
-      <!-- Usage history -->
-      <div class="panel">
-        <!-- average vs peak (both stored; no refetch) + time range; their own row on phones -->
-        {#snippet histControls()}
-          <div class="flex w-full gap-2 sm:w-auto">
-            <Segmented size="sm" label="Statistic" bind:value={histStat} options={[{ value: 'avg', label: 'Avg' }, { value: 'max', label: 'Peak' }]} />
-            <Segmented size="sm" label="Time range" bind:value={histRange} options={['24h', '7d', '30d'].map((r) => ({ value: r, label: r }))} />
-          </div>
-        {/snippet}
-        {@render head('chart-line', 'Usage history', 'CPU · memory · disk over time', '', histControls)}
-        {#if histLoading && histPoints.length === 0}
-          <div class="h-[188px] grid place-items-center text-xs text-muted-foreground">Loading history…</div>
-        {:else if histPoints.length < 2}
-          <div class="h-[188px] grid place-items-center text-center text-xs text-muted-foreground px-4">
-            Not enough history yet — usage is charted as the agent checks in (every&nbsp;~15s). Check back in a few minutes.
-          </div>
-        {:else}
-          <UPlotChart data={chartData} series={histSeries} height={188} yRange={[0, 100]} yUnit="%" />
-        {/if}
-        {@render note('Averaged into 5-minute buckets, kept for 30 days. “Peak” shows the highest reading in each bucket — a brief CPU or disk spike the average smooths away.')}
-      </div>
-
-      <!-- Disk space (per-filesystem, live) -->
-      <div class="panel">
-        {@render head('database', 'Disk space', 'mounted filesystems · live', 'text-info')}
-        {#if disks.length}
-          <div class="space-y-2.5">
-            {#each disks as d}
-              {@const pct = d.total ? Math.round((d.used / d.total) * 100) : 0}
-              <div class="text-xs">
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="font-mono truncate">{d.mount}</span>
-                  <span class="text-[10px] text-muted-foreground">{d.fstype}</span>
-                  <span class="ml-auto text-muted-foreground tabular-nums shrink-0">{formatBytes(d.used)} / {formatBytes(d.total)}</span>
-                  <span class="w-9 text-right tabular-nums font-medium shrink-0">{pct}%</span>
-                </div>
-                <span class="block h-2 rounded-full bg-muted overflow-hidden">
-                  <span class="block h-full rounded-full {usageColor(pct)}" style="width:{Math.min(pct, 100)}%"></span>
-                </span>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <div class="text-sm text-muted-foreground py-1">No filesystem usage reported.</div>
-        {/if}
-        {@render note('On-disk filesystems only (tmpfs and other virtual mounts are hidden). A filesystem near 100% is what fills logs and stalls services — watch the fullest one.')}
-      </div>
-
-      <!-- What runs and what listens -->
-      <div class="grid gap-4 xl:grid-cols-2 xl:items-start">
+        <!-- Services -->
         <div class="panel">
           {@render head('stack-2', 'Services', `${services?.active ?? 0} running · top memory`, 'text-info')}
           {#if services?.top?.length}
@@ -866,6 +821,37 @@
           {/if}
           {@render note('Running systemd services and the five using the most memory (from each service’s cgroup), plus what the wgscout agent itself uses — so the monitoring’s own footprint is visible.')}
         </div>
+      </div>
+
+      <!-- Disk space beside what listens -->
+      <div class="grid gap-4 xl:grid-cols-2 xl:items-start">
+        <!-- Disk space (per-filesystem, live) -->
+        <div class="panel">
+          {@render head('database', 'Disk space', 'mounted filesystems · live', 'text-info')}
+          {#if disks.length}
+            <div class="space-y-2.5">
+              {#each disks as d}
+                {@const pct = d.total ? Math.round((d.used / d.total) * 100) : 0}
+                <div class="text-xs">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="font-mono truncate">{d.mount}</span>
+                    <span class="text-[10px] text-muted-foreground">{d.fstype}</span>
+                    <span class="ml-auto text-muted-foreground tabular-nums shrink-0">{formatBytes(d.used)} / {formatBytes(d.total)}</span>
+                    <span class="w-9 text-right tabular-nums font-medium shrink-0">{pct}%</span>
+                  </div>
+                  <span class="block h-2 rounded-full bg-muted overflow-hidden">
+                    <span class="block h-full rounded-full {usageColor(pct)}" style="width:{Math.min(pct, 100)}%"></span>
+                  </span>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="text-sm text-muted-foreground py-1">No filesystem usage reported.</div>
+          {/if}
+          {@render note('On-disk filesystems only (tmpfs and other virtual mounts are hidden). A filesystem near 100% is what fills logs and stalls services — watch the fullest one.')}
+        </div>
+
+        <!-- Exposure -->
         <div class="panel">
           {@render head('network', 'Exposure', 'listening ports · osquery', 'text-info')}
           {#if facts?.ports?.length}
@@ -890,6 +876,28 @@
           {/if}
           {@render note('“Exposed” ports are open on all interfaces (reachable from the internet unless firewalled); “local” ones only from the box itself. An unexpected exposed port is worth a look.')}
         </div>
+      </div>
+
+      <!-- Usage history -->
+      <div class="panel">
+        <!-- average vs peak (both stored; no refetch) + time range; their own row on phones -->
+        {#snippet histControls()}
+          <div class="flex w-full gap-2 sm:w-auto">
+            <Segmented size="sm" label="Statistic" bind:value={histStat} options={[{ value: 'avg', label: 'Avg' }, { value: 'max', label: 'Peak' }]} />
+            <Segmented size="sm" label="Time range" bind:value={histRange} options={['24h', '7d', '30d'].map((r) => ({ value: r, label: r }))} />
+          </div>
+        {/snippet}
+        {@render head('chart-line', 'Usage history', 'CPU · memory · disk over time', '', histControls)}
+        {#if histLoading && histPoints.length === 0}
+          <div class="h-[188px] grid place-items-center text-xs text-muted-foreground">Loading history…</div>
+        {:else if histPoints.length < 2}
+          <div class="h-[188px] grid place-items-center text-center text-xs text-muted-foreground px-4">
+            Not enough history yet — usage is charted as the agent checks in (every&nbsp;~15s). Check back in a few minutes.
+          </div>
+        {:else}
+          <UPlotChart data={chartData} series={histSeries} height={188} yRange={[0, 100]} yUnit="%" />
+        {/if}
+        {@render note('Averaged into 5-minute buckets, kept for 30 days. “Peak” shows the highest reading in each bucket — a brief CPU or disk spike the average smooths away.')}
       </div>
 
     {/if}

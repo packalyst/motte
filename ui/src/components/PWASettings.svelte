@@ -326,12 +326,13 @@
   })
 </script>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title">
-      <Icon name="bell" size={16} />
-      Push Notifications
-    </h3>
+<div class="panel">
+  <div class="panel-head">
+    <span class="panel-icon text-primary"><Icon name="bell" size={17} /></span>
+    <div class="min-w-0 flex-1">
+      <div class="panel-title">Push notifications</div>
+      <div class="panel-sub">where your notifications are delivered</div>
+    </div>
     {#if $pushEnabled}
       <Badge variant="success" size="sm">Enabled</Badge>
     {:else if $permissions[PermissionType.NOTIFICATIONS] === PermissionState.DENIED}
@@ -340,9 +341,9 @@
       <Badge variant="muted" size="sm">Disabled</Badge>
     {/if}
   </div>
-  <div class="kt-panel-body">
+  <div class="space-y-4">
     <!-- Deliver via: the channels every notification uses. Push is set up below. -->
-    <div class="space-y-2 mb-4">
+    <div class="space-y-2">
       <p class="text-xs font-medium">Deliver via</p>
       <ContentBlock title="Webhook" description="Slack, Discord, ntfy, or your own endpoint">
         <Checkbox variant="switch" bind:checked={channels.webhookEnabled} />
@@ -364,7 +365,7 @@
     </div>
 
     <!-- Platform & Installation Status -->
-    <div class="grid grid-cols-2 gap-3 mb-4">
+    <div class="grid grid-cols-2 gap-3">
       <div class="p-2 bg-muted/50 rounded-lg border border-dashed border-border flex items-center justify-between">
         <div>
           <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Platform</div>
@@ -432,7 +433,7 @@
 
     <!-- Push Toggle -->
     {#if !isPushSupported()}
-      <div class="p-3 bg-warning/10 border border-warning/20 rounded text-xs">
+      <div class="p-3 bg-warning/10 border border-warning/20 rounded-lg text-xs">
         <Icon name="alert-circle" size={14} class="inline mr-1 text-warning" />
         Push notifications are not supported on this platform.
         {#if $platform === Platform.IOS && !$isInstalled}
@@ -440,7 +441,7 @@
         {/if}
       </div>
     {:else if $permissions[PermissionType.NOTIFICATIONS] === PermissionState.DENIED}
-      <div class="p-3 bg-destructive/10 border border-destructive/20 rounded text-xs">
+      <div class="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-xs">
         <Icon name="alert-triangle" size={14} class="inline mr-1 text-destructive" />
         Notifications are blocked. Please enable them in your browser/device settings.
       </div>
@@ -485,7 +486,7 @@
 
     <!-- Subscribed Devices -->
     {#if subscriptions.length > 0}
-      <div class="mt-4 pt-4 border-t border-border">
+      <div class="pt-4 border-t border-border">
         <span class="block text-xs font-medium text-foreground mb-2">Registered Devices ({subscriptions.length})</span>
         <div class="space-y-2">
           {#each subscriptions as sub}

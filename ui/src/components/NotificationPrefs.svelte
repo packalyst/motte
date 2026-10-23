@@ -58,20 +58,18 @@
 </script>
 
 <!-- Notification Preferences -->
-<div class="kt-panel {!anyChannel ? 'opacity-50 pointer-events-none' : ''}">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title">
-      <Icon name="settings" size={16} />
-      Notification Preferences
-    </h3>
+<div class="panel {!anyChannel ? 'opacity-50 pointer-events-none' : ''}">
+  <div class="panel-head">
+    <span class="panel-icon text-primary"><Icon name="bell-ringing" size={17} /></span>
+    <div class="min-w-0 flex-1">
+      <div class="panel-title">Notification preferences</div>
+      <div class="panel-sub">which events notify you, on every channel you enabled</div>
+    </div>
     {#if !anyChannel}
       <Badge variant="muted" size="xs">Enable a channel first</Badge>
     {/if}
   </div>
-  <div class="kt-panel-body space-y-4">
-    <p class="text-[10px] text-muted-foreground">
-      Choose which events notify you — on every channel you've enabled (push, plus anything under “Deliver via” above).
-    </p>
+  <div class="space-y-4">
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <ContentBlock title="Node Offline" description="When a VPN node goes offline">
         <Checkbox variant="switch" bind:checked={prefs.node_offline} />

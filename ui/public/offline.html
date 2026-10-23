@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#16161a" />
+<title>Motte · offline</title>
+<style>
+  :root { --bg: #f6f8fb; --card: #ffffff; --fg: #1d2330; --muted: #6b7280; --border: #e3e7ee; --brand: #3e668f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181d; --card: #1f2127; --fg: #eef0f3; --muted: #8b919c; --border: #2c2f36; --brand: #4c9deb; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 16px;
+    background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { width: 100%; max-width: 380px; padding: 28px 24px; text-align: center;
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
+  svg { height: 40px; color: var(--brand); }
+  h1 { margin: 18px 0 6px; font-size: 17px; text-wrap: balance; }
+  p { margin: 0; color: var(--muted); font-size: 13px; }
+  ul { margin: 16px 0 20px; padding: 0; list-style: none; text-align: left; font-size: 13px; color: var(--muted); }
+  li { padding: 8px 0 8px 22px; border-top: 1px dashed var(--border); position: relative; }
+  li::before { content: ""; position: absolute; left: 4px; top: 15px; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+  button { width: 100%; height: 38px; border: 0; border-radius: 8px; background: var(--brand); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  #status { margin-top: 10px; font-size: 12px; min-height: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <svg viewBox="19.8 57 200.4 128" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M 21 171 L 61 67 Q 65 57 75 57 Q 80 57 85 64 L 120 117 L 155 64 Q 160 57 165 57 Q 175 57 179 67 L 219 171 Q 224 185 208 185 L 32 185 Q 16 185 21 171 Z M 99 185 L 99 162 A 21 21 0 0 1 141 162 L 141 185 Z" /></svg>
+  <h1>Can't reach your panel</h1>
+  <p>Motte needs a connection to the server. Nothing is lost; it opens again as soon as the server is reachable.</p>
+  <ul>
+    <li>Check that you're online</li>
+    <li>If you reach the panel over the VPN, turn the VPN on</li>
+    <li>The server may be restarting; give it a minute</li>
+  </ul>
+  <button id="retry" type="button">Try again</button>
+  <p id="status" role="status" aria-live="polite">Retrying automatically…</p>
+</main>
+<script src="/offline.js"></script>
+</body>
+</html>
