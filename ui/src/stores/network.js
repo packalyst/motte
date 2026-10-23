@@ -3,7 +3,7 @@
  * Tracks online/offline state and provides reconnection events
  */
 
-import { writable, derived } from 'svelte/store'
+import { writable } from 'svelte/store'
 
 // Core online state
 export const isOnline = writable(typeof navigator !== 'undefined' ? navigator.onLine : true)

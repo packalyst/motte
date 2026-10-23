@@ -442,20 +442,6 @@
       toast(`${errors.length} failed: ${errors[0]}`, 'warning')
     }
   }
-
-  // Port options for manual selection (from discovered ports + common)
-  const portOptions = $derived([
-    { value: '', label: 'Select port...' },
-    ...discoveredPorts.map(p => ({ value: p.port, label: `${p.port} - ${p.service || 'Unknown'}` }))
-  ])
-
-  // Use discovered port when selected
-  function onPortSelect(e) {
-    const port = e.target.value
-    if (port) {
-      formData.targetPort = parseInt(port)
-    }
-  }
 </script>
 
 <div class="space-y-4">

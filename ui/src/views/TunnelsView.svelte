@@ -14,6 +14,7 @@
   import ContentBlock from '../components/ContentBlock.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import GroupButton from '../components/GroupButton.svelte'
+  import StatStrip from '../components/StatStrip.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -54,10 +55,10 @@
     : { label: 'Not running', variant: 'muted', tile: '' }
   )
   const usage = $derived([
-    { icon: 'activity', tile: 'bg-success/10 text-success', value: stats?.requests ?? 0, label: 'requests · 24h' },
-    { icon: 'ban', tile: 'bg-destructive/10 text-destructive', value: stats?.failed ?? 0, label: 'failed · 24h' },
-    { icon: 'users', tile: 'bg-info/10 text-info', value: stats?.clients ?? 0, label: 'unique clients' },
-    { icon: 'world', tile: 'bg-primary/10 text-primary', value: stats?.topDest || '—', label: 'top destination', mono: true },
+    { icon: 'activity', tone: 'success', value: stats?.requests ?? 0, label: 'requests · 24h' },
+    { icon: 'ban', tone: 'destructive', value: stats?.failed ?? 0, label: 'failed · 24h' },
+    { icon: 'users', tone: 'info', value: stats?.clients ?? 0, label: 'unique clients' },
+    { icon: 'world', tone: 'primary', value: stats?.topDest || '—', label: 'top destination', mono: true },
   ])
 
   // Search / filter by tunnel name.
@@ -571,18 +572,8 @@
       </div>
     </div>
 
-    <!-- Usage across all tunnels, last 24h: one surface, hairline dividers -->
-    <div class="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-4">
-      {#each usage as u (u.label)}
-        <div class="flex min-w-0 items-center gap-3 bg-card px-3 py-2.5">
-          <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg {u.tile}"><Icon name={u.icon} size={15} /></span>
-          <div class="min-w-0">
-            <div class="truncate text-base font-bold leading-tight tabular-nums text-foreground {u.mono ? 'font-mono text-sm' : ''}" title={String(u.value)}>{u.value}</div>
-            <div class="truncate text-[11px] text-muted-foreground">{u.label}</div>
-          </div>
-        </div>
-      {/each}
-    </div>
+    <!-- Usage across all tunnels, last 24h -->
+    <StatStrip items={usage} label="Usage, last 24 hours" />
 
     {#if drift && running}
       <div class="mt-3 flex items-center gap-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm">

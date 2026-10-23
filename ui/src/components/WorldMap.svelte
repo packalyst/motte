@@ -12,7 +12,7 @@
 
   let { dots = [], kind = 'src' } = $props()
 
-  const W = 1000, H = 500 // must match worldPath.js viewBox
+  const [, , W, H] = WORLD_VIEWBOX.split(' ').map(Number) // the map path's own coordinate space
 
   const COORDS = {
     US: [-98, 39, 'United States'], CA: [-106, 56, 'Canada'], MX: [-102, 23, 'Mexico'],

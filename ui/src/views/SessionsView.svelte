@@ -18,6 +18,7 @@
   import SessionCard from '../components/SessionCard.svelte'
   import RecordingList from '../components/RecordingList.svelte'
   import BulkRun from '../components/BulkRun.svelte'
+  import StatStrip from '../components/StatStrip.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -57,7 +58,6 @@
   const resume = (s) => openConsoleAt({ machine_id: s.machine_id, machine_name: s.machine_name, session: s.id, label: s.label }, BACK)
   const kill = (s) => closeSession(s, s.machine_name)
 
-  const tint = (color) => `background: color-mix(in oklch, ${color} 14%, transparent); color: ${color}`
   const stats = $derived([
     { icon: 'terminal-2', color: 'var(--success)', value: $consoleSessions.length, label: 'live sessions', sub: watched ? `${watched} open now` : '' },
     { icon: 'server', color: 'var(--client-mc)', value: consoleMachines.length, of: active.length, label: 'console on' },
@@ -95,18 +95,7 @@
     </div>
   </InfoCard>
 
-  <!-- Summary: one surface, hairline dividers (same as All clients) -->
-  <section aria-label="Summary" class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border lg:grid-cols-4">
-    {#each stats as s (s.label)}
-      <div class="flex items-center gap-3 bg-card px-4 py-3">
-        <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg" style={tint(s.color)}><Icon name={s.icon} size={16} /></span>
-        <div class="min-w-0">
-          <div class="text-xl font-bold leading-none tabular-nums text-foreground">{s.value}{#if s.of !== undefined}<span class="text-sm font-medium text-muted-foreground">{` / ${s.of}`}</span>{/if}</div>
-          <div class="mt-1 truncate text-[11px] text-muted-foreground">{s.label}{#if s.sub}<span class="hidden text-muted-foreground/70 sm:inline">{` · ${s.sub}`}</span>{/if}</div>
-        </div>
-      </div>
-    {/each}
-  </section>
+  <StatStrip items={stats} label="Summary" />
 
   <section aria-label="Live sessions" class="space-y-2">
     <div class="flex items-center gap-3">

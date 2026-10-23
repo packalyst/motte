@@ -1,5 +1,6 @@
 <script>
   import Icon from './Icon.svelte';
+  import Hint from './Hint.svelte';
 
   let {
     checked = $bindable(false),
@@ -9,6 +10,7 @@
     labelPosition = undefined, // 'left' | 'right' - where label appears relative to checkbox (default: 'left' for switch, 'right' for others)
     label = undefined,
     helperText = undefined,
+    hint = undefined, // shown as a tooltip on the label instead of helperText under it
     icon = undefined,
     disabled = false,
     indeterminate = false,
@@ -54,7 +56,7 @@
     {#if effectivePosition === 'left' && (label || helperText)}
       <div class="flex-1">
         {#if label}
-          <span class="text-sm font-medium text-foreground">{label}</span>
+          <span class="text-sm font-medium text-foreground"><Hint text={hint}>{label}</Hint></span>
         {/if}
         {#if helperText}
           <p class="text-xs text-muted-foreground">{helperText}</p>
@@ -72,7 +74,7 @@
     {#if effectivePosition === 'right' && (label || helperText)}
       <div>
         {#if label}
-          <span class="text-sm font-medium text-foreground">{label}</span>
+          <span class="text-sm font-medium text-foreground"><Hint text={hint}>{label}</Hint></span>
         {/if}
         {#if helperText}
           <p class="text-xs text-muted-foreground">{helperText}</p>
@@ -116,7 +118,7 @@
       {#if children}
         {@render children()}
       {:else if label}
-        <span class="text-sm text-foreground">{label}</span>
+        <span class="text-sm text-foreground"><Hint text={hint}>{label}</Hint></span>
       {/if}
     {/if}
     <input
@@ -132,7 +134,7 @@
       {#if children}
         {@render children()}
       {:else if label}
-        <span class="text-sm text-foreground">{label}</span>
+        <span class="text-sm text-foreground"><Hint text={hint}>{label}</Hint></span>
       {/if}
     {/if}
     {#if helperText}

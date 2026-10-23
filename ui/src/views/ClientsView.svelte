@@ -93,6 +93,9 @@
   let latestAgent = $state(null)
   let detailMachine = $state(null)
   let cvesMachine = $state(null)
+  // Arriving on a machine link (refresh, sidebar, Overview): show nothing until that machine is
+  // resolved, so the list doesn't flash first. Clicking a card from the list keeps the list.
+  let opening = $state(!!(hashParam('m') || hashParam('cves')))
   async function loadMachines() {
     const [m, e] = await Promise.allSettled([apiGet('/api/fleet/machines'), apiGet('/api/fleet/endpoints')])
     machines = m.status === 'fulfilled' ? m.value || [] : []
@@ -100,12 +103,16 @@
   }
   async function showFromHash() {
     const mid = hashParam('m'), cid = hashParam('cves')
-    if (!mid && !cid) { detailMachine = null; cvesMachine = null; return }
-    await loadMachines()
-    const m = machines.find((x) => x.id === (cid || mid)) || null
-    if (!m) { toast('That machine is no longer available', 'error'); closeMachine(); return }
-    cvesMachine = cid ? m : null
-    detailMachine = cid ? null : m
+    try {
+      if (!mid && !cid) { detailMachine = null; cvesMachine = null; return }
+      await loadMachines()
+      const m = machines.find((x) => x.id === (cid || mid)) || null
+      if (!m) { toast('That machine is no longer available', 'error'); closeMachine(); return }
+      cvesMachine = cid ? m : null
+      detailMachine = cid ? null : m
+    } finally {
+      opening = false
+    }
   }
   const openMachine = (id) => (window.location.hash = 'm=' + encodeURIComponent(id))
   const openCves = (m) => (window.location.hash = 'cves=' + encodeURIComponent(m.id))
@@ -237,7 +244,7 @@
   <MachineCVEs machine={cvesMachine} onback={() => openMachine(cvesMachine.id)} />
 {:else if detailMachine}
   <MachineDetail machine={detailMachine} {latestAgent} onback={closeMachine} ondeleted={closeMachine} onviewcves={openCves} />
-{:else}
+{:else if !opening}
 <div class="space-y-4">
   <InfoCard icon="devices" title="All clients"
     description="WireGuard peers, Tailscale nodes, agent machines and LAN devices in one place. Open a client to manage it." />

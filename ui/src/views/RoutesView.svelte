@@ -1,7 +1,6 @@
 <script>
   import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
   import { useDataLoader } from '$lib/composables/index.js'
-  import { filterByFields } from '$lib/utils/data.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
   import Button from '../components/Button.svelte'

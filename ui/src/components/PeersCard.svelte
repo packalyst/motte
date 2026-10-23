@@ -22,10 +22,6 @@
   let isolating = $state('')
 
   let activeTab = $state('online')
-  const tabs = $derived([
-    { id: 'online', label: 'Online now', badge: sessions.length },
-    { id: 'traffic', label: 'Top traffic' },
-  ])
 
   const byPeer = $derived($statsStore?.traffic?.by_peer?.slice(0, 6) || [])
 

@@ -2,6 +2,7 @@
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
   import Button from './Button.svelte';
+  import Hint from './Hint.svelte';
 
   let {
     type = 'text',
@@ -18,7 +19,8 @@
     label = undefined,
     labelClass = 'block text-xs font-medium text-foreground mb-1',
     helperText = undefined,
-    helperClass = 'text-[10px] text-muted-foreground mt-1',
+    helperClass = 'field-hint',
+    hint = undefined, // shown as a tooltip on the label instead of text under the field
 
     // Icon support
     prefixIcon = undefined,
@@ -88,7 +90,6 @@
 
   // Normalize addon icon props (can be string or { icon, tooltip })
   const suffixAddonIconProps = $derived(typeof suffixAddonIcon === 'string' ? { icon: suffixAddonIcon } : suffixAddonIcon);
-  const prefixAddonIconProps = $derived(typeof prefixAddonIcon === 'string' ? { icon: prefixAddonIcon } : prefixAddonIcon);
 
   // Determine wrapper type - any prefix/suffix uses input-group
   const hasInputGroup = $derived(prefixAddon || suffixAddon || prefixAddonIcon || suffixAddonIcon || prefixAddonBtn || suffixAddonBtn || prefixCheckbox || suffixCheckbox || prefixIconBtn || suffixIconBtn || prefixIcon || suffixIcon || hasPasswordToggle);
@@ -230,7 +231,7 @@
 {#if label || helperText}
   <div>
     {#if label}
-      <label for={restProps.id} class={labelClass}>{label}</label>
+      <label for={restProps.id} class={labelClass}><Hint text={hint}>{label}</Hint></label>
     {/if}
     {@render inputContent()}
     {#if helperText}
