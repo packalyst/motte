@@ -77,11 +77,12 @@
   }
 </script>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title"><Icon name="server" size={16} /> Mail server</h3>
+<div class="panel">
+  <div class="panel-head">
+    <span class="panel-icon text-primary"><Icon name="server" size={17} /></span>
+    <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Mail server</div>
   </div>
-  <div class="kt-panel-body space-y-3">
+  <div class="space-y-3">
     {#if loading}
       <div class="text-sm text-muted-foreground">Loading…</div>
     {:else}
@@ -98,16 +99,17 @@
       <p class="text-[11px] text-muted-foreground">Each person chooses whether to receive alert emails, and their address, in Profile → Notifications.</p>
     {/if}
   </div>
-  <div class="kt-panel-footer flex justify-end">
+  <div class="panel-foot justify-end">
     <Button variant="primary" icon="device-floppy" loading={saving} disabled={loading || !dirty} onclick={save}>Save</Button>
   </div>
 </div>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title"><Icon name="send" size={16} /> Send a test email</h3>
+<div class="panel">
+  <div class="panel-head">
+    <span class="panel-icon text-primary"><Icon name="send" size={17} /></span>
+    <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Send a test email</div>
   </div>
-  <div class="kt-panel-body space-y-3">
+  <div class="space-y-3">
     <form class="flex flex-col gap-2 sm:flex-row sm:items-end" onsubmit={(e) => { e.preventDefault(); sendTest() }}>
       <div class="min-w-0 flex-1">
         <Input label="Send to" type="email" bind:value={testTo} placeholder="you@example.com" prefixIcon="mail" />

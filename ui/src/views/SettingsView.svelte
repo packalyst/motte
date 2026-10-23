@@ -1099,14 +1099,12 @@
       {#if section === 'general'}
       <div class="space-y-4">
       <!-- Session & Interface Settings -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="settings" size={16} />
-            Preferences
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="settings" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Preferences</div>
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
           <div class="grid grid-cols-2 gap-3">
             <Select
               label="Session Timeout"
@@ -1184,7 +1182,7 @@
             </Button>
           </div>
         </div>
-        <div class="kt-panel-footer">
+        <div class="panel-foot">
           <Button
             onclick={saveSession}
             loading={savingSession}
@@ -1201,14 +1199,12 @@
       {#if section === 'headscale'}
       <div class="space-y-4">
       <!-- Headscale Settings -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="server" size={16} />
-            Headscale
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="server" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Headscale</div>
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
           <div class="grid grid-cols-2 gap-3">
             <Input
               id="headscaleApiUrl"
@@ -1255,7 +1251,7 @@
               </div>
           </div>
         </div>
-        <div class="kt-panel-footer">
+        <div class="panel-foot">
           <Button
             onclick={saveHeadscale}
             loading={savingHeadscale}
@@ -1268,12 +1264,10 @@
         </div>
       </div>
       <!-- Cross-Network Router -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="route" size={16} />
-            Cross-Network Router
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="route" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Cross-Network Router</div>
           {#if routerStatus?.status === 'running'}
             <Badge variant="success" size="sm">Running</Badge>
           {:else if routerStatus?.status === 'starting'}
@@ -1282,7 +1276,7 @@
             <Badge variant="muted" size="sm">Disabled</Badge>
           {/if}
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
           {#if routerStatus?.status === 'running'}
             <div class="grid grid-cols-2 gap-2">
               <ContentBlock variant="data" label="Router IP" value={routerStatus.ip || '—'} mono padding="sm" />
@@ -1302,7 +1296,7 @@
             </p>
           {/if}
         </div>
-        <div class="kt-panel-footer">
+        <div class="panel-foot">
           {#if routerStatus?.status === 'running'}
             <Button onclick={restartRouter} size="sm" variant="secondary" icon="refresh" disabled={routerLoading}>
               {routerLoading ? '...' : 'Restart'}
@@ -1325,13 +1319,14 @@
       {/if}
       {#if section === 'dns'}
       <div class="space-y-4">
-      <!-- AdGuard Settings -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="shield" size={16} />
-            AdGuard Home
-          </h3>
+      <!-- AdGuard Settings (trial of the panel style used on the machine page) -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="shield" size={17} /></span>
+          <div class="min-w-0 flex-1">
+            <div class="panel-title">AdGuard Home</div>
+            <div class="panel-sub">sign-in · query log · dashboard</div>
+          </div>
           <Button
             onclick={regenerateAdguardCredentials}
             variant="outline"
@@ -1341,46 +1336,44 @@
             Generate
           </Button>
         </div>
-        <div class="kt-panel-body">
-          <div class="grid grid-cols-2 gap-3">
-            <Input
-              id="adguardUsername"
-              label="Username"
-              type="text"
-              bind:value={adguardUsername}
-              placeholder="admin"
-              prefixIcon="user"
-              class="text-xs"
-            />
-            <Input
-              id="adguardPassword"
-              label="Password"
-              type="password"
-              bind:value={adguardPassword}
-              placeholder="Password"
-              prefixIcon="lock"
-              class="text-xs"
-            />
-          </div>
-          <div class="grid grid-cols-2 gap-3 pt-3 border-t border-border">
-            <Input
-              label="Query Log Buffer"
-              type="number"
-              bind:value={adguardQuerylogSize}
-              prefixIcon="database"
-              class="text-xs"
-              min="1"
-            />
-            <div class="flex items-center justify-between">
-              <div>
-                <span class="text-xs font-medium text-foreground">Dashboard Access</span>
-                <p class="text-[10px] text-muted-foreground">External access to AdGuard UI</p>
-              </div>
-              <Checkbox variant="switch" bind:checked={adguardDashboardEnabled} />
+        <div class="grid grid-cols-2 gap-3">
+          <Input
+            id="adguardUsername"
+            label="Username"
+            type="text"
+            bind:value={adguardUsername}
+            placeholder="admin"
+            prefixIcon="user"
+            class="text-xs"
+          />
+          <Input
+            id="adguardPassword"
+            label="Password"
+            type="password"
+            bind:value={adguardPassword}
+            placeholder="Password"
+            prefixIcon="lock"
+            class="text-xs"
+          />
+        </div>
+        <div class="mt-4 grid grid-cols-2 gap-3 border-t border-dashed border-border pt-4">
+          <Input
+            label="Query Log Buffer"
+            type="number"
+            bind:value={adguardQuerylogSize}
+            prefixIcon="database"
+            class="text-xs"
+            min="1"
+          />
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="text-xs font-medium text-foreground">Dashboard Access</span>
+              <p class="text-[10px] text-muted-foreground">External access to AdGuard UI</p>
             </div>
+            <Checkbox variant="switch" bind:checked={adguardDashboardEnabled} />
           </div>
         </div>
-        <div class="kt-panel-footer">
+        <div class="panel-foot">
           <Button
             onclick={saveAdguard}
             loading={savingAdguard}
@@ -1415,12 +1408,10 @@
       <!-- Allowed ports + port scanner side by side on wide screens -->
       <div class="grid gap-4 xl:grid-cols-2">
       <!-- Allowed Ports -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="lock" size={16} />
-            Allowed Ports
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="lock" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Allowed Ports</div>
           <Input
             type="number"
             bind:value={newPort}
@@ -1433,7 +1424,7 @@
             onkeydown={(e) => e.key === 'Enter' && addPort()}
           />
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
           <p class="text-[10px] text-muted-foreground mb-3">
             Firewall ports allowed for incoming connections.
           </p>
@@ -1491,14 +1482,12 @@
         </div>
       </div>
       <!-- Port Scanner Settings -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="scan" size={16} />
-            Port Scanner
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="scan" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Port Scanner</div>
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
           <p class="text-[10px] text-muted-foreground">
             Default settings for scanning VPN client ports in Domain Routes.
           </p>
@@ -1550,7 +1539,7 @@
             />
           </div>
         </div>
-        <div class="kt-panel-footer">
+        <div class="panel-foot">
           <Button
             onclick={saveScanner}
             loading={savingScanner}
@@ -1564,12 +1553,10 @@
       </div>
       </div>
       <!-- Jails (Intrusion Detection) -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="shield-lock" size={16} />
-            Jails
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="shield-lock" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Jails</div>
           <div class="kt-btn-group">
             <Button onclick={openSSHModal} variant="outline" icon="key">
               SSH: {sshPort}
@@ -1579,7 +1566,7 @@
             </Button>
           </div>
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
           <p class="text-[10px] text-muted-foreground mb-3">
             Intrusion detection - automatically block IPs based on log patterns.
           </p>
@@ -1626,14 +1613,12 @@
       {#if section === 'web'}
       <div class="space-y-4">
       <!-- Traefik Settings - Full width -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="route" size={16} />
-            Traefik
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="route" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Traefik</div>
         </div>
-        <div class="kt-panel-body space-y-4">
+        <div class="space-y-4">
           <!-- Rate Limiting -->
           <div>
             <ContentBlock variant="header" title="Rate Limiting" />
@@ -1752,7 +1737,7 @@
             {/if}
           </div>
         </div>
-        <div class="kt-panel-footer justify-end">
+        <div class="panel-foot justify-end">
           <Button
             onclick={saveTraefik}
             loading={savingTraefik}
@@ -1769,14 +1754,12 @@
       {#if section === 'general'}
       <div class="space-y-4">
       <!-- Logs Watchers -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="file-text" size={16} />
-            Log Watchers
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="file-text" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Log Watchers</div>
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
           <p class="text-[10px] text-muted-foreground mb-3">
             Enable or disable log collection from various sources.
           </p>
@@ -1853,14 +1836,12 @@
       {#if section === 'general'}
       <div class="space-y-4">
       <!-- About - Full width -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="info-circle" size={16} />
-            About
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="info-circle" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">About</div>
         </div>
-        <div class="kt-panel-body flex items-center justify-between !py-3">
+        <div class="flex items-center justify-between">
           <div class="text-xs text-muted-foreground">
             <p class="font-medium text-foreground">Wire Panel</p>
             <p class="mt-0.5">Headscale + WireGuard management interface</p>
@@ -1890,14 +1871,12 @@
       {#if section === 'web'}
       <div class="space-y-4">
       <!-- Geolocation Settings - Full width -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="world" size={16} />
-            Geolocation
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="world" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Geolocation</div>
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
             <!-- Two columns: IP Lookup + Toggles -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <!-- IP Lookup Provider -->
@@ -2052,7 +2031,7 @@
               </div>
             {/if}
           </div>
-        <div class="kt-panel-footer justify-between">
+        <div class="panel-foot justify-between">
           <Button
             onclick={triggerGeoUpdate}
             loading={triggeringGeoUpdate}
@@ -2086,14 +2065,12 @@
       {#if section === 'backups'}
       <div class="space-y-4">
       <!-- Backup & migrate - Full width -->
-      <div class="kt-panel">
-        <div class="kt-panel-header">
-          <h3 class="kt-panel-title">
-            <Icon name="database" size={16} />
-            Backup &amp; migrate
-          </h3>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="database" size={17} /></span>
+          <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Backup &amp; migrate</div>
         </div>
-        <div class="kt-panel-body">
+        <div class="space-y-3">
           <p class="text-xs text-muted-foreground mb-4">
             Export the whole panel configuration as one passphrase-encrypted file, then restore it here or on a fresh host. The file holds your secrets (peer keys, CA, credentials) sealed by the passphrase — keep both safe: there's no recovery without the passphrase.
           </p>

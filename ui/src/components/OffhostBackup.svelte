@@ -150,9 +150,10 @@
   }
 </script>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title"><Icon name="cloud" size={16} /> Off-host backups</h3>
+<div class="panel">
+  <div class="panel-head">
+    <span class="panel-icon text-primary"><Icon name="cloud" size={17} /></span>
+    <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Off-host backups</div>
     {#if status?.running}
       <span class="inline-flex items-center gap-1.5 text-xs text-info"><Icon name="loader-2" size={13} class="animate-spin" />Running…</span>
     {:else if status?.lastTime}
@@ -165,7 +166,7 @@
       <span class="text-xs text-muted-foreground">Never run</span>
     {/if}
   </div>
-  <div class="kt-panel-body space-y-4">
+  <div class="space-y-4">
     <p class="text-xs text-muted-foreground">
       Automatically upload the sealed backup to storage you control, so a lost host is recoverable. It's the same passphrase-encrypted file as a manual export — keep the passphrase safe; there is no recovery without it.
     </p>
@@ -285,7 +286,7 @@
       </div>
     {/if}
   </div>
-  <div class="kt-panel-footer flex items-center justify-between">
+  <div class="panel-foot justify-between">
     <Button variant="outline" icon="player-play" loading={running} disabled={loading} onclick={runNow}>Back up now</Button>
     <Button variant="primary" icon="device-floppy" loading={saving} disabled={loading} onclick={save}>Save settings</Button>
   </div>

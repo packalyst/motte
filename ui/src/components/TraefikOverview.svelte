@@ -60,19 +60,20 @@
   const tint = (c) => `background: color-mix(in oklch, ${c} 14%, transparent); color: ${c}`
 </script>
 
-<div class="kt-panel">
-  <div class="kt-panel-header">
-    <h3 class="kt-panel-title"><Icon name="activity" size={16} /> Live routing</h3>
+<div class="panel">
+  <div class="panel-head">
+    <span class="panel-icon text-primary"><Icon name="activity" size={17} /></span>
+    <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Live routing</div>
     <span class="text-xs text-muted-foreground">read from Traefik</span>
   </div>
   {#if loader.loading}
-    <div class="kt-panel-body text-sm text-muted-foreground">Loading…</div>
+    <div class="space-y-3 text-sm text-muted-foreground">Loading…</div>
   {:else if loader.error}
-    <div class="kt-panel-body flex items-start gap-2 text-sm text-muted-foreground">
+    <div class="flex items-start gap-2 text-sm text-muted-foreground">
       <Icon name="alert-triangle" size={16} class="mt-0.5 shrink-0 text-warning" />Traefik's status couldn't be loaded.
     </div>
   {:else}
-    <div class="kt-panel-body space-y-4">
+    <div class="space-y-4">
       <!-- counts: one surface, hairline dividers -->
       <div class="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-4">
         {#each [
