@@ -65,6 +65,7 @@ type Client struct {
 	Pending      bool     `json:"pending,omitempty"`  // LAN device waiting for approval
 	Blocked      bool     `json:"blocked,omitempty"`  // LAN device blocked (no address, traffic dropped)
 	Internet     *bool    `json:"internet,omitempty"` // LAN device may route out the WAN
+	Gone         bool     `json:"gone,omitempty"`     // machine whose agent was uninstalled
 	Open         OpenRef  `json:"open"`               // where each part of this client is managed
 }
 
@@ -175,6 +176,9 @@ func (s *Service) build(machines []fleet.Machine, machinesErr error) ([]Client, 
 		if a.Pending != b.Pending {
 			return a.Pending
 		}
+		if a.Gone != b.Gone {
+			return b.Gone
+		}
 		if a.Online != b.Online {
 			return a.Online
 		}
@@ -251,6 +255,7 @@ func fromMachine(m *fleet.Machine) Client {
 	e := Client{Key: "m:" + m.ID, Kind: "machine", Name: firstNonEmpty(m.Name, m.ID), IP: m.LastIP,
 		Open: OpenRef{MachineID: m.ID}, Flags: machineFlags(m), Tags: m.Tags}
 	e.Online = m.Online // its link to the panel is up
+	e.Gone = m.Status == "uninstalled"
 	if m.LastSeen != nil {
 		e.LastSeen = m.LastSeen.UTC().Format(time.RFC3339)
 	}
@@ -262,10 +267,10 @@ func fromMachine(m *fleet.Machine) Client {
 }
 
 func machineFlags(m *fleet.Machine) []Flag {
-	var f []Flag
 	if m.Status == "uninstalled" {
-		f = append(f, Flag{"Agent uninstalled", "warning", "plug", 0})
+		return nil // the card itself shows it; the revocation comes with it
 	}
+	var f []Flag
 	if m.Revoked {
 		f = append(f, Flag{"Revoked", "destructive", "certificate", 0})
 	}
@@ -339,6 +344,7 @@ func digest(list []Client) [32]byte {
 	type key struct {
 		K, Kind, Name, IP string
 		On, Pend, M, Blk  bool
+		Gone              bool
 		Net               *bool
 		F                 []Flag
 		Meta              string
@@ -346,7 +352,7 @@ func digest(list []Client) [32]byte {
 	}
 	ks := make([]key, len(list))
 	for i, c := range list {
-		ks[i] = key{c.Key, c.Kind, c.Name, c.IP, c.Online, c.Pending, c.Machine, c.Blocked, c.Internet, c.Flags, c.Meta, c.Tags}
+		ks[i] = key{c.Key, c.Kind, c.Name, c.IP, c.Online, c.Pending, c.Machine, c.Blocked, c.Gone, c.Internet, c.Flags, c.Meta, c.Tags}
 	}
 	b, _ := json.Marshal(ks)
 	return sha256.Sum256(b)

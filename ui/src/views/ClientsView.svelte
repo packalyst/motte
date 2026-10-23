@@ -370,12 +370,16 @@
             subtitle={c.meta}
             subtitleIcon={SUBTITLE_ICON[c.kind]}
             flags={c.flags || []}
-            tags={(c.tags || []).map((t) => t.replace(/^tag:/, ''))}
+            tags={c.gone ? null : (c.tags || []).map((t) => t.replace(/^tag:/, ''))}
             emptyTags="No tags"
             highlight={c.pending}
+            gone={c.gone}
             onopen={() => open(c)}
             openTitle={'Open in ' + KINDS[c.kind].label}
-            info={[
+            info={c.gone ? [
+              { icon: 'certificate', text: 'Certificate revoked' },
+              { icon: 'clock', text: timeAgo(c.last_seen) },
+            ] : [
               { icon: 'network', text: c.ip || '—', mono: true },
               { icon: 'clock', text: c.online ? 'Active now' : timeAgo(c.last_seen) },
             ]}
@@ -434,6 +438,8 @@
                   </div>
                 </div>
               </div>
+            {:else if c.gone}
+              <div class="text-[11px] text-muted-foreground">Agent removed and its data deleted. Open to remove it from the panel.</div>
             {:else}
               <div class="text-[11px] text-muted-foreground">No usage reported yet</div>
             {/if}
