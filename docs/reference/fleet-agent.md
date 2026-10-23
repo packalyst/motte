@@ -20,9 +20,10 @@ Per-machine telemetry + light enforcement, all confined to its own directory tre
 so uninstall leaves the host pristine (`base_dir` / `data_dir` / `conf_dir`):
 
 - **Metrics** — CPU / memory / disk / load / uptime read directly from `/proc` (`agent/metrics.go`, `agent/report.go`).
-- **CVE scanning (Trivy)** — scans OS packages **and** app dependencies (npm/composer/pip/go lockfiles auto-discovered by `trivy fs`). Slow/expensive → runs on `ScanInterval` (default 24h). `agent/tool_trivy.go`.
+- **CVE scanning (Trivy)** — scans OS packages **and** app dependencies (npm/composer/pip/go lockfiles auto-discovered by `trivy fs`). Slow/expensive → **on demand only**: never on install, boot or a timer. Trivy is installed by the first scan, each scan refreshes its own DB when stale, and the last result is saved (`/var/lib/wgscout/trivy/last-scan.json`, 0600) so it survives restarts. The `rescan` command runs it in the background; the report carries `scanning` / `scan_error`. `agent/tool_trivy.go`, `Manager.Scan`.
 - **Intrusion detection (CrowdSec)** — the agent reads CrowdSec's local decisions and enforces them itself via its own nftables table (replaces the bouncer). `agent/tool_crowdsec.go`.
-- **Host facts + FIM (osquery)** — host inventory + File Integrity Monitoring. `agent/tool_osquery.go`.
+- **Host facts** — OS, kernel, CPU, RAM, listening ports, read natively from `/proc`, `/sys`, `/etc` (no subprocess); hardware/OS/kernel once at start, the rest every minute. `agent/hostfacts.go`.
+- **FIM (osquery)** — File Integrity Monitoring via a supervised `osqueryd`. `agent/tool_osquery.go`.
 - **Enforcement** — blocks/unblocks source IPs via its own nftables table (`inet wgscout`, set `blocked_ips`). `agent/enforce.go`.
 - **Kernel maintenance** — install newest kernel, reboot to activate, purge superseded kernels + rescan, as a reboot-surviving state machine. `agent/kernelmaint.go` (`KernelMaint`).
 
@@ -56,7 +57,7 @@ store (§7). Written on demand with `wgscout -config … -write-default-config`.
 Key fields (`Config` struct):
 
 - Transport: `listen_addr`, `panel_url`, `ca_fingerprint` (pinned `sha256:<hex>`, from the install command), `enroll_token` (one-time; consumed + scrubbed on first enroll).
-- Loops: `metrics_interval` (default 15s — also the report cadence), `scan_interval` (24h), `db_update_every` (12h).
+- Loops: `metrics_interval` (default 15s — also the report cadence), `db_update_every` (12h, CrowdSec hub). CrowdSec decisions + host facts refresh every minute (fixed). No scan loop.
 - Firewall: **`dry_run` (default `true`)**, `nft_table` (`wgscout`), `nft_set` (`blocked_ips`).
 - `log_level`: `quiet` (default) or `debug`, flipped live by the `set-log-level` command.
 - Layout: `base_dir` (`/opt/wgscout`), `data_dir` (`/var/lib/wgscout`), `conf_dir` (`/etc/wgscout`), `manifest_path`.

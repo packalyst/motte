@@ -22,13 +22,13 @@ export function sevVariant(sev) {
 // online = reported within 2 min; idle = within 10 min; else offline. reachable (online only) is
 // what the server requires before it queues a command (fleet commandOnlineWindow).
 export function statusInfo(m) {
-  if (m?.status === 'uninstalled') return { dot: 'bg-muted-foreground', label: 'uninstalled', online: false, gone: true }
-  if (m?.revoked) return { dot: 'bg-destructive', label: 'revoked', online: false }
-  if (!m?.last_seen) return { dot: 'bg-muted-foreground', label: 'never reported', online: false }
+  if (m?.status === 'uninstalled') return { dot: 'bg-muted-foreground', variant: 'muted', label: 'uninstalled', online: false, gone: true }
+  if (m?.revoked) return { dot: 'bg-destructive', variant: 'danger', label: 'revoked', online: false }
+  if (!m?.last_seen) return { dot: 'bg-muted-foreground', variant: 'muted', label: 'never reported', online: false }
   const mins = (Date.now() - new Date(m.last_seen)) / 60000
-  if (mins < 2) return { dot: 'bg-success', label: 'online', online: true, reachable: true }
-  if (mins < 10) return { dot: 'bg-warning', label: 'idle', online: true }
-  return { dot: 'bg-muted-foreground', label: 'offline', online: false }
+  if (mins < 2) return { dot: 'bg-success', variant: 'success', label: 'online', online: true, reachable: true }
+  if (mins < 10) return { dot: 'bg-warning', variant: 'warning', label: 'idle', online: true }
+  return { dot: 'bg-muted-foreground', variant: 'danger', label: 'offline', online: false }
 }
 
 // round rounds a percentage for display (no decimals).
