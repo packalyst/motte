@@ -11,6 +11,7 @@
   import WorstOffender from '../components/WorstOffender.svelte'
   import ActivityFeed from '../components/ActivityFeed.svelte'
   import PeersCard from '../components/PeersCard.svelte'
+  import ClientsGlance from '../components/ClientsGlance.svelte'
   import { currentView } from '../stores/app.js'
 
   let { loading = $bindable(true) } = $props()
@@ -74,6 +75,17 @@
   ]
   let trafficHidden = $state({})
 
+  // Core services the server reports on: what each one does, for the health tiles.
+  const services = $derived($statsStore?.services || [])
+  const SERVICE = {
+    wireguard: { icon: 'shield-lock', what: 'VPN tunnel' },
+    traefik: { icon: 'route', what: 'Reverse proxy & TLS' },
+    headscale: { icon: 'cloud', what: 'Tailscale control server' },
+    adguard: { icon: 'shield-check', what: 'DNS filtering' },
+    turbotunnels: { icon: 'arrows-exchange', what: 'Public tunnels' },
+  }
+  const COLS = { 1: 'lg:grid-cols-1', 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5' }
+
   onMount(() => {
     subscribe('stats')
     loading = false
@@ -88,11 +100,17 @@
   <InfoCard
     icon="dashboard"
     title="Overview"
-    description="System status, VPN traffic, and resource usage at a glance."
+    description="Security, your clients, VPN traffic and server health at a glance."
   />
 
   <!-- Security lead: verdict + "did anyone get in?" glance -->
   <SecurityGlance />
+
+  <!-- Clients: every kind online / total, and what needs attention -->
+  <div>
+    <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2">Your clients</h2>
+    <ClientsGlance />
+  </div>
 
   <!-- Is my defense working — blocked by layer (last hour) -->
   <div>
@@ -109,16 +127,31 @@
     </div>
   </div>
 
-  <!-- Service health -->
-  {#if $statsStore?.services?.length}
-    <div>
-      <h2 class="text-xs uppercase tracking-wide text-muted-foreground font-semibold mb-2">Service health</h2>
-      <div class="bg-card border border-border rounded-xl p-4 flex flex-wrap gap-2">
-        {#each $statsStore.services as svc (svc.key)}
-          <span class="inline-flex items-center gap-1.5 text-xs bg-muted/40 border border-border rounded-full px-2.5 py-1">
-            <span class="h-1.5 w-1.5 rounded-full {svc.status === 'up' ? 'bg-success' : 'bg-destructive animate-pulse'}"></span>
-            <span class="{svc.status === 'up' ? 'text-muted-foreground' : 'text-destructive font-medium'}">{svc.name}</span>
-          </span>
+  <!-- Service health: one tile per core service -->
+  {#if services.length}
+    {@const down = services.filter((s) => s.status !== 'up').length}
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-icon {down ? '!bg-destructive/10 !text-destructive' : '!bg-success/10 !text-success'}"><Icon name="server-2" size={18} /></span>
+        <div class="min-w-0 flex-1">
+          <div class="panel-title">Service health</div>
+          <div class="panel-sub">{down ? `${down} of ${services.length} services down` : `All ${services.length} services running`}</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 {COLS[Math.min(services.length, 5)]}">
+        {#each services as svc (svc.key)}
+          {@const up = svc.status === 'up'}
+          {@const info = SERVICE[svc.key] || { icon: 'box', what: '' }}
+          <div class="flex items-center gap-3 rounded-lg border p-3 {up ? 'border-border bg-muted/20' : 'border-destructive/40 bg-destructive/5'}">
+            <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg {up ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}"><Icon name={info.icon} size={18} /></span>
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-[13px] font-semibold text-foreground">{svc.name}</div>
+              <div class="truncate text-[11px] text-muted-foreground">{info.what}</div>
+            </div>
+            <span class="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium {up ? 'text-success' : 'text-destructive'}">
+              <span class="h-1.5 w-1.5 rounded-full {up ? 'bg-success' : 'bg-destructive animate-pulse'}"></span>{up ? 'Running' : 'Down'}
+            </span>
+          </div>
         {/each}
       </div>
     </div>
@@ -156,65 +189,6 @@
             <span class="text-xs text-muted-foreground">Downloaded</span>
           </div>
           <div class="text-2xl font-bold text-info">{formatBytes($statsStore?.traffic?.total_rx)}</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Key Stats -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-    <div class="bg-card border border-border rounded-xl p-4">
-      <div>
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-primary/10">
-            <Icon name="clock" size={20} class="text-primary" />
-          </div>
-          <div>
-            <div class="text-xs text-muted-foreground">Uptime</div>
-            <div class="text-lg font-semibold">{formatUptime($statsStore?.system?.uptime)}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="bg-card border border-border rounded-xl p-4">
-      <div>
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-success/10">
-            <Icon name="users" size={20} class="text-success" />
-          </div>
-          <div>
-            <div class="text-xs text-muted-foreground">Nodes Online</div>
-            <div class="text-lg font-semibold">{$statsStore?.nodes?.online || 0}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="bg-card border border-border rounded-xl p-4">
-      <div>
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-destructive/10">
-            <Icon name="user-off" size={20} class="text-destructive" />
-          </div>
-          <div>
-            <div class="text-xs text-muted-foreground">Nodes Offline</div>
-            <div class="text-lg font-semibold">{$statsStore?.nodes?.offline || 0}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="bg-card border border-border rounded-xl p-4">
-      <div>
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-info/10">
-            <Icon name="plug-connected" size={20} class="text-info" />
-          </div>
-          <div>
-            <div class="text-xs text-muted-foreground">WG Peers</div>
-            <div class="text-lg font-semibold">{$statsStore?.nodes?.wgPeers || 0}</div>
-          </div>
         </div>
       </div>
     </div>
@@ -341,6 +315,7 @@
 
   <!-- System internals (muted) -->
   <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-muted-foreground pt-1">
+    <span class="flex items-center gap-1.5"><Icon name="clock" size={14} />Uptime {formatUptime($statsStore?.system?.uptime)}</span>
     <span class="flex items-center gap-1.5"><Icon name="cpu" size={14} />Memory {formatBytes($statsStore?.system?.mem_alloc)}</span>
     <span class="flex items-center gap-1.5"><Icon name="activity" size={14} />Goroutines {$statsStore?.system?.num_goroutine || 0}</span>
     <span class="flex items-center gap-1.5"><Icon name="plug-connected" size={14} />WS Clients {$statsStore?.system?.ws_clients || 0}</span>

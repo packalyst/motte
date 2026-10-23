@@ -20,7 +20,7 @@
 
   const SIZES = {
     default: { group: 'h-8.5 text-[0.8125rem]', option: 'h-full px-3' }, // matches kt-input / kt-select
-    sm: { group: 'h-7 text-xs', option: 'h-full px-2.5' }, // matches kt-input-sm / kt-select-sm
+    sm: { group: 'h-control text-xs', option: 'h-full px-2.5' }, // matches kt-input-sm / kt-select-sm
   }
   const sz = $derived(SIZES[size] || SIZES.default)
 

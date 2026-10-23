@@ -7,10 +7,9 @@
    * their full detail page right here (#m=<id>, #cves=<id>). Networks are managed in Settings.
    */
   import { onMount, onDestroy, untrack } from 'svelte'
-  import { get } from 'svelte/store'
   import { apiGet, apiDelete, openView, currentUser, hasRole, hashParam, toast } from '../stores/app.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
-  import { subscribe, unsubscribe, clientsStore } from '../stores/websocket.js'
+  import { KINDS, isKind, clientsList, watchClients, reloadClients, clientsFilter } from '$lib/clients.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import InfoCard from '../components/InfoCard.svelte'
@@ -35,12 +34,6 @@
 
   let { loading = $bindable(true) } = $props()
 
-  const KINDS = {
-    wireguard: { label: 'WireGuard', group: 'WireGuard peers', icon: 'shield', color: 'var(--client-wg)' },
-    tailscale: { label: 'Tailscale', group: 'Tailscale nodes', icon: 'cloud', color: 'var(--client-ts)' },
-    machine: { label: 'Machine', group: 'Machines', icon: 'device-desktop', color: 'var(--client-mc)' },
-    lan: { label: 'LAN device', group: 'LAN devices', icon: 'router', color: 'var(--client-lan)' },
-  }
   // How each type is added: a modal here, except LAN devices — they join over DHCP on a network
   // (networks are set up in Settings → Networks).
   const ADD = {
@@ -68,24 +61,16 @@
   const tint = (color, pct = 14) => `background: color-mix(in oklch, ${color} ${pct}%, transparent); color: ${color}`
   const SUBTITLE_ICON = { wireguard: 'user', tailscale: 'user', machine: 'device-desktop', lan: 'network' }
 
-  let clients = $state([])
+  const clients = $derived($clientsList.clients)
+  const unavailable = $derived($clientsList.unavailable)
   // "now" for lease countdowns; ticks each minute so the time left stays current between refetches
   let now = $state(Date.now() / 1000)
   const tick = setInterval(() => (now = Date.now() / 1000), 60_000)
-  let unavailable = $state([])
 
-  async function load() {
-    try {
-      const res = await apiGet('/api/clients')
-      clients = res.clients || []
-      unavailable = res.unavailable || []
-      loadTokens() // an enrolled agent redeems its token
-    } catch (e) {
-      toast('Could not load clients: ' + e.message, 'error')
-    } finally {
-      loading = false
-    }
-  }
+  // The list itself is shared and kept live (lib/clients.js); this refetches it now, after a change.
+  const load = () => reloadClients().catch(() => {}) // a failure shows through the error effect below
+  $effect(() => { if ($clientsList.loaded) loading = false })
+  $effect(() => { if ($clientsList.error) untrack(() => toast('Could not load clients: ' + $clientsList.error, 'error')) })
 
   // VPN clients open in the client modal here; machines and LAN devices open on their own page.
   // The modal works on the full VPN records, loaded when a VPN client is opened (and after changes).
@@ -145,7 +130,9 @@
       toast('Failed to cancel: ' + e.message, 'error')
     }
   }
+  // Loaded once; afterwards only while one is waiting, when the list changes (its agent enrolled).
   $effect(() => { if (isAdmin) untrack(loadTokens) })
+  $effect(() => { $clientsList; untrack(() => { if (pendingTokens.length) loadTokens() }) })
 
   async function open(c, kind = c.kind) {
     if (kind === 'machine') return openMachine(c.open.machine)
@@ -174,7 +161,6 @@
   }
   const approve = (c) => lanAction(c, approveDevice, 'approved')
 
-  const isKind = (c, k) => c.kind === k || (k === 'machine' && c.machine)
   const saved = loadState('clients')
   let search = $state('')
   let status = $state(saved.status || 'all')
@@ -219,20 +205,29 @@
       .filter((g) => g.items.length || (g.k === 'machine' && waiting.length)),
   )
 
-  // Live: the server signals changes on the clients channel; refetch on each signal.
-  let seen = get(clientsStore)
+  // Opened from elsewhere (sidebar, Overview) to show one kind — also from a machine's page here,
+  // which then gives way to the list.
   $effect(() => {
-    const n = $clientsStore
-    if (n > seen) { seen = n; load() }
+    const k = $clientsFilter
+    if (k === null) return
+    untrack(() => {
+      search = ''; status = 'all'; kind = KINDS[k] ? k : ''
+      if (detailMachine || cvesMachine) {
+        detailMachine = null
+        cvesMachine = null
+        history.replaceState(history.state, '', window.location.pathname)
+      }
+    })
+    clientsFilter.set(null)
   })
+  let release
   onMount(() => {
-    load()
-    subscribe('clients')
+    release = watchClients() // fetches unless the list is already live (the sidebar watches it too)
     showFromHash()
     window.addEventListener('hashchange', showFromHash)
   })
   onDestroy(() => {
-    unsubscribe('clients')
+    release?.()
     clearInterval(tick)
     window.removeEventListener('hashchange', showFromHash)
   })

@@ -31,6 +31,9 @@ const (
 	Channel       = "clients"
 	watchInterval = 10 * time.Second
 	keyWarnWithin = 14 * 24 * time.Hour // warn this long before a Tailscale node key expires
+	// The agent renews its client cert from 28 days before expiry; one still this close to expiry
+	// isn't renewing (agent too old, or the renewal keeps failing).
+	certWarnWithin = 21 * 24 * time.Hour
 )
 
 // Flag is a short state label shown on a client ("Key expired", "Not approved", …).
@@ -39,6 +42,9 @@ type Flag struct {
 	Tone  string `json:"tone"`            // "destructive" | "warning"
 	Icon  string `json:"icon"`            // the card shows the icon; the label is its tooltip
 	Count int    `json:"count,omitempty"` // shown next to the icon (e.g. number of critical CVEs)
+	// Act: someone should do something about it (Overview's "Needs attention"), unlike a state an
+	// admin chose on purpose (disabled, no internet, blocked, ad blocking off).
+	Act bool `json:"act,omitempty"`
 }
 
 // Client is one device in the unified list.
@@ -167,7 +173,7 @@ func (s *Service) build(machines []fleet.Machine, machinesErr error) ([]Client, 
 
 	for i := range out {
 		if adguard.BlockingOff(out[i].Key) { // from the last known AdGuard state; no call here
-			out[i].Flags = append(out[i].Flags, Flag{"Ad blocking off", "warning", "shield-off", 0})
+			out[i].Flags = append(out[i].Flags, Flag{"Ad blocking off", "warning", "shield-off", 0, false})
 		}
 	}
 
@@ -213,7 +219,7 @@ func fromVPN(c vpn.VPNClient) Client {
 		e.Open.Node = "wg-" + c.ExternalID
 		e.LastSeen = firstNonEmpty(raw.LastHandshake, raw.LastSeen)
 		if raw.Enabled != nil && !*raw.Enabled {
-			e.Flags = append(e.Flags, Flag{"Disabled", "warning", "player-pause", 0})
+			e.Flags = append(e.Flags, Flag{"Disabled", "warning", "player-pause", 0, false})
 		}
 	} else {
 		e.Kind, e.Key, e.Name = "tailscale", "ts:"+c.ExternalID, firstNonEmpty(raw.GivenName, raw.Name, c.Name)
@@ -224,7 +230,7 @@ func fromVPN(c vpn.VPNClient) Client {
 		e.Flags = append(e.Flags, keyExpiryFlags(raw.Expiry, time.Now())...)
 	}
 	if c.BlockInternet {
-		e.Flags = append(e.Flags, Flag{"No internet", "destructive", "world-off", 0})
+		e.Flags = append(e.Flags, Flag{"No internet", "destructive", "world-off", 0, false})
 	}
 	return e
 }
@@ -236,17 +242,22 @@ func keyExpiryFlags(expiry string, now time.Time) []Flag {
 	if err != nil || t.Year() <= 1 {
 		return nil
 	}
+	return expiryFlags("Key", t, now, keyWarnWithin, "key", "key-off")
+}
+
+// expiryFlags flags a credential that has expired or expires within warnWithin.
+func expiryFlags(what string, t, now time.Time, warnWithin time.Duration, icon, expiredIcon string) []Flag {
 	left := t.Sub(now)
 	switch {
 	case left <= 0:
-		return []Flag{{"Key expired", "destructive", "key-off", 0}}
-	case left <= keyWarnWithin:
+		return []Flag{{what + " expired", "destructive", expiredIcon, 0, true}}
+	case left <= warnWithin:
 		days := int(math.Ceil(left.Hours() / 24))
-		label := "Key expires in " + strconv.Itoa(days) + " days"
+		label := what + " expires in " + strconv.Itoa(days) + " days"
 		if days == 1 {
-			label = "Key expires within a day"
+			label = what + " expires within a day"
 		}
-		return []Flag{{label, "warning", "key", 0}}
+		return []Flag{{label, "warning", icon, 0, true}}
 	}
 	return nil
 }
@@ -272,17 +283,19 @@ func machineFlags(m *fleet.Machine) []Flag {
 	}
 	var f []Flag
 	if m.Revoked {
-		f = append(f, Flag{"Revoked", "destructive", "certificate", 0})
+		f = append(f, Flag{"Revoked", "destructive", "certificate", 0, false})
+	} else if m.CertExpires != nil {
+		f = append(f, expiryFlags("Certificate", *m.CertExpires, time.Now(), certWarnWithin, "certificate", "certificate")...)
 	}
 	if s := m.Summary; s != nil {
 		if s.CVECritical > 0 {
-			f = append(f, Flag{strconv.Itoa(s.CVECritical) + " critical CVE", "destructive", "bug", s.CVECritical})
+			f = append(f, Flag{strconv.Itoa(s.CVECritical) + " critical CVE", "destructive", "bug", s.CVECritical, true})
 		}
 		if s.Bans > 0 {
-			f = append(f, Flag{strconv.Itoa(s.Bans) + " active bans (CrowdSec)", "destructive", "skull", s.Bans})
+			f = append(f, Flag{strconv.Itoa(s.Bans) + " active bans (CrowdSec)", "destructive", "skull", s.Bans, false})
 		}
 		if s.FIM > 0 {
-			f = append(f, Flag{strconv.Itoa(s.FIM) + " file changes (FIM)", "warning", "file-search", s.FIM})
+			f = append(f, Flag{strconv.Itoa(s.FIM) + " file changes (FIM)", "warning", "file-search", s.FIM, true})
 		}
 	}
 	return f
@@ -299,9 +312,9 @@ func fromLAN(n dhcp.Network, d dhcp.Client) Client {
 		Pending: !d.Approved && !d.Blocked, Blocked: d.Blocked, Open: OpenRef{NetworkID: n.ID, LanID: d.ID}}
 	switch {
 	case d.Blocked:
-		e.Flags = []Flag{{"Blocked", "destructive", "ban", 0}}
+		e.Flags = []Flag{{"Blocked", "destructive", "ban", 0, false}}
 	case !d.Approved:
-		e.Flags = []Flag{{"Not approved", "warning", "user-question", 0}}
+		e.Flags = []Flag{{"Not approved", "warning", "user-question", 0, true}}
 	}
 	return e
 }

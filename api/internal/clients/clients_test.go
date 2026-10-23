@@ -16,9 +16,14 @@ func TestFromVPNFlagsAndIDs(t *testing.T) {
 	if wg.Key != "wg:abc" || wg.Open.Node != "wg-abc" || !wg.Online || len(wg.Flags) != 2 {
 		t.Fatalf("wireguard client mapped wrong: %+v", wg)
 	}
+	for _, f := range wg.Flags { // disabled / no internet are an admin's choice, nothing to act on
+		if f.Act {
+			t.Fatalf("a chosen state must not ask for action: %+v", f)
+		}
+	}
 	ts := fromVPN(vpn.VPNClient{Type: "headscale", ExternalID: "7", Name: "x", IP: "100.64.0.1",
 		RawData: json.RawMessage(`{"givenName":"phone","user":{"name":"ana"},"expiry":"2001-01-01T00:00:00Z","forcedTags":["tag:a"],"validTags":["tag:b","tag:a"]}`)})
-	if ts.Name != "phone" || ts.Meta != "ana" || ts.Open.Node != "7" || len(ts.Flags) != 1 || ts.Flags[0].Label != "Key expired" ||
+	if ts.Name != "phone" || ts.Meta != "ana" || ts.Open.Node != "7" || len(ts.Flags) != 1 || ts.Flags[0].Label != "Key expired" || !ts.Flags[0].Act ||
 		len(ts.Tags) != 2 || ts.Tags[1] != "tag:b" {
 		t.Fatalf("tailscale client mapped wrong: %+v", ts)
 	}
@@ -36,6 +41,17 @@ func TestFromMachineOnline(t *testing.T) {
 	}
 	if fromMachine(&fleet.Machine{ID: "m", LastSeen: &recent}).Online {
 		t.Error("a recent report alone does not make a machine online")
+	}
+}
+
+// A machine whose cert is close to expiry isn't renewing: flag it; a healthy one is quiet.
+func TestMachineCertExpiryFlag(t *testing.T) {
+	soon, later := time.Now().Add(5*24*time.Hour), time.Now().Add(60*24*time.Hour)
+	if f := machineFlags(&fleet.Machine{ID: "m", CertExpires: &soon}); len(f) != 1 || f[0].Label != "Certificate expires in 5 days" || f[0].Tone != "warning" || !f[0].Act {
+		t.Fatalf("expiring cert not flagged: %+v", f)
+	}
+	if f := machineFlags(&fleet.Machine{ID: "m", CertExpires: &later}); len(f) != 0 {
+		t.Fatalf("a cert with time left must not be flagged: %+v", f)
 	}
 }
 

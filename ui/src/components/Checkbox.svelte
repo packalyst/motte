@@ -109,8 +109,9 @@
   </button>
 
 {:else}
-  <!-- Default checkbox variant -->
-  <label class="inline-flex items-center gap-2 {disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} {className}">
+  <!-- Default checkbox variant: with text the box sits on the first line, so a wrapping label
+       doesn't leave it floating in the middle -->
+  <label class="inline-flex {label || children ? 'items-start' : 'items-center'} gap-2 {disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} {className}">
     {#if effectivePosition === 'left'}
       {#if children}
         {@render children()}
@@ -120,7 +121,7 @@
     {/if}
     <input
       type="checkbox"
-      class="kt-checkbox"
+      class="kt-checkbox {label || children ? 'mt-0.5' : ''}"
       {checked}
       {disabled}
       {indeterminate}
