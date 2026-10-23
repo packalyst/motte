@@ -3,20 +3,24 @@
    * SectionNav — the left menu for pages split into sections (a machine, Settings…): a dropdown on
    * mobile, a vertical rail on desktop whose divider runs the full height of the page. items:
    * [{ id, label, icon, badge?, soon? }]; the page owns the active id and decides what selecting
-   * does (e.g. also update the URL).
+   * does (e.g. also update the URL). only='rail' | 'select' renders just one part, for a page that
+   * places the mobile dropdown elsewhere (e.g. under its header).
    */
   import Icon from './Icon.svelte'
   import Badge from './Badge.svelte'
   import Select from './Select.svelte'
 
-  let { items = [], active, onselect, label = 'Sections' } = $props()
+  let { items = [], active, onselect, label = 'Sections', only = undefined } = $props()
 </script>
 
+{#if only !== 'rail'}
 <div class="lg:hidden">
   <Select value={active} size="lg" aria-label={label} onchange={(e) => onselect(e.target.value)}
     options={items.map((i) => ({ value: i.id, label: i.label + (i.badge !== undefined ? ` (${i.badge})` : '') + (i.soon ? ' — soon' : '') }))} />
 </div>
+{/if}
 
+{#if only !== 'select'}
 <nav aria-label={label}
   class="hidden shrink-0 flex-col gap-1 border-r border-border pr-3 lg:flex lg:w-52 lg:self-stretch">
   <div class="sticky top-4 flex flex-col gap-1">
@@ -31,3 +35,4 @@
     {/each}
   </div>
 </nav>
+{/if}

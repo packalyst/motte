@@ -24,7 +24,6 @@
     domains: () => import('./DomainRoutesView.svelte'),
     tunnels: () => import('./TunnelsView.svelte'),
     adguard: () => import('./AdGuardView.svelte'),
-    docker: () => import('./DockerView.svelte'),
     logs: () => import('./LogsView.svelte'),
     analytics: () => import('./AnalyticsView.svelte'),
     activity: () => import('./ActivityView.svelte'),
@@ -54,8 +53,7 @@
   // logic works for every group, not one hardcoded menu.
   const menuGroups = {
     'grp-monitoring': ['analytics', 'logs', 'activity', 'routines'],
-    'grp-web': ['domains', 'tunnels'],
-    'grp-services': ['adguard', 'docker'],
+    'grp-web': ['domains', 'tunnels', 'adguard'],
     'grp-headscale': ['routes', 'users', 'authkeys', 'apikeys'],
   }
   // Expand the group that contains the current view on load.
@@ -148,13 +146,7 @@
       children: [
         { id: 'domains', label: 'Domain Routes', icon: 'world-www' },
         { id: 'tunnels', label: 'Tunnels', icon: 'arrows-right-left' },
-      ]
-    },
-    {
-      id: 'grp-services', label: 'Services', icon: 'cloud',
-      children: [
-        { id: 'adguard', label: 'AdGuard', icon: 'shield-check' },
-        { id: 'docker', label: 'Docker', icon: 'box' },
+        { id: 'adguard', label: 'DNS', icon: 'shield-check' },
       ]
     },
     { id: 'divider4', divider: true },

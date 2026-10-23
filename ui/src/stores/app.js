@@ -26,7 +26,7 @@ theme.subscribe(value => {
 // Valid view IDs for URL routing
 export const validViews = ['overview', 'users', 'firewall', 'server', 'console', 'sessions', 'iplookup',
                            'clients', 'routes', 'authkeys', 'apikeys', 'domains', 'tunnels', 'adguard',
-                           'docker', 'logs', 'analytics', 'activity', 'routines', 'settings', 'profile', 'about']
+                           'logs', 'analytics', 'activity', 'routines', 'settings', 'profile', 'about']
 
 // Get initial tab from URL hash (for tab persistence on refresh)
 export function getInitialTab(defaultTab, validTabs) {
@@ -41,7 +41,7 @@ export function getInitialTab(defaultTab, validTabs) {
 // networks: devices are on Clients, the networks themselves in Settings → Networks.
 // A string maps to a view; [view, hash] also opens a section of it (the hash is only added when the
 // URL has none, so an explicit one wins).
-const viewAliases = { nodes: 'clients', fleet: 'clients', networks: 'clients', team: ['settings', 's=team'], traefik: ['settings', 's=web'] }
+const viewAliases = { nodes: 'clients', fleet: 'clients', networks: 'clients', team: ['settings', 's=team'], traefik: ['settings', 's=web'], docker: ['settings', 's=docker'] }
 function resolveView(v) {
   const a = viewAliases[v]
   if (!Array.isArray(a)) return a || v
@@ -148,59 +148,19 @@ if (typeof window !== 'undefined') {
   window.history.replaceState({ view: initialView }, '', '/' + initialView + hash)
 }
 
-// Toast config (module-level to avoid recreation on each call)
-const toastVariants = {
-  success: 'success',
-  error: 'destructive',
-  warning: 'warning',
-  info: 'info'
+// Toasts: rendered by Toaster.svelte as plain text (never HTML), stacked newest-in-front. At most
+// TOAST_LIMIT at once — a new one pushes out the oldest. Each carries how long it stays (errors a
+// little longer, so they can be read); the Toaster runs the timers and pauses them on hover.
+export const toasts = writable([])
+let toastSeq = 0
+const TOAST_LIMIT = 5
+const TOAST_MS = { error: 6000, warning: 5000 }
+export function dismissToast(id) {
+  toasts.update((list) => list.filter((t) => t.id !== id))
 }
-const toastIcons = {
-  success: '<span class="icon-[tabler--check] text-lg text-success"></span>',
-  error: '<span class="icon-[tabler--alert-circle] text-lg text-destructive"></span>',
-  warning: '<span class="icon-[tabler--alert-triangle] text-lg text-warning"></span>',
-  info: '<span class="icon-[tabler--info-circle] text-lg text-info"></span>'
-}
-const toastTextClass = {
-  success: 'text-success',
-  error: 'text-destructive',
-  warning: 'text-warning',
-  info: 'text-info'
-}
-
-// escapeHtml renders a string as literal text inside HTML. KTToast injects `message`
-// via innerHTML (not textContent), so any untrusted value interpolated into a toast —
-// machine names, error text, IP-lookup results, CVE titles — would otherwise be a stored
-// XSS sink. Escaping here closes that for ALL 200+ toast call sites at once.
-function escapeHtml(s) {
-  return String(s ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-}
-
-// Toast using KTUI
 export function toast(message, type = 'info') {
-  if (window.KTToast) {
-    window.KTToast.show({
-      dismiss:false,
-      cancel: {
-        label: `<span class="icon-[tabler--circle-x] cursor-pointer text-base ${toastTextClass[type] || toastTextClass.info}"></span>`,
-        onClick: function () {},
-      },
-      message: escapeHtml(message),
-      variant: 'secondary',
-      appearance: 'solid',
-      progress: true,
-      size: 'sm',
-      pauseOnHover: true,
-      position: 'top-end',
-      icon: toastIcons[type] || toastIcons.info,
-      className: toastTextClass[type] || toastTextClass.info
-    })
-  }
+  const t = { id: ++toastSeq, type, message: String(message ?? ''), duration: TOAST_MS[type] || 4000 }
+  toasts.update((list) => [...list.slice(-(TOAST_LIMIT - 1)), t])
 }
 
 // Global confirm modal store

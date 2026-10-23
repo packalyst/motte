@@ -15,6 +15,7 @@
   import NetworkList from '../components/NetworkList.svelte'
   import TeamSettings from '../components/TeamSettings.svelte'
   import TraefikOverview from '../components/TraefikOverview.svelte'
+  import DockerSettings from '../components/DockerSettings.svelte'
 
   // Left-menu sections; the open one is kept in the URL (#s=…) so a refresh or link lands on it.
   // Team is admin-only (the server enforces it too).
@@ -27,6 +28,7 @@
     { id: 'networks', label: 'Networks', icon: 'router', description: 'Private networks the panel serves as gateway and DHCP server.' },
     { id: 'firewall', label: 'Firewall', icon: 'wall', description: 'Open ports, the port scanner and intrusion-detection jails.' },
     { id: 'web', label: 'Web access', icon: 'world-www', description: 'Traefik settings and what it is routing right now, plus geolocation and country blocking.' },
+    { id: 'docker', label: 'Docker', icon: 'box', description: 'The panel\'s containers: restart services, view logs and check their health.' },
     { id: 'backups', label: 'Backups', icon: 'database', description: 'Encrypted export and restore, and automatic off-host copies.' },
     { id: 'email', label: 'Email', icon: 'mail', description: 'The mail server used to send alert emails.' },
   ]
@@ -2077,6 +2079,9 @@
       {/if}
       {#if section === 'web'}
         <TraefikOverview />
+      {/if}
+      {#if section === 'docker'}
+        <DockerSettings />
       {/if}
       {#if section === 'backups'}
       <div class="space-y-4">

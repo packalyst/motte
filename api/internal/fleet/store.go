@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,6 +179,37 @@ func certFingerprintPEM(certPEM []byte) string {
 func machineIdentityHash(machineID, wgPubkey string) string {
 	sum := sha256.Sum256([]byte(machineID + "|" + wgPubkey))
 	return hex.EncodeToString(sum[:])
+}
+
+// uniqueMachineName returns name, or name-2, name-3 … when an active (not revoked) machine already
+// uses it (case-insensitive), so two hosts with the same hostname stay tell-apart-able everywhere.
+// The result stays within the 64-character name limit.
+func (s *Service) uniqueMachineName(name string) string {
+	rows, err := s.db.Query(`SELECT LOWER(name) FROM fleet_machines WHERE revoked = 0`)
+	if err != nil {
+		return name
+	}
+	taken := map[string]bool{}
+	for rows.Next() {
+		var n sql.NullString
+		if rows.Scan(&n) == nil {
+			taken[n.String] = true
+		}
+	}
+	rows.Close()
+	if !taken[strings.ToLower(name)] {
+		return name
+	}
+	for i := 2; ; i++ {
+		suffix := "-" + strconv.Itoa(i)
+		base := name
+		if len(base)+len(suffix) > 64 {
+			base = strings.TrimSpace(base[:64-len(suffix)])
+		}
+		if c := base + suffix; !taken[strings.ToLower(c)] {
+			return c
+		}
+	}
 }
 
 func (s *Service) registerMachine(m Machine) error {

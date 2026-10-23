@@ -3,12 +3,10 @@ import './app.css'
 import App from './App.svelte'
 // Import directly from component path to avoid loading all KTUI components
 import { KTModal } from '@keenthemes/ktui/components/modal'
-import { KTToast } from '@keenthemes/ktui/components/toast'
 import { KTTooltip } from '@keenthemes/ktui/components/tooltip'
 
 // Make KTUI components globally available
 window.KTModal = KTModal
-window.KTToast = KTToast
 window.KTTooltip = KTTooltip
 KTModal.init()
 

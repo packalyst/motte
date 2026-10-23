@@ -245,3 +245,25 @@ func TestCommandLogShowsExpired(t *testing.T) {
 		t.Fatalf("want one expired command, got %+v (%v)", cmds, err)
 	}
 }
+
+// A machine enrolling with a hostname an active machine already uses gets a numbered name; a revoked
+// machine's name is free again, and the result never passes the 64-character limit.
+func TestUniqueMachineName(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "a", 0)
+	svc.db.Exec(`UPDATE fleet_machines SET name = 'web-01' WHERE id = 'a'`)
+	addMachine(t, svc, "b", 0)
+	svc.db.Exec(`UPDATE fleet_machines SET name = 'web-01-2' WHERE id = 'b'`)
+	addMachine(t, svc, "c", 0)
+	svc.db.Exec(`UPDATE fleet_machines SET name = 'old', revoked = 1 WHERE id = 'c'`)
+	for in, want := range map[string]string{"web-01": "web-01-3", "WEB-01": "WEB-01-3", "db-01": "db-01", "old": "old"} {
+		if got := svc.uniqueMachineName(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+	long := strings.Repeat("x", 64)
+	svc.db.Exec(`UPDATE fleet_machines SET name = ? WHERE id = 'a'`, long)
+	if got := svc.uniqueMachineName(long); len(got) > 64 || !strings.HasSuffix(got, "-2") {
+		t.Errorf("long name: got %q (%d chars)", got, len(got))
+	}
+}

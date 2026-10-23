@@ -22,6 +22,7 @@
     sm: 'max-w-md',   // 448px
     md: 'max-w-xl',   // 576px
     lg: 'max-w-2xl',  // 672px
+    wide: 'max-w-3xl', // 768px
     xl: 'max-w-4xl'   // 896px
   }
 

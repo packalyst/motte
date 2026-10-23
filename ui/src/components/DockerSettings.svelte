@@ -1,17 +1,18 @@
 <script>
+  // DockerSettings — the panel's containers (Settings → Docker): state, live stats, restart/stop/start,
+  // logs and image analysis. Live list over the "docker" WS channel.
   import { onMount, onDestroy } from 'svelte'
   import { toast, apiPost, apiGet } from '../stores/app.js'
   import { subscribe, unsubscribe, subscribeToLogs, unsubscribeFromLogs, dockerStore, dockerLogsStore, containerStatsStore } from '../stores/websocket.js'
-  import Icon from '../components/Icon.svelte'
-  import Badge from '../components/Badge.svelte'
-  import Button from '../components/Button.svelte'
-  import Modal from '../components/Modal.svelte'
-  import Checkbox from '../components/Checkbox.svelte'
-  import LoadingSpinner from '../components/LoadingSpinner.svelte'
-  import EmptyState from '../components/EmptyState.svelte'
-  import InfoCard from '../components/InfoCard.svelte'
+  import Icon from './Icon.svelte'
+  import Badge from './Badge.svelte'
+  import Button from './Button.svelte'
+  import Modal from './Modal.svelte'
+  import Checkbox from './Checkbox.svelte'
+  import LoadingSpinner from './LoadingSpinner.svelte'
+  import EmptyState from './EmptyState.svelte'
 
-  let { loading = $bindable(true) } = $props()
+  let loading = $state(true) // until the first container list arrives
 
   let containers = $state([])
 
@@ -206,12 +207,6 @@
 </script>
 
 <div class="space-y-4">
-  <InfoCard
-    icon="box"
-    title="Container Management"
-    description="Monitor and manage Docker containers. Restart services, view logs, and check container health."
-  />
-
   {#if loading}
     <LoadingSpinner centered size="lg" />
   {:else}

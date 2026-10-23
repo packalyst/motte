@@ -286,14 +286,14 @@
     </div>
   {/if}
 
-  <Toolbar bind:search placeholder="Search name, IP, user, OS, network or tag…">
+  <Toolbar bind:search size="sm" placeholder="Search name, IP, user, OS, network or tag…">
     <div class="flex w-full min-w-0 flex-wrap items-center gap-2 md:w-auto">
       <!-- status: toggle group on desktop, dropdown on mobile; type: always a dropdown -->
       <div class="flex w-full gap-2 md:w-auto">
-        <div class="hidden md:block"><Segmented label="Status" bind:value={status} options={statusOptions} /></div>
-        <Select bind:value={status} size="lg" aria-label="Status" class="min-w-0 flex-1 md:hidden"
+        <div class="hidden md:block"><Segmented size="sm" label="Status" bind:value={status} options={statusOptions} /></div>
+        <Select bind:value={status} size="sm" aria-label="Status" class="min-w-0 flex-1 md:hidden"
           options={statusOptions.map((o) => ({ value: o.value, label: `${o.value === 'all' ? 'Any status' : o.label} (${o.count})` }))} />
-        <Select bind:value={kind} size="lg" aria-label="Client type" class="min-w-0 flex-1 md:w-44 md:flex-none"
+        <Select bind:value={kind} size="sm" aria-label="Client type" class="min-w-0 flex-1 md:w-44 md:flex-none"
           options={kindOptions} />
         {#if isAdmin}
           <Button icon="plus" onclick={() => (showAdd = true)} class="shrink-0" tooltip="Add client"><span class="hidden sm:inline">Add client</span></Button>
@@ -324,7 +324,7 @@
           </button>
         {/if}
       </div>
-      <div class="grid-cards">
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {#if g.k === 'machine'}
           {#each waiting as t (t.id)}
             {@const end = new Date(t.expires_at).getTime() / 1000}

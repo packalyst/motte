@@ -542,7 +542,7 @@
 </script>
 
 <!-- Node Detail Modal -->
-<Modal bind:open={showNodeModal} size="lg" bodyClass="p-0">
+<Modal bind:open={showNodeModal} size="wide" bodyClass="p-0">
   {#snippet header()}
     {#if selectedNode}
       <div class="flex items-center gap-3">
@@ -560,13 +560,16 @@
             </div>
           {:else}
             <div class="flex items-center gap-2 mt-0.5">
-              <button onclick={() => editingName = true} class="kt-badge kt-badge-sm kt-badge-outline kt-badge-secondary} cursor-pointer">{selectedNode._displayName} <Icon name="edit" size={12} /></button>
+              <button onclick={() => editingName = true} title="Rename" class="kt-badge kt-badge-sm kt-badge-outline kt-badge-secondary inline-flex items-center gap-1 cursor-pointer">{selectedNode._displayName}<Icon name="edit" size={10} /></button>
+              <!-- the rest of the state badges: hidden on phones, where the name alone fits -->
+              <span class="hidden items-center gap-2 sm:flex">
               <Badge variant={selectedNode._online ? 'success' : 'muted'} size="sm">{selectedNode._online ? 'Online' : 'Offline'}</Badge>
               <Badge variant={selectedNode._type === 'wireguard' ? 'info' : 'primary'} size="sm">{selectedNode._type === 'wireguard' ? 'WG' : 'TS'}</Badge>
               {#if selectedNode._type === 'wireguard' && !selectedNode.enabled}<Badge variant="warning" size="sm">Disabled</Badge>{/if}
               {#if selectedNode._type === 'wireguard' && selectedNode.blockInternet}<Badge variant="destructive" size="sm">No Internet</Badge>{/if}
               {#if isExitNode}<Badge variant="success" size="sm">Exit</Badge>{/if}
               <button onclick={toggleDNS} class="kt-badge kt-badge-sm {hasDNS ? 'kt-badge-info' : 'kt-badge-outline kt-badge-secondary'} cursor-pointer" title="Toggle the DNS name for this client">DNS name</button>
+              </span>
             </div>
           {/if}
         </div>
@@ -650,20 +653,16 @@
                 options={[{ value: 'hour', label: 'Hour' }, { value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }]} />
             </div>
 
-            <!-- conntrack watcher status: explains why the list may be empty -->
+            <!-- conntrack watcher problems: explain why the list may be empty -->
             {#if conntrackStatus && !conntrackStatus.enabled}
               <div class="flex items-start gap-2 p-2 bg-warning/10 rounded text-[11px]">
                 <Icon name="alert-triangle" size={13} class="text-warning mt-0.5 shrink-0" />
-                <div>The <span class="font-mono">conntrack</span> watcher is <strong>disabled</strong>. Enable it in Settings → Logs Watchers to record per-destination traffic.</div>
+                <div>The <span class="font-mono">conntrack</span> watcher is <strong>disabled</strong>. Enable it in Settings → General → Log Watchers to record per-destination traffic.</div>
               </div>
             {:else if conntrackStatus?.lastError}
               <div class="flex items-start gap-2 p-2 bg-destructive/10 rounded text-[11px]">
                 <Icon name="alert-triangle" size={13} class="text-destructive mt-0.5 shrink-0" />
                 <div class="break-all">conntrack error: {conntrackStatus.lastError}</div>
-              </div>
-            {:else if conntrackStatus}
-              <div class="text-[10px] text-muted-foreground">
-                conntrack watcher: {conntrackStatus.running ? 'running' : 'stopped'} · {conntrackStatus.processed ?? 0} flows recorded
               </div>
             {/if}
 

@@ -1,7 +1,7 @@
 <script>
   /**
    * LanDeviceModal — one LAN device: Overview (name and reserved IP), Access (which VPN clients may
-   * reach it, its internet switch, ad blocking) and Actions (approve, block/unblock, forget). Open it by setting
+   * reach it, its internet switch), Ad blocking (admins) and Actions (approve, block/unblock, forget). Open it by setting
    * `deviceId`; closing sets it back to null. Every change is admin-only and audited on the server;
    * onchanged() lets the parent refresh. Access starts empty: nobody reaches a device until granted.
    */
@@ -23,7 +23,13 @@
   let { deviceId = $bindable(null), network = '', onchanged = undefined } = $props()
 
   const isAdmin = $derived(hasRole($currentUser, 'admin'))
-  const TABS = [{ id: 'overview', label: 'Overview' }, { id: 'access', label: 'Access' }, { id: 'actions', label: 'Actions' }]
+  // Ad blocking is admin-only (it shows browsing history).
+  const TABS = $derived([
+    { id: 'overview', label: 'Overview' },
+    { id: 'access', label: 'Access' },
+    ...(isAdmin ? [{ id: 'adblock', label: 'Ad blocking' }] : []),
+    { id: 'actions', label: 'Actions' },
+  ])
 
   let open = $state(false)
   let tab = $state('overview')
@@ -181,10 +187,13 @@
           <p class="text-[11px] text-muted-foreground mt-2">Nobody can reach a device until you allow them. An allowed client and the device can reach each other.</p>
         </div>
 
-        {#if isAdmin && device.approved && !device.blocked && device.ip}
-          <div class="border-t border-border pt-4">
-            <AdBlockPanel clientKey={'lan:' + device.id} />
-          </div>
+      {:else if tab === 'adblock'}
+        {#if device.blocked || !device.approved}
+          <p class="text-sm text-muted-foreground">{device.blocked ? 'Blocked devices get no address, so there is nothing to filter.' : 'Approve the device first.'}</p>
+        {:else if !device.ip}
+          <p class="text-sm text-muted-foreground">The device has no address yet.</p>
+        {:else}
+          <AdBlockPanel clientKey={'lan:' + device.id} />
         {/if}
 
       {:else}
