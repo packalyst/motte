@@ -5,10 +5,10 @@
   import { onMount } from 'svelte'
   import { apiGet, apiPut, apiPost, apiDelete, toast } from '../stores/app.js'
   import Icon from './Icon.svelte'
-  import Button from './Button.svelte'
   import Input from './Input.svelte'
   import Select from './Select.svelte'
   import Checkbox from './Checkbox.svelte'
+  import GroupButton from './GroupButton.svelte'
 
   let rules = $state([])
   let machines = $state([])
@@ -27,7 +27,7 @@
     try {
       const [r, m] = await Promise.allSettled([apiGet('/api/alerts/rules'), apiGet('/api/fleet/machines')])
       rules = r.status === 'fulfilled' ? (r.value || []).map(normalize) : []
-      machines = m.status === 'fulfilled' ? m.value || [] : []
+      machines = m.status === 'fulfilled' ? (m.value || []).filter((x) => !x.revoked) : [] // a revoked machine reports nothing
     } catch (e) {
       toast(e.message || 'Could not load alert rules', 'error')
     } finally {
@@ -91,58 +91,68 @@
   }
 </script>
 
+{#snippet chip(on, label, onclick, icon)}
+  <button type="button" aria-pressed={on} {onclick}
+    class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors
+      {on ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/50 hover:text-foreground'}">
+    <Icon name={on ? 'check' : icon} size={12} />{label}
+  </button>
+{/snippet}
+
 <div class="space-y-3">
-  <div class="flex items-center justify-between">
-    <h4 class="text-sm font-medium flex items-center gap-1.5"><Icon name="bell-ringing" size={14} /> Resource alert rules</h4>
-    <Button variant="outline" icon="plus" onclick={addRule}>Add rule</Button>
+  <div class="flex items-center gap-3">
+    <h4 class="flex min-w-0 flex-1 items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground after:h-px after:flex-1 after:bg-border">
+      <Icon name="bell-ringing" size={13} />Resource alert rules
+    </h4>
+    <button type="button" class="link-action" onclick={addRule}><Icon name="plus" size={12} />Add rule</button>
   </div>
-  <p class="text-xs text-muted-foreground">
+  <p class="text-[11px] text-muted-foreground">
     Fire when CPU, memory or disk stays over a threshold — on this panel and/or fleet machines. Uses the channels above.
   </p>
 
   {#if loading}
-      <div class="text-sm text-muted-foreground">Loading…</div>
-    {:else if rules.length === 0}
-      <p class="text-xs text-muted-foreground">No rules yet — add one to start alerting.</p>
-    {:else}
-      {#each rules as r (r.id ?? r)}
-        <div class="space-y-2 rounded-md border border-border p-3">
-          <div class="flex flex-wrap items-center gap-2">
-            <Checkbox checked={r.enabled} onchange={(e) => (r.enabled = e.target.checked)} />
-            <Input bind:value={r.name} placeholder="Name" class="w-32" />
-            <Select bind:value={r.metric} options={metricOptions} />
-            <span class="text-xs text-muted-foreground">over</span>
-            <Input type="number" bind:value={r.threshold} class="w-16" /><span class="text-xs">%</span>
-            <span class="text-xs text-muted-foreground">for</span>
-            <Input type="number" bind:value={r.forMin} class="w-16" /><span class="text-xs">min</span>
-            <div class="ml-auto flex items-center gap-1">
-              <Button variant="outline" size="xs" icon="device-floppy" onclick={() => saveRule(r)}>Save</Button>
-              <Button variant="ghost" size="xs" icon="trash" iconOnly onclick={() => removeRule(r)} />
-            </div>
+    <div class="text-sm text-muted-foreground">Loading…</div>
+  {:else if rules.length === 0}
+    <div class="flex items-center gap-3 rounded-lg border border-dashed border-border px-4 py-4 text-xs text-muted-foreground">
+      <Icon name="bell" size={16} class="shrink-0" />No rules yet — add one to start alerting.
+    </div>
+  {:else}
+    {#each rules as r (r.id ?? r)}
+      <div class="rounded-lg border border-border {r.enabled ? '' : 'opacity-70'}">
+        <!-- header: on/off, name, actions -->
+        <div class="flex items-center gap-2.5 border-b border-border px-3 py-2">
+          <Checkbox variant="switch" checked={r.enabled} onchange={(e) => (r.enabled = e.target.checked)} aria-label="Rule enabled" />
+          <div class="min-w-0 flex-1"><Input bind:value={r.name} placeholder="Rule name" aria-label="Rule name" /></div>
+          <div class="btn-group shrink-0">
+            <GroupButton icon="device-floppy" tone="primary" tooltip="Save rule" onclick={() => saveRule(r)} />
+            <GroupButton icon="trash" tone="destructive" tooltip="Delete rule" onclick={() => removeRule(r)} />
           </div>
-          <!-- Targets: the panel host and/or all machines and/or a multi-select of specific ones -->
-          <div class="space-y-1.5 pl-1">
-            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-              <span class="text-xs font-medium text-muted-foreground">Watch:</span>
-              <label class="flex items-center gap-1.5"><Checkbox checked={r.targets.host} onchange={(e) => (r.targets.host = e.target.checked)} /> This panel</label>
-              <label class="flex items-center gap-1.5"><Checkbox checked={r.targets.allMachines} onchange={(e) => (r.targets.allMachines = e.target.checked)} /> All machines</label>
+        </div>
+        <div class="space-y-3 p-3">
+          <!-- condition -->
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Select label="When" bind:value={r.metric} options={metricOptions} />
+            <Input label="Is over" type="number" bind:value={r.threshold} suffixAddon="%" min="1" max="100" />
+            <Input label="For at least" type="number" bind:value={r.forMin} suffixAddon="min" min="1" />
+          </div>
+          <!-- targets -->
+          <div class="space-y-1.5">
+            <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Watch</div>
+            <div class="flex flex-wrap gap-1.5">
+              {@render chip(r.targets.host, 'This panel', () => (r.targets.host = !r.targets.host), 'server')}
+              {@render chip(r.targets.allMachines, 'All machines', () => (r.targets.allMachines = !r.targets.allMachines), 'devices')}
+              {#if !r.targets.allMachines}
+                {#each machines as m (m.id)}
+                  {@render chip(r.targets.machineIds.includes(m.id), m.name || m.id, () => toggleMachine(r, m.id), 'device-desktop')}
+                {/each}
+              {/if}
             </div>
-            {#if !r.targets.allMachines}
-              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pl-6">
-                <span class="text-xs font-medium text-muted-foreground">Machines:</span>
-                {#if machines.length > 0}
-                  {#each machines as m (m.id)}
-                    <label class="flex items-center gap-1.5 text-xs">
-                      <Checkbox checked={r.targets.machineIds.includes(m.id)} onchange={() => toggleMachine(r, m.id)} /> {m.name || m.id}
-                    </label>
-                  {/each}
-                {:else}
-                  <span class="text-xs italic text-muted-foreground">no machines enrolled yet</span>
-                {/if}
-              </div>
+            {#if !r.targets.allMachines && machines.length === 0}
+              <p class="text-[11px] text-muted-foreground">No machines enrolled yet.</p>
             {/if}
           </div>
         </div>
-      {/each}
-    {/if}
+      </div>
+    {/each}
+  {/if}
 </div>

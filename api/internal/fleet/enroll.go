@@ -78,6 +78,7 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "machine-" + id
 	}
+	name = s.uniqueMachineName(name)
 	m := Machine{
 		ID:          id,
 		Name:        name,

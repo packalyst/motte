@@ -22,6 +22,8 @@
   import Gauge from './Gauge.svelte'
   import SessionCard from './SessionCard.svelte'
   import TagEditor from './TagEditor.svelte'
+  import GroupButton from './GroupButton.svelte'
+  import Checkbox from './Checkbox.svelte'
   import SectionNav from './SectionNav.svelte'
   import RecordingList from './RecordingList.svelte'
   import UPlotChart from './UPlotChart.svelte'
@@ -45,8 +47,7 @@
   // openConsole navigates to the standalone console page (not an overlay), opening the given session
   // as a tab there — or a fresh session when none is passed. The target is a one-shot the console
   // page consumes on arrival.
-  // `panel` (files | docker | diag | forwards) opens that console panel on arrival.
-  function openConsole(session = null, panel = null) {
+  function openConsole(session = null) {
     if (!consoleEnabled) {
       toast('Console is disabled for this machine', 'error')
       return
@@ -57,7 +58,6 @@
       session,
       label: session ? liveSessions.find((s) => s.id === session)?.label : null,
       fresh: !session,
-      panel,
     }, { view: 'clients', hash: 'm=' + encodeURIComponent(machine.id) }) // close → back to this machine
   }
 
@@ -163,22 +163,15 @@
   // Badge the Security item with the count that actually needs action now (critical+high CVEs).
   const secBadge = $derived(((cves?.counts?.CRITICAL || 0) + (cves?.counts?.HIGH || 0)) || undefined)
   // `soon` items are capabilities not built yet (AI), shown with an honest placeholder — no fake
-  // data, no backend call. Files / Docker / Diagnostics / Forwards are live console panels.
+  // data, no backend call. Files, Docker, diagnostics and forwards live inside the console itself.
   const navList = $derived([
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'sessions', label: 'Sessions', icon: 'terminal-2' },
-    { id: 'files', label: 'Files', icon: 'folder' },
-    { id: 'docker', label: 'Docker', icon: 'brand-docker' },
-    { id: 'diagnostics', label: 'Diagnostics', icon: 'stethoscope' },
-    { id: 'forwards', label: 'Forwards', icon: 'arrows-exchange' },
-    { id: 'services', label: 'Services', icon: 'stack-2' },
-    { id: 'network', label: 'Network', icon: 'network' },
     { id: 'security', label: 'Security', icon: 'shield-lock', badge: secBadge },
     { id: 'maintenance', label: 'Maintenance', icon: 'tool' },
-    { id: 'host', label: 'Host', icon: 'server' },
     { id: 'ai', label: 'AI tools', icon: 'sparkles', soon: true },
   ])
-  const navIds = ['overview', 'sessions', 'files', 'docker', 'diagnostics', 'forwards', 'services', 'network', 'security', 'maintenance', 'host', 'ai']
+  const navIds = ['overview', 'sessions', 'security', 'maintenance', 'ai']
 
   // Remember the open sub-page in the URL hash (#m=<id>&s=<sub>) so a refresh lands back on it.
   // We only touch the `s` param (the clients page owns `m`) and use replaceState so switching
@@ -487,7 +480,7 @@
 
 <!-- card header: icon tile + title + source subtitle -->
 {#snippet head(icon, title, sub, tint = 'text-muted-foreground')}
-  <div class="flex items-center gap-2.5 mb-3">
+  <div class="panel-head">
     <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 {tint}"><Icon name={icon} size={17} /></span>
     <div class="min-w-0">
       <div class="text-[13px] font-semibold text-foreground">{title}</div>
@@ -498,27 +491,7 @@
 
 <!-- persistent plain-language note (mockup's dashed footer) -->
 {#snippet note(text)}
-  <div class="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-dashed border-border">{text}</div>
-{/snippet}
-
-<!-- A capability that runs as a console panel: explain it, then open the console straight onto that
-     panel — resuming your live session on this host if there is one, else a fresh shell. Same gates
-     as the console itself (enabled + operator+), with the matching explanation when they're not met. -->
-{#snippet consoleTool(icon, title, sub, desc, panel, label)}
-  <div class="bg-card border border-border rounded-xl p-4">
-    {@render head(icon, title, sub, 'text-primary')}
-    {#if canOpenConsole && consoleEnabled}
-      <p class="text-sm text-muted-foreground mb-3">{desc}</p>
-      <Button variant="primary" size="sm" {icon} onclick={() => openConsole(liveSessions[0]?.id ?? null, panel)}>{label}</Button>
-    {:else if isAdmin && !consoleEnabled}
-      <p class="text-sm text-muted-foreground">Enable the console (on the Sessions tab) first — this runs over the same gated channel.</p>
-    {:else if !consoleEnabled}
-      <p class="text-sm text-muted-foreground">The console is disabled for this machine, so this is off.</p>
-    {:else}
-      <p class="text-sm text-muted-foreground">You don't have permission to use the console on this machine.</p>
-    {/if}
-    {@render note('Runs over the console channel, so it needs the console enabled and the operator+ role — the same gates. Read-only shares cannot use it.')}
-  </div>
+  <div class="panel-note">{text}</div>
 {/snippet}
 
 <!-- placeholder for a capability that isn't wired yet — honest "what this will do", no fake data -->
@@ -531,82 +504,72 @@
   </div>
 {/snippet}
 
-<div class="space-y-4">
-  <!-- Header: status · name · live chips · primary actions -->
-  <div class="flex items-start gap-3 flex-wrap">
-    <button onclick={onback} title="Back to all clients"
+<!-- Header: back · name with status · live facts · grouped actions. Lives in the content column. -->
+{#snippet header()}
+  <div class="flex items-start gap-3">
+    <button onclick={onback} title="Back to all clients" aria-label="Back to all clients"
       class="h-8 w-8 grid place-items-center rounded-lg border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer shrink-0">
       <Icon name="arrow-left" size={16} />
     </button>
-    <span class="w-2.5 h-2.5 rounded-full shrink-0 mt-2 {st.dot}"></span>
-    <div class="min-w-[150px] flex-1">
-      <div class="text-lg font-semibold text-foreground truncate leading-tight">{machine.name || machine.id}</div>
-      <div class="text-[11px] text-muted-foreground font-mono flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span>{st.label}</span>
-        {#if machine.last_seen}<span>· seen {timeAgo(machine.last_seen)}</span>{/if}
-        {#if report?.agent}<span>· agent {report.agent}</span>{/if}
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full shrink-0 {st.dot}" title={st.label}></span>
+        <h2 class="truncate text-lg font-semibold leading-tight text-foreground">{machine.name || machine.id}</h2>
         {#if report}
-          <span class="text-foreground">· CPU {round(m.cpu)}%</span>
-          <span class="text-foreground">MEM {round(m.mem)}%</span>
-          <span class="text-foreground">load {(m.load1 ?? 0).toFixed(2)}</span>
+          <span class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium {dryRun ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}">{dryRun ? 'Dry-run' : 'Live'}</span>
         {/if}
       </div>
+      <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+        <span>{st.label}</span>
+        {#if machine.last_seen}<span class="inline-flex items-center gap-1"><Icon name="clock" size={11} />seen {timeAgo(machine.last_seen)}</span>{/if}
+        {#if report?.agent}<span class="inline-flex items-center gap-1"><Icon name="robot" size={11} />agent {report.agent}</span>{/if}
+        {#if report}<span class="hidden items-center gap-1 tabular-nums sm:inline-flex"><Icon name="cpu" size={11} />CPU {round(m.cpu)}% · MEM {round(m.mem)}% · load {(m.load1 ?? 0).toFixed(2)}</span>{/if}
+      </div>
     </div>
-    <!-- live/dry-run pill -->
-    {#if report}
-      <span class="hidden sm:flex items-center gap-1.5 text-xs mt-1.5 shrink-0">
-        <span class="w-2 h-2 rounded-full {dryRun ? 'bg-warning' : 'bg-success'}"></span>
-        <span class="font-medium">{dryRun ? 'Dry-run' : 'Live'}</span>
-      </span>
-    {/if}
-    <!-- grouped actions -->
-    <div class="flex items-center rounded-lg border border-border overflow-hidden shrink-0 divide-x divide-border">
-      <button onclick={refresh} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer">
-        <Icon name="refresh" size={14} />Refresh
-      </button>
+    <div class="btn-group shrink-0">
+      <GroupButton icon="refresh" tooltip="Refresh" onclick={refresh} />
       {#if canOpenConsole && consoleEnabled}
-        <button onclick={() => openConsole()} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-primary hover:bg-primary/10 transition cursor-pointer">
-          <Icon name="terminal-2" size={14} />Console
-        </button>
+        <GroupButton icon="terminal-2" tone="primary" tooltip="Open console" onclick={() => openConsole()} />
       {/if}
-      <button onclick={del} class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition cursor-pointer">
-        <Icon name="trash" size={14} />Delete
-      </button>
+      <GroupButton icon="trash" tone="destructive" tooltip="Delete machine" onclick={del} />
     </div>
   </div>
+{/snippet}
 
+<!-- Menu on the left from the top (desktop); everything else, header first, in the right column. -->
+<div class="flex flex-col gap-4 lg:min-h-[calc(100dvh-8rem)] lg:flex-row">
+  {#if report}<SectionNav only="rail" items={navList} active={activeTab} onselect={go} label="Machine sections" />{/if}
+  <div class="min-w-0 flex-1 space-y-4">
+    {@render header()}
   {#if loading && !report}
-    <div class="bg-card border border-border rounded-xl p-8 text-center text-sm text-muted-foreground">Loading report…</div>
+    <div class="panel p-8 text-center text-sm text-muted-foreground">Loading report…</div>
   {:else if !report}
-    <div class="bg-card border border-border rounded-xl p-8">
+    <div class="panel p-8">
       <EmptyState icon="clock" title="No report yet"
         description="This machine hasn't checked in with a report. It appears once the agent's first metrics/scan cycle completes." />
     </div>
   {:else}
-    <div class="flex flex-col gap-4 lg:min-h-[calc(100dvh-8rem)] lg:flex-row">
-      <SectionNav items={navList} active={activeTab} onselect={go} label="Machine sections" />
-
-      <div class="min-w-0 flex-1 space-y-4">
+    <SectionNav only="select" items={navList} active={activeTab} onselect={go} label="Machine sections" />
     {#if activeTab === 'overview'}
       <!-- Gauges -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div class="bg-card border border-border rounded-xl p-4 flex flex-col items-center justify-center">
+        <div class="panel flex flex-col items-center justify-center">
           <Gauge value={round(m.cpu)} label="CPU" size={150} />
           <div class="text-[11px] text-muted-foreground mt-1">utilization</div>
         </div>
-        <div class="bg-card border border-border rounded-xl p-4 flex flex-col items-center justify-center">
+        <div class="panel flex flex-col items-center justify-center">
           <Gauge value={round(m.mem)} label="Memory" size={150} />
           <div class="text-[11px] text-muted-foreground mt-1 tabular-nums">
             {#if m.mem_total}{formatBytes(m.mem_used)} / {formatBytes(m.mem_total)}{:else}&nbsp;{/if}
           </div>
         </div>
-        <div class="bg-card border border-border rounded-xl p-4 flex flex-col items-center justify-center">
+        <div class="panel flex flex-col items-center justify-center">
           <Gauge value={round(m.disk)} label="Disk" size={150} />
           <div class="text-[11px] text-muted-foreground mt-1 tabular-nums">
             {#if m.disk_total}{formatBytes(m.disk_used)} / {formatBytes(m.disk_total)}{:else}&nbsp;{/if}
           </div>
         </div>
-        <div class="bg-card border border-border rounded-xl p-4 flex flex-col items-center justify-center text-center">
+        <div class="panel flex flex-col items-center justify-center text-center">
           <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Load</div>
           <div class="text-4xl font-bold tabular-nums leading-none mt-2">{(m.load1 ?? 0).toFixed(2)}</div>
           <div class="text-[11px] text-muted-foreground mt-2">uptime {fmtUptime(m.uptime)}</div>
@@ -625,25 +588,19 @@
         <Icon name="chevron-right" size={16} class="text-muted-foreground shrink-0" />
       </button>
 
-      <!-- Tags -->
-      <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('tag', 'Tags', 'who can see this machine')}
-        <TagEditor {tags} canEdit={isAdmin} onsave={saveTags} />
-        {@render note('Operators and viewers can be limited to machines with given tags (Team page → filter icon on a user). Only admins can change tags.')}
-      </div>
-
       <!-- Usage history -->
-      <div class="bg-card border border-border rounded-xl p-4">
-        <div class="flex items-center gap-2.5 mb-3 flex-wrap">
+      <div class="panel">
+        <div class="panel-head flex-wrap">
           <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-muted-foreground"><Icon name="chart-line" size={17} /></span>
           <div class="min-w-0 flex-1">
             <div class="text-[13px] font-semibold text-foreground">Usage history</div>
             <div class="text-[11px] text-muted-foreground truncate">CPU · memory · disk over time</div>
           </div>
-          <!-- average vs peak (both stored; no refetch) -->
-          <Segmented size="sm" label="Statistic" bind:value={histStat} options={[{ value: 'avg', label: 'Avg' }, { value: 'max', label: 'Peak' }]} />
-          <!-- time range -->
-          <Segmented size="sm" label="Time range" bind:value={histRange} options={['24h', '7d', '30d'].map((r) => ({ value: r, label: r }))} />
+          <!-- average vs peak (both stored; no refetch) + time range; their own row on phones -->
+          <div class="flex w-full gap-2 sm:w-auto">
+            <Segmented size="sm" label="Statistic" bind:value={histStat} options={[{ value: 'avg', label: 'Avg' }, { value: 'max', label: 'Peak' }]} />
+            <Segmented size="sm" label="Time range" bind:value={histRange} options={['24h', '7d', '30d'].map((r) => ({ value: r, label: r }))} />
+          </div>
         </div>
         {#if histLoading && histPoints.length === 0}
           <div class="h-[188px] grid place-items-center text-xs text-muted-foreground">Loading history…</div>
@@ -658,7 +615,7 @@
       </div>
 
       <!-- Disk space (per-filesystem, live) -->
-      <div class="bg-card border border-border rounded-xl p-4">
+      <div class="panel">
         {@render head('database', 'Disk space', 'mounted filesystems · live', 'text-info')}
         {#if disks.length}
           <div class="space-y-2.5">
@@ -682,126 +639,173 @@
         {/if}
         {@render note('On-disk filesystems only (tmpfs and other virtual mounts are hidden). A filesystem near 100% is what fills logs and stalls services — watch the fullest one.')}
       </div>
+
+      <!-- What runs and what listens -->
+      <div class="grid gap-4 xl:grid-cols-2 xl:items-start">
+        <div class="panel">
+          {@render head('stack-2', 'Services', `${services?.active ?? 0} running · top memory`, 'text-info')}
+          {#if services?.top?.length}
+            <div class="space-y-2.5">
+              {#each services.top as s}
+                <div class="text-xs">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="font-mono truncate">{s.name}</span>
+                    <span class="ml-auto text-muted-foreground tabular-nums shrink-0">{formatBytes(s.mem)}</span>
+                  </div>
+                  <span class="block h-2 rounded-full bg-muted overflow-hidden">
+                    <span class="block h-full rounded-full bg-info" style="width:{Math.max(2, Math.round((s.mem / svcMax) * 100))}%"></span>
+                  </span>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="text-sm text-muted-foreground py-1">No systemd services reported.</div>
+          {/if}
+          {#if services?.agent}
+            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border text-xs">
+              <Icon name="robot" size={15} class="text-muted-foreground" />
+              <span class="text-muted-foreground">wgscout agent</span>
+              <span class="ml-auto tabular-nums font-medium">{formatBytes(services.agent.mem)}</span>
+              <span class="text-muted-foreground tabular-nums">· {(services.agent.cpu || 0).toFixed(1)}% CPU</span>
+            </div>
+          {/if}
+          {@render note('Running systemd services and the five using the most memory (from each service’s cgroup), plus what the wgscout agent itself uses — so the monitoring’s own footprint is visible.')}
+        </div>
+        <div class="panel">
+          {@render head('network', 'Exposure', 'listening ports · osquery', 'text-info')}
+          {#if facts?.ports?.length}
+            <div class="space-y-2">
+              {#each ['exposed', 'iface', 'local'] as scope}
+                {#if portGroups[scope].length}
+                  <div>
+                    <div class="flex items-center gap-1.5 mb-1">
+                      <span class="w-1.5 h-1.5 rounded-full {scopeMeta[scope].dot}"></span>
+                      <span class="text-[11px] font-medium {scopeMeta[scope].tone}">{scopeMeta[scope].label}</span>
+                      <span class="text-[10px] text-muted-foreground">· {portGroups[scope].length}</span>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                      {#each portGroups[scope] as p}{@render portPill(p)}{/each}
+                    </div>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {:else}
+            <div class="text-sm text-muted-foreground py-1">No listening ports reported.</div>
+          {/if}
+          {@render note('“Exposed” ports are open on all interfaces (reachable from the internet unless firewalled); “local” ones only from the box itself. An unexpected exposed port is worth a look.')}
+        </div>
+      </div>
+
+      <!-- Host facts -->
+      <div class="panel">
+        {@render head('server', 'Host facts', 'os · hardware · identity')}
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border rounded-lg overflow-hidden border border-border">
+          {#each hostFacts as [ic, k, v]}
+            <div class="bg-card px-2.5 py-2 flex items-center gap-2 min-w-0">
+              <Icon name={ic} size={14} class="text-muted-foreground shrink-0" />
+              <div class="min-w-0">
+                <div class="text-[9px] uppercase tracking-wide text-muted-foreground leading-tight">{k}</div>
+                <div class="text-xs font-medium truncate {v ? '' : 'text-muted-foreground'}">{v || '—'}</div>
+              </div>
+            </div>
+          {/each}
+        </div>
+        {#if facts?.sessions?.length}
+          <div class="mt-3 pt-3 border-t border-border">
+            <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Login sessions</div>
+            {#each facts.sessions as s}
+              <div class="flex items-center gap-2 py-0.5 text-xs">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.active ? 'bg-success' : 'bg-muted-foreground/40'}" title={s.active ? 'active' : 'idle'}></span>
+                <span class="font-mono text-foreground shrink-0">{s.user}</span>
+                <span class="text-muted-foreground font-mono truncate">{s.host || s.tty || 'local'}</span>
+                <span class="text-muted-foreground ml-auto shrink-0">{s.when ? timeAgo(s.when) : ''}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Settings: console access, recording and tags (who can see this machine) -->
+      <div class="panel">
+        {@render head('settings', 'Settings', 'console access · recording · tags')}
+        <div class="space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-sm font-medium text-foreground">Browser console</div>
+              <div class="text-[11px] text-muted-foreground">A remote shell from the panel. Turning it on asks for your password again.</div>
+            </div>
+            {#if isAdmin}
+              <Checkbox variant="switch" checked={consoleEnabled} disabled={consoleBusy} onchange={() => setConsole(!consoleEnabled)} aria-label="Browser console" />
+            {:else}
+              <Badge variant={consoleEnabled ? 'success' : 'muted'} size="sm">{consoleEnabled ? 'On' : 'Off'}</Badge>
+            {/if}
+          </div>
+          <div class="flex items-start justify-between gap-3 border-t border-dashed border-border pt-4">
+            <div class="min-w-0">
+              <div class="text-sm font-medium text-foreground">Record sessions</div>
+              <div class="text-[11px] text-muted-foreground">Always: every console session on this machine is recorded (screen output only) for audit.</div>
+            </div>
+            {#if isAdmin}
+              <Segmented size="sm" label="Recording" value={consoleRecord} disabled={consoleBusy} onchange={setRecording}
+                options={[{ value: false, label: 'Off' }, { value: true, label: 'Always', tone: 'destructive' }]} />
+            {:else}
+              <Badge variant={consoleRecord ? 'destructive' : 'muted'} size="sm">{consoleRecord ? 'Always' : 'Off'}</Badge>
+            {/if}
+          </div>
+          <div class="border-t border-dashed border-border pt-4">
+            <div class="mb-2 text-sm font-medium text-foreground">Tags</div>
+            <TagEditor {tags} canEdit={isAdmin} onsave={saveTags} />
+          </div>
+        </div>
+        {@render note('Operators and viewers can be limited to machines with given tags (Settings → Team). Only admins change these settings; each change is logged.')}
+      </div>
     {/if}
 
     {#if activeTab === 'sessions'}
-      <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('terminal-2', 'Console', 'interactive shell to this machine', 'text-primary')}
-        {#if canOpenConsole || isAdmin}
-          <div class="flex flex-wrap items-center gap-2">
-            {#if canOpenConsole && consoleEnabled}
-              <Button variant="primary" size="sm" icon="terminal-2" onclick={() => openConsole()}>New session</Button>
-              <Button variant="ghost" size="sm" icon="refresh" onclick={refreshSessions}>Refresh</Button>
-            {/if}
-            {#if isAdmin}
-              <Button variant={consoleEnabled ? 'outline' : 'primary'} size="sm" icon="power" loading={consoleBusy} onclick={() => setConsole(!consoleEnabled)}>
-                {consoleEnabled ? 'Disable console' : 'Enable console'}
-              </Button>
-              <!-- Recording policy: Off / Always (every session on this machine), never per session. -->
-              <div class="flex items-center gap-1.5 ml-auto text-[11px] text-muted-foreground">
-                <span>Recording</span>
-                <Segmented size="sm" label="Recording" value={consoleRecord} disabled={consoleBusy} onchange={setRecording}
-                  options={[{ value: false, label: 'Off' }, { value: true, label: 'Always', tone: 'destructive' }]} />
-              </div>
-            {/if}
-            {#if !consoleEnabled && !isAdmin}
-              <span class="text-sm text-muted-foreground">Console is disabled for this machine.</span>
-            {/if}
+      <div class="panel">
+        <div class="panel-head">
+          <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-primary"><Icon name="terminal-2" size={17} /></span>
+          <div class="min-w-0 flex-1">
+            <div class="text-[13px] font-semibold text-foreground">Console sessions</div>
+            <div class="text-[11px] text-muted-foreground truncate">{consoleEnabled ? `${liveSessions.length} live · they keep running when you close the browser` : 'the console is off for this machine'}</div>
           </div>
-
-          <!-- Resumable sessions: a shell survives a browser drop (tmux), so reattach after a reload. -->
-          {#if consoleEnabled && canOpenConsole}
-            <div class="mt-3 pt-3 border-t border-border">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Your live sessions</div>
-              {#if liveSessions.length}
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {#each liveSessions as s (s.id)}
-                    <SessionCard session={s} machine={{ id: machine.id, name: machine.name }}
-                      onresume={(x) => openConsole(x.id)} onkill={killSession} />
-                  {/each}
-                </div>
-              {:else}
-                <div class="text-xs text-muted-foreground py-1">No resumable sessions yet. Start one — it survives a disconnect, so you can reattach after a reload or dropped connection.</div>
-              {/if}
-            </div>
+          {#if canOpenConsole && consoleEnabled}
+            <button type="button" class="link-action" onclick={() => openConsole()}><Icon name="plus" size={12} />New session</button>
+            <Button variant="ghost" size="xs" iconOnly icon="refresh" onclick={refreshSessions} tooltip="Refresh" />
           {/if}
-
-          <!-- Recorded sessions (one continuous recording per session; own, or everyone's for admins).
-               Reloads as the live-session set changes; stays listable after the console is disabled. -->
-          {#if canOpenConsole}
-            <RecordingList machineId={machine.id} live={liveSessions.length} hideEmpty={!consoleRecord} class="mt-3 pt-3 border-t border-border"
-              emptyText="No recordings yet. With recording on, every session on this machine is recorded from the moment it opens." />
-          {/if}
-        {:else}
+        </div>
+        {#if !canOpenConsole}
           <div class="text-sm text-muted-foreground">You don't have permission to use the console.</div>
-        {/if}
-        {@render note('A remote interactive shell is gated: enable per-machine (admin, re-authenticate), then open (operator+). Sessions resume server-side (tmux) — reattach from the list above after a reload. With recording set to Always, every session is recorded (output only) for audit; operators see their own recordings, admins see everyone’s, and each playback is logged. Recordings are encrypted on disk; only an admin can delete one (re-authenticated, logged).')}
-      </div>
-    {/if}
-
-    {#if activeTab === 'services'}
-      <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('stack-2', 'Services', `${services?.active ?? 0} running · top memory`, 'text-info')}
-        {#if services?.top?.length}
-          <div class="space-y-2.5">
-            {#each services.top as s}
-              <div class="text-xs">
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="font-mono truncate">{s.name}</span>
-                  <span class="ml-auto text-muted-foreground tabular-nums shrink-0">{formatBytes(s.mem)}</span>
-                </div>
-                <span class="block h-2 rounded-full bg-muted overflow-hidden">
-                  <span class="block h-full rounded-full bg-info" style="width:{Math.max(2, Math.round((s.mem / svcMax) * 100))}%"></span>
-                </span>
-              </div>
+        {:else if !consoleEnabled}
+          <div class="flex items-center gap-3 rounded-lg border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
+            <Icon name="lock" size={16} class="shrink-0" />
+            {#if isAdmin}The console is off. Turn it on in Overview → Settings.{:else}The console is off for this machine.{/if}
+          </div>
+        {:else if liveSessions.length}
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {#each liveSessions as s (s.id)}
+              <SessionCard session={s} machine={{ id: machine.id, name: machine.name }} onresume={(x) => openConsole(x.id)} onkill={killSession} />
             {/each}
           </div>
         {:else}
-          <div class="text-sm text-muted-foreground py-1">No systemd services reported.</div>
-        {/if}
-        {#if services?.agent}
-          <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border text-xs">
-            <Icon name="robot" size={15} class="text-muted-foreground" />
-            <span class="text-muted-foreground">wgscout agent</span>
-            <span class="ml-auto tabular-nums font-medium">{formatBytes(services.agent.mem)}</span>
-            <span class="text-muted-foreground tabular-nums">· {(services.agent.cpu || 0).toFixed(1)}% CPU</span>
+          <div class="flex items-center gap-3 rounded-lg border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
+            <Icon name="terminal-2" size={16} class="shrink-0" />No live sessions. Start one — you can reattach after a reload or a dropped connection.
           </div>
         {/if}
-        {@render note('Running systemd services and the five using the most memory (from each service’s cgroup), plus what the wgscout agent itself uses — so the monitoring’s own footprint is visible.')}
-      </div>
-    {/if}
-
-    {#if activeTab === 'network'}
-      <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('network', 'Exposure', 'listening ports · osquery', 'text-info')}
-        {#if facts?.ports?.length}
-          <div class="space-y-2">
-            {#each ['exposed', 'iface', 'local'] as scope}
-              {#if portGroups[scope].length}
-                <div>
-                  <div class="flex items-center gap-1.5 mb-1">
-                    <span class="w-1.5 h-1.5 rounded-full {scopeMeta[scope].dot}"></span>
-                    <span class="text-[11px] font-medium {scopeMeta[scope].tone}">{scopeMeta[scope].label}</span>
-                    <span class="text-[10px] text-muted-foreground">· {portGroups[scope].length}</span>
-                  </div>
-                  <div class="flex flex-wrap gap-1.5">
-                    {#each portGroups[scope] as p}{@render portPill(p)}{/each}
-                  </div>
-                </div>
-              {/if}
-            {/each}
-          </div>
-        {:else}
-          <div class="text-sm text-muted-foreground py-1">No listening ports reported.</div>
+        <!-- Recordings stay listable after the console is turned off; reload as sessions change. -->
+        {#if canOpenConsole}
+          <RecordingList machineId={machine.id} live={liveSessions.length} hideEmpty={!consoleRecord} class="mt-4 border-t border-dashed border-border pt-4"
+            emptyText="No recordings yet. With recording on, every session on this machine is recorded from the moment it opens." />
         {/if}
-        {@render note('“Exposed” ports are open on all interfaces (reachable from the internet unless firewalled); “local” ones only from the box itself. An unexpected exposed port is worth a look.')}
+        {@render note('Opening a session may ask for your password again (step-up). Sessions run in tmux on the machine, so they survive a disconnect. Recordings are encrypted on disk, each playback is logged, and only an admin can delete one.')}
       </div>
     {/if}
 
     {#if activeTab === 'security'}
       <!-- Vulnerabilities -->
-      <div class="bg-card border border-border rounded-xl p-4">
-        <div class="flex items-start gap-2.5 mb-3">
+      <div class="panel">
+        <div class="panel-head !items-start">
           <span class="w-9 h-9 rounded-lg grid place-items-center bg-muted border border-border shrink-0 text-warning"><Icon name="package" size={17} /></span>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
@@ -859,7 +863,7 @@
       </div>
 
       <!-- Blocking -->
-      <div class="bg-card border border-border rounded-xl p-4">
+      <div class="panel">
         {@render head('ban', 'Blocking', `${blockedIPs.length} IP${blockedIPs.length === 1 ? '' : 's'} blocked (CrowdSec + manual)`, 'text-destructive')}
         <div class="flex flex-wrap items-center gap-2">
           <div class="flex-1 min-w-[180px]">
@@ -902,7 +906,7 @@
 
     {#if activeTab === 'maintenance'}
       <!-- Agent + run state -->
-      <div class="bg-card border border-border rounded-xl p-4">
+      <div class="panel">
         {@render head('robot', 'Agent', report?.agent ? `wgscout ${report.agent}` : 'wgscout')}
         <div class="flex flex-wrap items-center gap-3 text-xs">
           {#if agentUpdate.state === 'current'}
@@ -942,7 +946,7 @@
       </div>
 
       <!-- Actions: patching + lifecycle -->
-      <div class="bg-card border border-border rounded-xl p-4">
+      <div class="panel">
         {@render head('tool', 'Actions', 'patching · lifecycle')}
         <div class="space-y-2.5">
           <div>
@@ -970,7 +974,7 @@
 
       <!-- Recent commands -->
       {#if commands.length}
-        <div class="bg-card border border-border rounded-xl p-4">
+        <div class="panel">
           {@render head('history', 'Recent commands', 'queued actions + results')}
           <div class="max-h-60 overflow-y-auto -mr-1 pr-1">
             {#each commands as c}
@@ -987,59 +991,11 @@
       {/if}
     {/if}
 
-    {#if activeTab === 'host'}
-      <!-- Host facts -->
-      <div class="bg-card border border-border rounded-xl p-4">
-        {@render head('server', 'Host facts', 'os · hardware · identity')}
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border rounded-lg overflow-hidden border border-border">
-          {#each hostFacts as [ic, k, v]}
-            <div class="bg-card px-2.5 py-2 flex items-center gap-2 min-w-0">
-              <Icon name={ic} size={14} class="text-muted-foreground shrink-0" />
-              <div class="min-w-0">
-                <div class="text-[9px] uppercase tracking-wide text-muted-foreground leading-tight">{k}</div>
-                <div class="text-xs font-medium truncate {v ? '' : 'text-muted-foreground'}">{v || '—'}</div>
-              </div>
-            </div>
-          {/each}
-        </div>
-        {#if facts?.sessions?.length}
-          <div class="mt-3 pt-3 border-t border-border">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Login sessions</div>
-            {#each facts.sessions as s}
-              <div class="flex items-center gap-2 py-0.5 text-xs">
-                <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.active ? 'bg-success' : 'bg-muted-foreground/40'}" title={s.active ? 'active' : 'idle'}></span>
-                <span class="font-mono text-foreground shrink-0">{s.user}</span>
-                <span class="text-muted-foreground font-mono truncate">{s.host || s.tty || 'local'}</span>
-                <span class="text-muted-foreground ml-auto shrink-0">{s.when ? timeAgo(s.when) : ''}</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    {#if activeTab === 'files'}
-      {@render consoleTool('folder', 'File browser', 'browse · upload · download · edit · delete',
-        'Browse, select, upload, download, edit and delete files on this host over the encrypted agent channel.', 'files', 'Open files')}
-    {/if}
-    {#if activeTab === 'docker'}
-      {@render consoleTool('brand-docker', 'Docker', 'containers · logs · start / stop / restart',
-        'List this host’s containers, read their logs and start, stop or restart them.', 'docker', 'Open Docker')}
-    {/if}
-    {#if activeTab === 'diagnostics'}
-      {@render consoleTool('stethoscope', 'Diagnostics', 'ping · traceroute · DNS',
-        'Check reachability and name resolution from this host’s point of view — useful when a peer or service “can’t be reached”.', 'diag', 'Open diagnostics')}
-    {/if}
-    {#if activeTab === 'forwards'}
-      {@render consoleTool('arrows-exchange', 'Port forwards', 'reach a service this host can see',
-        'Open a web service that only this host can reach (e.g. localhost:8080) in your browser, tunneled through the agent. Forwards are private to you and expire after 2 hours.', 'forwards', 'Open forwards')}
-    {/if}
     {#if activeTab === 'ai'}
       {@render soon('sparkles', 'AI tools', 'Explain command output and suggest commands. Opt-in — it sends only the text you choose to an AI provider, so it stays off by default.')}
     {/if}
-      </div>
-    </div>
   {/if}
+  </div>
 </div>
 
 <!-- FILE-INTEGRITY DRILL-DOWN -->

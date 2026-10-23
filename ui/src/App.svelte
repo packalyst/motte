@@ -7,6 +7,7 @@
   import Login from './views/Login.svelte'
   import SetupWizard from './views/SetupWizard.svelte'
   import ConfirmModal from './components/ConfirmModal.svelte'
+  import Toaster from './components/Toaster.svelte'
   import IdleLock from './components/IdleLock.svelte'
   import InstallPrompt from './components/InstallPrompt.svelte'
   import OfflineOverlay from './components/OfflineOverlay.svelte'
@@ -157,8 +158,9 @@
   <Login onLogin={handleLogin} />
 {/if}
 
-<!-- Global confirm modal -->
+<!-- Global confirm modal and toasts -->
 <ConfirmModal />
+<Toaster />
 
 <!-- Idle lock: self-arms only when the admin has set idle_lock_minutes > 0 -->
 {#if user}

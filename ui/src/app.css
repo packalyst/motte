@@ -201,43 +201,6 @@ body {
   overflow: hidden;
 }
 
-.kt-toast-progress {
-    height: 1px;
-}
-
-/* Mobile toast - native notification style */
-@media screen and (max-width: 640px) {
-  /* Toast container - full width at top */
-  .kt-toast-container {
-    left: 0 !important;
-    right: 0 !important;
-    top: 0 !important;
-    bottom: auto !important;
-    padding: 0 !important;
-    width: 100% !important;
-    max-width: 100% !important;
-  }
-
-  /* Individual toast - notification style */
-  .kt-toast {
-    width: 96% !important;
-    max-width: 96% !important;
-    margin: 0 !important;
-    border-radius: 0 0 12px 12px !important;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
-    padding: 14px 16px !important;
-    backdrop-filter: blur(10px);
-    left:2%
-  }
-
-  /* Safe area for notch/island */
-  .kt-toast:first-child {
-    padding-top: calc(env(safe-area-inset-top, 0px) + 14px) !important;
-  }
-
-
-}
-
 /* KTUI Switch - improve visibility in dark mode */
 .dark .kt-switch:not(:checked) {
   @apply border border-border bg-muted;
@@ -294,6 +257,18 @@ input:-webkit-autofill:active {
 @layer components {
   .custom_btns {
     @apply flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer;
+  }
+
+  /* Card with a header band and an optional footer note, each set off by a dashed line (machine
+     page; trial for wider use). panel-head / panel-note bleed to the card edges (p-4). */
+  .panel {
+    @apply rounded-xl border border-border bg-card p-4;
+  }
+  .panel-head {
+    @apply -mx-4 -mt-4 mb-4 flex items-center gap-2.5 border-b border-dashed border-border px-4 py-3;
+  }
+  .panel-note {
+    @apply -mx-4 -mb-4 mt-4 border-t border-dashed border-border px-4 py-3 text-[11px] text-muted-foreground;
   }
 
   /* Inline text action beside a section heading ("+ Add …", "+ New session") */

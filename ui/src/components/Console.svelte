@@ -284,7 +284,7 @@
   }
 
   // Driven by the parent (the global console page).
-  // Return openTab's promise so the parent can wait for the tab to exist (e.g. before openPanel).
+  // Return openTab's promise so the parent can wait for the tab to exist.
   export function openNew(machine) { return openTab(machine) }
   export function openSession(s) { return openTab({ id: s.machine_id, name: s.machine_name }, s.id, s.label) }
   export function hasTabs() { return tabs.length > 0 }
@@ -648,12 +648,6 @@
     if (tool) filesVisible = false
     loadTool(tool)
     fitAll()
-  }
-  // Driven by the parent: open a panel on arrival (machine page → "Open Docker" etc.). Safe to call
-  // before the session connects — the state is set now and the data loads in onOpen.
-  export function openPanel(name) {
-    if (name === 'files') { tool = null; filesVisible = true; if (activeSocket()?.isOpen) listFiles(filesCwd) }
-    else { filesVisible = false; tool = name; if (activeSocket()?.isOpen) loadTool(name) }
   }
   function refreshGit() { const s = activeSocket(); if (!s) return; gitLoading = true; s.gitStatus() }
   function dockerPs() { const s = activeSocket(); if (!s) return; dockerLoading = true; s.docker('ps') }

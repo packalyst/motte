@@ -1,9 +1,11 @@
 <script>
   import Icon from './Icon.svelte'
 
+  // size 'sm' makes the search box the small height, to match small selects / toggles / buttons.
   let {
     search = $bindable(''),
     placeholder = 'Search...',
+    size = 'default',
     children
   } = $props()
 </script>
@@ -11,7 +13,7 @@
 <div class="rounded-xl border border-border bg-muted/80 px-4 py-3">
   <div class="flex flex-wrap items-center gap-3">
     <!-- Search input -->
-    <div class="kt-input min-w-[160px] max-w-xl flex-1 sm:min-w-[220px]">
+    <div class="kt-input {size === 'sm' ? 'kt-input-sm' : ''} min-w-[160px] max-w-xl flex-1 sm:min-w-[220px]">
       <Icon name="search" size={16} />
       <input
         type="search"
