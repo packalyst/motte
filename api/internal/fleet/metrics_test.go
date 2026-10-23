@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // report builds a minimal report body carrying just the metrics we roll into history.
@@ -69,6 +70,29 @@ func TestMetricsHistoryEndpoint(t *testing.T) {
 	}
 	if body.Points[0].CPUAvg != 10 || body.Points[0].DiskAvg != 30 {
 		t.Errorf("unexpected point %+v", body.Points[0])
+	}
+	if la := body.Points[0].LoadAvg; la == nil || *la != 0.5 {
+		t.Errorf("load_avg = %v, want 0.5", la)
+	}
+}
+
+// A bucket stored without load (older rows) still comes back, with load_avg null.
+func TestMetricsHistoryNullLoad(t *testing.T) {
+	svc := newTestService(t)
+	if _, err := svc.db.Exec(`INSERT INTO fleet_metrics (machine_id, bucket, cpu_avg, cpu_max, mem_avg, mem_max, disk_avg, disk_max, samples)
+		VALUES ('m1', ?, 10, 10, 20, 20, 30, 30, 1)`, time.Now().Unix()/300*300); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	svc.handleMetricsHistory(rec, asOwner(httptest.NewRequest("GET", "/api/fleet/metrics?id=m1", nil)))
+	var body struct {
+		Points []metricPoint `json:"points"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Points) != 1 || body.Points[0].LoadAvg != nil {
+		t.Fatalf("want one point with null load, got %+v", body.Points)
 	}
 }
 

@@ -19,7 +19,7 @@
   import EmptyState from './EmptyState.svelte'
   import Modal from './Modal.svelte'
   import Segmented from './Segmented.svelte'
-  import Gauge from './Gauge.svelte'
+  import Sparkline from './Sparkline.svelte'
   import SessionCard from './SessionCard.svelte'
   import TagEditor from './TagEditor.svelte'
   import GroupButton from './GroupButton.svelte'
@@ -28,7 +28,7 @@
   import RecordingList from './RecordingList.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes, formatDate, formatExpiryDate } from '$lib/utils/format.js'
-  import { usageColor, statusInfo, round, fmtUptime } from '$lib/fleet.js'
+  import { usageColor, usageTone, statusInfo, round, fmtUptime } from '$lib/fleet.js'
 
   let { machine, latestAgent = null, onback, ondeleted, onviewcves } = $props()
 
@@ -306,6 +306,15 @@
       p.map((d) => d[`disk_${k}`]),
     ]
   })
+
+  // The vitals strip: each value's trend is its average line from the usage history above.
+  const ofTotal = (used, total) => (total ? `${formatBytes(used)} of ${formatBytes(total)}` : '')
+  const vitals = $derived([
+    { key: 'cpu', icon: 'cpu', label: 'CPU', value: m.cpu, sub: 'utilization' },
+    { key: 'mem', icon: 'database', label: 'Memory', value: m.mem, sub: ofTotal(m.mem_used, m.mem_total) },
+    { key: 'disk', icon: 'device-floppy', label: 'Disk', value: m.disk, sub: ofTotal(m.disk_used, m.disk_total) + (m.disk_total ? ' on /' : '') },
+  ].map((v) => ({ ...v, trend: histPoints.map((d) => d[`${v.key}_avg`]) })))
+  const loadTrend = $derived(histPoints.map((d) => d.load_avg))
 
   onMount(() => {
     if (st.gone) { loading = false; return } // nothing left to load or watch
@@ -664,30 +673,40 @@
   {:else}
     <SectionNav only="select" items={navList} active={activeTab} onselect={go} label="Machine sections" />
     {#if activeTab === 'overview'}
-      <!-- Gauges -->
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div class="panel flex flex-col items-center justify-center">
-          <Gauge value={round(m.cpu)} label="CPU" size={150} />
-          <div class="text-[11px] text-muted-foreground mt-1">utilization</div>
-        </div>
-        <div class="panel flex flex-col items-center justify-center">
-          <Gauge value={round(m.mem)} label="Memory" size={150} />
-          <div class="text-[11px] text-muted-foreground mt-1 tabular-nums">
-            {#if m.mem_total}{formatBytes(m.mem_used)} / {formatBytes(m.mem_total)}{:else}&nbsp;{/if}
+      <!-- Vitals: one surface with hairline dividers. Each shows the value now, what it's out of,
+           and its trend over the usage-history range (the same points; no extra request). -->
+      <section aria-label="Vitals" class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border lg:grid-cols-4">
+        {#each vitals as v (v.key)}
+          {@const pct = round(v.value)}
+          <div class="flex min-w-0 flex-col gap-2 bg-card p-4">
+            <div class="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+              <Icon name={v.icon} size={14} />{v.label}
+              {#if v.trend.length > 1}<span class="ms-auto text-[10px] font-normal">{histRange}</span>{/if}
+            </div>
+            <div class="flex items-baseline gap-1.5">
+              <span class="text-2xl font-bold leading-none tabular-nums text-foreground">{pct}<span class="text-sm font-medium text-muted-foreground">%</span></span>
+              <span class="h-2 w-2 self-center rounded-full" style="background: var(--{usageTone(pct)})" title={usageTone(pct) === 'success' ? 'Fine' : usageTone(pct) === 'warning' ? 'High' : 'Very high'}></span>
+            </div>
+            {#if v.trend.length > 1}
+              <Sparkline values={v.trend} color="var(--{usageTone(pct)})" label="{v.label} over {histRange}" />
+            {:else}
+              <span class="my-3.5 block h-1 overflow-hidden rounded-full bg-muted"><span class="block h-full rounded-full {usageColor(pct)}" style="width:{Math.min(pct, 100)}%"></span></span>
+            {/if}
+            <div class="mt-auto truncate text-[11px] tabular-nums text-muted-foreground">{v.sub}</div>
           </div>
-        </div>
-        <div class="panel flex flex-col items-center justify-center">
-          <Gauge value={round(m.disk)} label="Disk" size={150} />
-          <div class="text-[11px] text-muted-foreground mt-1 tabular-nums">
-            {#if m.disk_total}{formatBytes(m.disk_used)} / {formatBytes(m.disk_total)}{:else}&nbsp;{/if}
+        {/each}
+        <div class="flex min-w-0 flex-col gap-2 bg-card p-4">
+          <div class="flex items-center gap-2 text-[11px] font-medium text-muted-foreground"><Icon name="activity" size={14} />Load
+            {#if loadTrend.length > 1}<span class="ms-auto text-[10px] font-normal">{histRange}</span>{/if}
           </div>
+          <span class="text-2xl font-bold leading-none tabular-nums text-foreground">{(m.load1 ?? 0).toFixed(2)}</span>
+          {#if loadTrend.length > 1}
+            <!-- no fixed ceiling for load: scaled to the range's own peak (at least 1) -->
+            <Sparkline values={loadTrend} max={Math.max(1, ...loadTrend.filter((x) => x != null)) * 1.15} color="var(--info)" label="Load over {histRange}" />
+          {/if}
+          <div class="mt-auto truncate text-[11px] tabular-nums text-muted-foreground">1-min average · up {m.uptime ? fmtUptime(m.uptime) : '—'}</div>
         </div>
-        <div class="panel flex flex-col items-center justify-center text-center">
-          <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Load</div>
-          <div class="text-4xl font-bold tabular-nums leading-none mt-2">{(m.load1 ?? 0).toFixed(2)}</div>
-          <div class="text-[11px] text-muted-foreground mt-2">uptime {fmtUptime(m.uptime)}</div>
-        </div>
-      </div>
+      </section>
 
       <!-- Security glance → Security tab -->
       <button type="button" onclick={() => go('security')}
@@ -700,6 +719,73 @@
         </div>
         <Icon name="chevron-right" size={16} class="text-muted-foreground shrink-0" />
       </button>
+
+      <!-- Host facts and settings: side by side on wide screens -->
+      <div class="grid gap-4 xl:grid-cols-2 xl:items-start">
+        <!-- Host facts -->
+        <div class="panel">
+          {@render head('server', 'Host facts', 'os · hardware · identity')}
+          <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3 gap-px bg-border rounded-lg overflow-hidden border border-border">
+            {#each hostFacts as [ic, k, v]}
+              <div class="bg-card px-2.5 py-2 flex items-center gap-2 min-w-0">
+                <Icon name={ic} size={14} class="text-muted-foreground shrink-0" />
+                <div class="min-w-0">
+                  <div class="text-[9px] uppercase tracking-wide text-muted-foreground leading-tight">{k}</div>
+                  <div class="text-xs font-medium truncate {v ? '' : 'text-muted-foreground'}">{v || '—'}</div>
+                </div>
+              </div>
+            {/each}
+          </div>
+          {#if facts?.sessions?.length}
+            <div class="mt-3 pt-3 border-t border-border">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Login sessions</div>
+              {#each facts.sessions as s}
+                <div class="flex items-center gap-2 py-0.5 text-xs">
+                  <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.active ? 'bg-success' : 'bg-muted-foreground/40'}" title={s.active ? 'active' : 'idle'}></span>
+                  <span class="font-mono text-foreground shrink-0">{s.user}</span>
+                  <span class="text-muted-foreground font-mono truncate">{s.host || s.tty || 'local'}</span>
+                  <span class="text-muted-foreground ml-auto shrink-0">{s.when ? timeAgo(s.when) : ''}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <!-- Settings: console access, recording and tags (who can see this machine) -->
+        <div class="panel">
+          {@render head('settings', 'Settings', 'console access · recording · tags')}
+          <div class="space-y-4">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-foreground">Browser console</div>
+                <div class="text-[11px] text-muted-foreground">A remote shell from the panel. Turning it on asks for your password again.</div>
+              </div>
+              {#if isAdmin}
+                <Checkbox variant="switch" checked={consoleEnabled} disabled={consoleBusy} onchange={() => setConsole(!consoleEnabled)} aria-label="Browser console" />
+              {:else}
+                <Badge variant={consoleEnabled ? 'success' : 'muted'} size="sm">{consoleEnabled ? 'On' : 'Off'}</Badge>
+              {/if}
+            </div>
+            <div class="flex items-start justify-between gap-3 border-t border-dashed border-border pt-4">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-foreground">Record sessions</div>
+                <div class="text-[11px] text-muted-foreground">Always: every console session on this machine is recorded (screen output only) for audit.</div>
+              </div>
+              {#if isAdmin}
+                <Segmented size="sm" label="Recording" value={consoleRecord} disabled={consoleBusy} onchange={setRecording}
+                  options={[{ value: false, label: 'Off' }, { value: true, label: 'Always', tone: 'destructive' }]} />
+              {:else}
+                <Badge variant={consoleRecord ? 'destructive' : 'muted'} size="sm">{consoleRecord ? 'Always' : 'Off'}</Badge>
+              {/if}
+            </div>
+            <div class="border-t border-dashed border-border pt-4">
+              <div class="mb-2 text-sm font-medium text-foreground">Tags</div>
+              <TagEditor {tags} canEdit={isAdmin} onsave={saveTags} />
+            </div>
+          </div>
+          {@render note('Operators and viewers can be limited to machines with given tags (Settings → Team). Only admins change these settings; each change is logged.')}
+        </div>
+      </div>
 
       <!-- Usage history -->
       <div class="panel">
@@ -806,69 +892,6 @@
         </div>
       </div>
 
-      <!-- Host facts -->
-      <div class="panel">
-        {@render head('server', 'Host facts', 'os · hardware · identity')}
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border rounded-lg overflow-hidden border border-border">
-          {#each hostFacts as [ic, k, v]}
-            <div class="bg-card px-2.5 py-2 flex items-center gap-2 min-w-0">
-              <Icon name={ic} size={14} class="text-muted-foreground shrink-0" />
-              <div class="min-w-0">
-                <div class="text-[9px] uppercase tracking-wide text-muted-foreground leading-tight">{k}</div>
-                <div class="text-xs font-medium truncate {v ? '' : 'text-muted-foreground'}">{v || '—'}</div>
-              </div>
-            </div>
-          {/each}
-        </div>
-        {#if facts?.sessions?.length}
-          <div class="mt-3 pt-3 border-t border-border">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Login sessions</div>
-            {#each facts.sessions as s}
-              <div class="flex items-center gap-2 py-0.5 text-xs">
-                <span class="w-1.5 h-1.5 rounded-full shrink-0 {s.active ? 'bg-success' : 'bg-muted-foreground/40'}" title={s.active ? 'active' : 'idle'}></span>
-                <span class="font-mono text-foreground shrink-0">{s.user}</span>
-                <span class="text-muted-foreground font-mono truncate">{s.host || s.tty || 'local'}</span>
-                <span class="text-muted-foreground ml-auto shrink-0">{s.when ? timeAgo(s.when) : ''}</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      <!-- Settings: console access, recording and tags (who can see this machine) -->
-      <div class="panel">
-        {@render head('settings', 'Settings', 'console access · recording · tags')}
-        <div class="space-y-4">
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <div class="text-sm font-medium text-foreground">Browser console</div>
-              <div class="text-[11px] text-muted-foreground">A remote shell from the panel. Turning it on asks for your password again.</div>
-            </div>
-            {#if isAdmin}
-              <Checkbox variant="switch" checked={consoleEnabled} disabled={consoleBusy} onchange={() => setConsole(!consoleEnabled)} aria-label="Browser console" />
-            {:else}
-              <Badge variant={consoleEnabled ? 'success' : 'muted'} size="sm">{consoleEnabled ? 'On' : 'Off'}</Badge>
-            {/if}
-          </div>
-          <div class="flex items-start justify-between gap-3 border-t border-dashed border-border pt-4">
-            <div class="min-w-0">
-              <div class="text-sm font-medium text-foreground">Record sessions</div>
-              <div class="text-[11px] text-muted-foreground">Always: every console session on this machine is recorded (screen output only) for audit.</div>
-            </div>
-            {#if isAdmin}
-              <Segmented size="sm" label="Recording" value={consoleRecord} disabled={consoleBusy} onchange={setRecording}
-                options={[{ value: false, label: 'Off' }, { value: true, label: 'Always', tone: 'destructive' }]} />
-            {:else}
-              <Badge variant={consoleRecord ? 'destructive' : 'muted'} size="sm">{consoleRecord ? 'Always' : 'Off'}</Badge>
-            {/if}
-          </div>
-          <div class="border-t border-dashed border-border pt-4">
-            <div class="mb-2 text-sm font-medium text-foreground">Tags</div>
-            <TagEditor {tags} canEdit={isAdmin} onsave={saveTags} />
-          </div>
-        </div>
-        {@render note('Operators and viewers can be limited to machines with given tags (Settings → Team). Only admins change these settings; each change is logged.')}
-      </div>
     {/if}
 
     {#if activeTab === 'sessions'}
