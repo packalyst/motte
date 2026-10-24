@@ -16,6 +16,7 @@
   import Button from '../components/Button.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import DropdownButton from '../components/DropdownButton.svelte'
+  import { flagUrl } from '../lib/utils/flags.js'
   let { loading = $bindable(true) } = $props()
 
   // Data state
@@ -835,7 +836,7 @@
                           <div class="flex min-w-0 flex-wrap items-center gap-2">
                             {#if entry.entryType === 'country'}
                               <img
-                                src="https://flagcdn.com/{entry.value.toLowerCase()}.svg"
+                                src={flagUrl(entry.value)}
                                 width="18"
                                 alt={entry.value}
                                 class="rounded-sm shadow-sm"
@@ -1116,7 +1117,7 @@
                     class="px-2 py-1.5 rounded-md hover:bg-muted transition-colors {selectedCountries.includes(country.code) ? 'bg-primary/10' : ''}"
                   >
                     <img
-                      use:lazyLoad={"https://flagcdn.com/" + country.code.toLowerCase() + ".svg"}
+                      use:lazyLoad={flagUrl(country.code)}
                       width="16"
                       alt={country.code}
                       class="rounded-sm"

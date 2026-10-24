@@ -48,7 +48,7 @@ export function getDefaultPerPage() {
 export function lazyLoad(node, src) {
   const observer = new IntersectionObserver((entries) => {
     if (entries[0].isIntersecting) {
-      node.src = src
+      if (src) node.src = src
       observer.disconnect()
     }
   }, { rootMargin: '50px' })
