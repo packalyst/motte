@@ -221,7 +221,8 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if active {
 		if req.FinishMigration {
-			// It can cut machines off for good (they then need reinstalling): a fresh step-up.
+			// It can cut machines off for good (they then need reinstalling): a step-up, like the other
+			// fleet actions (passes without a prompt inside the fleet step-up grace window).
 			if status, err := s.verifyStepUp(r, "close the old port", req.CurrentPassword, req.TotpCode); err != nil {
 				router.JSONError(w, err.Error(), status)
 				return
@@ -478,8 +479,9 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	// A rescan's folders to skip are guarded once the request is otherwise good (in scope, a valid
 	// payload); anything else is refused by enqueueGuarded as usual, without that check running.
-	// Whether the machine is online is left to enqueueGuarded: it can come online between two checks,
-	// and the guard must never be skipped for a rescan that then goes through.
+	// It runs whether or not the machine is online (a machine can come online between two checks,
+	// and the guard must never be skipped for a rescan that then goes through), so adding folders
+	// on an offline machine may ask for a step-up before the request is refused as offline.
 	var excl *scanExcludeChange
 	if req.Type == "rescan" && s.machineAllowed(r, req.MachineID) && validateCommandPayload(req.Type, payload) == nil {
 		if excl, status, err = s.guardScanExcludes(r, req.MachineID, payload, req.CurrentPassword, req.TotpCode); err != nil {

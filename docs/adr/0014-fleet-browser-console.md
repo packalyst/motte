@@ -32,7 +32,11 @@ absent. tmux's status bar is off (the panel shows the session). Under systemd th
 a transient scope of its own, so the shells also outlive an agent restart (an update, a port
 change); only turning the console off (or a local-policy lock, or uninstalling) ends them, also when
 it was turned off while the agent was down. A viewer joining a session someone else holds is shown
-its current screen (a snapshot, cursor included) before live output.
+its current screen (a snapshot, cursor included) before live output. The command-history panel
+reads invisible markers the session's bash prints after each command; they carry a per-host secret
+(so output that merely looks like one is ignored) and reach the agent through tmux passthrough.
+Uploads go to a temporary file next to the target and replace it only once complete (owner and mode
+kept, set on the open file), so a failed or cut-off upload never costs the old file.
 
 **Gating (compensating controls for offering a real shell):**
 - **Per-host enable, default OFF** — a `fleet_machines.console_enabled` column *and* an agent-side
