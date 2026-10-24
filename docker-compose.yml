@@ -14,9 +14,12 @@ services:
     container_name: docker-socket-proxy
     restart: unless-stopped
     logging: *default-logging
-    ports:
-      - "127.0.0.1:2375:2375"  # Only accessible from localhost
+    # No network and no port: it listens only on a root-only socket file in a folder that only
+    # the api mounts, so no other container (host-networked ones included) and no local user
+    # can reach it.
+    network_mode: none
     environment:
+      - BIND_CONFIG=/run/docker-proxy/docker.sock mode 600
       # Read-only operations
       - CONTAINERS=1      # List containers, inspect
       - INFO=1            # Docker info
@@ -46,18 +49,7 @@ services:
       - GRPC=0            # No gRPC
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    # Isolated single-member network: gives this service an explicit network so
-    # Compose never auto-creates a project "_default" network (which would grab an
-    # overlapping /16 and clash with vpn-network). Nothing else joins it, so no
-    # BRIDGE-networked container can reach :2375 over the network.
-    # SECURITY NOTE: :2375 is published on 127.0.0.1, so EVERY host-networked container
-    # shares that loopback and can reach it — not just `api`, but also `adguard` and
-    # `vpn-router` (both network_mode: host). Since EXEC=1 is enabled (for the headscale
-    # CLI), a compromise of any of those could exec into the privileged `api` container.
-    # Mitigated today by keeping the AdGuard dashboard bound to localhost; the structural
-    # fix is to drop EXEC=1 by moving headscale ops to its REST API (tracked follow-up).
-    networks:
-      - socket-proxy-net
+      - /run/wgadmin-docker:/run/docker-proxy
 
   # ============================================
   # TRAEFIK - Reverse Proxy with API & Dashboard
@@ -140,8 +132,8 @@ services:
       - SSL_DOMAIN=${SSL_DOMAIN}
       - BEHIND_CLOUDFLARE=${BEHIND_CLOUDFLARE:-false}
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-${TRAEFIK_CONTAINER_IP}}
-      # Docker access via socket proxy (not direct socket)
-      - DOCKER_HOST=tcp://127.0.0.1:2375
+      # Docker access via the socket proxy's private socket file (not the raw Docker socket)
+      - DOCKER_HOST=unix:///run/docker-proxy/docker.sock
       # Core settings (hardcoded paths inside container)
       - API_PORT=${API_PORT}
       - DATA_DIR=/data
@@ -204,7 +196,8 @@ services:
       - ./adguard/conf:/adguard
       - ./adguard/work:/adguard/work:ro
       - ./headscale/config:/headscale/config
-      # Docker socket removed - using docker-socket-proxy instead
+      # The filtered Docker API (docker-socket-proxy), never the raw Docker socket
+      - /run/wgadmin-docker:/run/docker-proxy
       - /etc/ssh/sshd_config:/etc/ssh/sshd_config
       # DHCP (managed private networks): the panel writes per-network dnsmasq configs here and
       # reads the lease files back — both shared with the dnsmasq container.
@@ -325,14 +318,3 @@ networks:
       config:
         - subnet: ${DOCKER_SUBNET}
           gateway: ${DOCKER_GATEWAY}
-  # Dedicated single-member network for docker-socket-proxy, purely so Compose
-  # doesn't auto-create a "_default" network that overlaps vpn-network. Pinned to
-  # a tiny, out-of-the-way subnet so the address pool can't clash. NOT marked
-  # internal: an internal network blocks the published 127.0.0.1:2375 port the
-  # api relies on. Isolation still holds — no other container joins this network.
-  socket-proxy-net:
-    name: socket-proxy-net
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.31.255.0/28

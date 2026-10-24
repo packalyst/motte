@@ -35,7 +35,7 @@ Source of truth: [`docker-compose.yml`](../../docker-compose.yml). Every contain
 | **ui** | built from `./ui` (Svelte 5 → nginx) | `vpn-network` (static `UI_CONTAINER_IP`) | Static SPA served by nginx on port 80; Traefik proxies `/`. Talks only to the API. |
 | **headscale** | `headscale/headscale:0.25` | `vpn-network` (static `HEADSCALE_CONTAINER_IP`) | Tailscale-compatible coordination server. Exposes STUN/DERP (`3478/udp`, direct `8443`) and an internal API bound to `127.0.0.1:8085`. |
 | **adguard** | `adguard/adguardhome:v0.107.79` | `network_mode: host` | DNS server (`:53`) + filtering + query log. Host-networked to serve DNS on the host and to VPN clients. |
-| **docker-socket-proxy** | `tecnativa/docker-socket-proxy` | `socket-proxy-net` (isolated) | Filtered Docker API on `127.0.0.1:2375`. The api reaches Docker through this proxy, never the raw socket. Allows containers/logs/start/stop/restart/exec/images; denies build, volumes, networks, secrets, swarm. |
+| **docker-socket-proxy** | `tecnativa/docker-socket-proxy` | `network_mode: none` | Filtered Docker API on a root-only socket file (`/run/wgadmin-docker/docker.sock`) that only the api mounts. The api reaches Docker through this proxy, never the raw socket. Allows containers/logs/start/stop/restart/exec/images; denies build, volumes, networks, secrets, swarm. |
 | **vpn-router** | `tailscale/tailscale:v1.104.1` | `network_mode: host`, `NET_ADMIN`/`NET_RAW` | Optional (`profiles: [vpn-router]`). Advertises the WireGuard subnet into the Headscale/Tailnet so the two VPNs can route to each other (subnet router). |
 | **dnsmasq** | built from `./containers/dnsmasq` | `network_mode: host`, `NET_ADMIN` | DHCP-only (`port=0`, no DNS) server for the managed private-network feature. Config in the shared `dhcp_conf` volume, leases in `dhcp_leases`; the api renders the config (validated with `dnsmasq --test`) and reloads by restarting this container. Idle/harmless until a network is configured. |
 | **turbotunnels** | built from `./containers/turbotunnels` | `vpn-network` (static IP), `profiles: [turbotunnels]` | Compose entry only defines how to **build** the image. At runtime the api creates the real container itself via the Docker API, injecting the encrypted tunnel set (`TUNNELS_JSON`) and publishing ports dynamically. `restart: "no"` so a bare `compose up` doesn't loop. |
@@ -51,13 +51,13 @@ Supporting pieces that are not their own containers:
 
 ## 3. Container topology & networks
 
-Two Docker networks are declared, plus three containers on host networking:
+One Docker network is declared, plus the containers on host networking:
 
 - **`vpn-network`** (`DOCKER_SUBNET`, default `172.18.0.0/24`, gateway `172.18.0.1`): the bridge network with **static IP assignments** so Traefik, ui, headscale, and turbotunnels have predictable addresses. Traefik `172.18.0.2`, headscale `172.18.0.3`, ui `172.18.0.4`, turbotunnels `172.18.0.5`.
-- **`socket-proxy-net`** (`172.31.255.0/28`): a deliberately tiny, single-member network holding *only* docker-socket-proxy. It exists purely so Compose never auto-creates a `_default` network that could grab an overlapping `/16` and clash with `vpn-network`. It is **not** marked `internal`, because that would block the published `127.0.0.1:2375` port the api depends on — isolation instead comes from no other container joining it.
-- **Host networking**: `api`, `adguard`, and `vpn-router` share the host's network stack. This is what lets the api manage the kernel firewall/WireGuard and lets AdGuard serve DNS on the host.
+- **docker-socket-proxy** has no network at all (`network_mode: none`): it is reached only through its socket file.
+- **Host networking**: `api`, `adguard`, `dnsmasq` and `vpn-router` share the host's network stack. This is what lets the api manage the kernel firewall/WireGuard and lets AdGuard serve DNS on the host.
 
-> Gotcha (documented in `docker-compose.yml:53-58`): because `2375` is published on `127.0.0.1`, *every* host-networked container shares that loopback and can reach the socket proxy — not just `api` but also `adguard` and `vpn-router`. With `EXEC=1` enabled (needed today for the Headscale CLI), a compromise of any host-networked container could exec into the privileged `api`. Mitigated by keeping the AdGuard dashboard bound to localhost; the tracked structural fix is to drop `EXEC=1` by moving Headscale ops to its REST API.
+> Why a socket file and not a port: a port on `127.0.0.1` is shared by every host-networked container and every local user, and through the proxy (container create, `EXEC=1`) that is host root. The socket file is root-only and mounted into `api` alone. Dropping `EXEC=1` (Headscale ops via its REST API) is a tracked follow-up.
 
 ```
                                 Internet
@@ -81,8 +81,8 @@ Two Docker networks are declared, plus three containers on host networking:
    │  │ /data          │  │
    │  └────────────────┘  │      ┌──────────────────────────────┐
    │  nftables (host)     │      │  DOCKER-SOCKET-PROXY          │
-   │  wgctrl → wg0 (host) │◄─────┤  127.0.0.1:2375 (filtered)    │
-   └───┬───────────┬──────┘      │  socket-proxy-net 172.31.255  │
+   │  wgctrl → wg0 (host) │◄─────┤  root-only socket (filtered)  │
+   └───┬───────────┬──────┘      │  no network                   │
        │           │             └──────────────────────────────┘
    ┌───▼────┐  ┌───▼────────┐    ┌──────────────┐   ┌─────────────────┐
    │ADGUARD │  │TURBOTUNNELS│    │  VPN-ROUTER  │   │  FLEET AGENTS   │

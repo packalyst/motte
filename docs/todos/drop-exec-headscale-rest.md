@@ -1,12 +1,12 @@
 # Drop docker-socket-proxy EXEC=1 (headscale via REST)
 
-Remove `EXEC=1` from the `docker-socket-proxy` in `docker-compose.yml` so a compromised
-host-networked container can no longer `docker exec` into the privileged `api` container
-(= host root). This is the structural fix for the lateral-to-root path from the security
-audit; today it's only mitigated by keeping the AdGuard dashboard bound to localhost.
+Remove `EXEC=1` from the `docker-socket-proxy` in `docker-compose.yml`, so the Docker API the
+api holds can't run commands inside containers. Other containers and local users can no longer
+reach the proxy at all (it listens only on a root-only socket file mounted into `api` alone);
+this narrows what the api itself is allowed to do.
 
 - **Status:** Open (NOT fixed — only the misleading compose comment was corrected)
-- **Priority:** Medium (defense-in-depth; not remotely exploitable in the current config)
+- **Priority:** Low (defense-in-depth: only the api can reach the proxy)
 
 ## Why EXEC=1 exists
 Only 3 call sites still exec into the headscale container; everything else already uses the

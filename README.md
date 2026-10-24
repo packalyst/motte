@@ -122,7 +122,7 @@ flowchart TB
     traefik -->|"PathPrefix /"| ui["ui (Svelte)"]
     traefik -->|"host.docker.internal:8081"| api["api (Go) · privileged · host-networked"]
     traefik -->|"/agent install route"| api
-    api -->|"tcp 127.0.0.1:2375"| proxy["docker-socket-proxy (filtered)"]
+    api -->|"root-only socket file"| proxy["docker-socket-proxy (filtered)"]
     api -->|"writes rules"| nft["nftables — the gate"]
     api -.->|manages| headscale["headscale"]
     api -.->|manages| adguard["adguard DNS"]
