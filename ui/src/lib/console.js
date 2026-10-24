@@ -130,9 +130,10 @@ export class ConsoleSocket {
     const chunk = 48 * 1024
     for (let off = 0; off < buf.length; off += chunk) {
       const slice = buf.subarray(off, Math.min(off + chunk, buf.length))
-      this._send({ t: 'file-put', session: this.opts.session, path, data: b64encode(slice), eof: off + chunk >= buf.length })
+      // start marks the first chunk: the agent writes only an upload it saw begin.
+      this._send({ t: 'file-put', session: this.opts.session, path, data: b64encode(slice), start: off === 0, eof: off + chunk >= buf.length })
     }
-    if (buf.length === 0) this._send({ t: 'file-put', session: this.opts.session, path, eof: true })
+    if (buf.length === 0) this._send({ t: 'file-put', session: this.opts.session, path, start: true, eof: true })
   }
 
   getFile(path) {

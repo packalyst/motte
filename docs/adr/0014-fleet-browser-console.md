@@ -36,7 +36,11 @@ its current screen (a snapshot, cursor included) before live output. The command
 reads invisible markers the session's bash prints after each command; they carry a per-host secret
 (so output that merely looks like one is ignored) and reach the agent through tmux passthrough.
 Uploads go to a temporary file next to the target and replace it only once complete (owner and mode
-kept, set on the open file), so a failed or cut-off upload never costs the old file.
+kept, set on the open file), so a failed or cut-off upload never costs the old file. An upload is
+written only if the agent saw its first chunk (marked by the browser): the rest of one interrupted
+by a session reset changes nothing. File actions run in order on their own goroutine, so a slow disk
+doesn't hold up keystrokes. The git panel also refuses a repository whose own config names
+programs git would run (content filters, includes).
 
 **Gating (compensating controls for offering a real shell):**
 - **Per-host enable, default OFF** — a `fleet_machines.console_enabled` column *and* an agent-side

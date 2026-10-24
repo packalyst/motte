@@ -12,24 +12,31 @@ export function keyboardAware(node, enabled = true) {
   const vv = typeof window !== 'undefined' ? window.visualViewport : null
   if (!vv) return {}
   const update = () => {
-    const covered = enabled && vv.height < window.innerHeight - 1
+    const covered = vv.height < window.innerHeight - 1
     node.style.height = covered ? `${vv.height}px` : ''
     node.style.top = covered ? `${vv.offsetTop}px` : ''
     node.style.bottom = covered ? 'auto' : ''
     node.toggleAttribute('data-keyboard', covered)
   }
-  vv.addEventListener('resize', update)
-  vv.addEventListener('scroll', update)
-  update()
+  // Listening only while enabled; turned off, the node is left as its own classes make it.
+  const listen = (on) => {
+    const method = on ? 'addEventListener' : 'removeEventListener'
+    vv[method]('resize', update)
+    vv[method]('scroll', update)
+    if (on) {
+      update()
+      return
+    }
+    node.style.height = node.style.top = node.style.bottom = ''
+    node.removeAttribute('data-keyboard')
+  }
+  if (enabled) listen(true)
   return {
     update(next = true) {
-      enabled = next
-      update()
+      if (next !== enabled) listen((enabled = next))
     },
     destroy() {
-      vv.removeEventListener('resize', update)
-      vv.removeEventListener('scroll', update)
-      node.removeAttribute('data-keyboard')
+      if (enabled) listen(false)
     },
   }
 }

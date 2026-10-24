@@ -113,6 +113,7 @@ type consoleFrame struct {
 	Data    string `json:"data,omitempty"`
 	Path    string `json:"path,omitempty"`
 	EOF     bool   `json:"eof,omitempty"`
+	Start   bool   `json:"start,omitempty"` // file-put: an upload's first chunk (relayed to the agent)
 	Msg     string `json:"msg,omitempty"`
 	// Relayed verbatim (file-list-result directory entries). The panel is a pure relay for this —
 	// it never inspects the contents, so RawMessage round-trips whatever the agent produced.
