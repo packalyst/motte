@@ -100,32 +100,14 @@ func (s *Service) HandleLink(w http.ResponseWriter, r *http.Request) {
 	}
 	s.broadcastLink(m.ID, true)
 
-	stop := make(chan struct{})
-	go func() {
-		t := time.NewTicker(linkPingEvery)
-		defer t.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-t.C:
-				if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)) != nil {
-					conn.Close()
-					return
-				}
-			}
-		}
-	}()
-
-	_ = conn.SetReadDeadline(time.Now().Add(linkReadWait))
-	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(linkReadWait)) })
+	stop := keepAlive(conn)
 	var readErr error
 	for {
 		if _, _, readErr = conn.NextReader(); readErr != nil {
 			break
 		}
 	}
-	close(stop)
+	stop()
 	conn.Close()
 	goingAway := websocket.IsCloseError(readErr, websocket.CloseGoingAway)
 
@@ -154,4 +136,29 @@ func (s *Service) HandleLink(w http.ResponseWriter, r *http.Request) {
 // broadcastLink pushes a presence change to browsers allowed to see the machine.
 func (s *Service) broadcastLink(machineID string, online bool) {
 	s.scopedBroadcast(machineID, "fleet", map[string]any{"machine_id": machineID, "online": online})
+}
+
+// keepAlive pings an agent connection every linkPingEvery; with no pong for linkReadWait the peer
+// is gone (a machine that vanished without closing), and the connection's next read fails. Agents
+// answer pings by themselves. stop ends the pinging, once the reader is done.
+func keepAlive(conn *websocket.Conn) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(linkPingEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)) != nil {
+					conn.Close()
+					return
+				}
+			}
+		}
+	}()
+	_ = conn.SetReadDeadline(time.Now().Add(linkReadWait))
+	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(linkReadWait)) })
+	return func() { close(done) }
 }

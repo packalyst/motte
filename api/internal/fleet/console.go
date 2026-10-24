@@ -130,6 +130,8 @@ type consoleFrame struct {
 	// port-forward streams (fwd-open/data/close): Fwd is the stream id, Path+Port the remote target.
 	Fwd  string `json:"fwd,omitempty"`
 	Port int    `json:"port,omitempty"`
+	// snapshot-result: the cursor position as "row col" (0-based), from agents that send it.
+	Cursor string `json:"cursor,omitempty"`
 }
 
 var (
@@ -158,11 +160,17 @@ type consoleBridge struct {
 	writeMu  sync.Mutex
 	session  string
 	readonly bool
+	// held (guarded by writeMu): a viewer joining a held session gets no live output until its first
+	// screen is painted (showScreen) — that screen already shows it, and would wipe it.
+	held bool
 }
 
 func (b *consoleBridge) write(f consoleFrame) {
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
+	if b.held && f.T == "data" {
+		return
+	}
 	_ = b.browser.WriteJSON(f)
 }
 
@@ -179,7 +187,7 @@ type agentConn struct {
 	nextNum   int                         // next label number to hand out for this machine
 
 	sessWaiters []chan struct{}          // woken when the next sessions-list arrives (live-query)
-	snapWaiters map[string][]chan string // session id → waiters for a snapshot-result (preview)
+	snapWaiters map[string][]*snapWaiter // session id → waiters for a snapshot-result
 
 	fwdMu      sync.Mutex
 	fwdStreams map[string]*fwdConn // port-forward stream id → tunnel conn (bytes relayed as net.Conn)
@@ -288,53 +296,98 @@ func (a *agentConn) requestSessions(timeout time.Duration) {
 	}
 }
 
-// requestSnapshot asks the agent for a one-shot capture of a session's current screen (for the
-// preview cards) and waits up to timeout for the reply. Returns the base64 screen text and whether
-// it arrived. Owner-scoped by the caller.
-func (a *agentConn) requestSnapshot(session string, timeout time.Duration) (string, bool) {
-	ch := make(chan string, 1)
+// snapWaiter is one wait for a snapshot-result: fn gets the agent's reply, then done is closed.
+type snapWaiter struct {
+	fn   func(consoleFrame)
+	done chan struct{}
+}
+
+// awaitSnapshot asks the agent for a one-shot capture of a session's current screen and waits up to
+// timeout for fn to have run with the reply. fn runs on the agent's read loop, so before any frame
+// the agent sent after the reply; it can still run (late) after a timeout. Owner-scoped by the caller.
+func (a *agentConn) awaitSnapshot(session string, timeout time.Duration, fn func(consoleFrame)) bool {
+	w := &snapWaiter{fn: fn, done: make(chan struct{})}
 	a.mu.Lock()
-	a.snapWaiters[session] = append(a.snapWaiters[session], ch)
+	a.snapWaiters[session] = append(a.snapWaiters[session], w)
 	a.mu.Unlock()
 	a.writeToAgent(consoleFrame{T: "snapshot", Session: session})
 	select {
-	case data := <-ch:
-		return data, true
+	case <-w.done:
+		return true
 	case <-time.After(timeout):
+	}
+	a.mu.Lock() // no reply (an agent that never answers must not pile up waiters)
+	ws := a.snapWaiters[session]
+	for i, x := range ws {
+		if x == w {
+			a.snapWaiters[session] = append(ws[:i], ws[i+1:]...)
+			break
+		}
+	}
+	if len(a.snapWaiters[session]) == 0 {
+		delete(a.snapWaiters, session)
+	}
+	a.mu.Unlock()
+	return false
+}
+
+// requestSnapshot returns a session's current screen as base64 text (for the preview cards), and
+// whether it arrived within timeout.
+func (a *agentConn) requestSnapshot(session string, timeout time.Duration) (string, bool) {
+	ch := make(chan string, 1)
+	if !a.awaitSnapshot(session, timeout, func(f consoleFrame) { ch <- f.Data }) {
 		return "", false
 	}
+	return <-ch, true
 }
 
 // showScreen paints a session's current screen on one viewer that joined a session another viewer
-// already holds. tmux redraws only for the viewer whose join attached it (the first), so a later one
-// (a second browser, or a reconnect before the old socket is noticed dead) would otherwise start on
-// a blank terminal and see only output from then on.
+// already holds (addBridge marked it held). tmux redraws only for the viewer whose join attached it
+// (the first), so a later one (a second browser, or a reconnect before the old socket is noticed
+// dead) would otherwise start on a blank terminal and see only output from then on. Live output
+// reaches it once the screen is painted, or after the timeout without one.
 func (a *agentConn) showScreen(b *consoleBridge) {
-	data, ok := a.requestSnapshot(b.session, 2*time.Second)
-	if !ok || data == "" {
-		return
+	release := func(screen []byte) {
+		b.writeMu.Lock()
+		defer b.writeMu.Unlock()
+		if !b.held {
+			return
+		}
+		b.held = false
+		if len(screen) > 0 {
+			_ = b.browser.WriteJSON(consoleFrame{T: "data", Session: b.session, Data: base64.StdEncoding.EncodeToString(screen)})
+		}
 	}
-	raw, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return
+	if !a.awaitSnapshot(b.session, 2*time.Second, func(f consoleFrame) { release(screenPaint(f)) }) {
+		release(nil)
 	}
-	// capture-pane prints lines ending in "\n"; the terminal needs "\r\n". Home + clear first, so the
-	// screen replaces whatever the terminal showed.
+}
+
+// screenPaint turns a snapshot-result into terminal output that replaces the screen with it: home
+// and clear, then the captured lines, then the cursor where tmux has it. nil when there's nothing.
+func screenPaint(f consoleFrame) []byte {
+	raw, err := base64.StdEncoding.DecodeString(f.Data)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	// capture-pane prints lines ending in "\n"; the terminal needs "\r\n".
 	screen := "\x1b[0m\x1b[H\x1b[2J" + strings.ReplaceAll(strings.TrimRight(string(raw), "\n"), "\n", "\r\n")
-	b.write(consoleFrame{T: "data", Session: b.session, Data: base64.StdEncoding.EncodeToString([]byte(screen))})
+	var row, col int
+	if n, _ := fmt.Sscanf(f.Cursor, "%d %d", &row, &col); n == 2 && row >= 0 && col >= 0 && row < 1000 && col < 1000 {
+		screen += fmt.Sprintf("\x1b[%d;%dH", row+1, col+1)
+	}
+	return []byte(screen)
 }
 
 // deliverSnapshot hands a snapshot-result to everyone waiting on that session.
-func (a *agentConn) deliverSnapshot(session, data string) {
+func (a *agentConn) deliverSnapshot(f consoleFrame) {
 	a.mu.Lock()
-	waiters := a.snapWaiters[session]
-	delete(a.snapWaiters, session)
+	waiters := a.snapWaiters[f.Session]
+	delete(a.snapWaiters, f.Session)
 	a.mu.Unlock()
-	for _, ch := range waiters {
-		select {
-		case ch <- data:
-		default:
-		}
+	for _, w := range waiters {
+		w.fn(f)
+		close(w.done)
 	}
 }
 
@@ -403,6 +456,7 @@ func (a *agentConn) addBridge(session string, b *consoleBridge) (first bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	first = len(a.bridges[session]) == 0
+	b.held = !first // not shared yet: showScreen releases it
 	a.bridges[session] = append(a.bridges[session], b)
 	return first
 }
@@ -536,7 +590,7 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 	a := &agentConn{
 		conn: conn, bridges: map[string][]*consoleBridge{}, owners: map[string]int64{},
 		opened: map[string]time.Time{}, seen: map[string]time.Time{},
-		labels: map[string]int{}, snapWaiters: map[string][]chan string{},
+		labels: map[string]int{}, snapWaiters: map[string][]*snapWaiter{},
 		fwdStreams: map[string]*fwdConn{}, recs: map[string]*consoleRecorder{},
 	}
 	regSet(m.ID, a)
@@ -555,7 +609,11 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	// A vanished machine is noticed (its sessions and recordings closed) instead of the channel
+	// waiting forever; the agent likewise drops a panel that stops pinging.
+	stopPing := keepAlive(conn)
 	defer func() {
+		stopPing()
 		close(stopReaper)
 		regDel(m.ID, a)
 		a.closeAll()
@@ -571,7 +629,7 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if f.T == "snapshot-result" {
-			a.deliverSnapshot(f.Session, f.Data) // one-shot screen capture for a preview card
+			a.deliverSnapshot(f) // one-shot screen capture (preview card, or a joining viewer's screen)
 			continue
 		}
 		if f.T == "fwd-data" || f.T == "fwd-close" {

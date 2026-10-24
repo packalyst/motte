@@ -189,7 +189,9 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		Port    int  `json:"port"`
 		// FinishMigration closes the old port of a port change now, without waiting for the
 		// machines that haven't reconnected on the new one (they then need reinstalling).
-		FinishMigration bool `json:"finish_migration"`
+		FinishMigration bool   `json:"finish_migration"`
+		CurrentPassword string `json:"currentPassword"` // step-up for finish_migration
+		TotpCode        string `json:"totpCode"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
 		router.JSONError(w, "bad json", http.StatusBadRequest)
@@ -219,6 +221,11 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if active {
 		if req.FinishMigration {
+			// It can cut machines off for good (they then need reinstalling): a fresh step-up.
+			if status, err := s.verifyStepUp(r, "close the old port", req.CurrentPassword, req.TotpCode); err != nil {
+				router.JSONError(w, err.Error(), status)
+				return
+			}
 			actor, _ := s.actingAdmin(r)
 			s.finishMigration(actor, helper.GetClientIP(r))
 			s.writeConfigState(w)
@@ -469,12 +476,12 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), status)
 		return
 	}
-	// A rescan's folders to skip are guarded once the request is otherwise good (in scope, online,
-	// a valid payload); anything else is refused by enqueueGuarded as usual, without that check
-	// running (so no step-up is spent on a request that can't go through).
+	// A rescan's folders to skip are guarded once the request is otherwise good (in scope, a valid
+	// payload); anything else is refused by enqueueGuarded as usual, without that check running.
+	// Whether the machine is online is left to enqueueGuarded: it can come online between two checks,
+	// and the guard must never be skipped for a rescan that then goes through.
 	var excl *scanExcludeChange
-	if req.Type == "rescan" && s.machineAllowed(r, req.MachineID) && linkOnline(req.MachineID) &&
-		validateCommandPayload(req.Type, payload) == nil {
+	if req.Type == "rescan" && s.machineAllowed(r, req.MachineID) && validateCommandPayload(req.Type, payload) == nil {
 		if excl, status, err = s.guardScanExcludes(r, req.MachineID, payload, req.CurrentPassword, req.TotpCode); err != nil {
 			router.JSONError(w, err.Error(), status)
 			return

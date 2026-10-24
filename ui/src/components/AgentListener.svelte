@@ -5,7 +5,7 @@
    * until then. Saving is admin-only on the server.
    */
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Input from './Input.svelte'
   import Checkbox from './Checkbox.svelte'
@@ -54,7 +54,10 @@
     if (!ok) return
     savingCfg = true
     try {
-      ep = { ...ep, ...(await apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort), finish_migration: true })) }
+      const res = await withStepUp((extra) => apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort), finish_migration: true, ...extra }),
+        { title: 'Close the old port now', message: 'Re-enter your credentials to close the old port.', confirmText: 'Close old port', variant: 'destructive' })
+      if (res === STEPUP_CANCELLED) return
+      ep = { ...ep, ...res }
       toast('Old port closed', 'success')
       await load()
     } catch (e) {

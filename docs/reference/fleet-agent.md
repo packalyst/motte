@@ -41,7 +41,8 @@ until their tool has gathered).
 
 ## 2. Run mode
 
-The agent runs only bound to a panel: `agent/main.go` refuses to start without `panel_url`. It
+The agent runs only bound to a panel: `agent/main.go` refuses to start without `panel_url`, or with
+one that isn't `https://` (enrollment, commands and the console never travel unencrypted). It
 **must enroll first**, then runs the mTLS report/command loop; the panel is the only way in, and
 there is no local control port. If enrollment fails (panel down / bad token), it retries every 30s
 and starts **no** sub-agents until it succeeds. (An early dev-only local HTTP API, unauthenticated
@@ -159,8 +160,9 @@ reconnecting, and ends a running one at its next action; `no_port_forward` refus
 console port forwards; `no_self_update` refuses `update-agent`
 (root updates the binary by hand). A console locked while running is torn down like turning it
 off (its shells end), and starts again on the next `set-console` once the lock is lifted. No file
-locks nothing; a file that can't be read or parsed, or names a key it doesn't know (a misspelt
-switch), locks everything, so a typo never quietly undoes a lock. `agent/policy.go`.
+locks nothing; a file that can't be read or parsed, names a key it doesn't know (a misspelt
+switch), holds anything but one JSON object (`null`, text after it), locks everything, so a typo
+never quietly undoes a lock. `agent/policy.go`.
 
 ### Panel command lifecycle (`api/.../commands.go`)
 

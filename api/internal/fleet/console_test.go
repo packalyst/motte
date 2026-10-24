@@ -51,7 +51,7 @@ func newAgentConn() *agentConn {
 	return &agentConn{
 		bridges: map[string][]*consoleBridge{}, owners: map[string]int64{},
 		opened: map[string]time.Time{}, seen: map[string]time.Time{},
-		labels: map[string]int{}, snapWaiters: map[string][]chan string{},
+		labels: map[string]int{}, snapWaiters: map[string][]*snapWaiter{},
 	}
 }
 
@@ -150,19 +150,27 @@ func wsPair(t *testing.T) (server, client *websocket.Conn) {
 }
 
 // A viewer joining a session someone else holds gets the current screen (tmux only redraws for
-// the viewer whose join attached it).
+// the viewer whose join attached it), with the cursor where tmux has it; live output that the
+// screen already shows isn't sent first (the screen would wipe it).
 func TestShowScreenPaintsLaterViewer(t *testing.T) {
 	a := newAgentConn()
 	agentSide, agent := wsPair(t)
 	a.conn = agentSide
-	go func() { // the agent answers the snapshot request
+	browserSide, browser := wsPair(t)
+	a.addBridge("7_s1", &consoleBridge{browser: browserSide, session: "7_s1"})
+	b := &consoleBridge{browser: browserSide, session: "7_s1"}
+	if a.addBridge("7_s1", b) || !b.held {
+		t.Fatal("a later viewer must wait for its screen")
+	}
+	go func() { // the agent answers the snapshot request, after some live output
 		var f consoleFrame
 		if agent.ReadJSON(&f) == nil && f.T == "snapshot" {
-			a.deliverSnapshot(f.Session, base64.StdEncoding.EncodeToString([]byte("$ ls\nfile\n$ \n\n")))
+			b.write(consoleFrame{T: "data", Session: f.Session, Data: "bGl2ZQ=="})
+			a.deliverSnapshot(consoleFrame{T: "snapshot-result", Session: f.Session, Cursor: "2 2",
+				Data: base64.StdEncoding.EncodeToString([]byte("$ ls\nfile\n$ \n\n"))})
 		}
 	}()
-	browserSide, browser := wsPair(t)
-	a.showScreen(&consoleBridge{browser: browserSide, session: "7_s1"})
+	a.showScreen(b)
 
 	var f consoleFrame
 	browser.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -170,7 +178,29 @@ func TestShowScreenPaintsLaterViewer(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := base64.StdEncoding.DecodeString(f.Data)
-	if want := "\x1b[0m\x1b[H\x1b[2J$ ls\r\nfile\r\n$ "; f.T != "data" || f.Session != "7_s1" || string(raw) != want {
+	if want := "\x1b[0m\x1b[H\x1b[2J$ ls\r\nfile\r\n$ \x1b[3;3H"; f.T != "data" || f.Session != "7_s1" || string(raw) != want {
 		t.Fatalf("got %s %s %q, want data 7_s1 %q", f.T, f.Session, raw, want)
+	}
+	if b.held {
+		t.Fatal("still held after the screen was painted")
+	}
+}
+
+// An agent that never answers a snapshot leaves no waiter behind, and the viewer gets live output.
+func TestSnapshotTimeoutCleansUp(t *testing.T) {
+	a := newAgentConn()
+	agentSide, _ := wsPair(t)
+	a.conn = agentSide
+	browserSide, _ := wsPair(t)
+	b := &consoleBridge{browser: browserSide, session: "7_s1", held: true}
+	if _, ok := a.requestSnapshot("7_s1", 10*time.Millisecond); ok {
+		t.Fatal("a reply nobody sent")
+	}
+	a.showScreen(b) // 2s timeout
+	a.mu.Lock()
+	n := len(a.snapWaiters)
+	a.mu.Unlock()
+	if n != 0 || b.held {
+		t.Fatalf("%d waiters left, held=%v", n, b.held)
 	}
 }

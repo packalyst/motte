@@ -292,6 +292,9 @@ const (
 // already in flight.
 func (s *Service) beginPortMigration(oldPort, newPort int, machines []Machine) {
 	payload, _ := json.Marshal(map[string]int{"port": newPort})
+	// Any set-panel-port still queued is from an earlier change (one a panel restart cut short) and
+	// names a port that is going away.
+	s.cancelPending("", "set-panel-port")
 	ids := make([]string, 0, len(machines))
 	for _, m := range machines {
 		if _, err := s.Enqueue(m.ID, "set-panel-port", payload); err != nil {
@@ -451,14 +454,13 @@ func (s *Service) auditStrandedLocked(actor, ip string, waiting []string, why st
 
 // endMigrationLocked closes the old listener and clears the migration. A machine that hasn't
 // picked up its set-panel-port yet must not get it later (it would move to a port that may no
-// longer be open), so those are cancelled. Caller holds s.mu.
+// longer be open), so those are cancelled — all in one statement, as agents wait on s.mu. Caller
+// holds s.mu.
 func (s *Service) endMigrationLocked() {
 	s.closeListenerLocked(s.oldSrv, s.oldPort)
 	s.oldSrv, s.oldPort = nil, 0
 	s.migrating = false
-	for _, id := range s.migrateMachines {
-		s.cancelPending(id, "set-panel-port")
-	}
+	s.cancelPending("", "set-panel-port")
 	s.migrateMachines, s.migrateMoved, s.migrateSent = nil, nil, nil
 }
 
