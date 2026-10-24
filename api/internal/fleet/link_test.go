@@ -76,3 +76,21 @@ func waitFor(t *testing.T, ok func() bool) {
 	}
 	t.Fatal("condition not reached")
 }
+
+// An agent that says it's going away (a reboot) is offline at once: no grace period.
+func TestLinkGoingAwayIsOfflineAtOnce(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m2", false)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		svc.HandleLink(w, r.WithContext(context.WithValue(r.Context(), machineCtxKey, &Machine{ID: "m2"})))
+	}))
+	defer srv.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return linkOnline("m2") })
+	_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseGoingAway, "reboot"), time.Now().Add(time.Second))
+	waitFor(t, func() bool { return !linkOnline("m2") })
+	conn.Close()
+}

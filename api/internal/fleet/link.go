@@ -15,10 +15,11 @@ import (
 // only accepted for an online machine.
 
 const (
-	linkPingEvery = 25 * time.Second
-	linkReadWait  = 70 * time.Second // no pong this long = dead link
-	// linkGrace: a link that drops and comes back within this (panel or network blip, agent
-	// restart) still counts as up, so the UI doesn't flicker offline.
+	linkPingEvery = 10 * time.Second
+	linkReadWait  = 25 * time.Second // no pong this long = dead link (a machine that just vanished)
+	// linkGrace: a link that drops and comes back within this (panel or network blip) still
+	// counts as up, so the UI doesn't flicker offline. An agent that says it's going away
+	// (reboot, agent stopping) skips it.
 	linkGrace = 20 * time.Second
 )
 
@@ -118,22 +119,29 @@ func (s *Service) HandleLink(w http.ResponseWriter, r *http.Request) {
 
 	_ = conn.SetReadDeadline(time.Now().Add(linkReadWait))
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(linkReadWait)) })
+	var readErr error
 	for {
-		if _, _, err := conn.NextReader(); err != nil {
+		if _, _, readErr = conn.NextReader(); readErr != nil {
 			break
 		}
 	}
 	close(stop)
 	conn.Close()
+	goingAway := websocket.IsCloseError(readErr, websocket.CloseGoingAway)
 
 	links.Lock()
 	current := links.up[m.ID] == l
 	if current {
 		delete(links.up, m.ID)
 		links.down[m.ID] = time.Now()
+		if goingAway { // the agent said it's leaving: offline now, no grace
+			links.down[m.ID] = time.Now().Add(-linkGrace)
+		}
 	}
 	links.Unlock()
-	if current {
+	if current && goingAway {
+		s.broadcastLink(m.ID, false)
+	} else if current {
 		// Tell watchers only if it stays down past the grace period.
 		time.AfterFunc(linkGrace, func() {
 			if !linkOnline(m.ID) {
