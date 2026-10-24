@@ -297,7 +297,7 @@
   // (or an error); the agent also reports a tool as busy while it works on it, so a refresh or
   // another browser shows the change in progress too. No answer within TOOL_WAIT unlocks it.
   const TOOL_WAIT = 3 * 60 * 1000
-  let toolPending = $state({}) // id -> { on, at }
+  let toolPending = $state({}) // id -> { on, at, seq } (seq: the agent's finished-change count when sent)
   let toolRev = $state(0) // re-renders the switches after a cancelled confirm
   let toolNow = $state(Date.now())
   $effect(() => {
@@ -305,13 +305,14 @@
     const iv = setInterval(() => (toolNow = Date.now()), 5000)
     return () => clearInterval(iv)
   })
-  // Drop a pending change once the agent's report shows its outcome.
+  // Drop a pending change once the agent reports it finished: its change count has moved past
+  // the one we saw when sending (an old error or state can't end it early) and it's not busy.
   $effect(() => {
     const tools = report?.tools
     if (!tools) return
     for (const [id, p] of Object.entries(toolPending)) {
       const t = tools[id]
-      if (t && !t.busy && (t.error || (t.enabled === p.on && (!p.on || id === 'trivy' || t.installed)))) {
+      if (t && !t.busy && (t.seq ?? 0) > p.seq) {
         const { [id]: _, ...rest } = toolPending
         toolPending = rest
       }
@@ -337,7 +338,7 @@
         : `Turn off ${t.label} on ${machine.name}? ${t.off}`,
       confirmText: on ? 'Turn on' : 'Turn off', variant: on ? 'primary' : 'destructive',
       done: () => `Turning ${on ? 'on' : 'off'} ${t.label}…`,
-      after: () => { toolNow = Date.now(); toolPending = { ...toolPending, [t.id]: { on, at: toolNow } } },
+      after: () => { toolNow = Date.now(); toolPending = { ...toolPending, [t.id]: { on, at: toolNow, seq: report?.tools?.[t.id]?.seq ?? 0 } } },
     })
     toolRev++ // a cancelled confirm leaves the switch where the real state is
   }
@@ -496,8 +497,8 @@
   const setDryRun = (enabled) => cmd('set-dry-run', { enabled }, {
     title: enabled ? 'Switch to dry-run' : 'Go live',
     message: enabled
-      ? `Put ${machine.name} in DRY-RUN? It will LOG firewall/update actions instead of applying them.`
-      : `Take ${machine.name} LIVE? It will enforce firewall blocks and apply updates for real.`,
+      ? `Put ${machine.name} in DRY-RUN? Its firewall blocks are lifted (the list is kept) and updates are only logged, so nothing is blocked until it goes live again.`
+      : `Take ${machine.name} LIVE? Every block on its list is enforced at once, and updates are applied for real.`,
     confirmText: enabled ? 'Dry-run' : 'Go live', variant: enabled ? 'primary' : 'destructive',
   })
   // Scan opens the dialog (folders to leave out); the dialog is the confirmation.
@@ -675,7 +676,7 @@
           <span title="A vulnerability scan is running. Updates, restarts and reboot wait until it finishes."><Badge variant="info" size="sm"><Icon name="loader-2" size={11} class="mr-1 animate-spin" />Scanning</Badge></span>
         {/if}
         {#if report && dryRun}
-          <span title="Dry-run: firewall blocks and updates are only logged, not applied"><Badge variant="warning" size="sm">Dry-run</Badge></span>
+          <span title="Dry-run: nothing is blocked and updates are only logged; the block list is kept for going live"><Badge variant="warning" size="sm">Dry-run</Badge></span>
         {/if}
       </div>
       <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
@@ -1259,7 +1260,7 @@
             {/if}
           {/snippet}
           {@render row(dryRun ? 'Mode: dry-run' : 'Mode: enforcing',
-            dryRun ? 'Firewall blocks and updates are only logged, not applied.' : 'Firewall blocks and updates are applied for real.', mode)}
+            dryRun ? 'Nothing is blocked and updates are only logged. The block list is kept and applied when it goes live.' : 'Firewall blocks and updates are applied for real.', mode)}
 
           {#if report?.log_level}
             {#snippet logs()}
