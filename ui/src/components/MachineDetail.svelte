@@ -280,7 +280,17 @@
     const t = setInterval(() => (nowMs = Date.now()), 30000)
     return () => clearInterval(t)
   })
-  const jobShown = $derived(!!report?.job && (jobRunning || nowMs - new Date(report.job.ended_at).getTime() < JOB_SHOWN_AFTER))
+  // A finished job's card can also be closed by hand (✕). Which one was closed is remembered in
+  // this browser (a per-viewer convenience), so a refresh doesn't bring it back; the next job shows.
+  const jobKey = $derived(report?.job ? `${machine.id}:${report.job.started_at}` : '')
+  const JOB_CLOSED = 'motte.jobClosed'
+  let jobClosed = $state((() => { try { return localStorage.getItem(JOB_CLOSED) || '' } catch { return '' } })())
+  function closeJob() {
+    jobClosed = jobKey
+    try { localStorage.setItem(JOB_CLOSED, jobKey) } catch { /* private mode: closed for this visit only */ }
+  }
+  const jobShown = $derived(!!report?.job && jobKey !== jobClosed &&
+    (jobRunning || nowMs - new Date(report.job.ended_at).getTime() < JOB_SHOWN_AFTER))
 
   // Agent tools a machine can turn off (Settings). report.tools is absent on an agent too old to
   // report it; those tools are treated as on.
@@ -1141,7 +1151,7 @@
           <Button variant="outline" size="sm" icon="cpu" loading={jobRunning && report?.job?.kind === 'update-kernel'} disabled={!canMaintain || jobRunning} onclick={updateKernel}>Update kernel</Button>
           {#if toolOn('trivy') && (cves?.total || cveSummary?.unique_cves)}<Button variant="primary" size="sm" icon="list-details" class="sm:ml-auto" onclick={() => onviewcves?.(machine)}>View all & fix</Button>{/if}
         </div>
-        {#if jobShown}<JobProgress job={report.job} />{/if}
+        {#if jobShown}<JobProgress job={report.job} onclose={closeJob} />{/if}
         {#if report?.scan_error && !scanning}
           <div class="mt-2 flex items-start gap-1.5 text-[11px] text-destructive"><Icon name="alert-triangle" size={12} class="mt-px shrink-0" /><span class="break-words">Last scan failed: {report.scan_error}</span></div>
         {/if}

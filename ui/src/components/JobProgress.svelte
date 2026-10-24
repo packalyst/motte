@@ -3,11 +3,12 @@
    * JobProgress — the machine's package job (apply updates, fix packages, kernel update) as it
    * runs: the step, the last lines of output (live, a few seconds behind the machine) and, once
    * it ends, how it went. job is the report's `job`; it follows the machine's live reports.
+   * onclose, when given, adds a ✕ to a finished job's card.
    */
   import { timeAgo, formatBanTime } from '$lib/utils/format.js'
   import Icon from './Icon.svelte'
 
-  let { job } = $props()
+  let { job, onclose = undefined } = $props()
 
   const TITLE = { 'apply-updates': 'Applying updates', 'fix-packages': 'Upgrading selected packages', 'update-kernel': 'Updating the kernel' }
   const STATE = {
@@ -30,7 +31,14 @@
     <span class="inline-flex items-center gap-1 rounded px-1.5 py-px text-[10px] font-medium {st.cls}">
       {#if job.status === 'running'}<span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>{/if}{st.label}
     </span>
-    <span class="ml-auto tabular-nums text-muted-foreground">
+    {#if onclose && job.status !== 'running'}
+      <!-- top-right on a phone (the time drops below); after the time on wider screens -->
+      <button type="button" onclick={onclose} aria-label="Close" title="Close"
+        class="-mr-1 ml-auto grid h-6 w-6 shrink-0 cursor-pointer place-items-center rounded text-muted-foreground transition hover:bg-muted hover:text-foreground sm:order-last sm:ml-0">
+        <Icon name="x" size={14} />
+      </button>
+    {/if}
+    <span class="w-full pl-[22px] tabular-nums text-muted-foreground sm:ml-auto sm:w-auto sm:pl-0">
       {#if job.ended_at}{timeAgo(job.ended_at)} · took {formatBanTime(secs(job.started_at, job.ended_at))}{:else}started {timeAgo(job.started_at)}{/if}
     </span>
   </div>
