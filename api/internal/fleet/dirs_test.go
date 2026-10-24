@@ -151,10 +151,7 @@ func TestScanExcludeAddsNeedAdminStepUp(t *testing.T) {
 		time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
-	if status, _ := func() (int, error) {
-		_, st, err := svc.guardScanExcludes(as("operator"), "m1", json.RawMessage(`{"exclude":["/srv/cache"]}`), "", "")
-		return st, err
-	}(); status != http.StatusForbidden {
+	if _, status, _ := svc.guardScanExcludes(as("operator"), "m1", json.RawMessage(`{"exclude":["/srv/cache"]}`), "", ""); status != http.StatusForbidden {
 		t.Fatalf("an operator re-added a folder an admin had just removed: status %d", status)
 	}
 }

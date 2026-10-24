@@ -15,14 +15,7 @@ import (
 func startTestMigration(svc *Service, now time.Time, ids ...string) {
 	svc.mu.Lock()
 	svc.port, svc.oldPort = 7002, 7001
-	svc.migrating = true
-	svc.migrateStarted = now
-	svc.migrateEndsAt = now.Add(portMigrationGrace)
-	svc.migrateMachines, svc.migrateMoved, svc.migrateExtended = ids, map[string]bool{}, false
-	svc.migrateSent = map[string]time.Time{}
-	for _, id := range ids {
-		svc.migrateSent[id] = now
-	}
+	svc.initMigrationLocked(ids, now)
 	svc.mu.Unlock()
 }
 
@@ -139,5 +132,45 @@ func TestPortMigrationResendsToStragglers(t *testing.T) {
 	}
 	if got := queuedPayload(t, svc, "m1", "set-panel-port"); got != `{"port":7002}` {
 		t.Fatalf("re-sent %s, want the new port", got)
+	}
+}
+
+// Ending a migration takes back the set-panel-port commands nobody picked up: a machine that comes
+// back later must not move to a port that may be closed by then.
+func TestPortMigrationEndCancelsPending(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	startTestMigration(svc, time.Now(), "m1")
+	if _, err := svc.Enqueue("m1", "set-panel-port", []byte(`{"port":7002}`)); err != nil {
+		t.Fatal(err)
+	}
+	svc.finishMigration("admin", "")
+	var n int
+	_ = svc.db.QueryRow(`SELECT COUNT(*) FROM fleet_commands WHERE machine_id = 'm1' AND status = 'pending'`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d set-panel-port still pending after the migration ended", n)
+	}
+}
+
+// A machine whose record can't be read is still waited for: a database error never closes the
+// old port on it.
+func TestPortMigrationReadErrorKeepsWaiting(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	startTestMigration(svc, time.Now().Add(-portMigrationMax-time.Hour), "m1")
+	if _, err := svc.db.Exec(`ALTER TABLE fleet_machines RENAME TO fleet_machines_gone`); err != nil {
+		t.Fatal(err)
+	}
+	got := svc.unmovedMachines()
+	if len(got) != 1 || got[0].id != "m1" {
+		t.Fatalf("unreadable machine dropped from the wait: %+v", got)
+	}
+}
+
+// set-panel-port is the panel's own message: no person sends it, not even the owner.
+func TestSetPanelPortNotUserIssuable(t *testing.T) {
+	rr := httptest.NewRecorder()
+	if gatePanelInternalCommand(rr, asOwner(httptest.NewRequest(http.MethodPost, "/", nil)), "set-panel-port") || rr.Code != http.StatusForbidden {
+		t.Fatalf("owner could queue set-panel-port (status %d)", rr.Code)
 	}
 }

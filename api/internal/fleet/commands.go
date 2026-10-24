@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -76,9 +77,18 @@ var panelInternalCommands = map[string]bool{
 	"set-tool":       true, // which security tools run on a machine is an admin decision
 }
 
+// panelOnlyCommands are never sent by a person, not even an admin: only the panel's own flow
+// knows when they are safe (set-panel-port only during a port change, to a port that is open).
+var panelOnlyCommands = map[string]bool{"set-panel-port": true}
+
 // gatePanelInternalCommand blocks a panel-internal command type on the generic operator
-// endpoint unless the caller is admin or owner. Returns false (and writes 403) when blocked.
+// endpoint unless the caller is admin or owner, and a panel-only one for everyone. Returns false
+// (and writes 403) when blocked.
 func gatePanelInternalCommand(w http.ResponseWriter, r *http.Request, ctype string) bool {
+	if panelOnlyCommands[ctype] {
+		router.JSONError(w, "this command is sent by the panel itself (change the port in the fleet settings)", http.StatusForbidden)
+		return false
+	}
 	if !panelInternalCommands[ctype] {
 		return true
 	}
@@ -237,6 +247,23 @@ func (s *Service) enqueue(machineID, ctype string, payload json.RawMessage, ttl 
 		ringLink(machineID)
 	}
 	return id, err
+}
+
+// cancelPending withdraws a machine's undelivered commands of one type (a newer one replaces
+// them, or the reason for them is gone).
+func (s *Service) cancelPending(machineID, ctype string) {
+	if _, err := s.db.Exec(`UPDATE fleet_commands SET status='expired', done_at=?
+		WHERE machine_id = ? AND type = ? AND status = 'pending'`, time.Now().UTC().Format(time.RFC3339), machineID, ctype); err != nil {
+		log.Printf("fleet: cancel pending %s for %s: %v", ctype, machineID, err)
+	}
+}
+
+// cancelCommand withdraws one command if the machine hasn't picked it up yet.
+func (s *Service) cancelCommand(id string) {
+	if _, err := s.db.Exec(`UPDATE fleet_commands SET status='expired', done_at=? WHERE id = ? AND status = 'pending'`,
+		time.Now().UTC().Format(time.RFC3339), id); err != nil {
+		log.Printf("fleet: cancel command %s: %v", id, err)
+	}
 }
 
 // expirePending marks a machine's undelivered commands whose time ran out as expired. It reports

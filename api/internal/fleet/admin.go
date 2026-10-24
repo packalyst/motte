@@ -469,10 +469,12 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), status)
 		return
 	}
-	// A rescan's folders to skip are guarded once the request is otherwise good (in scope, a valid
-	// payload); anything else is refused by enqueueGuarded as usual, without that check running.
+	// A rescan's folders to skip are guarded once the request is otherwise good (in scope, online,
+	// a valid payload); anything else is refused by enqueueGuarded as usual, without that check
+	// running (so no step-up is spent on a request that can't go through).
 	var excl *scanExcludeChange
-	if req.Type == "rescan" && s.machineAllowed(r, req.MachineID) && validateCommandPayload(req.Type, payload) == nil {
+	if req.Type == "rescan" && s.machineAllowed(r, req.MachineID) && linkOnline(req.MachineID) &&
+		validateCommandPayload(req.Type, payload) == nil {
 		if excl, status, err = s.guardScanExcludes(r, req.MachineID, payload, req.CurrentPassword, req.TotpCode); err != nil {
 			router.JSONError(w, err.Error(), status)
 			return
