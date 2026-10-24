@@ -8,6 +8,8 @@
    * - showName: Show country name next to flag
    * - size: 'sm' | 'md' | 'lg' (default: 'md')
    */
+  import { flagUrl } from '../lib/utils/flags.js'
+
   let {
     code = '',
     name = '',
@@ -16,20 +18,20 @@
   } = $props()
 
   const sizes = {
-    sm: { width: 16, height: 12, class: 'w-4 h-3' },
-    md: { width: 20, height: 15, class: 'w-5 h-4' },
-    lg: { width: 24, height: 18, class: 'w-6 h-[18px]' }
+    sm: 'w-4 h-3',
+    md: 'w-5 h-4',
+    lg: 'w-6 h-[18px]'
   }
 
-  const validCode = $derived(code && /^[a-zA-Z]{2}$/.test(code) ? code.toLowerCase() : null)
+  const src = $derived(flagUrl(code))
 </script>
 
-{#if validCode}
+{#if src}
   <span class="inline-flex items-center gap-1.5">
     <img
-      src="https://flagcdn.com/{sizes[size].width}x{sizes[size].height}/{validCode}.png"
+      {src}
       alt={code}
-      class="{sizes[size].class} rounded-sm shadow-sm object-cover"
+      class="{sizes[size]} rounded-sm shadow-sm object-cover"
       loading="lazy"
     />
     {#if showName && name}

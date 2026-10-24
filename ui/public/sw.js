@@ -41,7 +41,10 @@ self.addEventListener('fetch', (e) => {
   const { request } = e
   const url = new URL(request.url)
 
-  if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) {
+  // Other sites' requests aren't the panel's to handle (and fetching them from here would count
+  // as a connection under the security policy, not an image): the browser does them itself.
+  if (url.origin !== self.location.origin) return
+  if (url.pathname.startsWith('/api/')) {
     return // don't call respondWith → default browser handling (fresh connection)
   }
 
@@ -53,7 +56,7 @@ self.addEventListener('fetch', (e) => {
   }
 
   // The offline page's own script, so it still loads with no connection.
-  if (url.origin === self.location.origin && PRECACHE.includes(url.pathname)) {
+  if (PRECACHE.includes(url.pathname)) {
     e.respondWith(fetch(request).catch(() => caches.match(url.pathname).then((cached) => cached || Response.error())))
     return
   }
