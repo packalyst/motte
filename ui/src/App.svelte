@@ -150,7 +150,7 @@
   <SetupWizard onComplete={handleSetupComplete} />
 {:else if user}
   {#if fwInactive}
-    <div class="fixed bottom-0 inset-x-0 z-[9999] bg-destructive text-destructive-foreground text-sm text-center py-2 px-4 font-medium shadow-lg">
+    <div class="fixed bottom-0 inset-x-0 z-[9999] bg-destructive text-destructive-foreground text-sm text-center pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] px-4 font-medium shadow-lg">
       Firewall not active — the firewall layer failed to start, so your rules are <strong>not being managed</strong>. Check the panel host (nftables), then reload.
     </div>
   {/if}

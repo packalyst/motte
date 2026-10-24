@@ -1,61 +1,59 @@
 <script>
   /**
-   * Pull-to-refresh component for mobile PWA
-   * Uses document-level touch detection to avoid wrapper issues with fixed modals
+   * Pull-to-refresh for the mobile PWA. Listens on the document (fixed modals sit outside any
+   * wrapper) but judges "at the top" by `scroller`, the element that actually scrolls the
+   * page: the window never scrolls in this layout, so checking it made every downward swipe,
+   * fast scroll-ups included, a pull.
    */
-  import { onMount } from 'svelte'
+  let { children, onRefresh = () => {}, scroller = null } = $props()
 
-  let { children, onRefresh = () => {} } = $props()
-
-  let startY = $state(0)
+  let startX = 0
+  let startY = 0
   let pullDistance = $state(0)
   let isPulling = $state(false)
   let isRefreshing = $state(false)
 
   const threshold = 80 // Distance to trigger refresh
   const maxPull = 120 // Max pull distance
+  // Movement before a pull counts: filters finger settle and the tail of a scroll.
+  const deadZone = 24
+  // The page must have rested at the top this long before a touch can start a pull, so a
+  // flick that carries the content up to the top and keeps going never refreshes.
+  const settleMs = 400
 
-  // Dead-zone in pixels before we start accumulating pullDistance. This filters
-  // out finger-settle jitter and momentum-scroll artifacts that were falsely
-  // arming the refresh when the user flick-scrolled up quickly and their touch
-  // landed at scrollY=0.
-  const deadZone = 20
+  let lastScrollAt = 0
+  const atTop = () => (scroller ? scroller.scrollTop : window.scrollY) <= 0
+
+  // A touch inside a dialog, or inside a box that scrolls on its own and isn't at its top, is
+  // for that element, not the page.
+  function ownsGesture(target) {
+    if (!(target instanceof Element) || target.closest('.kt-modal, [role="dialog"], [data-no-pull]')) return true
+    for (let el = target; el && el !== scroller && el !== document.body; el = el.parentElement) {
+      if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight) return true
+    }
+    return false
+  }
 
   function handleTouchStart(e) {
-    // Only start pull if at top of scroll, not refreshing, and single-touch
-    // (multi-touch = pinch/zoom, not a pull gesture).
-    if (
-      window.scrollY === 0 &&
-      document.documentElement.scrollTop === 0 &&
-      !isRefreshing &&
-      e.touches.length === 1
-    ) {
-      startY = e.touches[0].clientY
-      isPulling = true
-    }
+    if (isRefreshing || e.touches.length !== 1 || !atTop() || Date.now() - lastScrollAt < settleMs || ownsGesture(e.target)) return
+    startX = e.touches[0].clientX
+    startY = e.touches[0].clientY
+    isPulling = true
   }
 
   function handleTouchMove(e) {
     if (!isPulling || isRefreshing) return
-
-    const currentY = e.touches[0].clientY
-    const diff = currentY - startY
-
-    // Cancel on upward movement.
-    if (diff < 0) {
+    const dy = e.touches[0].clientY - startY
+    const dx = Math.abs(e.touches[0].clientX - startX)
+    // Upward, sideways (a swipe, not a pull) or the content started scrolling: not a pull.
+    if (dy < 0 || dx > dy || !atTop()) {
       isPulling = false
       pullDistance = 0
       return
     }
-
-    // Ignore movement within the dead-zone — real pull gestures cross it
-    // decisively, momentum/jitter usually don't.
-    if (diff < deadZone) return
-
-    if (window.scrollY === 0 && document.documentElement.scrollTop === 0) {
-      // Apply resistance; subtract dead-zone so effective travel starts at 0.
-      pullDistance = Math.min((diff - deadZone) * 0.5, maxPull)
-    }
+    if (dy < deadZone) return
+    // Apply resistance; subtract the dead-zone so effective travel starts at 0.
+    pullDistance = Math.min((dy - deadZone) * 0.5, maxPull)
   }
 
   async function handleTouchEnd() {
@@ -77,16 +75,26 @@
     pullDistance = 0
   }
 
-  onMount(() => {
-    // Use passive: false for touchmove to allow preventDefault if needed
+  // A cancelled touch (a system gesture took over) never refreshes.
+  function handleTouchCancel() {
+    isPulling = false
+    pullDistance = 0
+  }
+
+  $effect(() => {
+    const onScroll = () => { lastScrollAt = Date.now() }
+    const target = scroller || window
+    target.addEventListener('scroll', onScroll, { passive: true })
     document.addEventListener('touchstart', handleTouchStart, { passive: true })
     document.addEventListener('touchmove', handleTouchMove, { passive: true })
     document.addEventListener('touchend', handleTouchEnd, { passive: true })
-
+    document.addEventListener('touchcancel', handleTouchCancel, { passive: true })
     return () => {
+      target.removeEventListener('scroll', onScroll)
       document.removeEventListener('touchstart', handleTouchStart)
       document.removeEventListener('touchmove', handleTouchMove)
       document.removeEventListener('touchend', handleTouchEnd)
+      document.removeEventListener('touchcancel', handleTouchCancel)
     }
   })
 </script>
@@ -121,7 +129,7 @@
 <style>
   .pull-indicator {
     position: fixed;
-    top: 60px; /* Below header */
+    top: calc(60px + env(safe-area-inset-top)); /* below the header */
     left: 0;
     right: 0;
     display: flex;
