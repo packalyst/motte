@@ -435,7 +435,7 @@
               {#if data.supply_chain.signing_enabled}
                 <span class="font-medium text-success inline-flex items-center gap-1"><Icon name="shield-check" size={13} />On</span>
               {:else}
-                <span class="font-medium text-warning inline-flex items-center gap-1"><Icon name="shield" size={13} />Off · sha256/TLS</span>
+                <span class="font-medium text-destructive inline-flex items-center gap-1" title="Built without signing.pub: agent installs and updates are disabled"><Icon name="shield-off" size={13} />Missing · agent installs off</span>
               {/if}
             </div>
             {#if data.supply_chain.forge}

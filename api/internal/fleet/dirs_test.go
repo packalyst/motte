@@ -116,3 +116,32 @@ func TestSetToolGuarded(t *testing.T) {
 		}
 	}
 }
+
+// Adding folders for scans to skip takes an admin and a step-up; rescanning with the same list
+// or a shorter one stays an operator action.
+func TestScanExcludeAddsNeedAdminStepUp(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	if _, err := svc.db.Exec(`UPDATE fleet_machines SET last_report = ? WHERE id = 'm1'`, `{"scan_exclude":["/srv/cache"]}`); err != nil {
+		t.Fatal(err)
+	}
+	as := func(role string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/api/fleet/command", nil)
+		return r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: role, Username: role + "1"}))
+	}
+	for _, c := range []struct {
+		role, payload string
+		want          int
+	}{
+		{"operator", `{}`, 0},                                                   // no list: the saved one stays
+		{"operator", `{"exclude":["/srv/cache"]}`, 0},                           // the same list
+		{"operator", `{"exclude":[]}`, 0},                                       // scanning more
+		{"operator", `{"exclude":["/srv/cache","/opt"]}`, http.StatusForbidden}, // hiding /opt
+		{"admin", `{"exclude":["/opt"]}`, http.StatusPreconditionRequired},      // admin, no step-up yet
+	} {
+		status, err := svc.guardScanExcludes(as(c.role), "m1", json.RawMessage(c.payload), "", "")
+		if status != c.want || (c.want == 0) != (err == nil) {
+			t.Errorf("%s %s: status %d err %v, want %d", c.role, c.payload, status, err, c.want)
+		}
+	}
+}

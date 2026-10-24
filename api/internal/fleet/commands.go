@@ -108,6 +108,12 @@ func (s *Service) verifyCommandStepUp(r *http.Request, ctype, currentPassword, c
 	if !requiresStepUp(ctype) {
 		return 0, nil
 	}
+	return s.verifyStepUp(r, ctype, currentPassword, currentTOTP)
+}
+
+// verifyStepUp requires a step-up for `what` (a command, or a sensitive part of one): passes
+// inside the fleet step-up grace window, else needs the operator's password (+ TOTP).
+func (s *Service) verifyStepUp(r *http.Request, ctype, currentPassword, currentTOTP string) (int, error) {
 	actor, userID := s.actingAdmin(r)
 	ip := helper.GetClientIP(r)
 	authSvc := auth.GetService()

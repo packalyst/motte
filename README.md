@@ -174,7 +174,7 @@ flowchart LR
 
 ### Release signing &amp; verification (ed25519)
 
-The root of trust is an **offline ed25519 key**. On the release machine, `make release` signs `checksums.txt` with the **private** key (`signing.key` — never on the panel). The **public** key (`signing.pub`) is committed and compiled into **both** the panel and the agent. The panel verifies before serving; the agent verifies **again itself** — so even a compromised panel cannot feed a tampered binary. When no key is built in, signature enforcement is off and binaries fall back to SHA-256 over TLS/mTLS (the pre-signing baseline).
+The root of trust is an **offline ed25519 key**. On the release machine, `make release` signs `checksums.txt` with the **private** key (`signing.key` — never on the panel). The **public** key (`signing.pub`) is committed and compiled into **both** the panel and the agent. The panel verifies before serving; the agent verifies **again itself** — so even a compromised panel cannot feed a tampered binary. There is no unsigned fallback: a panel built without the key serves no agent release, an agent built without it never updates itself, and `make release` refuses to build one.
 
 ```mermaid
 flowchart TB

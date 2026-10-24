@@ -33,6 +33,7 @@ func (s *Service) requireClientCert(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		s.syncCert(m, r.TLS.PeerCertificates[0], fp)
+		s.noteListenerPort(m.ID, r)
 		next(w, r.WithContext(context.WithValue(r.Context(), machineCtxKey, m)))
 	}
 }
