@@ -17,8 +17,8 @@ ARG VERSION=dev
 ARG BRANCH=
 
 # Base64 ed25519 public key (from the committed signing.pub, passed by manage.sh /
-# docker compose). When empty, release-signature enforcement is disabled; when set, the
-# panel requires a valid checksums.txt.sig on every agent release it serves.
+# docker compose). The panel requires a valid checksums.txt.sig on every agent release it
+# serves; when empty, it serves none (fleet agent installs and updates are disabled).
 ARG SIGN_PUBKEY=
 
 # Download dependencies and build (build the whole ./cmd package, not just

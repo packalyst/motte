@@ -70,7 +70,7 @@
 
   async function scan() {
     busy = true
-    try { await onscan?.([...chosen].sort()); open = false } finally { busy = false }
+    try { if ((await onscan?.([...chosen].sort())) !== false) open = false } finally { busy = false }
   }
 </script>
 

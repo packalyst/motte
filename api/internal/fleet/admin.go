@@ -147,6 +147,18 @@ func (s *Service) blocklistPayload() (payload json.RawMessage, count, status int
 	return payload, len(ips), 0, nil
 }
 
+// userCommandPayload is the payload to queue for a command a user sent (the single and bulk
+// command endpoints): the request's own, except a blocklist push, which always carries the
+// panel's list built here, never one from the request (an empty one would wipe the machine's
+// list without the step-up clear-blocks needs).
+func (s *Service) userCommandPayload(ctype string, payload json.RawMessage) (json.RawMessage, int, error) {
+	if ctype != "sync-blocks" {
+		return payload, http.StatusOK, nil
+	}
+	p, _, status, err := s.blocklistPayload()
+	return p, status, err
+}
+
 // handleClearBlocks queues a clear-blocks command that empties the machine's panel-pushed
 // blocklist set (CrowdSec/manual bans are untouched). POST /api/fleet/clear-blocks {"machine_id"}
 func (s *Service) handleClearBlocks(w http.ResponseWriter, r *http.Request) {
@@ -196,8 +208,8 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	// A port migration keeps both ports open for a grace window; a second change mid-flight
 	// would strand agents between three ports. Reject any config change until it finishes.
 	if active, endsAt := s.migrationState(); active {
-		secs := int(time.Until(endsAt).Seconds()) + 1
-		router.JSONError(w, fmt.Sprintf("port migration in progress — try again in ~%ds", secs), http.StatusConflict)
+		router.JSONError(w, fmt.Sprintf("a port change is still in progress: the old port stays open until every machine has reconnected on the new one (at the latest %s); try again after that",
+			endsAt.Local().Format("Jan 2 15:04")), http.StatusConflict)
 		return
 	}
 
@@ -429,7 +441,18 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 	if !gatePanelInternalCommand(w, r, req.Type) {
 		return
 	}
-	id, status, err := s.enqueueGuarded(r, req.MachineID, req.Type, req.CurrentPassword, req.TotpCode, req.Payload)
+	payload, status, err := s.userCommandPayload(req.Type, req.Payload)
+	if err != nil {
+		router.JSONError(w, err.Error(), status)
+		return
+	}
+	if req.Type == "rescan" {
+		if status, err := s.guardScanExcludes(r, req.MachineID, payload, req.CurrentPassword, req.TotpCode); err != nil {
+			router.JSONError(w, err.Error(), status)
+			return
+		}
+	}
+	id, status, err := s.enqueueGuarded(r, req.MachineID, req.Type, req.CurrentPassword, req.TotpCode, payload)
 	if err != nil {
 		router.JSONError(w, err.Error(), status)
 		return
@@ -466,15 +489,16 @@ func (s *Service) handleBulkCommand(w http.ResponseWriter, r *http.Request) {
 	if !gatePanelInternalCommand(w, r, req.Type) {
 		return
 	}
-	// The blocklist push carries the panel's own list, built here, never one from the request.
-	if req.Type == "sync-blocks" {
-		payload, _, status, err := s.blocklistPayload()
-		if err != nil {
-			router.JSONError(w, err.Error(), status)
-			return
-		}
-		req.Payload = payload
+	payload, status, err := s.userCommandPayload(req.Type, req.Payload)
+	if err != nil {
+		router.JSONError(w, err.Error(), status)
+		return
 	}
+	if _, set := scanExcludeList(payload); req.Type == "rescan" && set {
+		router.JSONError(w, "folders to skip are set per machine, not in a bulk run", http.StatusBadRequest)
+		return
+	}
+	req.Payload = payload
 	// Verify step-up once for the whole batch (428 → the UI prompts and retries).
 	if status, err := s.verifyCommandStepUp(r, req.Type, req.CurrentPassword, req.TotpCode); err != nil {
 		router.JSONError(w, err.Error(), status)

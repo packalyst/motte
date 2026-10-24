@@ -136,7 +136,7 @@ func (c *agentCache) Get(ctx context.Context, arch string) (bin, manifest, insta
 
 // LatestSigned refreshes and returns the latest release's agent version (tag minus the
 // "agent-v"/"v" prefix), the raw checksums.txt content, and the base64 ed25519 signature
-// over it (empty when signing is disabled). The agent uses this to decide whether to update
+// over it. The agent uses this to decide whether to update
 // and to verify the download itself before trusting it.
 func (c *agentCache) LatestSigned(ctx context.Context) (version, checksums, sig string, err error) {
 	c.mu.Lock()
@@ -164,6 +164,12 @@ func (c *agentCache) Binary(ctx context.Context, arch string) ([]byte, error) {
 func (c *agentCache) refreshLocked(ctx context.Context) error {
 	if c.forge == nil {
 		return fmt.Errorf("agent asset serving is disabled: SOURCE_REPO/SOURCE_FORGE not configured")
+	}
+	// Agent releases are only ever served signature-verified. A panel built without the public
+	// key can't verify them, so it serves none (installs and updates stop) rather than
+	// trusting unsigned binaries that run as root on every machine.
+	if !signingEnabled() {
+		return fmt.Errorf("agent installs and updates are disabled: this panel was built without the release signing key (signing.pub)")
 	}
 	if c.checksums == "" {
 		// cold start — reload the cached checksums.txt and the tag it belongs to from disk.
@@ -200,23 +206,20 @@ func (c *agentCache) refreshLocked(ctx context.Context) error {
 	// signature failure still throttles the next attempt (otherwise every request after a
 	// bad/failed verify would re-hit the forge with no backoff).
 	c.lastCheck = time.Now()
-	// When the panel is built with a signing key, the release's checksums.txt MUST carry a
-	// valid ed25519 signature before we trust it. Fail-closed: a missing or bad signature is
-	// never served, and we keep any previously-verified cache rather than accepting it.
-	var sigStr string
-	if signingEnabled() {
-		sig, serr := c.fetchAsset(ctx, tag, "checksums.txt.sig")
-		if serr != nil {
-			if c.checksums != "" && c.tag != "" {
-				return nil // signature unreachable — keep serving the last verified release
-			}
-			return fmt.Errorf("fetch release signature: %w", serr)
+	// The release's checksums.txt MUST carry a valid ed25519 signature before we trust it.
+	// Fail-closed: a missing or bad signature is never served, and we keep any
+	// previously-verified cache rather than accepting it.
+	sig, serr := c.fetchAsset(ctx, tag, "checksums.txt.sig")
+	if serr != nil {
+		if c.checksums != "" && c.tag != "" {
+			return nil // signature unreachable — keep serving the last verified release
 		}
-		if verr := verifyChecksumsSig(latest, sig); verr != nil {
-			return fmt.Errorf("reject release %s: %w", tag, verr)
-		}
-		sigStr = strings.TrimSpace(string(sig))
+		return fmt.Errorf("fetch release signature: %w", serr)
 	}
+	if verr := verifyChecksumsSig(latest, sig); verr != nil {
+		return fmt.Errorf("reject release %s: %w", tag, verr)
+	}
+	sigStr := strings.TrimSpace(string(sig))
 	if tag == c.tag && string(latest) == c.checksums {
 		c.sig = sigStr // keep the signature fresh even when the release is unchanged
 		return nil

@@ -458,32 +458,32 @@
 
     const endpoint = opts.endpoint || '/api/fleet/command'
     const base = opts.endpoint ? { machine_id: machine.id } : { machine_id: machine.id, type, payload }
-    const send = async (extra = {}) => {
-      const res = await apiPost(endpoint, { ...base, ...extra })
+    try {
+      const res = await withStepUp((extra) => apiPost(endpoint, { ...base, ...extra }), opts.title || type)
+      if (res === STEPUP_CANCELLED) return
       toast(opts.done ? opts.done(res) : `${type} queued`, 'success')
       if (opts.after) opts.after()
-    }
-
-    try {
-      await send()
     } catch (e) {
-      // Destructive (confirm-tier) commands require step-up re-authentication: the panel
-      // answers 428 until the operator's current password is supplied. Prompt and retry once.
-      if (e.status === 428) {
-        const su = await stepUpConfirm({
-          title: `Confirm "${opts.title || type}"`,
-          message: `This is a sensitive action on ${machine.name}. Re-enter your credentials to authorize it.`,
-          confirmText: 'Authorize', variant: 'destructive',
-        })
-        if (!su?.confirmed || !su?.password) return
-        try {
-          await send({ currentPassword: su.password, totpCode: su.totp || '' })
-        } catch (e2) {
-          toast('Failed: ' + e2.message, 'error')
-        }
-        return
-      }
       toast('Failed: ' + e.message, 'error')
+    }
+  }
+
+  // withStepUp sends a request; a sensitive one the panel answers 428 until the operator's
+  // current password (+ TOTP) is supplied, so it prompts and retries once. STEPUP_CANCELLED
+  // when the operator closes the prompt.
+  const STEPUP_CANCELLED = Symbol('step-up cancelled')
+  async function withStepUp(send, what) {
+    try {
+      return await send({})
+    } catch (e) {
+      if (e.status !== 428) throw e
+      const su = await stepUpConfirm({
+        title: `Confirm "${what}"`,
+        message: `This is a sensitive action on ${machine.name}. Re-enter your credentials to authorize it.`,
+        confirmText: 'Authorize', variant: 'destructive',
+      })
+      if (!su?.confirmed || !su?.password) return STEPUP_CANCELLED
+      return await send({ currentPassword: su.password, totpCode: su.totp || '' })
     }
   }
 
@@ -514,11 +514,18 @@
   // Scan opens the dialog (folders to leave out); the dialog is the confirmation.
   let scanDialog = $state(false)
   const rescan = () => (scanDialog = true)
+  // Adding folders to skip is admin-only and asks for the password (it hides findings in every
+  // later scan); the same or a shorter list doesn't. False keeps the dialog open.
   async function startScan(exclude) {
     try {
-      await apiPost('/api/fleet/command', { machine_id: machine.id, type: 'rescan', payload: { exclude } })
+      const res = await withStepUp((extra) => apiPost('/api/fleet/command', { machine_id: machine.id, type: 'rescan', payload: { exclude }, ...extra }), 'Skip folders in scans')
+      if (res === STEPUP_CANCELLED) return false
       toast('Scan started', 'success')
-    } catch (e) { toast('Scan not started: ' + (e?.message || e), 'error'); throw e }
+      return true
+    } catch (e) {
+      toast('Scan not started: ' + (e?.message || e), 'error')
+      return false
+    }
   }
   const updateAgent = () => cmd('update-agent', null, {
     title: 'Update agent',

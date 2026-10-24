@@ -2,7 +2,10 @@ package fleet
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -20,19 +23,40 @@ func (f testForge) LatestTag(context.Context, *http.Client) (string, error) {
 	return "agent-v0.0.1", nil
 }
 
-// releaseCache builds a cache over a fake release whose checksums.txt lists `listed`, while
-// the server returns `served` for each asset — so a test can serve a tampered file.
+// withTestSigningKey bakes a fresh signing key into the panel for the test and returns a
+// signer for checksums.txt.
+func withTestSigningKey(t *testing.T) func([]byte) string {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := signPubKey
+	signPubKey = base64.StdEncoding.EncodeToString(pub)
+	t.Cleanup(func() { signPubKey = orig })
+	return func(b []byte) string { return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, b)) }
+}
+
+// releaseCache builds a cache over a fake, correctly signed release whose checksums.txt lists
+// `listed`, while the server returns `served` for each asset — so a test can serve a tampered
+// file.
 func releaseCache(t *testing.T, listed, served map[string]string) *agentCache {
 	t.Helper()
+	sign := withTestSigningKey(t)
 	var sums strings.Builder
 	for name, body := range listed {
 		h := sha256.Sum256([]byte(body))
 		fmt.Fprintf(&sums, "%s  %s\n", hex.EncodeToString(h[:]), name)
 	}
+	sig := sign([]byte(sums.String()))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
-		if name == "checksums.txt" {
+		switch name {
+		case "checksums.txt":
 			fmt.Fprint(w, sums.String())
+			return
+		case "checksums.txt.sig":
+			fmt.Fprint(w, sig)
 			return
 		}
 		body, ok := served[name]
@@ -114,5 +138,24 @@ func TestRecheckLatestVersionRateLimited(t *testing.T) {
 	c.versionAt = time.Now().Add(-2 * time.Minute)
 	if v := c.RecheckLatestVersion(context.Background()); v != "0.1.55" || n != 2 {
 		t.Fatalf("recheck after a minute: %q after %d calls", v, n)
+	}
+}
+
+// A panel built without the signing key serves no agent release at all (installs and updates
+// stop) instead of trusting unsigned binaries.
+func TestAgentCacheRefusesWithoutSigningKey(t *testing.T) {
+	c := releaseCache(t, release, release)
+	signPubKey = "" // restored by the cleanup releaseCache registered
+	if _, _, _, err := c.Get(context.Background(), "amd64"); err == nil || !strings.Contains(err.Error(), "without the release signing key") {
+		t.Fatalf("want refusal without a signing key, got %v", err)
+	}
+}
+
+// A release whose signature doesn't verify is never served.
+func TestAgentCacheRejectsBadSignature(t *testing.T) {
+	c := releaseCache(t, release, release)
+	withTestSigningKey(t) // the panel now trusts a different key than the release was signed with
+	if _, _, _, err := c.Get(context.Background(), "amd64"); err == nil || !strings.Contains(err.Error(), "reject release") {
+		t.Fatalf("want signature rejection, got %v", err)
 	}
 }

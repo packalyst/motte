@@ -135,7 +135,8 @@
   })
   onMount(() => {
     const onHash = () => {
-      const h = decodeURIComponent(window.location.hash.slice(1))
+      let h = ''
+      try { h = decodeURIComponent(window.location.hash.slice(1)) } catch { /* malformed (#%): not an in-page link */ }
       if (!h || !document.getElementById(h)) scrollPageTop()
     }
     window.addEventListener('hashchange', onHash)

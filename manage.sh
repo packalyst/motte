@@ -2972,8 +2972,9 @@ export PANEL_BRANCH
 echo -e "${CYAN}Panel version:${NC} $PANEL_VERSION"
 
 # Bake the release-signing public key(s) into the panel so it verifies agent-release signatures
-# (ed25519). Read from the committed signing.pub; when absent, the key is empty and signature
-# enforcement stays off (unsigned/legacy releases keep working). The PRIVATE key is never here.
+# (ed25519). Read from the committed signing.pub; without it the panel serves no agent release
+# at all (fleet installs and agent updates stop) rather than trusting unsigned binaries. The
+# PRIVATE key is never here.
 # signing.pub may hold several keys (one per line) during a key rollover; strip spaces, drop
 # blank lines, and comma-join so every key is baked in (a single-key file yields just that key).
 if [ -f signing.pub ]; then
@@ -2981,8 +2982,8 @@ if [ -f signing.pub ]; then
     echo -e "${CYAN}Release signing:${NC} ${GREEN}ON${NC} (public key baked in — releases must be signed)"
 else
     PANEL_SIGN_PUBKEY=""
-    echo -e "${CYAN}Release signing:${NC} ${YELLOW}OFF${NC} (no signing.pub — agent binaries trusted by sha256/TLS only)"
-    echo -e "  ${YELLOW}To enable: run 'make keygen' in agent/, commit signing.pub, then rebuild.${NC}"
+    echo -e "${CYAN}Release signing:${NC} ${RED}MISSING${NC} (no signing.pub — fleet agent installs and updates are disabled)"
+    echo -e "  ${YELLOW}To fix: run 'make keygen' in agent/, commit signing.pub, then rebuild.${NC}"
 fi
 export PANEL_SIGN_PUBKEY
 

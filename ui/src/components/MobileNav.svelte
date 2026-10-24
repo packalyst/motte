@@ -11,14 +11,12 @@
    */
   import Select from './Select.svelte'
   import Icon from './Icon.svelte'
-  import { scrollPageTop } from '../stores/app.js'
+  import { selectSection } from '../stores/app.js'
 
   let { items = [], active, onselect, label = 'Sections', from = 'lg', look = 'select' } = $props()
 
   // whole class names, so Tailwind sees them
   const HIDE = { sm: 'sm:hidden', md: 'md:hidden', lg: 'lg:hidden' }
-  // a newly picked section starts at the top
-  const pick = (id) => { onselect(id); scrollPageTop() }
 </script>
 
 {#if look === 'bottom'}
@@ -28,7 +26,7 @@
     <span class="bottom-nav-indicator" aria-hidden="true"></span>
     {#each items as i (i.id)}
       <button type="button" class="bottom-nav-item" aria-current={active === i.id ? 'page' : undefined}
-        disabled={i.soon} title={i.soon ? `${i.label} (soon)` : undefined} onclick={() => pick(i.id)}>
+        disabled={i.soon} title={i.soon ? `${i.label} (soon)` : undefined} onclick={() => selectSection(onselect, i.id)}>
         <span class="bottom-nav-icon">
           <Icon name={i.icon} size={20} />
           {#if i.badge}<span class="bottom-nav-badge">{i.badge}</span>{/if}
@@ -40,7 +38,7 @@
 {:else}
   <div class="sticky-bar {HIDE[from] || HIDE.lg}">
     <div class="sticky-bar-card">
-      <Select value={active} size="lg" aria-label={label} onchange={(e) => pick(e.target.value)}
+      <Select value={active} size="lg" aria-label={label} onchange={(e) => selectSection(onselect, e.target.value)}
         options={items.map((i) => ({ value: i.id, label: i.label + (i.badge !== undefined ? ` (${i.badge})` : '') + (i.soon ? ' — soon' : '') }))} />
     </div>
   </div>

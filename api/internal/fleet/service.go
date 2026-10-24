@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"api/internal/events"
 	"api/internal/router"
 )
 
@@ -62,14 +64,19 @@ type Service struct {
 	// one atomic step — two concurrent config POSTs must not both pass the check.
 	cfgMu sync.Mutex
 
-	// Live port migration (dual-listen grace window). When the port changes with agents
-	// enrolled, the new listener starts while the old one (oldSrv/oldPort) stays up until
-	// every agent acks set-panel-port or migrateEndsAt passes — so none are stranded.
-	oldSrv        *http.Server
-	oldPort       int
-	migrating     bool
-	migrateEndsAt time.Time
-	migrateIDs    []string
+	// Live port migration (dual-listen). When the port changes with agents enrolled, the new
+	// listener starts while the old one (oldSrv/oldPort) stays up until every migrating
+	// machine has really connected on the new port (migrateMoved), so none are stranded.
+	// Normally that takes seconds; machines that haven't moved by migrateEndsAt (offline, or
+	// unable to reach the new port) keep the old port open up to portMigrationMax.
+	oldSrv          *http.Server
+	oldPort         int
+	migrating       bool
+	migrateStarted  time.Time
+	migrateEndsAt   time.Time
+	migrateMachines []string        // machines told to move
+	migrateMoved    map[string]bool // machine id -> seen on the new port
+	migrateExtended bool            // the grace window passed with machines still to move
 
 	clientCertTTL time.Duration
 }
@@ -258,30 +265,33 @@ func (s *Service) stopLocked() {
 		s.oldSrv, s.oldPort = nil, 0
 	}
 	s.migrating = false
-	s.migrateIDs = nil
+	s.migrateMachines, s.migrateMoved = nil, nil
 	s.enabled = false
 }
 
-// portMigrationGrace bounds how long the OLD port stays open after a change: agents
-// online at the time migrate within ~10s (their poll interval); this cap only affects
-// machines powered off during the window (they strand and need reinstall).
-const portMigrationGrace = 5 * time.Minute
+// portMigrationGrace is how long a port change normally keeps the OLD port open: online
+// agents reconnect on the new port within seconds. Machines that haven't moved by then
+// (powered off, or unable to reach the new port: the agent then goes back to the old address
+// after 2 minutes) keep the old port open up to portMigrationMax, then strand.
+const (
+	portMigrationGrace = 5 * time.Minute
+	portMigrationMax   = 24 * time.Hour
+)
 
 // beginPortMigration switches the listener to newPort WITHOUT stranding agents: it opens
 // the new port while keeping the old one live, queues set-panel-port for every enrolled
-// machine, and closes the old port once all have acked or after portMigrationGrace.
+// machine, and closes the old port once every one of them has connected on the new port.
 // Caller must have verified a real port change with machines present and no migration
 // already in flight.
 func (s *Service) beginPortMigration(oldPort, newPort int, machines []Machine) {
 	payload, _ := json.Marshal(map[string]int{"port": newPort})
 	ids := make([]string, 0, len(machines))
 	for _, m := range machines {
-		id, err := s.Enqueue(m.ID, "set-panel-port", payload)
-		if err != nil {
+		if _, err := s.Enqueue(m.ID, "set-panel-port", payload); err != nil {
 			log.Printf("fleet: queue set-panel-port for %s: %v", m.ID, err)
 			continue
 		}
-		ids = append(ids, id)
+		ids = append(ids, m.ID)
 		s.broadcastCommands(m.ID)
 	}
 
@@ -290,67 +300,105 @@ func (s *Service) beginPortMigration(oldPort, newPort int, machines []Machine) {
 	s.srv = nil
 	s.startListenerLocked(newPort) // sets s.srv + s.port to the new listener
 	s.migrating = true
-	s.migrateEndsAt = time.Now().Add(portMigrationGrace)
-	s.migrateIDs = ids
+	s.migrateStarted = time.Now()
+	s.migrateEndsAt = s.migrateStarted.Add(portMigrationGrace)
+	s.migrateMachines, s.migrateMoved, s.migrateExtended = ids, map[string]bool{}, false
 	s.mu.Unlock()
 
-	log.Printf("fleet: port migration %d -> %d, notified %d machine(s); old port open up to %s",
-		oldPort, newPort, len(ids), portMigrationGrace)
+	log.Printf("fleet: port migration %d -> %d, notified %d machine(s); old port open until they reconnect",
+		oldPort, newPort, len(ids))
 	go s.watchMigration()
 }
 
-// watchMigration closes the old listener once every migrated machine has acked
-// set-panel-port, or when the grace window expires — whichever comes first.
+// noteListenerPort records that machine m reached the panel on the new port during a
+// migration (called for every authenticated agent request).
+func (s *Service) noteListenerPort(machineID string, r *http.Request) {
+	addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return
+	}
+	_, port, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	if s.migrating && port == strconv.Itoa(s.port) {
+		s.migrateMoved[machineID] = true
+	}
+	s.mu.Unlock()
+}
+
+// watchMigration closes the old listener once every migrating machine has connected on the
+// new port. When the grace window passes with machines still to move, it says which ones
+// and keeps the old port open for them up to portMigrationMax.
 func (s *Service) watchMigration() {
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	for range tick.C {
-		s.mu.Lock()
-		if !s.migrating {
-			s.mu.Unlock()
+		if s.migrationStep(time.Now()) {
 			return
 		}
-		expired := time.Now().After(s.migrateEndsAt)
-		if !expired && !s.allAckedLocked() {
-			s.mu.Unlock()
-			continue
-		}
-		s.closeListenerLocked(s.oldSrv, s.oldPort)
-		reason := "all agents acked"
-		if expired {
-			reason = "grace window elapsed"
-		}
-		log.Printf("fleet: port migration complete (%s) — old port %d closed", reason, s.oldPort)
-		s.oldSrv, s.oldPort = nil, 0
-		s.migrating = false
-		s.migrateIDs = nil
-		s.mu.Unlock()
-		return
 	}
 }
 
-// allAckedLocked reports whether every set-panel-port command from the current migration
-// has been acked (status left pending/delivered) — i.e. the agent received it. Caller
-// holds s.mu.
-func (s *Service) allAckedLocked() bool {
-	if len(s.migrateIDs) == 0 {
+// migrationStep runs one check of a port migration; true once it is over.
+func (s *Service) migrationStep(now time.Time) bool {
+	waiting := s.unmovedMachines()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.migrating {
 		return true
 	}
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(s.migrateIDs)), ",")
-	args := make([]any, len(s.migrateIDs))
-	for i, id := range s.migrateIDs {
-		args[i] = id
-	}
-	var pending int
-	q := `SELECT COUNT(*) FROM fleet_commands WHERE id IN (` + placeholders + `) AND status IN ('pending','delivered')`
-	if err := s.db.QueryRow(q, args...).Scan(&pending); err != nil {
+	switch {
+	case len(waiting) == 0:
+		log.Printf("fleet: port migration complete (every machine reconnected on :%d) — old port %d closed", s.port, s.oldPort)
+	case now.Before(s.migrateEndsAt):
 		return false
+	case !s.migrateExtended:
+		s.migrateExtended = true
+		s.migrateEndsAt = s.migrateStarted.Add(portMigrationMax)
+		msg := fmt.Sprintf("Port change: %d machine(s) haven't reconnected on the new port %d yet (%s); the old port %d stays open for them until %s",
+			len(waiting), s.port, strings.Join(waiting, ", "), s.oldPort, s.migrateEndsAt.Format(time.RFC3339))
+		log.Printf("fleet: %s", msg)
+		events.Audit("fleet", "port_migration_waiting", events.SeverityWarning, "system", "", msg)
+		return false
+	default:
+		msg := fmt.Sprintf("Port change: old port %d closed; %d machine(s) never reconnected on port %d (%s) and need reinstalling",
+			s.oldPort, len(waiting), s.port, strings.Join(waiting, ", "))
+		log.Printf("fleet: %s", msg)
+		events.Audit("fleet", "port_migration_stranded", events.SeverityWarning, "system", "", msg)
 	}
-	return pending == 0
+	s.closeListenerLocked(s.oldSrv, s.oldPort)
+	s.oldSrv, s.oldPort = nil, 0
+	s.migrating = false
+	s.migrateMachines, s.migrateMoved = nil, nil
+	return true
 }
 
-// migrationState reports whether a live port migration is in progress and when its
-// grace window (both ports open) ends.
+// unmovedMachines names the migrating machines that still exist (not deleted or revoked) and
+// haven't connected on the new port yet.
+func (s *Service) unmovedMachines() []string {
+	s.mu.Lock()
+	var ids []string
+	for _, id := range s.migrateMachines {
+		if !s.migrateMoved[id] {
+			ids = append(ids, id)
+		}
+	}
+	s.mu.Unlock()
+	var out []string
+	for _, id := range ids {
+		var name string
+		if err := s.db.QueryRow(`SELECT name FROM fleet_machines WHERE id = ? AND revoked = 0`, id).Scan(&name); err != nil {
+			continue // deleted or revoked: nothing left to wait for (a read error is retried next tick)
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// migrationState reports whether a live port migration is in progress and when the old port
+// is due to close at the latest.
 func (s *Service) migrationState() (active bool, endsAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -128,6 +128,13 @@ export function scrollPageTop() {
   document.querySelector('.app-scroller')?.scrollTo({ top: 0 })
 }
 
+// selectSection picks a section in a section menu (rail, bottom bar or sticky select): the page
+// switches, and the new section starts at the top.
+export function selectSection(onselect, id) {
+  onselect(id)
+  scrollPageTop()
+}
+
 export function setHashParam(key, value) {
   if (typeof window === 'undefined') return
   const p = new URLSearchParams(window.location.hash.slice(1))

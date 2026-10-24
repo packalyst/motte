@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -100,6 +101,29 @@ func validateCommandPayload(ctype string, payload json.RawMessage) error {
 		if json.Unmarshal(payload, &pl) != nil || pl.Enabled == nil || !slices.Contains(machineTools, pl.Tool) {
 			return errors.New("set-tool needs a tool (crowdsec, osquery or trivy) and enabled")
 		}
+	case "fix-packages":
+		var pl struct {
+			Packages []string `json:"packages"`
+		}
+		if json.Unmarshal(payload, &pl) != nil || len(pl.Packages) == 0 {
+			return errors.New("fix-packages needs a list of packages")
+		}
+		if len(pl.Packages) > maxFixPackages {
+			return fmt.Errorf("too many packages in one fix (max %d)", maxFixPackages)
+		}
+		for _, p := range pl.Packages {
+			if len(p) > 200 || !pkgNameRe.MatchString(p) {
+				return fmt.Errorf("%q is not a plain package name", p)
+			}
+		}
+	case "set-dry-run":
+		// The agent flips enforcement on this: it must say on or off explicitly.
+		var pl struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if json.Unmarshal(payload, &pl) != nil || pl.Enabled == nil {
+			return errors.New("set-dry-run needs enabled (true or false)")
+		}
 	case "sync-blocks":
 		// The agent replaces its list with this one: a missing list must never read as empty
 		// (clear-blocks is how a list is emptied).
@@ -111,6 +135,68 @@ func validateCommandPayload(ctype string, payload json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// pkgNameRe is a package name the agent's apt/dnf/yum read as just a name (the agent checks the
+// same rule): letters/digits first (never a flag), never a trailing '-' (apt: remove), an
+// optional architecture suffix.
+var pkgNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~-]*[A-Za-z0-9._+~](:[a-z0-9-]+)?$`)
+
+// maxFixPackages bounds one targeted fix (the CVE drill-down selects a handful).
+const maxFixPackages = 500
+
+// scanExcludeList is a rescan payload's folders to skip; set is false when it gives no list (the
+// agent then keeps the machine's saved one; any list, even empty, replaces it).
+func scanExcludeList(payload json.RawMessage) (list []string, set bool) {
+	var pl struct {
+		Exclude *[]string `json:"exclude"`
+	}
+	if len(payload) == 0 || json.Unmarshal(payload, &pl) != nil || pl.Exclude == nil {
+		return nil, false
+	}
+	return *pl.Exclude, true
+}
+
+// guardScanExcludes covers the one sensitive part of a rescan: its folders to skip are saved on
+// the machine and apply to every later scan, so ADDING one hides that folder's findings for
+// good. That takes an admin and a step-up; removing folders (scanning more) or rescanning with
+// the same list stays an operator action. Any change to the list is audited with the folders.
+func (s *Service) guardScanExcludes(r *http.Request, machineID string, payload json.RawMessage, pwd, totp string) (int, error) {
+	next, set := scanExcludeList(payload)
+	if !set {
+		return 0, nil // the saved list stays as it is
+	}
+	var cur struct {
+		ScanExclude []string `json:"scan_exclude"`
+	}
+	if raw, err := s.lastReport(machineID); err == nil && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cur)
+	}
+	var added, removed []string
+	for _, p := range next {
+		if !slices.Contains(cur.ScanExclude, p) {
+			added = append(added, p)
+		}
+	}
+	for _, p := range cur.ScanExclude {
+		if !slices.Contains(next, p) {
+			removed = append(removed, p)
+		}
+	}
+	if len(added) > 0 {
+		if p := router.CurrentUser(r); p == nil || (p.Role != "admin" && p.Role != "owner") {
+			return http.StatusForbidden, errors.New("only an admin can add folders for scans to skip")
+		}
+		if status, err := s.verifyStepUp(r, "rescan (skip folders)", pwd, totp); err != nil {
+			return status, err
+		}
+	}
+	if len(added) > 0 || len(removed) > 0 {
+		actor, _ := s.actingAdmin(r)
+		events.Audit("fleet", "scan_excludes_changed", events.SeverityWarning, actor, helper.GetClientIP(r),
+			fmt.Sprintf("Folders skipped by scans on %s changed: added %v, removed %v", machineID, added, removed))
+	}
+	return 0, nil
 }
 
 // machineTools are the agent tools a machine can turn on and off (set-tool).

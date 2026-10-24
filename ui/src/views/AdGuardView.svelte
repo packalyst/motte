@@ -439,7 +439,7 @@
       { icon: 'globe', tone: 'warning', value: blockedServices.length, label: 'blocked services' },
     ]} />
 
-    <!-- Segmented tab bar — pills on desktop, a select on mobile (matches Analytics) -->
+    <!-- Segmented tab bar — pills on desktop, MobileNav (a select under the top bar) on phones -->
     <div class="space-y-3">
       <div class="hidden sm:flex gap-0.5 bg-muted p-1 rounded-lg w-fit">
         {#each tabs as t}

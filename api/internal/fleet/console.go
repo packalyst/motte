@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -590,6 +591,10 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "machine, grant and session are required", http.StatusBadRequest)
 		return
 	}
+	if !consoleSessionRe.MatchString(session) {
+		http.Error(w, "invalid session id", http.StatusBadRequest)
+		return
+	}
 	g, ok := takeGrant(grantID, machineID, session, p.UserID)
 	if !ok {
 		http.Error(w, "invalid or expired console grant", http.StatusForbidden)
@@ -704,6 +709,10 @@ var browserFrameTypes = map[string]bool{
 	"file-put": true, "file-get": true, "file-list": true, "file-delete": true, "file-mkdir": true,
 	"ping": true, "git": true, "docker": true, "diag": true,
 }
+
+// consoleSessionRe is a valid console session id (the browser's random id, or a share link's
+// namespaced "<user id>_<id>"); the agent checks the same and matches tmux names exactly.
+var consoleSessionRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,96}$`)
 
 // nsSession namespaces a client-chosen session id by the owner's user id, so interactive sessions
 // are private to their opener (no cross-operator reattach or id collision).
@@ -822,8 +831,8 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 		// A share link may only be minted by the operator who currently OWNS the session, and it is
 		// bound to that owner's namespaced session id — so one operator can't share (or even address)
 		// another operator's shell.
-		if req.Session == "" {
-			router.JSONError(w, "a session is required to create a share link", http.StatusBadRequest)
+		if req.Session == "" || !consoleSessionRe.MatchString(req.Session) {
+			router.JSONError(w, "a valid session is required to create a share link", http.StatusBadRequest)
 			return
 		}
 		session = nsSession(p.UserID, req.Session)

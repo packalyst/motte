@@ -21,10 +21,10 @@ so uninstall leaves the host pristine (`base_dir` / `data_dir` / `conf_dir`):
 
 - **Metrics** — CPU / memory / disk / load / uptime read directly from `/proc` (`agent/metrics.go`, `agent/report.go`).
 - **CVE scanning (Trivy)** — scans OS packages **and** app dependencies (npm/composer/pip/go lockfiles auto-discovered by `trivy fs`). Slow/expensive → **on demand only**: never on install, boot or a timer. Trivy is installed by the first scan, each scan refreshes its own DB when stale, and the last result is saved (`/var/lib/wgscout/trivy/last-scan.json`, 0600) so it survives restarts. The `rescan` command runs it in the background; the report carries `scanning` / `scan_error`. `agent/tool_trivy.go`, `Manager.Scan`.
-- **Intrusion detection (CrowdSec)** — the agent reads CrowdSec's local decisions (`--limit 0`: all of them) and enforces them itself via its own nftables table (replaces the bouncer). Rules: the SSH set only, no GeoIP enrichment (converged at install and every hub update); the daemon runs with `GOMEMLIMIT=32MiB GOGC=25`. Its local API listens on 127.0.0.1 only and no Central API / Console is configured. `agent/tool_crowdsec.go`.
+- **Intrusion detection (CrowdSec)** — the agent reads CrowdSec's local decisions (`--limit 0`: all of them) and enforces them itself via its own nftables table (replaces the bouncer). Rules: the SSH set only, no GeoIP enrichment (converged at install and every hub update); the daemon runs with `GOMEMLIMIT=64MiB GOGC=25`. Its local API listens on 127.0.0.1 only and no Central API / Console is configured. `agent/tool_crowdsec.go`.
 - **Host facts** — OS, kernel, CPU, RAM, listening ports, read natively from `/proc`, `/sys`, `/etc` (no subprocess); hardware/OS/kernel once at start, the rest every minute. `agent/hostfacts.go`.
 - **FIM (osquery)** — File Integrity Monitoring via a supervised `osqueryd`. `agent/tool_osquery.go`.
-- **Enforcement** — blocks source IPs via its own nftables table (`inet wgscout`: sets `blocked_ips` / `blocked_ips6` for manual blocks and CrowdSec bans, `panel_blocklist` for the panel-pushed list). The agent's saved state (`<data_dir>/blocks.json`, root-only) is the truth, with each entry's sources (manual, crowdsec, panel); the kernel table is rebuilt from it in one atomic `nft -f` transaction at start (a reboot empties the kernel's rules), on every change, when dry-run changes, and by a once-a-minute self-heal (a failed save or apply, or a table that went missing). Dry-run enforces nothing: the table is removed and the list kept. An address stays blocked while any source still wants it; unblocking also drops CrowdSec's ban. Only replies to connections the host opened are accepted ahead of the drops, so a ban also ends a blocked address's existing sessions. Addresses that would hurt the host (loopback, its own, multicast, link-local) and reserved panel ranges are refused. `agent/enforce.go`.
+- **Enforcement** — blocks source IPs via its own nftables table (`inet wgscout`: sets `blocked_ips` / `blocked_ips6` for manual blocks and CrowdSec bans, `panel_blocklist` for the panel-pushed list). The agent's saved state (`<data_dir>/blocks.json`, root-only) is the truth, with each entry's sources (manual, crowdsec, panel); the kernel table is rebuilt from it in one atomic `nft -f` transaction at start (a reboot empties the kernel's rules), on every change, when dry-run changes, and by a once-a-minute self-heal (a failed save or apply, or a table that went missing). Dry-run enforces nothing: the table is removed and the list kept. An address stays blocked while any source still wants it; unblocking also drops CrowdSec's ban. The same drops sit in two chains: `input` (traffic for the host) and `forward` (traffic through it, above all to Docker-published ports, which are rewritten to the container before they'd reach `input`). Only replies to connections the host or a container opened are accepted ahead of the drops, so a ban also ends a blocked address's existing sessions. Addresses that would hurt the host (loopback, its own, multicast, link-local) are refused, and the panel list also refuses private and reserved addresses (single or range: RFC 1918, 100.64/10 CGNAT/Tailscale), so a push can't cut off the operator's own VPN or LAN. `agent/enforce.go`.
 - **Kernel maintenance** — install newest kernel, reboot to activate, purge superseded kernels + rescan, as a reboot-surviving state machine. `agent/kernelmaint.go` (`KernelMaint`).
 
 The **sub-agents (tools)** are installed only from a pinned `manifest.json`
@@ -141,6 +141,22 @@ for selected CVEs), `update-kernel`, `restart` (`tools`|`host`), `set-dry-run`,
 `set-log-level` (`quiet`|`debug`), `update-agent` (self-update), `rescan` (Trivy
 now), `sync-blocks` (push the panel's blocklist onto the host). Anything else →
 `command not allowed`.
+
+### Local policy (a lock the panel can't change)
+
+Root on a server can create `/etc/wgscout/local-policy.json` to switch capabilities off
+whatever the panel asks — useful on sensitive hosts, since whoever controls the panel
+otherwise controls the console, port forwards and agent updates:
+
+```json
+{"no_console": true, "no_port_forward": true, "no_self_update": true}
+```
+
+Each switch is read when it matters, so an edit applies at once: `no_console` refuses
+`set-console`, keeps the console channel from starting or reconnecting and refuses new shells;
+`no_port_forward` refuses console port forwards; `no_self_update` refuses `update-agent`
+(root updates the binary by hand). No file locks nothing; a file that can't be read or parsed
+locks everything, so a typo never quietly undoes a lock. `agent/policy.go`.
 
 ### Panel command lifecycle (`api/.../commands.go`)
 

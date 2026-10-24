@@ -26,29 +26,21 @@
   onMount(load)
 
   // Port migration: while both ports are open the config is locked (a second change would strand
-  // agents). Tick a clock for the countdown and re-poll so it unlocks when the panel finishes.
-  let now = $state(Date.now())
+  // agents). The old port closes once every machine has reconnected on the new one (normally
+  // seconds; machines that can't, at the latest by migrate_ends_at). Re-poll so it unlocks.
   const migrating = $derived(!!ep?.migrating)
-  const migrateLeft = $derived(
-    migrating && ep?.migrate_ends_at
-      ? Math.max(0, Math.ceil((new Date(ep.migrate_ends_at).getTime() - now) / 1000))
-      : 0
-  )
+  const migrateBy = $derived(migrating && ep?.migrate_ends_at ? new Date(ep.migrate_ends_at).toLocaleString() : '')
   $effect(() => {
     if (!migrating) return
-    let n = 0
     const t = setInterval(async () => {
-      now = Date.now()
-      if (++n % 5 === 0) {
-        try {
-          const fresh = await apiGet('/api/fleet/endpoints')
-          if (!savingCfg) {
-            ep = { ...ep, ...fresh }
-            if (!fresh.migrating) { cfgPort = fresh.port; cfgEnabled = fresh.enabled }
-          }
-        } catch { /* keep last state */ }
-      }
-    }, 1000)
+      try {
+        const fresh = await apiGet('/api/fleet/endpoints')
+        if (!savingCfg) {
+          ep = { ...ep, ...fresh }
+          if (!fresh.migrating) { cfgPort = fresh.port; cfgEnabled = fresh.enabled }
+        }
+      } catch { /* keep last state */ }
+    }, 5000)
     return () => clearInterval(t)
   })
 
@@ -58,7 +50,7 @@
       const res = await apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort) })
       ep = { ...ep, ...res }
       if (res.migrating) {
-        toast('New port published to agents — old port stays open ~5 min while they reconnect', 'success')
+        toast('New port sent to the agents — the old port stays open until they have all reconnected', 'success')
       } else {
         toast(cfgEnabled ? `Fleet listener on :${ep.port}` : 'Fleet listener off', 'success')
       }
@@ -100,7 +92,7 @@
     {#if migrating}
       <p class="flex items-start gap-1.5 text-[11px] text-warning">
         <Icon name="refresh" size={13} class="mt-0.5 shrink-0 animate-spin" />
-        Changing port — agents are being told the new port ({ep.port}). The old port stays open ~{migrateLeft}s more so they reconnect; settings are locked until then.
+        Changing port — agents are being told the new port ({ep.port}). The old port stays open until every machine has reconnected on the new one (usually under a minute; at the latest {migrateBy} for machines that are offline); settings are locked until then.
       </p>
     {/if}
   </div>

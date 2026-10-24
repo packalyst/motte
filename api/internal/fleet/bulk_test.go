@@ -91,3 +91,47 @@ func TestSyncBlocksNeedsList(t *testing.T) {
 		}
 	}
 }
+
+// A dry-run command must say on or off: a missing value never reads as "off" (enforcing).
+func TestSetDryRunNeedsValue(t *testing.T) {
+	for p, ok := range map[string]bool{``: false, `{}`: false, `{"enabled":null}`: false, `{"enabled":false}`: true, `{"enabled":true}`: true} {
+		if err := validateCommandPayload("set-dry-run", json.RawMessage(p)); (err == nil) != ok {
+			t.Errorf("payload %q: err=%v, want ok=%v", p, err, ok)
+		}
+	}
+}
+
+// A targeted package fix carries plain package names only (never a flag or "name-", which apt
+// reads as remove), and a bounded list.
+func TestFixPackagesValidated(t *testing.T) {
+	for p, ok := range map[string]bool{
+		`{"packages":["openssl","libc6:amd64","g++"]}`: true,
+		`{"packages":[]}`: false, `{}`: false, `{"packages":["nginx-"]}`: false,
+		`{"packages":["--purge"]}`: false, `{"packages":["pkg=1.0"]}`: false,
+	} {
+		if err := validateCommandPayload("fix-packages", json.RawMessage(p)); (err == nil) != ok {
+			t.Errorf("payload %s: err=%v, want ok=%v", p, err, ok)
+		}
+	}
+}
+
+// The single-command endpoint can't push a caller's list either: an empty list from the request
+// is replaced by the panel's own.
+func TestSingleSyncBlocksCarriesPanelList(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	svc.blockedIPs = func() ([]string, error) { return []string{"203.0.113.0/24"}, nil }
+	body := `{"machine_id":"m1","type":"sync-blocks","payload":{"ips":[]}}`
+	rr := httptest.NewRecorder()
+	svc.handleEnqueueCommand(rr, asOwner(httptest.NewRequest(http.MethodPost, "/api/fleet/command", bytes.NewReader([]byte(body)))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var payload string
+	if err := svc.db.QueryRow(`SELECT payload FROM fleet_commands WHERE machine_id='m1' AND type='sync-blocks'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload != `{"ips":["203.0.113.0/24"]}` {
+		t.Fatalf("queued %s, want the panel's list", payload)
+	}
+}
