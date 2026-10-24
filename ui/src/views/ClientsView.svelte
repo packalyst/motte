@@ -326,7 +326,7 @@
           </button>
         {/if}
       </div>
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {#if g.k === 'machine'}
           {#each waiting as t (t.id)}
             {@const end = new Date(t.expires_at).getTime() / 1000}

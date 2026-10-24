@@ -247,9 +247,10 @@
   </div>
 
   <!-- mobile: the segmented tabs + period wrap badly on a phone, so collapse them
-       into a compact filters card of selects (shown only ≤720px; desktop keeps the
-       toolbar above). -->
-  <div class="filters-m">
+       into a compact filters card of selects that stays under the top bar (shown only
+       ≤720px; desktop keeps the toolbar above). -->
+  <div class="filters-m sticky-bar">
+    <div class="sticky-bar-card">
     <div class="frow">
       <Select value={selectedType ?? ''} onchange={(e) => setType(e.target.value || null)}>
         {#each TABS as t}<option value={t.id ?? ''}>{t.label}</option>{/each}
@@ -271,6 +272,7 @@
         <Button variant="outline" size="sm" icon="download" onclick={downloadCsv} class="flex-1">Export</Button>
       </div>
     {/if}
+    </div>
   </div>
 
   {#if loading}
@@ -639,7 +641,7 @@
   .filters-m { display: none; }
   @media (max-width: 720px) {
     .toolbar { display: none; }
-    .filters-m { display: flex; flex-direction: column; gap: 8px; background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); padding: 10px; margin: 16px 0 18px; }
+    .filters-m { display: block; margin: 8px -12px 10px; } /* the card itself: .sticky-bar(-card) */
     .filters-m .frow { display: flex; gap: 8px; }
     .filters-m .frow > :global(*) { flex: 1; min-width: 0; }
   }

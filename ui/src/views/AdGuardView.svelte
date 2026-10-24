@@ -11,7 +11,7 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
-  import Select from '../components/Select.svelte'
+  import MobileNav from '../components/MobileNav.svelte'
   import Tabs from '../components/Tabs.svelte'
   import Checkbox from '../components/Checkbox.svelte'
   import Explain from '../components/Explain.svelte'
@@ -452,11 +452,7 @@
           </button>
         {/each}
       </div>
-      <div class="sm:hidden">
-        <Select value={activeTab} onchange={(e) => setTab(e.target.value)}>
-          {#each tabs as t}<option value={t.id}>{t.label}</option>{/each}
-        </Select>
-      </div>
+      <MobileNav items={tabs} active={activeTab} onselect={setTab} label="DNS sections" from="sm" />
 
       <!-- Overview is two panels of its own; the other tabs share one panel -->
       <div class={activeTab === 'overview' ? 'space-y-4' : 'panel'}>

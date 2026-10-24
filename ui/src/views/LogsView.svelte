@@ -241,7 +241,8 @@
       </div>
     {:else}
       <div class="data-table-content">
-        <table>
+        <!-- table-stack: each entry is a compact card on a phone (no sideways scrolling) -->
+        <table class="table-stack">
           <thead>
             <tr>
               <th>Time</th>
@@ -260,7 +261,7 @@
               {@const destGeo = geoData[log.logs_dest_ip]}
               <tr class="even:bg-muted/50">
                 <td class="data-table-cell-nowrap">
-                  <div class="space-y-1">
+                  <div class="space-y-1 stack-inline">
                     <div class="flex items-center gap-2">
                       <Icon name="calendar" size={14} class="text-muted-foreground" />
                       <span class="text-xs font-medium">{formatRelativeDate(log.logs_timestamp)}</span>
@@ -274,7 +275,7 @@
                   </div>
                 </td>
                 <td>
-                  <div class="space-y-1">
+                  <div class="space-y-1 stack-inline">
                     <div class="flex items-center gap-2">
                       <Icon name={typeInfo.icon} size={14} class={typeInfo.color} />
                       <span class="text-xs font-medium {typeInfo.color}">{typeInfo.label}</span>
@@ -291,7 +292,7 @@
                 </td>
                 <td class="data-table-cell-mono">
                   {#if log.logs_type === 'proxy' && log.logs_service}
-                    <div class="space-y-1">
+                    <div class="space-y-1 stack-inline">
                       <div class="flex items-center gap-2">
                         <Icon name="user" size={14} class="text-primary" />
                         <span class="text-xs font-medium">{log.logs_service}</span>
@@ -304,7 +305,7 @@
                       </div>
                     </div>
                   {:else if log.logs_src_client_name}
-                    <div class="space-y-1">
+                    <div class="space-y-1 stack-inline">
                       <div class="flex items-center gap-2">
                         <Icon name="device-laptop" size={14} class="text-primary" />
                         <span class="text-xs font-medium">{log.logs_src_client_name}</span>
@@ -323,12 +324,12 @@
                     </div>
                   {/if}
                 </td>
-                <td class="data-table-cell-mono">
+                <td class="data-table-cell-mono stack-main">
                   {#if log.logs_domain}
-                    <div class="space-y-1">
+                    <div class="space-y-1 stack-inline">
                       <div class="flex items-center gap-2">
                         <Icon name="world" size={14} class="text-muted-foreground" />
-                        <span class="text-xs truncate max-w-[200px]" title={log.logs_domain}>{log.logs_domain}</span>
+                        <span class="text-xs truncate max-w-[200px] max-sm:max-w-none" title={log.logs_domain}>{log.logs_domain}</span>
                       </div>
                       {#if log.logs_type === 'dns' && log.logs_dest_ip && log.logs_dest_ip !== '0.0.0.0'}
                         <div class="border-t border-dashed border-border pt-1">
@@ -395,7 +396,7 @@
                     {/if}
                   {/if}
                 </td>
-                <td class="text-right">
+                <td class="text-right stack-end">
                   {#if log.logs_status}
                     <Badge variant={statusInfo.variant} size="sm">{statusInfo.label}</Badge>
                   {:else}

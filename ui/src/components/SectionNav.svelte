@@ -1,23 +1,21 @@
 <script>
   /**
    * SectionNav — the left menu for pages split into sections (a machine, Settings…): a dropdown on
-   * mobile, a vertical rail on desktop whose divider runs the full height of the page. items:
+   * mobile (MobileNav: sticky under the top bar), a vertical rail on desktop whose divider runs the full height of the page. items:
    * [{ id, label, icon, badge?, soon? }]; the page owns the active id and decides what selecting
    * does (e.g. also update the URL). only='rail' | 'select' renders just one part, for a page that
-   * places the mobile dropdown elsewhere (e.g. under its header).
+   * places the mobile dropdown elsewhere (e.g. under its header). mobile='select' | 'bottom' picks
+   * the phone look (MobileNav: sticky select, or an app tab bar at the bottom).
    */
   import Icon from './Icon.svelte'
   import Badge from './Badge.svelte'
-  import Select from './Select.svelte'
+  import MobileNav from './MobileNav.svelte'
 
-  let { items = [], active, onselect, label = 'Sections', only = undefined } = $props()
+  let { items = [], active, onselect, label = 'Sections', only = undefined, mobile = 'select' } = $props()
 </script>
 
 {#if only !== 'rail'}
-<div class="lg:hidden">
-  <Select value={active} size="lg" aria-label={label} onchange={(e) => onselect(e.target.value)}
-    options={items.map((i) => ({ value: i.id, label: i.label + (i.badge !== undefined ? ` (${i.badge})` : '') + (i.soon ? ' — soon' : '') }))} />
-</div>
+<MobileNav {items} {active} {onselect} {label} look={mobile} />
 {/if}
 
 {#if only !== 'select'}

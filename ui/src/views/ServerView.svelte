@@ -220,15 +220,18 @@
       <!-- Current server load -->
       <div class="{card} lg:col-span-2">
         <h3 class="text-sm font-semibold mb-4 flex items-center gap-2"><Icon name="gauge" size={16} class="text-primary" />Current server load</h3>
-        <div class="flex flex-col sm:flex-row gap-6">
-          <!-- Left: gauge (vertically centered) -->
-          <div class="flex items-center justify-center shrink-0 sm:w-48">
+        <!-- Gauge left, system facts and load right (phones too); the host details sit under the
+             facts on desktop and run the full width under both on a phone (the right column is
+             `contents` there, so its two parts become rows of the grid). One markup. -->
+        <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 text-xs sm:gap-x-6">
+          <!-- gauge: CSS sets its width (smaller on a phone); the SVG scales with it -->
+          <div class="flex w-[120px] items-center justify-center sm:w-48 [&>svg]:h-auto [&>svg]:w-full sm:[&>svg]:w-[160px]">
             <Gauge value={latest?.cpu ?? 0} size={160} label="CPU utilization" />
           </div>
 
-          <!-- Right: system + host details (vertical divider on desktop) -->
-          <div class="flex-1 min-w-0 text-xs space-y-3 sm:border-l sm:border-border sm:pl-6">
-            <div class="flex flex-wrap gap-x-5 gap-y-2">
+          <div class="contents sm:block sm:min-w-0 sm:space-y-3 sm:border-l sm:border-border sm:pl-6">
+          <div class="min-w-0 space-y-3 self-center border-l border-border pl-4 sm:border-0 sm:pl-0">
+            <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-x-5">
               <div class="flex items-center gap-1.5" title="Logical CPU cores"><Icon name="cpu" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
               <div class="flex items-center gap-1.5" title="Time since boot"><Icon name="clock" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
               <div class="flex items-center gap-1.5" title="When the host last booted"><Icon name="refresh" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
@@ -240,12 +243,13 @@
                 <span class="flex items-baseline gap-1"><b class="text-sm font-semibold tabular-nums {loadColor(latest?.load?.[pair[1]], latest?.cores_n)}">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</b><span class="text-[10px] text-muted-foreground">{pair[0]}</span></span>
               {/each}
             </div>
-            <div class="pt-3 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+          </div>
+          <div class="col-span-2 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border pt-3 sm:grid-cols-2">
               {#if data.host.distro}<div class="flex items-center gap-1.5 min-w-0"><Icon name="box" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Distro</span><b class="font-medium text-foreground truncate">{data.host.distro}</b></div>{/if}
               {#if data.host.kernel}<div class="flex items-center gap-1.5 min-w-0"><Icon name="code" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Kernel</span><b class="font-medium text-foreground truncate font-mono">{data.host.kernel}</b></div>{/if}
               {#if data.host.hostname}<div class="flex items-center gap-1.5 min-w-0"><Icon name="device-desktop" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Host</span><b class="font-medium text-foreground truncate">{data.host.hostname}</b></div>{/if}
               {#if data.host.timezone}<div class="flex items-center gap-1.5 min-w-0"><Icon name="map-pin" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Timezone</span><b class="font-medium text-foreground truncate">{data.host.timezone}</b></div>{/if}
-            </div>
+          </div>
           </div>
         </div>
       </div>

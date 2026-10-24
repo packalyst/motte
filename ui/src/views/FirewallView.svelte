@@ -792,7 +792,8 @@
               </div>
             {:else}
               <div class="data-table-content">
-                <table>
+                <!-- table-stack: each rule is a compact card on a phone (no sideways scrolling) -->
+                <table class="table-stack has-check">
                   <thead>
                     <tr>
                       <th class="w-8">
@@ -812,7 +813,7 @@
                   <tbody>
                     {#each blockedEntries as entry}
                       <tr class="{removingEntryId === entry.id ? 'opacity-50' : ''} {selectedBlockedEntries.includes(entry.id) ? 'bg-primary/5' : ''}">
-                        <td>
+                        <td class="stack-check">
                           <Checkbox
                             checked={selectedBlockedEntries.includes(entry.id)}
                             onchange={() => toggleBlockedEntrySelection(entry.id)}
@@ -830,8 +831,8 @@
                             </div>
                           </div>
                         </td>
-                        <td>
-                          <div class="flex items-center gap-2">
+                        <td class="stack-main">
+                          <div class="flex min-w-0 flex-wrap items-center gap-2">
                             {#if entry.entryType === 'country'}
                               <img
                                 src="https://flagcdn.com/{entry.value.toLowerCase()}.svg"
@@ -897,7 +898,7 @@
                             <Badge variant="mono" size="sm">Permanent</Badge>
                           {/if}
                         </td>
-                        <td class="data-table-cell-actions">
+                        <td class="data-table-cell-actions stack-end">
                           {#if removingEntryId === entry.id}
                             <div class="w-4 h-4 border-2 border-muted border-t-primary rounded-full animate-spin"></div>
                           {:else if entry.essential}

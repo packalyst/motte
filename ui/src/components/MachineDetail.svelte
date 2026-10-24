@@ -776,7 +776,7 @@
         description="This machine hasn't checked in with a report. It appears once the agent's first metrics/scan cycle completes." />
     </div>
   {:else}
-    <SectionNav only="select" items={navList} active={activeTab} onselect={go} label="Machine sections" />
+    <SectionNav only="select" mobile="bottom" items={navList} active={activeTab} onselect={go} label="Machine sections" />
     {#if activeTab === 'overview'}
       <!-- Vitals: one surface with hairline dividers. Each shows the value now, what it's out of,
            and its trend over the usage-history range (the same points; no extra request). -->

@@ -127,6 +127,12 @@
   // Pull-to-refresh handler
   let scroller = $state(null) // the element that scrolls the page (pull-to-refresh watches it)
 
+  // A new page starts at the top: the scroller is shared by every page, so it would otherwise
+  // keep the previous page's scroll position.
+  $effect(() => {
+    if ($currentView && scroller) scroller.scrollTop = 0
+  })
+
   async function handlePullRefresh() {
     await reloadCurrentView()
   }
@@ -481,7 +487,7 @@
     {/if}
 
     <!-- Content area with pull-to-refresh -->
-    <section bind:this={scroller} class="flex-1 overflow-hidden overflow-y-auto overscroll-contain bg-background">
+    <section bind:this={scroller} class="app-scroller flex-1 overflow-hidden overflow-y-auto overscroll-contain bg-background">
       <PullToRefresh onRefresh={handlePullRefresh} {scroller}>
         <div class="p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:p-4 lg:pb-[max(1rem,env(safe-area-inset-bottom))]">
           {#if loading}

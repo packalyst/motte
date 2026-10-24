@@ -175,20 +175,21 @@
     <!-- Total Transfer -->
     <div class="bg-card border border-border rounded-xl p-4">
       <h3 class="text-sm font-semibold mb-3">Total Transfer</h3>
-      <div class="space-y-3">
-        <div class="p-4 rounded-lg bg-success/10 border border-success/20">
+      <!-- side by side on phones and tablets, stacked in the narrow desktop column -->
+      <div class="grid grid-cols-2 gap-3 lg:grid-cols-1">
+        <div class="min-w-0 p-3 sm:p-4 rounded-lg bg-success/10 border border-success/20">
           <div class="flex items-center gap-2 mb-1">
             <Icon name="arrow-up" size={16} class="text-success" />
             <span class="text-xs text-muted-foreground">Uploaded</span>
           </div>
-          <div class="text-2xl font-bold text-success">{formatBytes($statsStore?.traffic?.total_tx)}</div>
+          <div class="truncate text-xl sm:text-2xl font-bold tabular-nums text-success">{formatBytes($statsStore?.traffic?.total_tx)}</div>
         </div>
-        <div class="p-4 rounded-lg bg-info/10 border border-info/20">
+        <div class="min-w-0 p-3 sm:p-4 rounded-lg bg-info/10 border border-info/20">
           <div class="flex items-center gap-2 mb-1">
             <Icon name="arrow-down" size={16} class="text-info" />
             <span class="text-xs text-muted-foreground">Downloaded</span>
           </div>
-          <div class="text-2xl font-bold text-info">{formatBytes($statsStore?.traffic?.total_rx)}</div>
+          <div class="truncate text-xl sm:text-2xl font-bold tabular-nums text-info">{formatBytes($statsStore?.traffic?.total_rx)}</div>
         </div>
       </div>
     </div>
