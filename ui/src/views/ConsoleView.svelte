@@ -10,6 +10,7 @@
   } from '../stores/app.js'
   import { consoleSessions, openConsoleEvents } from '../lib/consoleEvents.js'
   import Console from '../components/Console.svelte'
+  import { keyboardAware } from '../lib/utils/viewport.js'
 
   let { loading = $bindable() } = $props()
 
@@ -118,7 +119,7 @@
     You need operator access to use the console.
   </div>
 {:else}
-  <div class="fixed inset-0 lg:left-60 z-40 flex bg-[#0f1419] text-[#d7dce2]">
+  <div use:keyboardAware class="safe-inset fixed inset-0 lg:left-60 z-40 flex bg-[#0f1419] text-[#d7dce2]">
     <Console
       embedded
       machines={machines.map((m) => ({ id: m.id, name: m.name, console_record: m.console_record }))}

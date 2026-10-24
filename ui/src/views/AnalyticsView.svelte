@@ -330,14 +330,18 @@
     <div class="grid cols-4 stack-gap">
       {#each Object.entries(typeMeta) as [type, meta]}
         {@const d = data[type]}
-        <div class="card">
-          <div class="card-h compact"><h3><span class="tdot" style="background:{meta.cvar}"></span>{meta.label}</h3><span class="sub">{d && !d.error ? fmtNumber(d.total_count) : '—'}</span></div>
+        <div class="panel flex flex-col">
+          <div class="panel-head">
+            <span class="tdot" style="background:{meta.cvar}"></span>
+            <div class="panel-title min-w-0 flex-1">{meta.label}</div>
+            <span class="panel-sub tabular-nums">{d && !d.error ? fmtNumber(d.total_count) : '—'}</span>
+          </div>
           {#if d?.time_series?.length > 1}
-            <div class="card-body tight">
+            <div class="-mx-4 -mb-4 flex-1 overflow-hidden rounded-b-xl">
               <UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={120} yFormat={fmtNumber} legend={false} />
             </div>
           {:else}
-            <div class="card-body"><div class="nodata">Not enough data in this period.</div></div>
+            <div class="flex-1"><div class="nodata">Not enough data in this period.</div></div>
           {/if}
         </div>
       {/each}
@@ -349,21 +353,22 @@
 
     <!-- world map + top countries -->
     <div class="grid cols-2 stack-gap start">
-      <div class="card">
-        <div class="card-h">
-          <h3><Icon name="world" size={15} />World map</h3>
+      <div class="panel flex flex-col">
+        <div class="panel-head">
+          <span class="panel-icon"><Icon name="world" size={17} /></span>
+          <div class="panel-title min-w-0 flex-1">World map</div>
           <div class="map-toggle">
             <button class:active={mapKind === 'src'} onclick={() => (mapKind = 'src')}>Who's hitting us</button>
             <button class:active={mapKind === 'dest'} onclick={() => (mapKind = 'dest')}>Where traffic goes</button>
           </div>
         </div>
-        <div class="card-body tight">
+        <div class="-mx-4 -mb-4 flex-1 overflow-hidden rounded-b-xl">
           {#if mapData.length}<WorldMap dots={mapData} kind={mapKind} />{:else}<div class="nodata pad">No country data in this period.</div>{/if}
         </div>
       </div>
-      <div class="card">
-        <div class="card-h"><h3><Icon name="map-pin" size={15} />Top countries</h3><span class="sub">{mapKind === 'src' ? 'source of attacks' : 'destination of traffic'}</span></div>
-        <div class="card-body">
+      <div class="panel flex flex-col">
+        {@render head('map-pin', 'Top countries', mapKind === 'src' ? 'source of attacks' : 'destination of traffic')}
+        <div class="flex-1">
           {#if mapData.length}
             {@const mx = maxOf(mapData)}
             <div class="rows">{#each mapData.slice(0, 10) as row}{@render cRow(row.country, row.count, mx, mapKind === 'src' ? 'var(--destructive)' : 'var(--info)', fmtNumber)}{/each}</div>
@@ -374,9 +379,9 @@
 
     <!-- devices -->
     <div class="section-title">Devices<span class="line"></span></div>
-    <div class="card">
-      <div class="card-h"><h3><Icon name="activity" size={15} />Top devices by data used</h3><span class="sub">click a device for full detail</span></div>
-      <div class="card-body">
+    <div class="panel flex flex-col">
+      {@render head('activity', 'Top devices by data used', 'click a device for full detail')}
+      <div class="flex-1">
         {#if topTalkers.length}
           {@const mx = maxOf(topTalkers, 'total')}
           <div class="rows">
@@ -414,16 +419,16 @@
       </div>
 
       {#if peerUsage.series?.length}
-        <div class="card stack-gap">
-          <div class="card-h"><h3><Icon name="activity" size={15} />Data over time</h3><span class="sub">upload + download, this device</span></div>
-          <div class="card-body"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} legend={false} /></div>
+        <div class="panel flex flex-col stack-gap">
+          {@render head('activity', 'Data over time', 'upload + download, this device')}
+          <div class="flex-1"><UPlotChart data={[peerUsage.series.map((b) => b.ts), peerUsage.series.map((b) => b.total)]} series={[{ label: 'Traffic', stroke: '--primary', fill: 0.18 }]} height={160} yFormat={fmtBytes} legend={false} /></div>
         </div>
       {/if}
 
       <div class="grid cols-2">
-        <div class="card">
-          <div class="card-h"><h3><Icon name="globe" size={15} />Talked to</h3><span class="sub">by total bytes</span></div>
-          <div class="card-body">
+        <div class="panel flex flex-col">
+          {@render head('globe', 'Talked to', 'by total bytes')}
+          <div class="flex-1">
             <div class="ud-legend"><span><span class="sw" style="background:var(--info)"></span>download</span><span><span class="sw" style="background:var(--tx)"></span>upload</span></div>
             {#if peerUsage.destinations?.length}
               {@const mx = maxOf(peerUsage.destinations, 'bytes_total')}
@@ -444,9 +449,9 @@
             {:else}<div class="nodata pad">No per-destination byte data yet.</div>{/if}
           </div>
         </div>
-        <div class="card">
-          <div class="card-h"><h3><Icon name="map-pin" size={15} />By country</h3></div>
-          <div class="card-body">
+        <div class="panel flex flex-col">
+          {@render head('map-pin', 'By country', null)}
+          <div class="flex-1">
             {#if clientCountries.length}
               {@const mx = clientCountries[0].count}
               <div class="rows">{#each clientCountries as row}{@render cRow(row.country, row.count, mx, 'var(--primary)', fmtBytes)}{/each}</div>
@@ -507,9 +512,9 @@
       {/if}
 
       {#if d.time_series?.length}
-        <div class="card stack-gap">
-          <div class="card-h"><h3>Events over time</h3><span class="sub">{periodLabelFull}</span></div>
-          <div class="card-body tight"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} yFormat={fmtNumber} legend={false} /></div>
+        <div class="panel flex flex-col stack-gap">
+          {@render head(null, 'Events over time', periodLabelFull)}
+          <div class="-mx-4 -mb-4 flex-1 overflow-hidden rounded-b-xl"><UPlotChart data={[d.time_series.map((b) => b.ts), d.time_series.map((b) => b.count)]} series={[{ label: meta.label, stroke: meta.stroke, fill: 0.18 }]} height={170} yFormat={fmtNumber} legend={false} /></div>
         </div>
       {/if}
 
@@ -522,18 +527,18 @@
             {@render barCard('Top visitors', d.top_clients, meta.cvar, { sub: 'by IP' }, lblIp)}
           </div>
           <div class="mcol">
-            <div class="card"><div class="card-h"><h3>HTTP status</h3><span class="sub">how requests were answered</span></div><div class="card-body"><Donut segments={donutSeg(d.http_status, httpColor)} format={fmtNumber} /></div></div>
+            <div class="panel flex flex-col">{@render head(null, 'HTTP status', 'how requests were answered')}<div class="flex-1"><Donut segments={donutSeg(d.http_status, httpColor)} format={fmtNumber} /></div></div>
             {@render barCard('Top paths', d.top_paths, meta.cvar, {}, lblPath)}
           </div>
         </div>
       {:else if selectedType === 'dns'}
         <div class="masonry stack-gap">
           <div class="mcol">
-            <div class="card"><div class="card-h"><h3>Response codes</h3></div><div class="card-body"><Donut segments={donutSeg(d.status_counts, dnsColor)} format={fmtNumber} /></div></div>
+            <div class="panel flex flex-col">{@render head(null, 'Response codes', null)}<div class="flex-1"><Donut segments={donutSeg(d.status_counts, dnsColor)} format={fmtNumber} /></div></div>
             {@render barCard('Top allowed domains', d.top_allowed, 'var(--success)', { sub: 'most resolved' }, lblDomain)}
           </div>
           <div class="mcol">
-            <div class="card"><div class="card-h"><h3>Query types</h3></div><div class="card-body"><Donut segments={donutSeg(d.query_types, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
+            <div class="panel flex flex-col">{@render head(null, 'Query types', null)}<div class="flex-1"><Donut segments={donutSeg(d.query_types, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
             {@render barCard('Top blocked domains', d.top_blocked, 'var(--destructive)', { sub: 'ads & trackers' }, lblDomain)}
           </div>
         </div>
@@ -544,14 +549,14 @@
             {@render barCard('Top destinations', d.top_dest_ips, meta.cvar, {}, lblIp)}
           </div>
           <div class="mcol">
-            <div class="card"><div class="card-h"><h3>Protocol mix</h3></div><div class="card-body"><Donut segments={donutSeg(d.protocols, (_, i) => (i === 0 ? 'var(--tx)' : 'var(--info)'))} format={fmtNumber} /></div></div>
+            <div class="panel flex flex-col">{@render head(null, 'Protocol mix', null)}<div class="flex-1"><Donut segments={donutSeg(d.protocols, (_, i) => (i === 0 ? 'var(--tx)' : 'var(--info)'))} format={fmtNumber} /></div></div>
             {@render barCard('Top countries', d.top_countries, 'var(--info)', { icon: 'map-pin', sub: 'destination', empty: 'No country data.' }, lblCountry)}
           </div>
         </div>
       {:else}
         <div class="masonry stack-gap">
           <div class="mcol">
-            <div class="card"><div class="card-h"><h3>Most-probed ports</h3></div><div class="card-body"><Donut segments={donutSeg(d.top_dest_ports, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
+            <div class="panel flex flex-col">{@render head(null, 'Most-probed ports', null)}<div class="flex-1"><Donut segments={donutSeg(d.top_dest_ports, (_, i) => CYCLE[i % CYCLE.length])} format={fmtNumber} /></div></div>
             {@render barCard('Top attacker IPs', d.top_clients, meta.cvar, { sub: 'by IP' }, lblIp)}
           </div>
           <div class="mcol">
@@ -593,10 +598,21 @@
 
 <!-- one bar-list card: header + rows of [label · bar · value]. `rowLabel` renders the
      per-row label cell; `opts` = { icon?, sub?, empty? }. -->
+<!-- a card header in the app's panel style: icon tile, title, and a line under it -->
+{#snippet head(icon, title, sub)}
+  <div class="panel-head">
+    {#if icon}<span class="panel-icon"><Icon name={icon} size={17} /></span>{/if}
+    <div class="min-w-0 flex-1">
+      <div class="panel-title">{title}</div>
+      {#if sub}<div class="panel-sub">{sub}</div>{/if}
+    </div>
+  </div>
+{/snippet}
+
 {#snippet barCard(title, rows, cvar, opts, rowLabel)}
-  <div class="card">
-    <div class="card-h"><h3>{#if opts.icon}<Icon name={opts.icon} size={15} />{/if}{title}</h3>{#if opts.sub}<span class="sub">{opts.sub}</span>{/if}</div>
-    <div class="card-body">
+  <div class="panel flex flex-col">
+    {@render head(opts.icon, title, opts.sub)}
+    <div class="flex-1">
       {#if rows?.length}
         {@const mx = maxOf(rows)}
         <div class="rows">{#each rows as r}
@@ -612,9 +628,9 @@
 {/snippet}
 
 {#snippet mapCard(title, sub, rows, kind)}
-  <div class="card">
-    <div class="card-h"><h3><Icon name="world" size={15} />{title}</h3><span class="sub">{sub}</span></div>
-    <div class="card-body tight">{#if rows?.length}<WorldMap dots={rows} {kind} />{:else}<div class="nodata pad">No country data.</div>{/if}</div>
+  <div class="panel flex flex-col">
+    {@render head('world', title, sub)}
+    <div class="-mx-4 -mb-4 flex-1 overflow-hidden rounded-b-xl">{#if rows?.length}<WorldMap dots={rows} {kind} />{:else}<div class="nodata pad">No country data.</div>{/if}</div>
   </div>
 {/snippet}
 
@@ -654,15 +670,6 @@
   .map-toggle button { border: 0; background: transparent; padding: 5px 10px; font-size: 11px; font-weight: 700; border-radius: 6px; cursor: pointer; color: var(--muted-foreground); }
   .map-toggle button.active { background: var(--card); color: var(--foreground); }
 
-  /* cards */
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--a-radius); overflow: hidden; display: flex; flex-direction: column; }
-  .card-h { padding: 13px 16px; border-bottom: 1px solid var(--border); background: color-mix(in oklch, var(--muted) 55%, transparent); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-  .card-h h3 { margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
-  .card-h.compact { padding: 10px 12px; }
-  .card-h.compact h3 { font-size: 12px; }
-  .card-h .sub { font-size: 11.5px; color: var(--muted-foreground); font-weight: 600; }
-  .card-body { padding: 16px; flex: 1; }
-  .card-body.tight { padding: 0; }
 
   .grid { display: grid; gap: 14px; }
   .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }

@@ -46,9 +46,19 @@
     if (e.target === modalElement && open && !dismissible) e.detail.payload.cancel = true
   }
 
+  // KTUI loses track of a backdrop when a modal reopens while its close is still fading out (it
+  // removes the new backdrop and leaves the old one, invisible, over the whole page, so nothing
+  // can be clicked any more). Once no modal is open, any backdrop left is an orphan: remove it.
+  function sweepBackdrops() {
+    if (document.querySelector('.kt-modal.open')) return
+    document.querySelectorAll('.kt-modal-backdrop').forEach((el) => el.remove())
+    document.body.style.overflow = ''
+  }
+
   function handleHideEvent(e) {
     // KTUI events bubble: a tooltip inside the modal fires 'hidden' too — only the modal's own counts
     if (e.target !== modalElement) return
+    sweepBackdrops()
     if (open) {
       if (onclose) {
         onclose()
@@ -69,6 +79,7 @@
       if (ktModal.dispose) {
         ktModal.dispose()
       }
+      setTimeout(sweepBackdrops, 500) // the element is gone, so no 'hidden' arrives: sweep after the fade
     }
   })
 

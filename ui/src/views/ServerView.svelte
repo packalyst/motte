@@ -232,23 +232,26 @@
           <div class="contents sm:block sm:min-w-0 sm:space-y-3 sm:border-l sm:border-border sm:pl-6">
           <div class="min-w-0 space-y-3 self-center border-l border-border pl-4 sm:border-0 sm:pl-0">
             <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-x-5">
-              <div class="flex items-center gap-1.5" title="Logical CPU cores"><Icon name="cpu" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
-              <div class="flex items-center gap-1.5" title="Time since boot"><Icon name="clock" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
-              <div class="flex items-center gap-1.5" title="When the host last booted"><Icon name="refresh" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
+              <div class="flex items-center gap-1.5" title="Logical CPU cores"><Icon name="cpu" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Cores</span><b class="ml-auto sm:ml-0 font-medium tabular-nums text-foreground">{latest?.cores_n ?? '—'}</b></div>
+              <div class="flex items-center gap-1.5" title="Time since boot"><Icon name="clock" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Uptime</span><b class="ml-auto sm:ml-0 font-medium text-foreground">{fmtUptime(latest?.uptime ?? data.host.uptime_seconds)}</b></div>
+              <div class="flex items-center gap-1.5" title="When the host last booted"><Icon name="refresh" size={13} class="text-muted-foreground" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground">Last reboot</span><b class="ml-auto sm:ml-0 font-medium text-foreground">{data.host.boot_time ? timeAgo(data.host.boot_time) : '—'}</b></div>
             </div>
             <!-- Load average -->
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 pt-3 border-t border-border">
-              <span class="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground" title="Run-queue length — processes waiting to run, averaged over 1/5/15 min. It is not a percentage; below the core count ({latest?.cores_n ?? '?'}) means no CPU contention.">Load avg <Icon name="help-circle" size={11} class="opacity-60" /></span>
-              {#each [['1m', 0], ['5m', 1], ['15m', 2]] as pair}
-                <span class="flex items-baseline gap-1"><b class="text-sm font-semibold tabular-nums {loadColor(latest?.load?.[pair[1]], latest?.cores_n)}">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</b><span class="text-[10px] text-muted-foreground">{pair[0]}</span></span>
-              {/each}
+              <span class="flex w-full items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground sm:w-auto" title="Run-queue length — processes waiting to run, averaged over 1/5/15 min. It is not a percentage; below the core count ({latest?.cores_n ?? '?'}) means no CPU contention.">Load avg <Icon name="help-circle" size={11} class="opacity-60" /></span>
+              <!-- phones: the three values together on the right (the label takes the line above) -->
+              <span class="ml-auto flex gap-x-4 sm:ml-0">
+                {#each [['1m', 0], ['5m', 1], ['15m', 2]] as pair}
+                  <span class="flex items-baseline gap-1"><b class="text-sm font-semibold tabular-nums {loadColor(latest?.load?.[pair[1]], latest?.cores_n)}">{latest?.load?.[pair[1]]?.toFixed(2) ?? '—'}</b><span class="text-[10px] text-muted-foreground">{pair[0]}</span></span>
+                {/each}
+              </span>
             </div>
           </div>
           <div class="col-span-2 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-border pt-3 sm:grid-cols-2">
-              {#if data.host.distro}<div class="flex items-center gap-1.5 min-w-0"><Icon name="box" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Distro</span><b class="font-medium text-foreground truncate">{data.host.distro}</b></div>{/if}
-              {#if data.host.kernel}<div class="flex items-center gap-1.5 min-w-0"><Icon name="code" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Kernel</span><b class="font-medium text-foreground truncate font-mono">{data.host.kernel}</b></div>{/if}
-              {#if data.host.hostname}<div class="flex items-center gap-1.5 min-w-0"><Icon name="device-desktop" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Host</span><b class="font-medium text-foreground truncate">{data.host.hostname}</b></div>{/if}
-              {#if data.host.timezone}<div class="flex items-center gap-1.5 min-w-0"><Icon name="map-pin" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Timezone</span><b class="font-medium text-foreground truncate">{data.host.timezone}</b></div>{/if}
+              {#if data.host.distro}<div class="flex items-center gap-1.5 min-w-0"><Icon name="box" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Distro</span><b class="ml-auto min-w-0 text-right font-medium text-foreground truncate sm:ml-0 sm:text-left">{data.host.distro}</b></div>{/if}
+              {#if data.host.kernel}<div class="flex items-center gap-1.5 min-w-0"><Icon name="code" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Kernel</span><b class="ml-auto min-w-0 text-right font-medium text-foreground truncate sm:ml-0 sm:text-left font-mono">{data.host.kernel}</b></div>{/if}
+              {#if data.host.hostname}<div class="flex items-center gap-1.5 min-w-0"><Icon name="device-desktop" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Host</span><b class="ml-auto min-w-0 text-right font-medium text-foreground truncate sm:ml-0 sm:text-left">{data.host.hostname}</b></div>{/if}
+              {#if data.host.timezone}<div class="flex items-center gap-1.5 min-w-0"><Icon name="map-pin" size={13} class="text-muted-foreground shrink-0" /><span class="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">Timezone</span><b class="ml-auto min-w-0 text-right font-medium text-foreground truncate sm:ml-0 sm:text-left">{data.host.timezone}</b></div>{/if}
           </div>
           </div>
         </div>

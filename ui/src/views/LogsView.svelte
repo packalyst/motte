@@ -346,7 +346,7 @@
                       <span class="text-xs">{log.logs_dest_ip}{log.logs_dest_port ? `:${log.logs_dest_port}` : ''}</span>
                     </div>
                   {:else}
-                    <span class="text-muted-foreground">—</span>
+                    <span class="stack-empty text-muted-foreground">—</span>
                   {/if}
                 </td>
                 <td>
@@ -370,7 +370,7 @@
                     {:else if geo?.reputation}
                       <IpBadge {geo} showOwner={false} />
                     {:else}
-                      <span class="text-muted-foreground">—</span>
+                      <span class="stack-empty text-muted-foreground">—</span>
                     {/if}
                   {:else}
                     {@const geo = srcGeo}
@@ -392,7 +392,7 @@
                     {:else if geo?.reputation}
                       <IpBadge {geo} showOwner={false} />
                     {:else}
-                      <span class="text-muted-foreground">—</span>
+                      <span class="stack-empty text-muted-foreground">—</span>
                     {/if}
                   {/if}
                 </td>
@@ -400,7 +400,7 @@
                   {#if log.logs_status}
                     <Badge variant={statusInfo.variant} size="sm">{statusInfo.label}</Badge>
                   {:else}
-                    <span class="text-muted-foreground">—</span>
+                    <span class="stack-empty text-muted-foreground">—</span>
                   {/if}
                 </td>
               </tr>

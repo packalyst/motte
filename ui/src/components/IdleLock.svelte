@@ -108,7 +108,7 @@
 </script>
 
 {#if locked}
-  <div class="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-md">
+  <div class="safe-inset fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-md">
     <div class="w-full max-w-sm mx-4 rounded-lg border border-border bg-card p-6 shadow-xl space-y-4">
       <div class="flex items-center gap-3">
         <div class="flex-shrink-0 w-10 h-10 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
