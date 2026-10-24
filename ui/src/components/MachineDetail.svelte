@@ -272,6 +272,15 @@
   // The agent refuses installs, restarts and reboots while a scan runs (security commands still
   // go through), so those buttons wait for it too.
   const jobRunning = $derived(report?.job?.status === 'running') // a package job; one at a time
+  // A finished job stays on screen for a while, then leaves (its outcome stays in Recent commands).
+  const JOB_SHOWN_AFTER = 10 * 60 * 1000
+  let nowMs = $state(Date.now())
+  $effect(() => {
+    if (!report?.job?.ended_at) return
+    const t = setInterval(() => (nowMs = Date.now()), 30000)
+    return () => clearInterval(t)
+  })
+  const jobShown = $derived(!!report?.job && (jobRunning || nowMs - new Date(report.job.ended_at).getTime() < JOB_SHOWN_AFTER))
 
   // Agent tools a machine can turn off (Settings). report.tools is absent on an agent too old to
   // report it; those tools are treated as on.
@@ -284,21 +293,54 @@
       off: 'The scanner and its database are removed from the machine. The scan history stays in the panel.' },
   ]
   const toolOn = (id) => report?.tools?.[id]?.enabled ?? true
-  function toolState(id) {
-    const t = report?.tools?.[id]
-    if (!t) return ''
-    if (t.error) return t.error
-    if (!t.enabled) return 'off'
-    if (!t.installed) return id === 'trivy' ? 'installs on the first scan' : 'installing…'
-    return id === 'trivy' || t.running ? '' : 'not running'
-  }
-  const setTool = (t, on) => cmd('set-tool', { tool: t.id, enabled: on }, {
-    title: `Turn ${on ? 'on' : 'off'} ${t.label}`,
-    message: on ? `Install and start ${t.label} on ${machine.name}? It downloads the pinned, checksum-verified release.`
-      : `Turn off ${t.label} on ${machine.name}? ${t.off}`,
-    confirmText: on ? 'Turn on' : 'Turn off', variant: on ? 'primary' : 'destructive',
-    done: () => `${t.label} turned ${on ? 'on' : 'off'}`,
+  // A switch change is "pending" from the moment it's sent until the agent reports the result
+  // (or an error); the agent also reports a tool as busy while it works on it, so a refresh or
+  // another browser shows the change in progress too. No answer within TOOL_WAIT unlocks it.
+  const TOOL_WAIT = 3 * 60 * 1000
+  let toolPending = $state({}) // id -> { on, at }
+  let toolRev = $state(0) // re-renders the switches after a cancelled confirm
+  let toolNow = $state(Date.now())
+  $effect(() => {
+    if (!Object.keys(toolPending).length) return
+    const iv = setInterval(() => (toolNow = Date.now()), 5000)
+    return () => clearInterval(iv)
   })
+  // Drop a pending change once the agent's report shows its outcome.
+  $effect(() => {
+    const tools = report?.tools
+    if (!tools) return
+    for (const [id, p] of Object.entries(toolPending)) {
+      const t = tools[id]
+      if (t && !t.busy && (t.error || (t.enabled === p.on && (!p.on || id === 'trivy' || t.installed)))) {
+        const { [id]: _, ...rest } = toolPending
+        toolPending = rest
+      }
+    }
+  })
+  // What a switch shows: { on, busy, text, tone }
+  function toolView(id) {
+    const t = report?.tools?.[id]
+    const p = toolPending[id]
+    if (t?.busy) return { on: t.busy === 'turning-on', busy: true, text: t.busy === 'turning-on' ? 'turning on…' : 'turning off…' }
+    if (p && toolNow - p.at < TOOL_WAIT) return { on: p.on, busy: true, text: p.on ? 'turning on…' : 'turning off…' }
+    if (p) return { on: toolOn(id), busy: false, text: 'no answer from the machine yet', tone: 'text-warning' }
+    if (t?.error) return { on: toolOn(id), busy: false, text: t.error, tone: 'text-destructive' }
+    if (!t) return { on: true, busy: false, text: '' }
+    if (!t.enabled) return { on: false, busy: false, text: 'off' }
+    if (!t.installed) return { on: true, busy: false, text: id === 'trivy' ? 'installs on the first scan' : 'installing…' }
+    return { on: true, busy: false, text: id === 'trivy' || t.running ? '' : 'not running', tone: 'text-warning' }
+  }
+  async function setTool(t, on) {
+    await cmd('set-tool', { tool: t.id, enabled: on }, {
+      title: `Turn ${on ? 'on' : 'off'} ${t.label}`,
+      message: on ? `Install and start ${t.label} on ${machine.name}? It downloads the pinned, checksum-verified release.`
+        : `Turn off ${t.label} on ${machine.name}? ${t.off}`,
+      confirmText: on ? 'Turn on' : 'Turn off', variant: on ? 'primary' : 'destructive',
+      done: () => `Turning ${on ? 'on' : 'off'} ${t.label}…`,
+      after: () => { toolNow = Date.now(); toolPending = { ...toolPending, [t.id]: { on, at: toolNow } } },
+    })
+    toolRev++ // a cancelled confirm leaves the switch where the real state is
+  }
   const canMaintain = $derived(st.reachable && !scanning)
   const scanned = $derived(!!cves?.scanned_at || !!cves?.total || !!cveSummary?.unique_cves)
   const sevRows = $derived(SEV.map((s) => ({ ...s, n: cves?.counts?.[s.sev] || 0 })).filter((s) => s.n))
@@ -846,17 +888,23 @@
               {/if}
             </div>
             {#each TOOLS as t (t.id)}
-              {@const state = toolState(t.id)}
+              {@const v = toolView(t.id)}
               <div class="flex items-start justify-between gap-3 border-t border-dashed border-border pt-4">
                 <div class="min-w-0">
-                  <div class="text-sm font-medium text-foreground">{t.label}{#if state}<span class="ml-1.5 text-[11px] font-normal text-muted-foreground">· {state}</span>{/if}</div>
+                  <div class="flex flex-wrap items-center gap-x-1.5 text-sm font-medium text-foreground">
+                    {t.label}
+                    {#if v.busy}<Icon name="loader-2" size={12} class="animate-spin text-info" />{/if}
+                    {#if v.text}<span class="text-[11px] font-normal {v.busy ? 'text-info' : v.tone || 'text-muted-foreground'}">{v.text}</span>{/if}
+                  </div>
                   <div class="text-[11px] text-muted-foreground">{t.desc}</div>
                 </div>
                 {#if isAdmin}
-                  <Checkbox variant="switch" checked={toolOn(t.id)} disabled={!st.reachable || jobRunning || (t.id === 'trivy' && scanning)}
-                    onchange={() => setTool(t, !toolOn(t.id))} aria-label={t.label} />
+                  {#key `${t.id}:${v.on}:${toolRev}`}
+                    <Checkbox variant="switch" checked={v.on} disabled={v.busy || !st.reachable || jobRunning || (t.id === 'trivy' && scanning)}
+                      onchange={() => setTool(t, !v.on)} aria-label={t.label} />
+                  {/key}
                 {:else}
-                  <Badge variant={toolOn(t.id) ? 'success' : 'muted'} size="sm">{toolOn(t.id) ? 'On' : 'Off'}</Badge>
+                  <Badge variant={v.on ? 'success' : 'muted'} size="sm">{v.busy ? '…' : v.on ? 'On' : 'Off'}</Badge>
                 {/if}
               </div>
             {/each}
@@ -1092,7 +1140,7 @@
           <Button variant="outline" size="sm" icon="cpu" loading={jobRunning && report?.job?.kind === 'update-kernel'} disabled={!canMaintain || jobRunning} onclick={updateKernel}>Update kernel</Button>
           {#if toolOn('trivy') && (cves?.total || cveSummary?.unique_cves)}<Button variant="primary" size="sm" icon="list-details" class="sm:ml-auto" onclick={() => onviewcves?.(machine)}>View all & fix</Button>{/if}
         </div>
-        {#if report?.job}<JobProgress job={report.job} />{/if}
+        {#if jobShown}<JobProgress job={report.job} />{/if}
         {#if report?.scan_error && !scanning}
           <div class="mt-2 flex items-start gap-1.5 text-[11px] text-destructive"><Icon name="alert-triangle" size={12} class="mt-px shrink-0" /><span class="break-words">Last scan failed: {report.scan_error}</span></div>
         {/if}
