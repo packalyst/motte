@@ -200,7 +200,6 @@
       { icon: 'search', title: 'Search scrollback', on: searchVisible && mine, fn: () => (searchVisible = !searchVisible) },
       { icon: 'file', title: 'Files', on: filesVisible && mine, pin: true, fn: toggleFiles },
       { icon: 'git-branch', title: 'Git status', on: tool === 'git' && mine, fn: () => openTool('git') },
-      { icon: 'arrows-exchange', title: 'Port forwards', on: tool === 'forwards' && mine, fn: () => openTool('forwards') },
       { icon: 'brand-docker', title: 'Docker', on: tool === 'docker' && mine, fn: () => openTool('docker') },
       { icon: 'terminal-2', title: 'Snippets', on: tool === 'snippets' && mine, fn: () => openTool('snippets') },
       { icon: 'clipboard', title: 'Paste clipboard', pin: true, fn: () => pasteInto(tab) },
@@ -604,30 +603,11 @@
   }
   function delSnippet(i) { snippets = snippets.filter((_, x) => x !== i); saveSnippets() }
 
-  let forwards = $state([]) // [{id, url, host, port}] — reach a web service on the machine via the agent
-  async function addForward() {
-    openPrompt({ title: 'Forward to host:port (as the machine sees it)', placeholder: 'localhost:8080', onok: async (v) => {
-      const t = (v || '').trim()
-      if (!t) return
-      const i = t.lastIndexOf(':')
-      const host = i > 0 ? t.slice(0, i) : 'localhost'
-      const port = parseInt(i > 0 ? t.slice(i + 1) : t, 10)
-      if (!port || port < 1 || port > 65535) { toast('Enter a valid port', 'error'); return }
-      try {
-        const res = await apiPost('/api/fleet/console/forward', { machine_id: activeTab.machine.id, host, port })
-        forwards = [...forwards, { id: res.id, url: res.url, host, port }]
-      } catch (e) {
-        toast(e.message || 'could not open forward', 'error')
-      }
-    } })
-  }
-
   // Panel header icon + title per tool (same icons as the toolbar).
   const toolMeta = {
     snippets: { icon: 'terminal-2', title: 'Snippets' },
     git: { icon: 'git-branch', title: 'Git status' },
     docker: { icon: 'brand-docker', title: 'Docker' },
-    forwards: { icon: 'arrows-exchange', title: 'Port forwards' },
     commands: { icon: 'list-details', title: 'Commands' },
     diag: { icon: 'stethoscope', title: 'Diagnostics' },
   }
@@ -970,7 +950,6 @@
         {#if tool === 'git'}<button onclick={refreshGit} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>{/if}
         {#if tool === 'docker'}<button onclick={() => { dockerLog = null; dockerPs() }} title="Refresh" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="refresh" size={13} /></button>{/if}
         {#if tool === 'snippets'}<button onclick={addSnippet} title="Add snippet" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="plus" size={14} /></button>{/if}
-        {#if tool === 'forwards'}<button onclick={addForward} title="New forward" class="ml-auto p-1 text-white/60 hover:text-white"><Icon name="plus" size={14} /></button>{/if}
         <button onclick={() => (tool = null)} title="Close" class="p-1 text-white/60 hover:text-white"><Icon name="x" size={14} /></button>
       </div>
       <div class="flex-1 overflow-y-auto">
@@ -1019,18 +998,6 @@
             {/each}
           {:else}
             <div class="p-3 text-xs text-white/40">No containers.</div>
-          {/if}
-        {:else if tool === 'forwards'}
-          {#if forwards.length}
-            {#each forwards as f (f.id)}
-              <div class="flex items-center gap-2 px-3 py-2 border-b border-white/5 text-xs">
-                <Icon name="arrows-exchange" size={13} class="text-[#58a6ff] shrink-0" />
-                <span class="font-mono text-white/80 truncate flex-1">{f.host}:{f.port}</span>
-                <a href={f.url} target="_blank" rel="noopener noreferrer" class="text-[#58a6ff] hover:underline shrink-0">open ↗</a>
-              </div>
-            {/each}
-          {:else}
-            <div class="p-3 text-xs text-white/40 leading-relaxed">No forwards. Add one with + to reach a web service the machine can see (e.g. <span class="font-mono">localhost:8080</span>) in your browser.</div>
           {/if}
         {:else if tool === 'diag'}
           <div class="p-3 space-y-2">

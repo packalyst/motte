@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -128,31 +127,14 @@ type consoleFrame struct {
 	// git / docker tool panels (relayed verbatim): Action selects the operation (docker ps/logs/
 	// start/stop/restart); Path carries the container id/name for a per-container action.
 	Action string `json:"action,omitempty"`
-	// port-forward streams (fwd-open/data/close): Fwd is the stream id, Path+Port the remote target.
-	Fwd  string `json:"fwd,omitempty"`
-	Port int    `json:"port,omitempty"`
 	// snapshot-result: the cursor position as "row col" (0-based), from agents that send it.
 	Cursor string `json:"cursor,omitempty"`
 }
 
 var (
 	agentUpgrader   = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }} // mTLS authenticates
-	browserUpgrader = websocket.Upgrader{CheckOrigin: consoleSameOrigin}
+	browserUpgrader = websocket.Upgrader{CheckOrigin: helper.SameOrigin}
 )
-
-func consoleSameOrigin(r *http.Request) bool {
-	o := r.Header.Get("Origin")
-	if o == "" {
-		return true // non-browser client; the session+grant is the real gate
-	}
-	// Exact host match against the request's own Host (do NOT trust client-set X-Forwarded-Host).
-	// Parse the Origin URL so "https://evilpanel.io" cannot suffix-match host "panel.io".
-	u, err := url.Parse(o)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	return strings.EqualFold(u.Host, r.Host)
-}
 
 // ---- agent channel registry ---------------------------------------------------------------------
 
@@ -203,9 +185,6 @@ type agentConn struct {
 
 	sessWaiters []chan struct{}          // woken when the next sessions-list arrives (live-query)
 	snapWaiters map[string][]*snapWaiter // session id → waiters for a snapshot-result
-
-	fwdMu      sync.Mutex
-	fwdStreams map[string]*fwdConn // port-forward stream id → tunnel conn (bytes relayed as net.Conn)
 
 	recs map[string]*consoleRecorder // session id → its open recording (guarded by mu)
 }
@@ -606,7 +585,7 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		conn: conn, bridges: map[string][]*consoleBridge{}, owners: map[string]int64{},
 		opened: map[string]time.Time{}, seen: map[string]time.Time{},
 		labels: map[string]int{}, snapWaiters: map[string][]*snapWaiter{},
-		fwdStreams: map[string]*fwdConn{}, recs: map[string]*consoleRecorder{},
+		recs: map[string]*consoleRecorder{},
 	}
 	regSet(m.ID, a)
 	// Reaper: sweep this channel's sessions for idle / over-max every minute, for the life of the
@@ -645,10 +624,6 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		}
 		if f.T == "snapshot-result" {
 			a.deliverSnapshot(f) // one-shot screen capture (preview card, or a joining viewer's screen)
-			continue
-		}
-		if f.T == "fwd-data" || f.T == "fwd-close" {
-			a.fwdRoute(f) // port-forward tunnel bytes → the waiting net.Conn
 			continue
 		}
 		if f.T == "data" {
@@ -782,10 +757,9 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 			continue // view-only: drop EVERY browser frame (data, file-put, file-get, resize, close…)
 		}
 		if !browserFrameTypes[f.T] {
-			continue // panel-only control/tunnel frames (fwd-*, open, …) never come from a browser
+			continue // panel-only control frames (open, …) never come from a browser
 		}
 		f.Session = effSession // never let a browser target another session
-		f.Fwd, f.Port = "", 0  // tunnel fields are panel-owned
 		if f.T == "resize" {
 			f.Cols, f.Rows = clampResize(f.Cols), clampResize(f.Rows) // bound every resize, not just open
 		} else if f.T == "data" {
@@ -796,9 +770,8 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 }
 
 // browserFrameTypes is everything an interactive browser may send to its own session on the agent.
-// Anything else is dropped — notably the fwd-open/fwd-data/fwd-close tunnel frames, which only the
-// panel's audited, owner-bound forward proxy may emit, and the open/sessions/snapshot control frames
-// the panel issues itself. Keep in sync with ui/src/lib/console.js.
+// Anything else is dropped — notably the open/sessions/snapshot control frames the panel issues
+// itself. Keep in sync with ui/src/lib/console.js.
 var browserFrameTypes = map[string]bool{
 	"data": true, "resize": true, "close": true,
 	"file-put": true, "file-get": true, "file-list": true, "file-delete": true, "file-mkdir": true,

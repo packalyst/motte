@@ -2307,15 +2307,6 @@
           "min_role": "operator"
         },
         {
-          "path": "/console/forward",
-          "methods": [
-            "POST"
-          ],
-          "handler": "ConsoleForward",
-          "description": "Open a port-forward to a host:port reachable by the machine",
-          "min_role": "operator"
-        },
-        {
           "path": "/console/recordings",
           "methods": [
             "GET"
