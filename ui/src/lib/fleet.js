@@ -11,6 +11,14 @@ const USAGE_BG = { destructive: 'bg-destructive', warning: 'bg-warning', success
 // usageColor is the bar colour class for that tone.
 export const usageColor = (pct) => USAGE_BG[usageTone(pct)]
 
+// Severity rows worst-first: the key the agent reports, a label, and its bar colour.
+export const SEV = [
+  { sev: 'CRITICAL', label: 'critical', bar: 'bg-destructive' },
+  { sev: 'HIGH', label: 'high', bar: 'bg-warning' },
+  { sev: 'MEDIUM', label: 'medium', bar: 'bg-info' },
+  { sev: 'LOW', label: 'low', bar: 'bg-muted-foreground/50' },
+]
+
 // sevVariant maps a Trivy severity to a Badge variant.
 export function sevVariant(sev) {
   switch ((sev || '').toUpperCase()) {
