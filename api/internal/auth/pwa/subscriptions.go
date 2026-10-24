@@ -2,6 +2,7 @@ package pwa
 
 import (
 	"database/sql"
+	"net/url"
 	"strings"
 	"time"
 
@@ -256,34 +257,24 @@ var validPushDomains = []string{
 	".notify.windows.com",               // Edge/Windows (wildcard suffix)
 }
 
-// isValidPushEndpoint checks if the endpoint is from a known push service
+// isValidPushEndpoint checks the endpoint is an https URL on a known push service: parsed as the
+// HTTP client will (so "https://fcm.googleapis.com:x@10.0.0.5/" is 10.0.0.5, refused), with no
+// user info, and the host matched whole.
 func isValidPushEndpoint(endpoint string) bool {
-	// Remove https:// prefix for domain check
-	domain := strings.TrimPrefix(endpoint, "https://")
-
-	// Extract just the host part (before first /)
-	if idx := strings.Index(domain, "/"); idx > 0 {
-		domain = domain[:idx]
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" {
+		return false
 	}
-
-	// Remove port if present
-	if idx := strings.Index(domain, ":"); idx > 0 {
-		domain = domain[:idx]
-	}
-
+	host := strings.ToLower(u.Hostname())
 	for _, valid := range validPushDomains {
 		if strings.HasPrefix(valid, ".") {
 			// Wildcard suffix match (e.g., ".notify.windows.com")
-			if strings.HasSuffix(domain, valid) {
+			if strings.HasSuffix(host, valid) && len(host) > len(valid) {
 				return true
 			}
-		} else {
-			// Exact match
-			if domain == valid {
-				return true
-			}
+		} else if host == valid {
+			return true
 		}
 	}
-
 	return false
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"time"
 
 	"api/internal/auth"
 	"api/internal/database"
@@ -201,7 +202,13 @@ func (s *Service) sendPush(sub *PushSubscription, payload []byte) error {
 		},
 	}
 
+	// Stored endpoints are checked again (rows saved before a stricter check), and the request goes
+	// through the external-only client: never to an internal address, also not via a redirect.
+	if !isValidPushEndpoint(sub.Endpoint) {
+		return errors.New("push endpoint is not a known push service")
+	}
 	resp, err := webpush.SendNotification(payload, subscription, &webpush.Options{
+		HTTPClient:      helper.SafeExternalHTTPClient(15 * time.Second),
 		Subscriber:      subject,
 		VAPIDPublicKey:  vapidPublic,
 		VAPIDPrivateKey: vapidPrivate,

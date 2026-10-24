@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,12 +22,13 @@ var (
 )
 
 // RedactSecretPath hides secrets carried in the URL path — the rotation key in
-// /api/restart/{key} and the webhook keys in /api/hook/{keys...} — so they never
-// land in any log sink (the app log or the Traefik-sourced inbound logs shown on
-// the Logs page). It receives only the path (query params are logged separately,
-// and callers should send webhook params in the body, not the query string).
+// /api/restart/{key}, the webhook keys in /api/hook/{keys...} and an agent's one-time install
+// token in /agent/{token} — so they never land in any log sink (the app log or the
+// Traefik-sourced inbound logs shown on the Logs page, which viewers can read). It receives
+// only the path (query params are logged separately, and callers should send webhook params
+// in the body, not the query string).
 func RedactSecretPath(path string) string {
-	for _, p := range []string{"/api/restart/", "/api/hook/"} {
+	for _, p := range []string{"/api/restart/", "/api/hook/", "/agent/"} {
 		if strings.HasPrefix(path, p) && len(path) > len(p) {
 			return p + "[redacted]"
 		}
@@ -291,4 +293,17 @@ func splitForwarded(xff string) []string {
 		}
 	}
 	return out
+}
+
+// SameOrigin reports whether a browser request comes from the page's own origin: its Origin
+// header's host is exactly the request's Host (never a client-set X-Forwarded-Host; parsed, so
+// "https://evilpanel.io" can't suffix-match "panel.io"). No Origin header is a non-browser client.
+// The WebSocket upgrades use it: the session cookie rides along on any same-site upgrade.
+func SameOrigin(r *http.Request) bool {
+	o := r.Header.Get("Origin")
+	if o == "" {
+		return true
+	}
+	u, err := url.Parse(o)
+	return err == nil && u.Host != "" && strings.EqualFold(u.Host, r.Host)
 }

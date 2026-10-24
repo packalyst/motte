@@ -50,13 +50,15 @@ func New() *Service {
 	return s
 }
 
-// checkOrigin validates WebSocket connection origins against allowed origins
+// checkOrigin validates WebSocket connection origins: the panel's own, or one listed explicitly
+// in the CORS config. The CORS "*" doesn't count here: the session cookie rides along on any
+// same-site upgrade, so a sibling site (another subdomain or port) could otherwise read the live
+// channels as the signed-in user.
 func checkOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		// No origin header = same-origin request (e.g., from CLI tools)
+	if helper.SameOrigin(r) {
 		return true
 	}
+	origin := r.Header.Get("Origin")
 
 	// Get allowed origins from CORS config
 	cfg := config.Get()
@@ -66,13 +68,6 @@ func checkOrigin(r *http.Request) bool {
 	}
 
 	allowedOrigins := cfg.Middleware.CORS.AllowOrigins
-
-	// Check if wildcard is allowed
-	for _, allowed := range allowedOrigins {
-		if allowed == "*" {
-			return true
-		}
-	}
 
 	// Parse origin URL
 	originURL, err := url.Parse(origin)
@@ -115,6 +110,7 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// The token is never read from the URL query (that would leak into proxy/access logs and
 	// browser history).
 	handshakeToken := helper.SessionToken(r)
+	token := handshakeToken
 	var user *auth.User
 	if handshakeToken != "" {
 		u, verr := authSvc.ValidateSession(handshakeToken)
@@ -171,10 +167,16 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		user = u
+		token = authMsg.Token
 	}
 
 	// Create client
 	client := NewClient(s.hub, conn, user.ID, user.Username, user.Role, user.ScopeKind, user.ScopeValues)
+	client.stillValid = func() bool {
+		u, err := authSvc.ValidateSession(token)
+		return err == nil && !authSvc.IsSessionLocked(token) && u.ID == user.ID && u.Role == user.Role &&
+			u.ScopeKind == user.ScopeKind && u.ScopeValues == user.ScopeValues
+	}
 
 	// Register client
 	s.hub.register <- client

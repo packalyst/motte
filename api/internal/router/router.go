@@ -904,6 +904,13 @@ func JSONWithStatus(w http.ResponseWriter, data interface{}, code int) {
 }
 
 // JSONError sends a JSON error response
+// DBError answers a failed database operation: the details go to the log, never to the client
+// (table and column names, SQL fragments and file paths are of no use to it).
+func DBError(w http.ResponseWriter, err error) {
+	log.Printf("database error: %v", err)
+	JSONError(w, "database error", http.StatusInternalServerError)
+}
+
 func JSONError(w http.ResponseWriter, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

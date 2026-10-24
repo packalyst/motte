@@ -388,10 +388,10 @@ even if one slips past input sanitisation and output-escaping. Set as a Traefik
 
 ```
 default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none';
-img-src 'self' data: https:;
+img-src 'self' data: https://unpkg.com https://*.tile.openstreetmap.org;
 style-src 'self' 'unsafe-inline' https://unpkg.com;
 script-src 'self';
-connect-src 'self' ws: wss:;
+connect-src 'self';
 font-src 'self' data:
 ```
 
@@ -403,12 +403,13 @@ Key constraints and *why* (from the template's own comments):
 - **`style-src` keeps `'unsafe-inline'`** — Svelte/Tailwind inject inline styles; that
   is not a script-exec vector. `unpkg.com` is allowed for the external Leaflet
   stylesheet.
-- **`img-src … data: https:`** — `data:` is required so the **2FA QR code renders as a
-  `data:image/png;base64` URL** (§3) and other inline images; `https:` covers Leaflet
-  map tiles.
-- **`connect-src`** is the panel itself plus `ws:`/`wss:` for the live WebSocket, with no
-  external host: country flags are served by the panel, and the **service worker leaves
-  other origins alone**, so map tiles and marker icons load as plain images (`img-src`).
+- **`img-src … data: https://unpkg.com https://*.tile.openstreetmap.org`** — `data:` is
+  required so the **2FA QR code renders as a `data:image/png;base64` URL** (§3) and other
+  inline images; the two hosts are the Leaflet map tiles and the Leaflet stylesheet's own
+  images. No other external image loads.
+- **`connect-src 'self'`** — the panel itself only (`'self'` covers its own `ws:`/`wss:` for
+  the live WebSockets): country flags are served by the panel, and the **service worker
+  leaves other origins alone**, so map tiles load as plain images (`img-src`).
 - `frame-ancestors 'none'` = the modern clickjacking guard (matches `frameDeny`).
 
 ### Secrets handling

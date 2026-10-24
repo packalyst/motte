@@ -109,7 +109,7 @@ func (s *Service) handleAddPort(w http.ResponseWriter, r *http.Request) {
 		name = excluded.name, enabled = 1`,
 		strconv.Itoa(req.Port), req.Protocol, req.Service, isEssential)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -150,7 +150,7 @@ func (s *Service) handleSetPortScope(w http.ResponseWriter, r *http.Request) {
 		WHERE entry_type = 'port' AND action = 'allow' AND value = ? AND protocol = ?`,
 		req.Scope, strconv.Itoa(req.Port), req.Protocol)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
@@ -180,7 +180,7 @@ func (s *Service) handleRemovePort(w http.ResponseWriter, r *http.Request) {
 
 	_, err = s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND essential = 0", portStr)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 

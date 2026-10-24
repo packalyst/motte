@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,5 +189,19 @@ func TestEnrollRejectsBadInputs(t *testing.T) {
 	svc.HandleEnroll(rr2, httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewReader(body2)))
 	if rr2.Code != http.StatusBadRequest {
 		t.Fatalf("garbage CSR want 400, got %d", rr2.Code)
+	}
+}
+
+// Deleting a machine also deletes its console recordings: it takes a step-up, every time.
+func TestDeleteMachineNeedsStepUp(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	rr := httptest.NewRecorder()
+	svc.handleDeleteMachine(rr, asOwner(httptest.NewRequest(http.MethodPost, "/api/fleet/machine/delete", strings.NewReader(`{"machine_id":"m1"}`))))
+	if rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("machine deleted without a step-up: %d", rr.Code)
+	}
+	if m, _ := svc.machineByID("m1"); m == nil {
+		t.Fatal("the machine is gone")
 	}
 }
