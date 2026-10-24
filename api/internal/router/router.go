@@ -779,11 +779,11 @@ func (r *Router) handleManifest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Build manifest with domain-specific name
-	// short_name is used by iOS for home screen icon (keep it short)
+	// short_name is the label under the home-screen icon (iOS and Android): the product name. The
+	// full name keeps the domain, so install prompts and app lists still tell two panels apart.
 	manifest := map[string]interface{}{
 		"name":             "Motte - " + sslDomain,
-		"short_name":       sslDomain,
+		"short_name":       "Motte",
 		"description":      "Your infrastructure. Your stronghold.",
 		"start_url":        "/",
 		"display":          "standalone",

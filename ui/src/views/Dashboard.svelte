@@ -394,7 +394,7 @@
   <!-- Mobile overlay -->
   {#if sidebarOpen}
     <div
-      class="fixed inset-0 z-30 bg-background/60 backdrop-blur-sm lg:hidden"
+      class="fixed inset-0 z-30 bg-background/50 backdrop-blur-[2px] lg:hidden"
       onclick={closeSidebar}
       onkeydown={(e) => e.key === 'Escape' && closeSidebar()}
       role="button"
