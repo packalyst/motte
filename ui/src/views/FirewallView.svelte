@@ -835,13 +835,10 @@
                         <td class="stack-main">
                           <div class="flex min-w-0 flex-wrap items-center gap-2">
                             {#if entry.entryType === 'country'}
-                              <img
-                                src={flagUrl(entry.value)}
-                                width="18"
-                                alt={entry.value}
-                                class="rounded-sm shadow-sm"
-                                loading="lazy"
-                              />
+                              {@const flag = flagUrl(entry.value)}
+                              {#if flag}
+                                <img src={flag} width="18" alt={entry.value} class="rounded-sm shadow-sm" loading="lazy" />
+                              {/if}
                               <span class="text-sm font-medium">{entry.name || entry.value}</span>
                               <Badge variant="secondary" size="sm" title="{entry.hitCount || 0} IP ranges">
                                 <Icon name="network" size={10} class="mr-0.5" />
@@ -1116,12 +1113,9 @@
                     onchange={() => toggleCountrySelection(country.code)}
                     class="px-2 py-1.5 rounded-md hover:bg-muted transition-colors {selectedCountries.includes(country.code) ? 'bg-primary/10' : ''}"
                   >
-                    <img
-                      use:lazyLoad={flagUrl(country.code)}
-                      width="16"
-                      alt={country.code}
-                      class="rounded-sm"
-                    />
+                    {#if flagUrl(country.code)}
+                      <img use:lazyLoad={flagUrl(country.code)} width="16" alt={country.code} class="rounded-sm" />
+                    {/if}
                     <span class="text-xs text-foreground truncate">{country.name}</span>
                   </Checkbox>
                 {/each}
