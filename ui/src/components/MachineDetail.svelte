@@ -1170,14 +1170,19 @@
         {:else}
           <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No active bans.</div>
         {/if}
-        <!-- FIM roll-up: count + drill-down (the full list rides its own /fim endpoint) -->
-        <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border">
-          <Icon name="file-search" size={16} class={fimCount ? 'text-warning' : 'text-muted-foreground'} />
-          <span class="text-sm flex-1 min-w-0">
-            {#if fimCount}<span class="font-medium">{fimCount.toLocaleString()}</span> file-integrity change{fimCount === 1 ? '' : 's'}{:else if !toolOn('osquery')}<span class="text-muted-foreground">File watch is off for this machine: file changes aren't tracked.</span>{:else}<span class="text-muted-foreground">No file-integrity changes</span>{/if}
-          </span>
-          {#if fimCount}<Button size="sm" variant="ghost" icon="eye" onclick={openFim}>View all</Button>{/if}
-        </div>
+        <!-- FIM roll-up: count + drill-down (the full list rides its own /fim endpoint); when file
+             watch is off, the same "off" note as CrowdSec's above -->
+        {#if !fimCount && !toolOn('osquery')}
+          <div class="mt-3">{@render toolOff("File watch is off for this machine: file changes aren't tracked.")}</div>
+        {:else}
+          <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+            <Icon name="file-search" size={16} class={fimCount ? 'text-warning' : 'text-muted-foreground'} />
+            <span class="text-sm flex-1 min-w-0">
+              {#if fimCount}<span class="font-medium">{fimCount.toLocaleString()}</span> file-integrity change{fimCount === 1 ? '' : 's'}{:else}<span class="text-muted-foreground">No file-integrity changes</span>{/if}
+            </span>
+            {#if fimCount}<Button size="sm" variant="ghost" icon="eye" onclick={openFim}>View all</Button>{/if}
+          </div>
+        {/if}
         {@render note('CrowdSec bans attackers on-host automatically. File-integrity changes (a watched file changed) are the "someone got in" signals worth investigating.')}
       </div>
 
