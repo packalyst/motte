@@ -125,6 +125,8 @@
   }
 
   // Pull-to-refresh handler
+  let scroller = $state(null) // the element that scrolls the page (pull-to-refresh watches it)
+
   async function handlePullRefresh() {
     await reloadCurrentView()
   }
@@ -227,7 +229,9 @@
 <svelte:window onclick={handleClickOutside} />
 
 <!-- Root container -->
-<div class="flex h-screen bg-background text-foreground antialiased">
+<!-- h-dvh tracks the visible height on phones; the safe-area insets (viewport-fit=cover) keep
+     content clear of the notch, the rounded corners and the home indicator -->
+<div class="flex h-dvh bg-background pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-foreground antialiased">
 
   <!-- Sidebar -->
   <aside
@@ -235,7 +239,7 @@
     class:translate-x-0={sidebarOpen}
   >
     <!-- Sidebar header (logo) -->
-    <div class="flex h-14 items-center gap-3 border-b border-border px-4">
+    <div class="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-3 border-b border-border px-4 pt-[env(safe-area-inset-top)]">
       <Logo size={28} wordmark tagline />
     </div>
 
@@ -310,8 +314,8 @@
       {/each}
     </nav>
 
-    <!-- Sidebar footer -->
-    <div class="border-t border-border p-3 space-y-3">
+    <!-- Sidebar footer (clear of the home indicator on phones) -->
+    <div class="border-t border-border p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] space-y-3">
       <!-- Clients: online out of all, then each kind (opens Clients narrowed to it) -->
       <div class="space-y-2 text-[11px]">
         <button type="button" onclick={() => openClients('')} title="Open Clients"
@@ -387,7 +391,7 @@
   <!-- Main column -->
   <main class="flex min-w-0 flex-1 flex-col">
     <!-- Top bar -->
-    <header class="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-border bg-card/95 px-4 backdrop-blur lg:px-5">
+    <header class="sticky top-0 z-10 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center justify-between border-b border-border bg-card/95 px-4 pt-[env(safe-area-inset-top)] backdrop-blur lg:px-5">
       <div class="flex items-center gap-3">
         <!-- Mobile menu button -->
         <button
@@ -477,9 +481,9 @@
     {/if}
 
     <!-- Content area with pull-to-refresh -->
-    <section class="flex-1 overflow-hidden overflow-y-auto bg-background">
-      <PullToRefresh onRefresh={handlePullRefresh}>
-        <div class="p-3 lg:p-4">
+    <section bind:this={scroller} class="flex-1 overflow-hidden overflow-y-auto overscroll-contain bg-background">
+      <PullToRefresh onRefresh={handlePullRefresh} {scroller}>
+        <div class="p-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))] lg:p-4 lg:pb-[calc(1rem+env(safe-area-inset-bottom))]">
           {#if loading}
             <div class="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
               <div class="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-foreground"></div>

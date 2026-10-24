@@ -71,7 +71,7 @@
 
 {#if ordered.length}
   <section aria-label="Notifications" aria-live="polite"
-    class="fixed inset-x-3 bottom-3 z-[100] sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[356px]"
+    class="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[100] sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[356px]"
     style="height: {stackHeight}px" onmouseenter={pause} onmouseleave={resume}>
     {#each ordered as t, i (t.id)}
       {@const [icon, tone] = ICON[t.type] || ICON.info}
