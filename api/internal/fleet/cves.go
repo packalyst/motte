@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"api/internal/database"
-	"compress/gzip"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -93,11 +92,37 @@ func isKernelPkg(pkg string) bool {
 	return false
 }
 
-// IngestCVEs replaces a machine's stored findings with the latest full scan (a snapshot,
-// not history — the newest scan is the truth), in one transaction.
-func (s *Service) IngestCVEs(machineID, scannedAt string, findings []CVE) error {
+// IngestCVEs replaces a machine's stored findings with the latest full scan (the newest scan
+// is the truth; only its summary is kept as history, see recordScan), in one transaction.
+// A repeat of an already stored scan (the agent resends its last one after a restart) is a
+// no-op.
+func (s *Service) IngestCVEs(machineID string, meta scanMeta, findings []CVE) error {
 	tx, err := s.db.Begin()
 	if err != nil {
+		return err
+	}
+	if seen, err := scanStored(tx, machineID, meta.ScannedAt); err != nil || seen {
+		_ = tx.Rollback()
+		return err
+	}
+	// A scan older than the newest one stored (a late or replayed report) is history only: the
+	// findings never move backwards.
+	var newest string
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(scanned_at), '') FROM fleet_scans WHERE machine_id = ? AND status = 'ok'`,
+		machineID).Scan(&newest); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if newest > meta.ScannedAt {
+		if err := recordScan(tx, machineID, meta, summarizeScan(findings, nil)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		return tx.Commit()
+	}
+	prevIDs, err := storedCVEIDs(tx, machineID)
+	if err != nil {
+		_ = tx.Rollback()
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM fleet_cves WHERE machine_id = ?`, machineID); err != nil {
@@ -132,7 +157,7 @@ func (s *Service) IngestCVEs(machineID, scannedAt string, findings []CVE) error 
 			project = deriveProject(f.Class, f.Target, f.Pkg)
 		}
 		args = append(args, machineID, f.CVEID, f.Pkg, f.Installed, f.Fixed, f.Severity,
-			f.Target, project, f.Class, f.Type, f.Title, scannedAt)
+			f.Target, project, f.Class, f.Type, f.Title, meta.ScannedAt)
 		rows++
 		if rows >= batchRows {
 			if err := flush(); err != nil {
@@ -142,6 +167,10 @@ func (s *Service) IngestCVEs(machineID, scannedAt string, findings []CVE) error 
 		}
 	}
 	if err := flush(); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := recordScan(tx, machineID, meta, summarizeScan(findings, prevIDs)); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -156,26 +185,27 @@ func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unknown machine")
 		return
 	}
-	var body io.Reader = http.MaxBytesReader(w, r.Body, 64<<20) // 64 MiB compressed cap
-	if r.Header.Get("Content-Encoding") == "gzip" {
-		gz, err := gzip.NewReader(body)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, "bad gzip")
-			return
-		}
-		defer gz.Close()
-		body = gz
+	body, ok := reportBody(w, r, 64<<20) // 64 MiB, compressed and decompressed
+	if !ok {
+		return
 	}
+	defer body.Close()
 	// Stream-decode with the finding cap enforced DURING decode (see decodeCVEReport): the
 	// decompressed stream is bounded (bomb guard) and the retained slice can never exceed
 	// maxFindings, so a compressible flood of tiny elements can't amplify into a huge slice.
 	const maxFindings = 200000
-	scannedAt, cves, err := decodeCVEReport(io.LimitReader(body, 64<<20), maxFindings)
+	meta, cves, err := decodeCVEReport(body, maxFindings)
+	if err == nil && !meta.HasFindings {
+		err = errBadCVE // a report without its findings must never read as a clean scan
+	}
+	if err == nil {
+		err = meta.normalize()
+	}
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	if err := s.IngestCVEs(m.ID, scannedAt, cves); err != nil {
+	if err := s.IngestCVEs(m.ID, meta, cves); err != nil {
 		writeErr(w, http.StatusInternalServerError, "store failed")
 		return
 	}
@@ -195,57 +225,73 @@ type cveFinding struct {
 	Title     string `json:"title"`
 }
 
-// decodeCVEReport streams {"scanned_at":…,"findings":[…]} and keeps at most max findings. Past
-// the cap it drains (without retaining) so scanned_at is still read even if it trails findings,
-// while the retained slice stays bounded regardless of input size.
-func decodeCVEReport(r io.Reader, max int) (string, []CVE, error) {
+// decodeCVEReport streams a scan report — {"scanned_at","trigger","cost","findings":[…]} — and
+// keeps at most max findings. Past the cap it drains (without retaining)
+// so fields trailing the findings are still read, while the retained slice stays bounded
+// regardless of input size. The caller validates the metadata (scanMeta.normalize).
+func decodeCVEReport(r io.Reader, max int) (scanMeta, []CVE, error) {
+	var meta scanMeta
 	dec := json.NewDecoder(r)
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return "", nil, errBadCVE
+		return meta, nil, errBadCVE
 	}
-	var scannedAt string
 	cves := []CVE{}
 	for dec.More() {
 		key, err := dec.Token()
 		if err != nil {
-			return "", nil, err
+			return meta, nil, err
 		}
 		switch key {
 		case "scanned_at":
-			if err := dec.Decode(&scannedAt); err != nil {
-				return "", nil, err
-			}
+			err = dec.Decode(&meta.ScannedAt)
+		case "trigger":
+			err = dec.Decode(&meta.Trigger)
+		case "cost":
+			err = dec.Decode(&meta.Cost)
 		case "findings":
-			if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
-				return "", nil, errBadCVE
-			}
-			for dec.More() {
-				if len(cves) >= max {
-					var skip json.RawMessage // drain the rest without retaining
-					if err := dec.Decode(&skip); err != nil {
-						return "", nil, err
-					}
-					continue
-				}
-				var f cveFinding
-				if err := dec.Decode(&f); err != nil {
-					return "", nil, err
-				}
-				cves = append(cves, CVE{CVEID: f.ID, Pkg: f.Pkg, Installed: f.Installed, Fixed: f.Fixed,
-					Severity: f.Severity, Target: f.Target, Project: deriveProject(f.Class, f.Target, f.Pkg),
-					Class: f.Class, Type: f.Type, Title: f.Title})
-			}
-			if _, err := dec.Token(); err != nil { // consume ']'
-				return "", nil, err
-			}
+			meta.HasFindings = true
+			err = decodeFindings(dec, max, &cves)
 		default:
 			var skip json.RawMessage
-			if err := dec.Decode(&skip); err != nil {
-				return "", nil, err
-			}
+			err = dec.Decode(&skip)
+		}
+		if err != nil {
+			return meta, nil, err
 		}
 	}
-	return scannedAt, cves, nil
+	return meta, cves, nil
+}
+
+// decodeFindings streams the findings array (or null) into cves, retaining at most max.
+func decodeFindings(dec *json.Decoder, max int, cves *[]CVE) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok == nil {
+		return nil
+	}
+	if tok != json.Delim('[') {
+		return errBadCVE
+	}
+	for dec.More() {
+		if len(*cves) >= max {
+			var skip json.RawMessage // drain the rest without retaining
+			if err := dec.Decode(&skip); err != nil {
+				return err
+			}
+			continue
+		}
+		var f cveFinding
+		if err := dec.Decode(&f); err != nil {
+			return err
+		}
+		*cves = append(*cves, CVE{CVEID: f.ID, Pkg: f.Pkg, Installed: f.Installed, Fixed: f.Fixed,
+			Severity: f.Severity, Target: f.Target, Project: deriveProject(f.Class, f.Target, f.Pkg),
+			Class: f.Class, Type: f.Type, Title: f.Title})
+	}
+	_, err = dec.Token() // consume ']'
+	return err
 }
 
 var errBadCVE = errors.New("malformed cve payload")

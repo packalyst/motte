@@ -2084,6 +2084,24 @@
           "min_role": "operator"
         },
         {
+          "path": "/agent-version",
+          "methods": [
+            "POST"
+          ],
+          "handler": "CheckAgentVersion",
+          "description": "Re-check the newest published agent release now (at most once a minute)",
+          "min_role": "operator"
+        },
+        {
+          "path": "/dirs",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ListDirs",
+          "description": "One folder's sub-folder names on a machine, for the scan dialog",
+          "min_role": "operator"
+        },
+        {
           "path": "/report",
           "methods": [
             "GET"
@@ -2166,6 +2184,22 @@
           ],
           "handler": "ListCVEs",
           "description": "Filtered/paginated machine CVE list"
+        },
+        {
+          "path": "/scans",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ScanHistory",
+          "description": "Machine vulnerability-scan history, newest first (?machine_id=)"
+        },
+        {
+          "path": "/scans/changes",
+          "methods": [
+            "GET"
+          ],
+          "handler": "ScanChanges",
+          "description": "CVE ids one scan found new and fixed (?machine_id=&scanned_at=)"
         },
         {
           "path": "/cves/by-cve",

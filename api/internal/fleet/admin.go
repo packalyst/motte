@@ -38,6 +38,10 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"CVEGroups":              s.handleCVEGroups,
 		"ListCVEs":               s.handleListCVEs,
 		"ListCVEsByCVE":          s.handleListCVEsByCVE,
+		"ScanHistory":            s.handleScanHistory,
+		"ScanChanges":            s.handleScanChanges,
+		"ListDirs":               s.handleListDirs,
+		"CheckAgentVersion":      s.handleCheckAgentVersion,
 		"ExportCVEs":             s.handleExportCVEs,
 		"FixPackages":            s.handleFixPackages,
 		"MachineCommands":        s.handleMachineCommands,
@@ -271,6 +275,12 @@ func (s *Service) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 		"migrating":       active,                                  // a port migration is in flight — lock the port field
 		"migrate_ends_at": rfc3339OrEmpty(endsAt),                  // when both ports close down to the new one
 	})
+}
+
+// handleCheckAgentVersion (POST /api/fleet/agent-version) re-checks the newest published agent
+// release now (rate-limited, see RecheckLatestVersion).
+func (s *Service) handleCheckAgentVersion(w http.ResponseWriter, r *http.Request) {
+	router.JSON(w, map[string]string{"agent_version": s.agentCache.RecheckLatestVersion(r.Context())})
 }
 
 func (s *Service) effectivePort() int {
