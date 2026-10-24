@@ -16,6 +16,7 @@ package fleet
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -302,6 +303,25 @@ func (a *agentConn) requestSnapshot(session string, timeout time.Duration) (stri
 	case <-time.After(timeout):
 		return "", false
 	}
+}
+
+// showScreen paints a session's current screen on one viewer that joined a session another viewer
+// already holds. tmux redraws only for the viewer whose join attached it (the first), so a later one
+// (a second browser, or a reconnect before the old socket is noticed dead) would otherwise start on
+// a blank terminal and see only output from then on.
+func (a *agentConn) showScreen(b *consoleBridge) {
+	data, ok := a.requestSnapshot(b.session, 2*time.Second)
+	if !ok || data == "" {
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return
+	}
+	// capture-pane prints lines ending in "\n"; the terminal needs "\r\n". Home + clear first, so the
+	// screen replaces whatever the terminal showed.
+	screen := "\x1b[0m\x1b[H\x1b[2J" + strings.ReplaceAll(strings.TrimRight(string(raw), "\n"), "\n", "\r\n")
+	b.write(consoleFrame{T: "data", Session: b.session, Data: base64.StdEncoding.EncodeToString([]byte(screen))})
 }
 
 // deliverSnapshot hands a snapshot-result to everyone waiting on that session.
@@ -661,6 +681,8 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	// causes an agent-side open (it can only ever watch an already-running session).
 	if first && !readonly {
 		a.writeToAgent(consoleFrame{T: "open", Session: effSession, Cols: cols, Rows: rows})
+	} else if !first {
+		go a.showScreen(b)
 	}
 	// Any viewer joining changes what the session lists show (attached / viewers / recording) — push.
 	notifySessionsChanged(machineID)

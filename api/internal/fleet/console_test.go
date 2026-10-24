@@ -1,8 +1,14 @@
 package fleet
 
 import (
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestConsoleGrants(t *testing.T) {
@@ -118,5 +124,53 @@ func TestBrowserFrameAllowlist(t *testing.T) {
 		if browserFrameTypes[bad] {
 			t.Errorf("browser frame %q must be dropped", bad)
 		}
+	}
+}
+
+// wsPair returns the two ends of one live WebSocket: the server side and the dialled client side.
+func wsPair(t *testing.T) (server, client *websocket.Conn) {
+	t.Helper()
+	got := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		got <- c
+	}))
+	t.Cleanup(srv.Close)
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server = <-got
+	t.Cleanup(func() { client.Close(); server.Close() })
+	return server, client
+}
+
+// A viewer joining a session someone else holds gets the current screen (tmux only redraws for
+// the viewer whose join attached it).
+func TestShowScreenPaintsLaterViewer(t *testing.T) {
+	a := newAgentConn()
+	agentSide, agent := wsPair(t)
+	a.conn = agentSide
+	go func() { // the agent answers the snapshot request
+		var f consoleFrame
+		if agent.ReadJSON(&f) == nil && f.T == "snapshot" {
+			a.deliverSnapshot(f.Session, base64.StdEncoding.EncodeToString([]byte("$ ls\nfile\n$ \n\n")))
+		}
+	}()
+	browserSide, browser := wsPair(t)
+	a.showScreen(&consoleBridge{browser: browserSide, session: "7_s1"})
+
+	var f consoleFrame
+	browser.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := browser.ReadJSON(&f); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := base64.StdEncoding.DecodeString(f.Data)
+	if want := "\x1b[0m\x1b[H\x1b[2J$ ls\r\nfile\r\n$ "; f.T != "data" || f.Session != "7_s1" || string(raw) != want {
+		t.Fatalf("got %s %s %q, want data 7_s1 %q", f.T, f.Session, raw, want)
 	}
 }
