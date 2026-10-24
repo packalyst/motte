@@ -9,6 +9,7 @@
   import { SEV } from '$lib/fleet.js'
   import { formatBytes, formatDate, timeAgo, formatBanTime } from '$lib/utils/format.js'
   import Icon from './Icon.svelte'
+  import UPlotChart from './UPlotChart.svelte'
 
   let { machineId, reloadKey = '' } = $props()
 
@@ -37,8 +38,17 @@
 
   const KEY = { CRITICAL: 'critical', HIGH: 'high', MEDIUM: 'medium', LOW: 'low' }
   const ok = $derived(scans.filter((s) => s.status === 'ok'))
-  const chart = $derived([...scans].reverse()) // oldest → newest, left → right
-  const peak = $derived(Math.max(1, ...ok.map((s) => SEV.reduce((t, v) => t + (s[KEY[v.sev]] || 0), 0))))
+  // uPlot columnar shape: [times (unix s), critical, high, medium, low], oldest first
+  const TREND_SERIES = [
+    { label: 'Critical', stroke: '--destructive' },
+    { label: 'High', stroke: '--warning' },
+    { label: 'Medium', stroke: '--info' },
+    { label: 'Low', stroke: '--muted-foreground' },
+  ]
+  const trend = $derived.by(() => {
+    const pts = [...ok].reverse()
+    return [pts.map((s) => Math.floor(new Date(s.scanned_at).getTime() / 1000)), ...SEV.map((v) => pts.map((s) => s[KEY[v.sev]] || 0))]
+  })
   const shown = $derived(showAll ? scans : scans.slice(0, 8))
   const TRIGGER = { manual: 'Manual', kernel: 'After kernel update' }
 </script>
@@ -58,21 +68,9 @@
     <div class="py-1 text-sm text-muted-foreground">No scans yet. Each scan you run is listed here, with how long it took and what changed since the one before.</div>
   {:else}
     {#if ok.length > 1}
-      <!-- trend: one bar per scan, stacked by severity; a failed scan is a short red tick -->
-      <div class="mb-4 flex h-20 items-end gap-[3px]" role="img" aria-label="Distinct CVEs per scan, oldest to newest">
-        {#each chart as s (s.scanned_at)}
-          {#if s.status === 'ok'}
-            {@const total = SEV.reduce((t, v) => t + (s[KEY[v.sev]] || 0), 0)}
-            <div class="flex min-w-[3px] flex-1 flex-col-reverse overflow-hidden rounded-sm bg-muted" style="height: {Math.max(4, (total / peak) * 100)}%"
-              title="{formatDate(s.scanned_at)} · {s.cves.toLocaleString()} CVEs ({SEV.map((v) => `${s[KEY[v.sev]]} ${v.label}`).join(', ')})">
-              {#each SEV as v (v.sev)}
-                {#if s[KEY[v.sev]]}<div class={v.bar} style="height: {(s[KEY[v.sev]] / Math.max(1, total)) * 100}%"></div>{/if}
-              {/each}
-            </div>
-          {:else}
-            <div class="h-1 min-w-[3px] flex-1 rounded-sm bg-destructive" title="{formatDate(s.scanned_at)} · failed: {s.error}"></div>
-          {/if}
-        {/each}
+      <!-- trend: distinct CVEs per severity over time, one point per finished scan -->
+      <div class="mb-4">
+        <UPlotChart data={trend} series={TREND_SERIES} height={170} yFormat={(v) => Math.round(v).toLocaleString()} />
       </div>
     {/if}
 
