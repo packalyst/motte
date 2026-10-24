@@ -187,6 +187,9 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled bool `json:"enabled"`
 		Port    int  `json:"port"`
+		// FinishMigration closes the old port of a port change now, without waiting for the
+		// machines that haven't reconnected on the new one (they then need reinstalling).
+		FinishMigration bool `json:"finish_migration"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
 		router.JSONError(w, "bad json", http.StatusBadRequest)
@@ -205,12 +208,27 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 
-	// A port migration keeps both ports open for a grace window; a second change mid-flight
-	// would strand agents between three ports. Reject any config change until it finishes.
-	if active, endsAt := s.migrationState(); active {
-		router.JSONError(w, fmt.Sprintf("a port change is still in progress: the old port stays open until every machine has reconnected on the new one (at the latest %s); try again after that",
-			endsAt.Local().Format("Jan 2 15:04")), http.StatusConflict)
+	// A port migration keeps both ports open until the machines have moved; a second port change
+	// mid-flight would strand agents between three ports. Only two things go through meanwhile:
+	// switching the listener off (it closes both ports and ends the migration) and finishing the
+	// migration now (closes the old port).
+	active, endsAt := s.migrationState()
+	if req.FinishMigration && !active { // already finished: nothing to change
+		s.writeConfigState(w)
 		return
+	}
+	if active {
+		if req.FinishMigration {
+			actor, _ := s.actingAdmin(r)
+			s.finishMigration(actor, helper.GetClientIP(r))
+			s.writeConfigState(w)
+			return
+		}
+		if req.Enabled {
+			router.JSONError(w, fmt.Sprintf("a port change is still in progress: the old port stays open until every machine has reconnected on the new one (at the latest %s). Close the old port now, or switch the listener off, to change it sooner",
+				endsAt.Local().Format("Jan 2 15:04")), http.StatusConflict)
+			return
+		}
 	}
 
 	oldEnabled, oldPort := s.Status()
@@ -250,6 +268,11 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		s.reloadFromSettingsLocked() // we already hold cfgMu
 	}
 
+	s.writeConfigState(w)
+}
+
+// writeConfigState answers a config change with the listener's state now.
+func (s *Service) writeConfigState(w http.ResponseWriter) {
 	enabled, _ := s.Status()
 	active, endsAt := s.migrationState()
 	router.JSON(w, map[string]any{
@@ -446,8 +469,11 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), status)
 		return
 	}
-	if req.Type == "rescan" {
-		if status, err := s.guardScanExcludes(r, req.MachineID, payload, req.CurrentPassword, req.TotpCode); err != nil {
+	// A rescan's folders to skip are guarded once the request is otherwise good (in scope, a valid
+	// payload); anything else is refused by enqueueGuarded as usual, without that check running.
+	var excl *scanExcludeChange
+	if req.Type == "rescan" && s.machineAllowed(r, req.MachineID) && validateCommandPayload(req.Type, payload) == nil {
+		if excl, status, err = s.guardScanExcludes(r, req.MachineID, payload, req.CurrentPassword, req.TotpCode); err != nil {
 			router.JSONError(w, err.Error(), status)
 			return
 		}
@@ -457,6 +483,7 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), status)
 		return
 	}
+	s.auditScanExcludes(r, req.MachineID, excl)
 	s.broadcastCommands(req.MachineID) // show the newly-queued command live
 	router.JSON(w, map[string]string{"command_id": id})
 }
@@ -494,9 +521,11 @@ func (s *Service) handleBulkCommand(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), status)
 		return
 	}
-	if _, set := scanExcludeList(payload); req.Type == "rescan" && set {
-		router.JSONError(w, "folders to skip are set per machine, not in a bulk run", http.StatusBadRequest)
-		return
+	if req.Type == "rescan" {
+		if _, set, _ := parseScanExcludes(payload); set {
+			router.JSONError(w, "folders to skip are set per machine, not in a bulk run", http.StatusBadRequest)
+			return
+		}
 	}
 	req.Payload = payload
 	// Verify step-up once for the whole batch (428 → the UI prompts and retries).

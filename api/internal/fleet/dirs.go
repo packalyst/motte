@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -69,19 +71,14 @@ func validExclude(p string) bool {
 func validateCommandPayload(ctype string, payload json.RawMessage) error {
 	switch ctype {
 	case "rescan":
-		if len(payload) == 0 {
-			return nil
-		}
-		var pl struct {
-			Exclude []string `json:"exclude"`
-		}
-		if err := json.Unmarshal(payload, &pl); err != nil {
+		exclude, _, err := parseScanExcludes(payload)
+		if err != nil {
 			return errors.New("bad scan request")
 		}
-		if len(pl.Exclude) > maxScanExcludes {
+		if len(exclude) > maxScanExcludes {
 			return fmt.Errorf("too many excluded folders (max %d)", maxScanExcludes)
 		}
-		for _, p := range pl.Exclude {
+		for _, p := range exclude {
 			if !validExclude(p) {
 				return fmt.Errorf("can't leave out %q: not a plain folder path, or it holds the system's package records", p)
 			}
@@ -116,13 +113,13 @@ func validateCommandPayload(ctype string, payload json.RawMessage) error {
 				return fmt.Errorf("%q is not a plain package name", p)
 			}
 		}
-	case "set-dry-run":
-		// The agent flips enforcement on this: it must say on or off explicitly.
+	case "set-dry-run", "set-console":
+		// The agent flips enforcement or the console on this: it must say on or off explicitly.
 		var pl struct {
 			Enabled *bool `json:"enabled"`
 		}
 		if json.Unmarshal(payload, &pl) != nil || pl.Enabled == nil {
-			return errors.New("set-dry-run needs enabled (true or false)")
+			return fmt.Errorf("%s needs enabled (true or false)", ctype)
 		}
 	case "sync-blocks":
 		// The agent replaces its list with this one: a missing list must never read as empty
@@ -145,58 +142,110 @@ var pkgNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~-]*[A-Za-z0-9._+~]
 // maxFixPackages bounds one targeted fix (the CVE drill-down selects a handful).
 const maxFixPackages = 500
 
-// scanExcludeList is a rescan payload's folders to skip; set is false when it gives no list (the
-// agent then keeps the machine's saved one; any list, even empty, replaces it).
-func scanExcludeList(payload json.RawMessage) (list []string, set bool) {
+// parseScanExcludes reads a rescan payload's folders to skip; set is false when it gives no list
+// (the agent then keeps the machine's saved one; any list, even empty, replaces it).
+func parseScanExcludes(payload json.RawMessage) (list []string, set bool, err error) {
+	if len(payload) == 0 {
+		return nil, false, nil
+	}
 	var pl struct {
 		Exclude *[]string `json:"exclude"`
 	}
-	if len(payload) == 0 || json.Unmarshal(payload, &pl) != nil || pl.Exclude == nil {
-		return nil, false
+	if err := json.Unmarshal(payload, &pl); err != nil {
+		return nil, false, err
 	}
-	return *pl.Exclude, true
+	if pl.Exclude == nil {
+		return nil, false, nil
+	}
+	return *pl.Exclude, true, nil
 }
+
+// scanExcludeChange is what a rescan does to a machine's folders to skip.
+type scanExcludeChange struct{ added, removed []string }
 
 // guardScanExcludes covers the one sensitive part of a rescan: its folders to skip are saved on
 // the machine and apply to every later scan, so ADDING one hides that folder's findings for
 // good. That takes an admin and a step-up; removing folders (scanning more) or rescanning with
-// the same list stays an operator action. Any change to the list is audited with the folders.
-func (s *Service) guardScanExcludes(r *http.Request, machineID string, payload json.RawMessage, pwd, totp string) (int, error) {
-	next, set := scanExcludeList(payload)
+// the same list stays an operator action. Callers check scope and the payload first, and audit
+// the change (auditScanExcludes) only once the command is queued.
+//
+// What counts as already skipped is the machine's saved list as both the panel and the machine
+// know it: in its last report AND in the last rescan queued for it. The report alone can lag a
+// change by a few seconds (an operator could re-add a folder an admin just removed), and it comes
+// from the machine itself; a folder missing from either counts as added.
+func (s *Service) guardScanExcludes(r *http.Request, machineID string, payload json.RawMessage, pwd, totp string) (*scanExcludeChange, int, error) {
+	next, set, _ := parseScanExcludes(payload) // already validated by the caller
 	if !set {
-		return 0, nil // the saved list stays as it is
+		return nil, 0, nil // the saved list stays as it is
 	}
-	var cur struct {
+	cur := s.savedScanExcludes(machineID)
+	var ch scanExcludeChange
+	for _, p := range next {
+		if !slices.Contains(cur, p) {
+			ch.added = append(ch.added, p)
+		}
+	}
+	for _, p := range cur {
+		if !slices.Contains(next, p) {
+			ch.removed = append(ch.removed, p)
+		}
+	}
+	if len(ch.added) > 0 {
+		if p := router.CurrentUser(r); p == nil || !auth.RoleAtLeast(p.Role, auth.RoleAdmin) {
+			return nil, http.StatusForbidden, errors.New("only an admin can add folders for scans to skip")
+		}
+		if status, err := s.verifyStepUp(r, "rescan (skip folders)", pwd, totp); err != nil {
+			return nil, status, err
+		}
+	}
+	return &ch, 0, nil
+}
+
+// savedScanExcludes is a machine's folders to skip that both its last report and the last rescan
+// queued for it agree on (see guardScanExcludes). With no rescan queued yet, the report's list.
+func (s *Service) savedScanExcludes(machineID string) []string {
+	var rep struct {
 		ScanExclude []string `json:"scan_exclude"`
 	}
 	if raw, err := s.lastReport(machineID); err == nil && raw != "" {
-		_ = json.Unmarshal([]byte(raw), &cur)
+		_ = json.Unmarshal([]byte(raw), &rep)
 	}
-	var added, removed []string
-	for _, p := range next {
-		if !slices.Contains(cur.ScanExclude, p) {
-			added = append(added, p)
+	rows, err := s.db.Query(`SELECT payload FROM fleet_commands WHERE machine_id = ? AND type = 'rescan'
+		ORDER BY created_at DESC, rowid DESC`, machineID)
+	if err != nil {
+		return nil // can't tell: nothing counts as already skipped (the strict side)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p sql.NullString
+		if rows.Scan(&p) != nil {
+			return nil
+		}
+		if last, set, _ := parseScanExcludes(json.RawMessage(p.String)); set {
+			var both []string
+			for _, d := range rep.ScanExclude {
+				if slices.Contains(last, d) {
+					both = append(both, d)
+				}
+			}
+			return both
 		}
 	}
-	for _, p := range cur.ScanExclude {
-		if !slices.Contains(next, p) {
-			removed = append(removed, p)
-		}
+	return rep.ScanExclude
+}
+
+// auditScanExcludes records a queued change to a machine's folders to skip. The paths are quoted
+// (removed ones come from the machine's own report) and the message is bounded.
+func (s *Service) auditScanExcludes(r *http.Request, machineID string, ch *scanExcludeChange) {
+	if ch == nil || len(ch.added)+len(ch.removed) == 0 {
+		return
 	}
-	if len(added) > 0 {
-		if p := router.CurrentUser(r); p == nil || (p.Role != "admin" && p.Role != "owner") {
-			return http.StatusForbidden, errors.New("only an admin can add folders for scans to skip")
-		}
-		if status, err := s.verifyStepUp(r, "rescan (skip folders)", pwd, totp); err != nil {
-			return status, err
-		}
+	actor, _ := s.actingAdmin(r)
+	msg := fmt.Sprintf("Folders skipped by scans on %s changed: added %q, removed %q", machineID, ch.added, ch.removed)
+	if len(msg) > 2000 {
+		msg = msg[:2000] + "…"
 	}
-	if len(added) > 0 || len(removed) > 0 {
-		actor, _ := s.actingAdmin(r)
-		events.Audit("fleet", "scan_excludes_changed", events.SeverityWarning, actor, helper.GetClientIP(r),
-			fmt.Sprintf("Folders skipped by scans on %s changed: added %v, removed %v", machineID, added, removed))
-	}
-	return 0, nil
+	events.Audit("fleet", "scan_excludes_changed", events.SeverityWarning, actor, helper.GetClientIP(r), msg)
 }
 
 // machineTools are the agent tools a machine can turn on and off (set-tool).
