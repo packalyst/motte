@@ -76,33 +76,51 @@
 
     <div class="divide-y divide-dashed divide-border">
       {#each shown as s (s.scanned_at)}
-        <div class="py-2 first:pt-0 last:pb-0">
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <span class="h-2 w-2 shrink-0 rounded-full {s.status === 'ok' ? 'bg-success' : 'bg-destructive'}"></span>
-            <span class="font-medium text-foreground" title={formatDate(s.scanned_at)}>{timeAgo(s.scanned_at)}</span>
-            <span class="rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">{TRIGGER[s.trigger] || s.trigger}</span>
-            <span class="tabular-nums text-muted-foreground">{formatBanTime(Math.round(s.seconds))}</span>
-            {#if s.peak_mem}<span class="tabular-nums text-muted-foreground">peak {formatBytes(s.peak_mem)}</span>{/if}
-            {#if s.status === 'ok'}
-              <span class="flex flex-wrap items-center gap-x-2.5 tabular-nums sm:ml-auto">
-                <span><span class="font-medium text-foreground">{s.cves.toLocaleString()}</span> <span class="text-muted-foreground">CVEs</span></span>
+        <div class="py-2.5 first:pt-0 last:pb-0">
+          <!-- Same two lines on every row: when (left) / result (right), then how it ran (left) /
+               the severities (right). The change button gets its own line on a phone and a third
+               column on wider screens; a failure's reason gets its own line. -->
+          <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="h-2 w-2 shrink-0 rounded-full {s.status === 'ok' ? 'bg-success' : 'bg-destructive'}"></span>
+              <span class="font-medium text-foreground" title={formatDate(s.scanned_at)}>{timeAgo(s.scanned_at)}</span>
+              <span class="truncate rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">{TRIGGER[s.trigger] || s.trigger}</span>
+            </div>
+            <div class="text-right tabular-nums">
+              {#if s.status === 'ok'}
+                <span class="font-semibold text-foreground">{s.cves.toLocaleString()}</span> <span class="text-muted-foreground">CVEs</span>
+              {:else}
+                <span class="font-medium text-destructive">Failed</span>
+              {/if}
+            </div>
+            <div class="row-start-2 flex min-w-0 items-center gap-2 pl-4 text-[11px] tabular-nums text-muted-foreground">
+              <span>{formatBanTime(Math.round(s.seconds))}</span>
+              {#if s.peak_mem}<span class="truncate">· peak {formatBytes(s.peak_mem)}</span>{/if}
+            </div>
+            <div class="row-start-2 flex items-center justify-end gap-2.5 text-[11px] tabular-nums">
+              {#if s.status === 'ok'}
                 {#each SEV as v (v.sev)}
                   {#if s[KEY[v.sev]]}<span class="inline-flex items-center gap-1"><span class="h-1.5 w-1.5 rounded-full {v.bar}"></span>{s[KEY[v.sev]].toLocaleString()}</span>{/if}
                 {/each}
-                {#if s.new == null}
-                  <span class="text-muted-foreground">first scan</span>
-                {:else if s.new || s.fixed}
-                  <button type="button" class="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 font-medium transition-colors hover:bg-muted aria-expanded:bg-muted cursor-pointer"
-                    aria-expanded={open === s.scanned_at} onclick={() => toggleChanges(s.scanned_at)}>
-                    {#if s.new}<span class="text-destructive">+{s.new.toLocaleString()} new</span>{/if}{#if s.new && s.fixed}<span class="text-muted-foreground">·</span>{/if}{#if s.fixed}<span class="text-success">{s.fixed.toLocaleString()} fixed</span>{/if}
-                    <Icon name={open === s.scanned_at ? 'chevron-up' : 'chevron-down'} size={12} class="text-muted-foreground" />
-                  </button>
-                {:else}
-                  <span class="text-muted-foreground">no change</span>
-                {/if}
-              </span>
-            {:else}
-              <span class="min-w-0 break-words text-destructive sm:ml-auto">Failed: {s.error}</span>
+              {/if}
+            </div>
+            <div class="col-span-2 pl-4 sm:col-span-1 sm:col-start-3 sm:row-span-2 sm:row-start-1 sm:pl-0 sm:text-right">
+              {#if s.status !== 'ok'}
+                <span class="break-words text-[11px] text-destructive sm:hidden">{s.error}</span>
+              {:else if s.new == null}
+                <span class="text-[11px] text-muted-foreground">first scan</span>
+              {:else if s.new || s.fixed}
+                <button type="button" class="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 font-medium tabular-nums transition-colors hover:bg-muted aria-expanded:bg-muted cursor-pointer"
+                  aria-expanded={open === s.scanned_at} onclick={() => toggleChanges(s.scanned_at)}>
+                  {#if s.new}<span class="text-destructive">+{s.new.toLocaleString()} new</span>{/if}{#if s.new && s.fixed}<span class="text-muted-foreground">·</span>{/if}{#if s.fixed}<span class="text-success">{s.fixed.toLocaleString()} fixed</span>{/if}
+                  <Icon name={open === s.scanned_at ? 'chevron-up' : 'chevron-down'} size={12} class="text-muted-foreground" />
+                </button>
+              {:else}
+                <span class="text-[11px] text-muted-foreground">no change</span>
+              {/if}
+            </div>
+            {#if s.status !== 'ok'}
+              <span class="col-span-3 hidden break-words pl-4 text-[11px] text-destructive sm:block">{s.error}</span>
             {/if}
           </div>
           {#if open === s.scanned_at}

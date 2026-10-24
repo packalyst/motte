@@ -10,6 +10,7 @@
   import Icon from './Icon.svelte'
   import Badge from './Badge.svelte'
   import MobileNav from './MobileNav.svelte'
+  import { scrollPageTop } from '../stores/app.js'
 
   let { items = [], active, onselect, label = 'Sections', only = undefined, mobile = 'select' } = $props()
 </script>
@@ -23,7 +24,7 @@
   class="hidden shrink-0 flex-col gap-1 border-r border-border pr-3 lg:flex lg:w-52 lg:self-stretch">
   <div class="sticky top-4 flex flex-col gap-1">
     {#each items as item (item.id)}
-      <button type="button" onclick={() => onselect(item.id)} aria-current={active === item.id ? 'page' : undefined}
+      <button type="button" onclick={() => { onselect(item.id); scrollPageTop() }} aria-current={active === item.id ? 'page' : undefined}
         class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm whitespace-nowrap shrink-0 transition cursor-pointer {active === item.id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}">
         <Icon name={item.icon} size={16} class="shrink-0" />
         <span>{item.label}</span>

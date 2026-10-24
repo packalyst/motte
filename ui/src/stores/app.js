@@ -121,6 +121,13 @@ export function hashParam(key) {
   if (typeof window === 'undefined') return null
   return new URLSearchParams(window.location.hash.slice(1)).get(key)
 }
+// Scroll the page area (the one scroller every page shares, .app-scroller) back to the top: a new
+// page, a newly opened item (a machine) or a newly picked section starts at the top instead of
+// keeping the previous scroll position.
+export function scrollPageTop() {
+  document.querySelector('.app-scroller')?.scrollTo({ top: 0 })
+}
+
 export function setHashParam(key, value) {
   if (typeof window === 'undefined') return
   const p = new URLSearchParams(window.location.hash.slice(1))

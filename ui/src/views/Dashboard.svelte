@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { slide } from 'svelte/transition'
-  import { theme, currentView, hasRole } from '../stores/app.js'
+  import { theme, currentView, hasRole, scrollPageTop } from '../stores/app.js'
   import { subscribe, unsubscribe } from '../stores/websocket.js'
   import { KINDS, clientsList, watchClients, summarize, openClients } from '../lib/clients.js'
   import { visibilityChangeCount } from '../stores/network.js'
@@ -127,10 +127,19 @@
   // Pull-to-refresh handler
   let scroller = $state(null) // the element that scrolls the page (pull-to-refresh watches it)
 
-  // A new page starts at the top: the scroller is shared by every page, so it would otherwise
-  // keep the previous page's scroll position.
+  // A new page, or a new item opened through the address (#m=<machine>, #cves=…), starts at the
+  // top: the scroller is shared by every page and would otherwise keep the old scroll position.
+  // A real in-page link (#some-id naming an element) still jumps to its target.
   $effect(() => {
-    if ($currentView && scroller) scroller.scrollTop = 0
+    if ($currentView && scroller) scrollPageTop()
+  })
+  onMount(() => {
+    const onHash = () => {
+      const h = decodeURIComponent(window.location.hash.slice(1))
+      if (!h || !document.getElementById(h)) scrollPageTop()
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
   })
 
   async function handlePullRefresh() {
