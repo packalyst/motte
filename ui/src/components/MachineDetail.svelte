@@ -2,7 +2,7 @@
   /**
    * MachineDetail — the per-machine hub, laid out WebTerm-style: a header (status, live
    * CPU/MEM/load, primary actions) beside a left sub-nav rail of capabilities (Overview /
-   * Sessions / Files / Docker / Diagnostics / Forwards / Services / Network / Security /
+   * Sessions / Files / Docker / Diagnostics / Services / Network / Security /
    * Maintenance / Host / AI). The open sub-page is kept in the URL hash (#m=<id>&s=<sub>) so a
    * refresh returns to it. All state, handlers and the live WS subscription live once in this
    * container; panels only re-home the existing cards — no gate, handler or data path changes.
@@ -181,7 +181,7 @@
   // Badge the Security item with the count that actually needs action now (critical+high CVEs).
   const secBadge = $derived(((cves?.counts?.CRITICAL || 0) + (cves?.counts?.HIGH || 0)) || undefined)
   // `soon` items are capabilities not built yet (AI), shown with an honest placeholder — no fake
-  // data, no backend call. Files, Docker, diagnostics and forwards live inside the console itself.
+  // data, no backend call. Files, Docker and diagnostics live inside the console itself.
   const navList = $derived([
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'sessions', label: 'Sessions', icon: 'terminal-2' },

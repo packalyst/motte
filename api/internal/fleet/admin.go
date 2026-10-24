@@ -52,7 +52,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"ConsoleSessions":        s.handleConsoleSessions,
 		"ConsoleSnapshot":        s.handleConsoleSnapshot,
 		"ConsoleKill":            s.handleConsoleKill,
-		"ConsoleForward":         s.handleConsoleForward,
 		"ConsoleRecordings":      s.handleConsoleRecordings,
 		"ConsoleRecording":       s.handleConsoleRecording,
 		"ConsoleRecordingDelete": s.handleConsoleRecordingDelete,
@@ -65,10 +64,18 @@ func (s *Service) Handlers() router.ServiceHandlers {
 // POST /api/fleet/machine/delete  {"machine_id":"..."}
 func (s *Service) handleDeleteMachine(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineID string `json:"machine_id"`
+		MachineID       string `json:"machine_id"`
+		CurrentPassword string `json:"currentPassword"`
+		TotpCode        string `json:"totpCode"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil || req.MachineID == "" {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
+		return
+	}
+	// It deletes the machine's console recordings too (the audit trail of what was done on it):
+	// a fresh step-up every time, like deleting a recording.
+	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TotpCode); err != nil {
+		router.JSONError(w, err.Error(), status)
 		return
 	}
 	if err := s.DeleteMachine(req.MachineID); err != nil {
