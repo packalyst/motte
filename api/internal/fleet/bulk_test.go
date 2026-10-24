@@ -3,6 +3,7 @@ package fleet
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,5 +52,42 @@ func TestBulkCommand(t *testing.T) {
 	svc.handleBulkCommand(rr3, bulkReq(t, `{"machine_ids":[],"type":"block"}`))
 	if rr3.Code != http.StatusBadRequest {
 		t.Fatalf("empty machine_ids: status %d, want 400", rr3.Code)
+	}
+}
+
+// A bulk blocklist push carries the panel's own list (never the request's), and a list the
+// panel can't read stops the push instead of sending an empty one.
+func TestBulkPushBlocksCarriesPanelList(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	svc.blockedIPs = func() ([]string, error) { return []string{"203.0.113.0/24", "198.51.100.9"}, nil }
+
+	rr := httptest.NewRecorder()
+	svc.handleBulkCommand(rr, bulkReq(t, `{"machine_ids":["m1"],"type":"sync-blocks","payload":{"ips":["192.0.2.1"]}}`))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var payload string
+	if err := svc.db.QueryRow(`SELECT payload FROM fleet_commands WHERE machine_id='m1' AND type='sync-blocks'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload != `{"ips":["203.0.113.0/24","198.51.100.9"]}` {
+		t.Fatalf("pushed %s, want the panel's list", payload)
+	}
+
+	svc.blockedIPs = func() ([]string, error) { return nil, errors.New("db locked") }
+	rr = httptest.NewRecorder()
+	svc.handleBulkCommand(rr, bulkReq(t, `{"machine_ids":["m1"],"type":"sync-blocks"}`))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("unreadable list: status %d, want 500", rr.Code)
+	}
+}
+
+// A sync-blocks without a list is refused, so it can never read as "empty the list".
+func TestSyncBlocksNeedsList(t *testing.T) {
+	for p, ok := range map[string]bool{``: false, `{}`: false, `{"ips":null}`: false, `{"ips":[]}`: true, `{"ips":["192.0.2.1"]}`: true} {
+		if err := validateCommandPayload("sync-blocks", json.RawMessage(p)); (err == nil) != ok {
+			t.Errorf("payload %q: err=%v, want ok=%v", p, err, ok)
+		}
 	}
 }

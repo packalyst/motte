@@ -100,6 +100,15 @@ func validateCommandPayload(ctype string, payload json.RawMessage) error {
 		if json.Unmarshal(payload, &pl) != nil || pl.Enabled == nil || !slices.Contains(machineTools, pl.Tool) {
 			return errors.New("set-tool needs a tool (crowdsec, osquery or trivy) and enabled")
 		}
+	case "sync-blocks":
+		// The agent replaces its list with this one: a missing list must never read as empty
+		// (clear-blocks is how a list is emptied).
+		var pl struct {
+			IPs *[]string `json:"ips"`
+		}
+		if json.Unmarshal(payload, &pl) != nil || pl.IPs == nil {
+			return errors.New("sync-blocks needs the blocklist")
+		}
 	}
 	return nil
 }

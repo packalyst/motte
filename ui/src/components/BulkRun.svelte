@@ -17,7 +17,7 @@
     { value: 'update-kernel', label: 'Update kernel', icon: 'cpu', hint: 'Install the latest kernel; applies after a reboot' },
     { value: 'restart', label: 'Reboot host', icon: 'power', hint: 'Restarts the machine — sessions on it drop', danger: true },
     { value: 'update-agent', label: 'Update agent', icon: 'refresh', hint: 'Move the agent to the latest release' },
-    { value: 'sync-blocks', label: 'Push panel blocklist', icon: 'shield', hint: "Send the panel's blocked IPs to the machine" },
+    { value: 'sync-blocks', label: 'Push panel blocklist', icon: 'shield', hint: "Replace each machine's panel list with the panel's blocked IPs and ranges" },
   ]
 
   let command = $state('apply-updates')
