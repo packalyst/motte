@@ -171,7 +171,21 @@ func (b *consoleBridge) write(f consoleFrame) {
 	if b.held && f.T == "data" {
 		return
 	}
-	_ = b.browser.WriteJSON(f)
+	b.sendLocked(f)
+}
+
+// browserWriteWait bounds one write to a viewer. Writes run on the agent channel's read loop, so a
+// viewer that stopped reading (a phone gone to sleep) must not hold it up: the channel would miss
+// its keepalive and drop every session's viewers on the machine.
+const browserWriteWait = 5 * time.Second
+
+// sendLocked writes f to the viewer, and drops a viewer that doesn't take it in time (its socket
+// closes, which ends its handler and detaches it; it can reconnect). Caller holds writeMu.
+func (b *consoleBridge) sendLocked(f consoleFrame) {
+	_ = b.browser.SetWriteDeadline(time.Now().Add(browserWriteWait))
+	if err := b.browser.WriteJSON(f); err != nil {
+		b.browser.Close()
+	}
 }
 
 type agentConn struct {
@@ -355,7 +369,7 @@ func (a *agentConn) showScreen(b *consoleBridge) {
 		}
 		b.held = false
 		if len(screen) > 0 {
-			_ = b.browser.WriteJSON(consoleFrame{T: "data", Session: b.session, Data: base64.StdEncoding.EncodeToString(screen)})
+			b.sendLocked(consoleFrame{T: "data", Session: b.session, Data: base64.StdEncoding.EncodeToString(screen)})
 		}
 	}
 	if !a.awaitSnapshot(b.session, 2*time.Second, func(f consoleFrame) { release(screenPaint(f)) }) {

@@ -55,7 +55,7 @@
     savingCfg = true
     try {
       const res = await withStepUp((extra) => apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort), finish_migration: true, ...extra }),
-        { title: 'Close the old port now', message: 'Re-enter your credentials to close the old port.', confirmText: 'Close old port', variant: 'destructive' })
+        { title: 'Close the old port now', message: 'Confirm your password to close the old port.', confirmText: 'Close old port', variant: 'destructive' })
       if (res === STEPUP_CANCELLED) return
       ep = { ...ep, ...res }
       toast('Old port closed', 'success')
