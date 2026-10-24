@@ -26,7 +26,7 @@ const jailGroupBy = `
 func (s *Service) handleGetJails(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(jailQueryBase + jailGroupBy)
 	if err != nil {
-		router.JSONError(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -84,7 +84,7 @@ func (s *Service) handleCreateJail(w http.ResponseWriter, r *http.Request) {
 		jail.Name, jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action,
 		jail.EscalateEnabled, jail.EscalateThreshold, jail.EscalateWindow, jail.EscalateASN, jail.EscalateASNThreshold, jail.EscalateASNWindow)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -161,7 +161,7 @@ func (s *Service) handleUpdateJail(w http.ResponseWriter, r *http.Request) {
 		jail.Enabled, jail.LogFile, jail.FilterRegex, jail.MaxRetry, jail.FindTime, jail.BanTime, jail.Port, jail.Action,
 		jail.EscalateEnabled, jail.EscalateThreshold, jail.EscalateWindow, jail.EscalateASN, jail.EscalateASNThreshold, jail.EscalateASNWindow, name)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 

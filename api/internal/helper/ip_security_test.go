@@ -105,3 +105,18 @@ func TestIsPrivateIPOrCIDR_BlocksSSRFTargets(t *testing.T) {
 		t.Error("IsPrivateIPOrCIDR on garbage must be false")
 	}
 }
+
+// Secrets carried in a URL path never reach a log.
+func TestRedactSecretPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/api/restart/k3y":    "/api/restart/[redacted]",
+		"/api/hook/a/b":       "/api/hook/[redacted]",
+		"/agent/0123abcd":     "/agent/[redacted]",
+		"/api/fleet/machines": "/api/fleet/machines",
+		"/agent":              "/agent",
+	} {
+		if got := RedactSecretPath(in); got != want {
+			t.Errorf("RedactSecretPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -61,6 +61,11 @@ type Client struct {
 	ScopeKind   string
 	ScopeValues string
 
+	// stillValid re-checks the client's login (nil: no re-check). A session that ended or got
+	// locked, or a role or scope that changed, ends the connection at the next ping: the browser
+	// reconnects with what the user has now, and a demoted or removed user stops getting data.
+	stillValid func() bool
+
 	// Log streaming state
 	logStreamStop chan struct{}
 	logContainer  string
@@ -178,6 +183,11 @@ func (c *Client) WritePump() {
 
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if c.stillValid != nil && !c.stillValid() {
+				c.conn.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "session changed"))
+				return
+			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

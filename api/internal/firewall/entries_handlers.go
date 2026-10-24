@@ -83,7 +83,7 @@ func (s *Service) handleGetEntries(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		router.JSONError(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -188,6 +188,24 @@ func validateEntryEnums(action, direction, protocol string) error {
 // only (the sanctioned way to open a port is the admin-only /fw/ports endpoint).
 func opensFirewall(action, entryType string) bool {
 	return action == nftables.ActionAllow || entryType == nftables.EntryTypePort
+}
+
+// anyOpensFirewall reports whether any of the entries ids is one that widens access
+// (opensFirewall). Re-enabling such an entry, or widening its direction, opens the firewall as
+// much as creating it, so it's admin-grade too. An error counts as yes (the strict side).
+func (s *Service) anyOpensFirewall(ids []int64) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	var n int
+	err := s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM firewall_entries WHERE id IN (%s) AND (action = ? OR entry_type = ?)`, ph),
+		append(args, nftables.ActionAllow, nftables.EntryTypePort)...).Scan(&n)
+	return err != nil || n > 0
 }
 
 // callerIsAdmin reports whether the request principal is admin or owner.
@@ -299,7 +317,7 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		WHERE firewall_entries.essential = 0`,
 		req.Type, normalizedValue, req.Action, req.Direction, req.Protocol, req.Reason, req.Name, expiresAt)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -380,7 +398,7 @@ func (s *Service) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 
 	_, err = s.db.Exec("DELETE FROM firewall_entries WHERE id = ? AND essential = 0", id)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -516,6 +534,12 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enabling an allow-rule or port entry, or changing its direction, opens the firewall: admin.
+	if req.Action != "delete" && req.Action != "disable" && !callerIsAdmin(r) && s.anyOpensFirewall(req.IDs) {
+		router.JSONError(w, "only admins can enable or change allow-rules and open ports", http.StatusForbidden)
+		return
+	}
+
 	// Build placeholders
 	placeholders := make([]string, len(req.IDs))
 	args := make([]interface{}, len(req.IDs))
@@ -546,7 +570,7 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.db.Exec(query, args...)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -668,7 +692,7 @@ func (s *Service) handleDeleteBySource(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.db.Exec("DELETE FROM firewall_entries WHERE source = ? AND essential = 0", source)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -698,7 +722,7 @@ func (s *Service) handleDeleteAll(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.db.Exec(query, args...)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -742,6 +766,13 @@ func (s *Service) handleToggleEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enabling an allow-rule or port entry, or changing its direction, opens the firewall: admin.
+	widens := (req.Enabled != nil && *req.Enabled) || req.Direction != ""
+	if widens && !callerIsAdmin(r) && s.anyOpensFirewall([]int64{id}) {
+		router.JSONError(w, "only admins can enable or change allow-rules and open ports", http.StatusForbidden)
+		return
+	}
+
 	response := map[string]interface{}{"status": "updated"}
 
 	// Handle enabled toggle
@@ -752,7 +783,7 @@ func (s *Service) handleToggleEntry(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err = s.db.Exec("UPDATE firewall_entries SET enabled = ? WHERE id = ?", *req.Enabled, id)
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			router.DBError(w, err)
 			return
 		}
 		response["enabled"] = *req.Enabled
@@ -771,7 +802,7 @@ func (s *Service) handleToggleEntry(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err = s.db.Exec("UPDATE firewall_entries SET direction = ? WHERE id = ?", req.Direction, id)
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			router.DBError(w, err)
 			return
 		}
 		response["direction"] = req.Direction
