@@ -502,11 +502,9 @@ func main() {
 			}
 			sslDomain := helper.GetEnvOptional("SSL_DOMAIN", "")
 			// Source the panel's explicit blocklist for the "push blocks" command.
-			blockedIPs := func() []string {
-				if fwSvc == nil {
-					return nil
-				}
-				return fwSvc.ExplicitBlockedCIDRs()
+			var blockedIPs func() ([]string, error)
+			if fwSvc != nil {
+				blockedIPs = fwSvc.ExplicitBlockedCIDRs
 			}
 			var ferr error
 			flSvc, ferr = fleet.New(db, sslDomain, openPort, closePort, blockedIPs, settings.GetTraefikFWBlock)

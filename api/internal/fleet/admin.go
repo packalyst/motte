@@ -116,23 +116,35 @@ func (s *Service) handlePushBlocks(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
-	if s.blockedIPs == nil {
-		router.JSONError(w, "blocklist unavailable", http.StatusServiceUnavailable)
+	payload, count, status, err := s.blocklistPayload()
+	if err != nil {
+		router.JSONError(w, err.Error(), status)
 		return
 	}
-	// Push the whole explicit blocklist — that's the point of "push panel blocklist". The
-	// entries are IPv4 CIDRs/IPs (a country compresses to a few thousand CIDRs), and the
-	// agent replaces its panel set wholesale in one nft transaction, so there's no per-entry
-	// cost to fear here.
-	ips := s.blockedIPs()
-	payload, _ := json.Marshal(map[string]any{"ips": ips})
 	// sync-blocks is allow-tier (no step-up); route through the guardrail for audit coverage.
 	id, status, err := s.enqueueGuarded(r, req.MachineID, "sync-blocks", "", "", payload)
 	if err != nil {
 		router.JSONError(w, err.Error(), status)
 		return
 	}
-	router.JSON(w, map[string]any{"command_id": id, "count": len(ips)})
+	router.JSON(w, map[string]any{"command_id": id, "count": count})
+}
+
+// blocklistPayload builds the sync-blocks payload from the panel's explicit blocklist (its IP
+// and range blocks; country/ASN blocks stay on the panel). It is the only source of that
+// payload: the agent replaces its panel list with whatever arrives, so a caller-supplied or
+// empty-by-accident list would unblock everything there.
+func (s *Service) blocklistPayload() (payload json.RawMessage, count, status int, err error) {
+	if s.blockedIPs == nil {
+		return nil, 0, http.StatusServiceUnavailable, errors.New("blocklist unavailable")
+	}
+	ips, err := s.blockedIPs()
+	if err != nil {
+		log.Printf("fleet: reading the panel blocklist: %v", err)
+		return nil, 0, http.StatusInternalServerError, errors.New("couldn't read the panel blocklist; nothing was pushed")
+	}
+	payload, _ = json.Marshal(map[string]any{"ips": ips})
+	return payload, len(ips), 0, nil
 }
 
 // handleClearBlocks queues a clear-blocks command that empties the machine's panel-pushed
@@ -453,6 +465,15 @@ func (s *Service) handleBulkCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	if !gatePanelInternalCommand(w, r, req.Type) {
 		return
+	}
+	// The blocklist push carries the panel's own list, built here, never one from the request.
+	if req.Type == "sync-blocks" {
+		payload, _, status, err := s.blocklistPayload()
+		if err != nil {
+			router.JSONError(w, err.Error(), status)
+			return
+		}
+		req.Payload = payload
 	}
 	// Verify step-up once for the whole batch (428 → the UI prompts and retries).
 	if status, err := s.verifyCommandStepUp(r, req.Type, req.CurrentPassword, req.TotpCode); err != nil {

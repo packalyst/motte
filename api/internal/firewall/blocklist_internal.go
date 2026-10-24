@@ -43,25 +43,29 @@ func (s *Service) AllBlockedCIDRs() []string {
 // are millions of entries meant for the panel's own nftables sets, far too large to push
 // down to a member machine. This is what the fleet "push panel blocks" command ships to an
 // agent so a host benefits from the specific IPs the panel already knows are hostile.
-func (s *Service) ExplicitBlockedCIDRs() []string {
+//
+// A read error is returned, never an empty list: a push replaces the machine's list, so an
+// empty one caused by a database hiccup would silently unblock everything.
+func (s *Service) ExplicitBlockedCIDRs() ([]string, error) {
 	out := []string{}
 	rows, err := s.db.Query(`SELECT value FROM firewall_entries
 		WHERE entry_type IN ('ip','range') AND action = 'block' AND enabled = 1
 		  AND direction IN ('inbound','both')
 		  AND (expires_at IS NULL OR expires_at > datetime('now'))`)
 	if err != nil {
-		return out
+		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var v string
-		if rows.Scan(&v) == nil {
-			if v = strings.TrimSpace(v); v != "" {
-				out = append(out, v)
-			}
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
 		}
 	}
-	return out
+	return out, rows.Err()
 }
 
 // HandleInternalBlocklist serves the block list as plain text (one CIDR/IP per line) for

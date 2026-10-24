@@ -485,7 +485,7 @@
 
   const pushBlocks = () => cmd('sync-blocks', null, {
     endpoint: '/api/fleet/push-blocks', title: 'Push / update panel blocklist',
-    message: `Push the panel's entire explicit blocklist (manual + auto-blocked IPs, ranges, and country/ASN CIDRs) onto ${machine.name}? It REPLACES the machine's panel-blocklist set (a rule separate from CrowdSec/manual bans), so re-pushing just updates it.`,
+    message: `Push the panel's blocked IPs and ranges (manual and auto-blocked) onto ${machine.name}? Country and ASN blocks stay on the panel only. It REPLACES the machine's panel list (separate from its CrowdSec and manual blocks), so pushing again updates it. Later changes on the panel need another push.`,
     done: (r) => `Replacing panel blocklist on ${machine.name} with ${r.count} entries`,
   })
   const clearBlocks = () => cmd('clear-blocks', null, {

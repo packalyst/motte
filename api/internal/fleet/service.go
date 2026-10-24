@@ -33,7 +33,7 @@ type Service struct {
 
 	// blockedIPs returns the panel's explicit ip/range blocklist, so the operator can
 	// push it onto a machine (sync-blocks). Nil ⇒ push is unavailable.
-	blockedIPs func() []string
+	blockedIPs func() ([]string, error)
 
 	// fwBlockEnabled reports the "Enforce Firewall on Proxied Traffic" setting, so the
 	// generated /agent Traefik route carries sentinel_fw_block only when it's on. Nil ⇒ off.
@@ -104,7 +104,7 @@ func (s *Service) scopedBroadcast(machineID, channel string, payload any) {
 // New initializes the schema + CA. The listener is NOT started here — call
 // ReloadFromSettings() once the firewall callbacks are wired. openPort/closePort
 // may be nil (then the firewall isn't touched).
-func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, blockedIPs func() []string, fwBlockEnabled func() bool) (*Service, error) {
+func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, blockedIPs func() ([]string, error), fwBlockEnabled func() bool) (*Service, error) {
 	if err := ensureSchema(db); err != nil {
 		return nil, err
 	}
