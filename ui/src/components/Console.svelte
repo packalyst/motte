@@ -12,6 +12,7 @@
   import { apiPost, stepUpConfirm, toast, confirm } from '../stores/app.js'
   import { consoleSessions, sessionColor } from '../lib/consoleEvents.js'
   import { ConsoleSocket } from '../lib/console.js'
+  import { keyboardAware } from '../lib/utils/viewport.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
 
@@ -88,7 +89,11 @@
   let now = $state(Date.now()) // ticks every second for live durations
   onMount(() => {
     const iv = setInterval(() => (now = Date.now()), 1000)
-    return () => clearInterval(iv)
+    // Refit whenever the console itself changes size, not only the window: the phone keyboard
+    // opening (keyboardAware) or the layout settling resizes it without a window resize.
+    const ro = new ResizeObserver(() => onResize())
+    ro.observe(rootEl)
+    return () => { clearInterval(iv); ro.disconnect() }
   })
 
   function applyTermOpts() {
@@ -132,6 +137,9 @@
   const recordingNow = $derived(new Set($consoleSessions.filter((s) => s.recording).map((s) => s.machine_id + '|' + s.id)))
   let innerWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 1280)
   const compactBar = $derived(innerWidth < 1024)
+  // On a phone only the `pin` items stay on the bar; everything else goes in the "…" menu.
+  const phoneBar = $derived(innerWidth < 640)
+  const onBar = (it, compact) => !compact || (phoneBar ? it.pin : !it.more)
   let overflowFor = $state(null) // tab id whose "…" menu is open
   let rootEl
   // Run a toolbar action against a specific tab: focus it first, so actions that read the active
@@ -189,12 +197,12 @@
     const mine = activeId === tab.id
     return [
       { icon: 'search', title: 'Search scrollback', on: searchVisible && mine, fn: () => (searchVisible = !searchVisible) },
-      { icon: 'file', title: 'Files', on: filesVisible && mine, fn: toggleFiles },
+      { icon: 'file', title: 'Files', on: filesVisible && mine, pin: true, fn: toggleFiles },
       { icon: 'git-branch', title: 'Git status', on: tool === 'git' && mine, fn: () => openTool('git') },
       { icon: 'arrows-exchange', title: 'Port forwards', on: tool === 'forwards' && mine, fn: () => openTool('forwards') },
       { icon: 'brand-docker', title: 'Docker', on: tool === 'docker' && mine, fn: () => openTool('docker') },
       { icon: 'terminal-2', title: 'Snippets', on: tool === 'snippets' && mine, fn: () => openTool('snippets') },
-      { icon: 'clipboard', title: 'Paste clipboard', fn: () => pasteInto(tab) },
+      { icon: 'clipboard', title: 'Paste clipboard', pin: true, fn: () => pasteInto(tab) },
       { icon: 'stethoscope', title: 'Diagnostics', on: tool === 'diag' && mine, more: true, fn: () => openTool('diag') },
       { icon: termLight ? 'moon' : 'sun', title: 'Terminal theme', more: true, fn: toggleTheme },
       { icon: 'copy', title: 'Copy selection', more: true, fn: () => copySelection(tab) },
@@ -708,7 +716,7 @@
       {@render activity(tab)}
       <button onclick={() => act(tab, () => openTool('commands'))} title="Command history"
         class="px-1.5 py-1 rounded text-[11px] font-mono hover:bg-white/5 {tool === 'commands' && activeId === tab.id ? 'bg-[#58a6ff]/15 text-[#58a6ff]' : 'text-white/60'}">&gt;{tab.commands.length || ''}</button>
-      {#each items.filter((it) => !compact || !it.more) as it (it.title)}
+      {#each items.filter((it) => onBar(it, compact)) as it (it.title)}
         <button onclick={() => act(tab, it.fn)} title={it.title} class="p-1.5 rounded hover:bg-white/5 {it.on ? 'text-[#58a6ff]' : 'text-white/60'}">
           {#if it.text}<span class="text-[11px] font-medium px-0.5">{it.text}</span>{:else}<Icon name={it.icon} size={14} />{/if}
         </button>
@@ -717,7 +725,7 @@
         <button onclick={() => (overflowFor = overflowFor === tab.id ? null : tab.id)} title="More" class="p-1.5 rounded text-white/60 hover:bg-white/5"><Icon name="dots" size={14} /></button>
         {#if overflowFor === tab.id}
           <div class="absolute right-2 top-full mt-1 z-50 w-48 bg-[#1a1f29] border border-white/10 rounded-lg shadow-xl py-1">
-            {#each items.filter((it) => it.more) as it (it.title)}
+            {#each items.filter((it) => !onBar(it, compact)) as it (it.title)}
               <button onclick={() => act(tab, it.fn)} class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-white/70 hover:bg-white/5 text-left">
                 {#if it.text}<span class="w-[14px] text-center text-[11px]">{it.text}</span>{:else}<Icon name={it.icon} size={14} />{/if}{it.title}
               </button>
@@ -750,9 +758,9 @@
 
 <!-- Overlay mode: inset past the app sidebar on desktop so it stays visible (a page, not a modal).
      Embedded mode (global console): fill the page column the parent lays out beside its rail. -->
-<div bind:this={rootEl} class={embedded
+<div bind:this={rootEl} use:keyboardAware={!embedded} class={embedded
     ? 'relative flex-1 min-w-0 flex flex-col bg-[#0f1419] text-[#d7dce2]'
-    : 'fixed inset-0 lg:left-60 z-50 flex flex-col bg-[#0f1419] text-[#d7dce2]'}>
+    : 'safe-inset fixed inset-0 lg:left-60 z-50 flex flex-col bg-[#0f1419] text-[#d7dce2]'}>
   <!-- TOP BAR: tabs on the left (can span machines); session controls on the right. -->
   <div class="flex items-center gap-2 px-2 py-1.5 border-b border-white/10 bg-[#12161d]">
     <div class="flex items-center gap-1 overflow-x-auto flex-1 min-w-0">

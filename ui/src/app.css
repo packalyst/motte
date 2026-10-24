@@ -204,9 +204,23 @@ body {
   }
 }
 
+/* Full-screen layers draw under the phone's status bar, notch and home indicator (the app uses
+   viewport-fit=cover), so their content is kept inside the safe area: .safe-inset for the
+   console, the recording player and the like, the same padding (at least 1rem) for every modal. */
+.safe-inset {
+  --safe-min: 0px; /* a layer that wants its own padding too sets this; the larger one wins */
+  padding: max(var(--safe-min), env(safe-area-inset-top)) max(var(--safe-min), env(safe-area-inset-right))
+    max(var(--safe-min), env(safe-area-inset-bottom)) max(var(--safe-min), env(safe-area-inset-left));
+}
+
 /* KTUI Modal overrides */
+.kt-modal {
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
 .kt-modal-content {
-  max-height: calc(100dvh - 2rem); /* the overlay's p-4; dvh follows the phone's toolbars */
+  /* the overlay's padding above; dvh follows the phone's toolbars */
+  max-height: calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)));
   overflow: hidden;
 }
 
@@ -720,6 +734,7 @@ input:-webkit-autofill:active {
        .stack-main  the row's title (first line, takes the space)
        .stack-end   actions (first line, right)
        .stack-check a selection checkbox (left gutter; add .has-check to the table)
+       .stack-empty a placeholder ("—") not worth a line on a phone
      Every other cell goes on the following line(s), side by side, as small meta. Inside a
      cell, .stack-inline puts a two-line block (value over detail) on one line instead. */
   .table-stack, .table-stack tbody { @apply block; }
@@ -734,8 +749,16 @@ input:-webkit-autofill:active {
   .data-table .table-stack td.stack-end { @apply order-2; }
   .data-table .table-stack.has-check tbody tr { @apply pl-10; }
   .data-table .table-stack td.stack-check { @apply absolute left-3 top-3.5; }
-  .data-table .table-stack .stack-inline { @apply flex items-center gap-1.5; }
-  .data-table .table-stack .stack-inline > * { @apply m-0 border-0 p-0; }
+  .data-table .table-stack .stack-inline { @apply flex min-w-0 max-w-full items-center gap-1.5; }
+  .data-table .table-stack .stack-inline > * { @apply m-0 min-w-0 border-0 p-0; }
+  /* Long values (domains, IPv6, host names) stay on one line and end in "…" instead of breaking
+     into fragments or pushing the card wider than the screen. */
+  .data-table .table-stack td { @apply max-w-full; }
+  .data-table .table-stack td.stack-main *,
+  .data-table .table-stack .stack-inline * { @apply min-w-0; }
+  .data-table .table-stack .stack-empty { @apply hidden; }
+  .data-table .table-stack td.stack-main span,
+  .data-table .table-stack .stack-inline span { @apply truncate; }
 }
 
 /* ============================================================================

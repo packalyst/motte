@@ -143,7 +143,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-2 sm:p-6 [&_button]:cursor-pointer [&_button:disabled]:cursor-not-allowed" role="dialog" aria-modal="true" aria-label={'Playing recording: ' + (rec.title || 'session')}>
+<div class="safe-inset [--safe-min:0.5rem] sm:[--safe-min:1.5rem] fixed inset-0 z-[70] bg-black/60 flex items-center justify-center [&_button]:cursor-pointer [&_button:disabled]:cursor-not-allowed" role="dialog" aria-modal="true" aria-label={'Playing recording: ' + (rec.title || 'session')}>
   <div class="w-full max-w-6xl h-full max-h-[90vh] bg-[#12161d] text-[#d7dce2] border border-white/10 rounded-xl flex flex-col overflow-hidden shadow-2xl">
     <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
       <Icon name="player-play" size={14} class="text-[#58a6ff]" />

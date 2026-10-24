@@ -548,7 +548,17 @@
     title="Tunnels"
     description="Authenticated HTTP forward proxies. Direct tunnels exit from this server; chained tunnels forward through another proxy. Config is stored encrypted and applied by (re)starting the proxy."
     descriptionClass="hidden sm:block"
-  />
+  >
+    <div class="kt-btn-group shrink-0 self-center">
+      {#if running}
+        <Button variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
+        <Button variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
+      {:else}
+        <Button variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
+      {/if}
+      <Button variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
+    </div>
+  </InfoCard>
 
   <!-- The proxy: its state and controls, the last 24h across all tunnels, and anything wrong -->
   <div class="panel">
@@ -559,16 +569,7 @@
           Proxy
           {#if status}<Badge variant={proxyState.variant} size="sm"><span class="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current"></span>{proxyState.label}</Badge>{/if}
         </div>
-        <div class="panel-sub">{config.tunnels.length} tunnel{config.tunnels.length === 1 ? '' : 's'}<span class="hidden sm:inline"> · applied when the proxy (re)starts</span></div>
-      </div>
-      <div class="kt-btn-group">
-        {#if running}
-          <Button variant="secondary" icon="refresh" onclick={restart} disabled={busy}>Restart</Button>
-          <Button variant="destructive" icon="player-stop" onclick={stop} disabled={busy}>Stop</Button>
-        {:else}
-          <Button variant="secondary" icon="play" onclick={start} disabled={busy || config.tunnels.length === 0}>Start</Button>
-        {/if}
-        <Button variant="outline" icon="file-text" onclick={openLogs}>Logs</Button>
+        <div class="panel-sub">{config.tunnels.length} tunnel{config.tunnels.length === 1 ? '' : 's'}<span class="hidden sm:inline">{' · '}applied when the proxy (re)starts</span></div>
       </div>
     </div>
 
@@ -585,7 +586,7 @@
     {#if status?.status === 'error' && status.error}
       <div class="mt-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2">
         <Icon name="alert-triangle" size={16} class="mt-0.5 shrink-0 text-destructive" />
-        <div class="break-all text-xs text-foreground">{status.error}</div>
+        <div class="text-xs text-foreground [overflow-wrap:anywhere]">{status.error}</div>
       </div>
     {/if}
   </div>
@@ -628,12 +629,12 @@
           <!-- Summary row (tap toggles the connection details): what it is, where it listens, its
                last 24h. Secrets (credentials, keys, URLs) only appear expanded. -->
           <div
-            class="flex cursor-pointer select-none flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition hover:bg-muted/30"
+            class="flex cursor-pointer select-none flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3 transition hover:bg-muted/30"
             role="button" tabindex="0" aria-expanded={isOpen}
             onclick={() => toggleExpand(t.id)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(t.id) } }}
           >
-            <div class="flex min-w-0 flex-1 basis-64 items-center gap-3">
+            <div class="flex min-w-0 flex-1 items-center gap-3 sm:basis-64">
               <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
                 <Icon name="arrows-right-left" size={16} />
                 <span class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card {running ? 'bg-success' : 'bg-muted-foreground/50'}" title={running ? 'Serving' : 'Proxy not running'}></span>
@@ -650,7 +651,8 @@
                 </div>
               </div>
             </div>
-            <!-- listeners: protocol and port -->
+            <!-- listeners (protocol:port) and the last 24h: their own line on a phone -->
+            <div class="order-3 flex w-full items-center justify-between gap-3 sm:order-none sm:w-auto sm:gap-4">
             <div class="flex flex-wrap items-center gap-1.5">
               {#each (t.listeners || []) as l}
                 <span class="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px]">
@@ -658,13 +660,14 @@
                 </span>
               {/each}
             </div>
-            <div class="flex w-28 shrink-0 flex-col text-[11px] tabular-nums text-muted-foreground">
+            <div class="flex shrink-0 flex-col text-right text-[11px] tabular-nums text-muted-foreground sm:w-28 sm:text-left">
               {#if use}
                 <span><span class="font-semibold text-foreground">{use.requests}</span> req · <span class={use.failed ? 'font-semibold text-destructive' : ''}>{use.failed} failed</span></span>
                 <span>{use.clients} client{use.clients === 1 ? '' : 's'}{formatLastSeen(use.lastSeen) ? ` · ${formatLastSeen(use.lastSeen)}` : ''}</span>
               {:else}
                 <span>no traffic · 24h</span>
               {/if}
+            </div>
             </div>
             <div class="flex shrink-0 items-center gap-2" onclick={(e) => e.stopPropagation()} role="presentation">
               <div class="btn-group">
