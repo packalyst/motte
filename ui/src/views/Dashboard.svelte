@@ -245,9 +245,10 @@
 <svelte:window onclick={handleClickOutside} />
 
 <!-- Root container -->
-<!-- h-dvh tracks the visible height on phones; the safe-area insets (viewport-fit=cover) keep
-     content clear of the notch, the rounded corners and the home indicator -->
-<div class="flex h-dvh bg-background pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-foreground antialiased">
+<!-- h-dvh tracks the visible height on phones (.app-frame fixes it for the installed app); the
+     safe-area insets (viewport-fit=cover) keep content clear of the notch, the rounded corners
+     and the home indicator -->
+<div class="app-frame flex h-dvh bg-background pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] text-foreground antialiased">
 
   <!-- Sidebar -->
   <aside
