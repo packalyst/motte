@@ -5,7 +5,7 @@
    * until then. Saving is admin-only on the server.
    */
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Input from './Input.svelte'
   import Checkbox from './Checkbox.svelte'
@@ -43,6 +43,26 @@
     }, 5000)
     return () => clearInterval(t)
   })
+
+  // Close a port change's old port now, without waiting for the machines still to move.
+  async function finishMigration() {
+    const ok = await confirm({
+      title: 'Close the old port now',
+      message: `Machines that haven't reconnected on port ${ep.port} yet (offline ones, for example) lose their connection to the panel and need reinstalling. Close the old port anyway?`,
+      confirmText: 'Close old port', variant: 'destructive',
+    })
+    if (!ok) return
+    savingCfg = true
+    try {
+      ep = { ...ep, ...(await apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort), finish_migration: true })) }
+      toast('Old port closed', 'success')
+      await load()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      savingCfg = false
+    }
+  }
 
   async function saveConfig() {
     savingCfg = true
@@ -83,7 +103,8 @@
           <div class="text-[11px] text-muted-foreground">Opens the port through the firewall and starts the mutual-TLS listener. Nothing to edit in env or compose.</div>
         </div>
       </div>
-      <Checkbox variant="switch" bind:checked={cfgEnabled} onchange={saveConfig} disabled={migrating || !ep} aria-label="Accept agent connections" />
+      <!-- switching off stays possible during a port change: it closes both ports -->
+      <Checkbox variant="switch" bind:checked={cfgEnabled} onchange={saveConfig} disabled={!ep || savingCfg} aria-label="Accept agent connections" />
     </div>
     <div class="max-w-xs">
       <Input type="number" bind:value={cfgPort} min="1" max="65535" prefixIcon="plug" label="Port" disabled={migrating || !ep}
@@ -92,7 +113,8 @@
     {#if migrating}
       <p class="flex items-start gap-1.5 text-[11px] text-warning">
         <Icon name="refresh" size={13} class="mt-0.5 shrink-0 animate-spin" />
-        Changing port — agents are being told the new port ({ep.port}). The old port stays open until every machine has reconnected on the new one (usually under a minute; at the latest {migrateBy} for machines that are offline); settings are locked until then.
+        <span>Changing port — agents are being told the new port ({ep.port}). The old port stays open until every machine has reconnected on the new one (usually under a minute; at the latest {migrateBy} for machines that are offline). The port can't change again until then.
+          <button type="button" class="link-action ml-1" disabled={savingCfg} onclick={finishMigration}>Close old port now</button></span>
       </p>
     {/if}
   </div>

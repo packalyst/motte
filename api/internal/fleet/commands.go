@@ -113,13 +113,13 @@ func (s *Service) verifyCommandStepUp(r *http.Request, ctype, currentPassword, c
 
 // verifyStepUp requires a step-up for `what` (a command, or a sensitive part of one): passes
 // inside the fleet step-up grace window, else needs the operator's password (+ TOTP).
-func (s *Service) verifyStepUp(r *http.Request, ctype, currentPassword, currentTOTP string) (int, error) {
+func (s *Service) verifyStepUp(r *http.Request, what, currentPassword, currentTOTP string) (int, error) {
 	actor, userID := s.actingAdmin(r)
 	ip := helper.GetClientIP(r)
 	authSvc := auth.GetService()
 	if authSvc == nil || userID == 0 {
 		events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
-			fmt.Sprintf("Command %q denied: operator could not be verified for step-up", ctype))
+			fmt.Sprintf("Command %q denied: operator could not be verified for step-up", what))
 		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
 	}
 	// Inside the shared fleet step-up grace window (from a recent console open or command)? Pass
@@ -137,7 +137,7 @@ func (s *Service) verifyStepUp(r *http.Request, ctype, currentPassword, currentT
 			return http.StatusPreconditionRequired, fmt.Errorf("two-factor authentication code required")
 		}
 		events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
-			fmt.Sprintf("Command %q denied: step-up re-authentication failed", ctype))
+			fmt.Sprintf("Command %q denied: step-up re-authentication failed", what))
 		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication failed")
 	}
 	touchStepUpGrace(userID)

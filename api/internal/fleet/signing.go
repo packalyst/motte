@@ -11,16 +11,14 @@ import (
 // signatures, injected at link time via -ldflags "-X api/internal/fleet.signPubKey=<b64>"
 // from the committed signing.pub. It may carry SEVERAL keys separated by commas/whitespace:
 // during a key rollover both the retiring and the new key are baked in, and a release
-// verifies if ANY of them accepts it, so agents keep updating across the rotation. When empty
-// (no key built in) signature enforcement is DISABLED, so unsigned/legacy releases still work;
-// once any key is baked in, every release the panel serves MUST carry a valid
-// checksums.txt.sig. The matching PRIVATE key never exists on the panel.
+// verifies if ANY of them accepts it, so agents keep updating across the rotation. Every release
+// the panel serves MUST carry a valid checksums.txt.sig; when empty (no key built in) the panel
+// serves no agent release at all. The matching PRIVATE key never exists on the panel.
 var signPubKey string
 
-// signingEnabled reports whether the panel was built with a signing public key and must
-// therefore require+verify a release signature. It is based on a key STRING being present
-// (not on it parsing): a present-but-malformed key must fail closed at verification, never
-// silently disable enforcement.
+// signingEnabled reports whether the panel was built with a signing public key; without one it
+// serves no agent release. It is based on a key STRING being present (not on it parsing): a
+// present-but-malformed key fails closed at verification instead.
 func signingEnabled() bool { return strings.TrimSpace(signPubKey) != "" }
 
 // signingPubKeys parses the configured key list into usable ed25519 public keys, skipping any
@@ -47,8 +45,8 @@ func signingPubKeys() []ed25519.PublicKey {
 func verifyChecksumsSig(checksums, sigB64 []byte) error {
 	keys := signingPubKeys()
 	if len(keys) == 0 {
-		// A key string was provided (callers gate on signingEnabled) but none parsed — a
-		// misconfigured baked-in key must never silently pass verification.
+		// No usable key (none built in, or none parsed): a misconfigured key must never let a
+		// release through.
 		return fmt.Errorf("panel signing public key is invalid")
 	}
 	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigB64)))

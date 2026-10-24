@@ -124,7 +124,6 @@
     currentView.set(current)
   }
 
-  // Pull-to-refresh handler
   let scroller = $state(null) // the element that scrolls the page (pull-to-refresh watches it)
 
   // A new page, or a new item opened through the address (#m=<machine>, #cves=…), starts at the

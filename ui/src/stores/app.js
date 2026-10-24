@@ -115,12 +115,6 @@ export function takeHashParam(key) {
   return v
 }
 
-// hashParam / setHashParam read and write one key of the URL hash (#a=1&b=2), e.g. a page's open
-// section, so a refresh lands back on it. replaceState: no new history entry, no hashchange event.
-export function hashParam(key) {
-  if (typeof window === 'undefined') return null
-  return new URLSearchParams(window.location.hash.slice(1)).get(key)
-}
 // Scroll the page area (the one scroller every page shares, .app-scroller) back to the top: a new
 // page, a newly opened item (a machine) or a newly picked section starts at the top instead of
 // keeping the previous scroll position.
@@ -135,6 +129,12 @@ export function selectSection(onselect, id) {
   scrollPageTop()
 }
 
+// hashParam / setHashParam read and write one key of the URL hash (#a=1&b=2), e.g. a page's open
+// section, so a refresh lands back on it. replaceState: no new history entry, no hashchange event.
+export function hashParam(key) {
+  if (typeof window === 'undefined') return null
+  return new URLSearchParams(window.location.hash.slice(1)).get(key)
+}
 export function setHashParam(key, value) {
   if (typeof window === 'undefined') return
   const p = new URLSearchParams(window.location.hash.slice(1))

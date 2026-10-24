@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,6 +19,10 @@ func startTestMigration(svc *Service, now time.Time, ids ...string) {
 	svc.migrateStarted = now
 	svc.migrateEndsAt = now.Add(portMigrationGrace)
 	svc.migrateMachines, svc.migrateMoved, svc.migrateExtended = ids, map[string]bool{}, false
+	svc.migrateSent = map[string]time.Time{}
+	for _, id := range ids {
+		svc.migrateSent[id] = now
+	}
 	svc.mu.Unlock()
 }
 
@@ -77,5 +82,62 @@ func TestPortMigrationKeepsOldPortForStragglers(t *testing.T) {
 	}
 	if !svc.migrationStep(now.Add(portMigrationMax + time.Second)) {
 		t.Fatal("old port still open past the cap")
+	}
+}
+
+// During a port change the listener can still be switched off (both ports close), and the old
+// port can be closed early; any other change waits.
+func TestPortMigrationConfigEscapes(t *testing.T) {
+	post := func(svc *Service, body string) *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		svc.handleSetConfig(rr, asOwner(httptest.NewRequest(http.MethodPost, "/api/fleet/config", strings.NewReader(body))))
+		return rr
+	}
+	svc := newTestService(t)
+	if _, err := svc.db.Exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT, encrypted INTEGER DEFAULT 0, updated_at DATETIME)`); err != nil {
+		t.Fatal(err)
+	}
+	addMachine(t, svc, "m1", true)
+	startTestMigration(svc, time.Now(), "m1")
+	if rr := post(svc, `{"enabled":true,"port":7003}`); rr.Code != http.StatusConflict {
+		t.Fatalf("a new port mid-migration: %d, want 409", rr.Code)
+	}
+	if rr := post(svc, `{"enabled":true,"port":7002,"finish_migration":true}`); rr.Code != http.StatusOK {
+		t.Fatalf("finish now: %d %s", rr.Code, rr.Body.String())
+	}
+	if active, _ := svc.migrationState(); active {
+		t.Fatal("still migrating after finishing it")
+	}
+
+	startTestMigration(svc, time.Now(), "m1")
+	if rr := post(svc, `{"enabled":false,"port":7002}`); rr.Code != http.StatusOK {
+		t.Fatalf("switching off mid-migration: %d %s", rr.Code, rr.Body.String())
+	}
+	if active, _ := svc.migrationState(); active {
+		t.Fatal("still migrating after switching the listener off")
+	}
+}
+
+// A machine still turning up on the old port is sent the new port again, at most every
+// portMigrationResend.
+func TestPortMigrationResendsToStragglers(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	startTestMigration(svc, time.Now().Add(-portMigrationResend-time.Minute), "m1")
+	count := func() int {
+		var n int
+		_ = svc.db.QueryRow(`SELECT COUNT(*) FROM fleet_commands WHERE machine_id = 'm1' AND type = 'set-panel-port'`).Scan(&n)
+		return n
+	}
+	svc.noteListenerPort("m1", reqOnPort(7001))
+	if n := count(); n != 1 {
+		t.Fatalf("%d re-sends after the interval, want 1", n)
+	}
+	svc.noteListenerPort("m1", reqOnPort(7001))
+	if n := count(); n != 1 {
+		t.Fatalf("re-sent again within the interval (%d)", n)
+	}
+	if got := queuedPayload(t, svc, "m1", "set-panel-port"); got != `{"port":7002}` {
+		t.Fatalf("re-sent %s, want the new port", got)
 	}
 }

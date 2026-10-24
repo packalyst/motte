@@ -139,9 +139,35 @@ func TestScanExcludeAddsNeedAdminStepUp(t *testing.T) {
 		{"operator", `{"exclude":["/srv/cache","/opt"]}`, http.StatusForbidden}, // hiding /opt
 		{"admin", `{"exclude":["/opt"]}`, http.StatusPreconditionRequired},      // admin, no step-up yet
 	} {
-		status, err := svc.guardScanExcludes(as(c.role), "m1", json.RawMessage(c.payload), "", "")
+		_, status, err := svc.guardScanExcludes(as(c.role), "m1", json.RawMessage(c.payload), "", "")
 		if status != c.want || (c.want == 0) != (err == nil) {
 			t.Errorf("%s %s: status %d err %v, want %d", c.role, c.payload, status, err, c.want)
 		}
+	}
+
+	// An admin removes /srv/cache (queued); until the machine reports again its report still
+	// lists it, but re-adding it is an addition all the same.
+	if _, err := svc.db.Exec(`INSERT INTO fleet_commands (id, machine_id, type, payload, status, created_at) VALUES ('c1','m1','rescan','{"exclude":[]}','pending',?)`,
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := func() (int, error) {
+		_, st, err := svc.guardScanExcludes(as("operator"), "m1", json.RawMessage(`{"exclude":["/srv/cache"]}`), "", "")
+		return st, err
+	}(); status != http.StatusForbidden {
+		t.Fatalf("an operator re-added a folder an admin had just removed: status %d", status)
+	}
+}
+
+// The skip-folder check runs only for an otherwise valid request: an invalid folder is refused
+// as invalid, without asking for a step-up first.
+func TestScanExcludeGuardAfterValidation(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	rr := httptest.NewRecorder()
+	body := `{"machine_id":"m1","type":"rescan","payload":{"exclude":["relative/path"]}}`
+	svc.handleEnqueueCommand(rr, asOwner(httptest.NewRequest(http.MethodPost, "/api/fleet/command", strings.NewReader(body))))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("invalid folder: status %d (%s), want 400 before any step-up", rr.Code, rr.Body.String())
 	}
 }

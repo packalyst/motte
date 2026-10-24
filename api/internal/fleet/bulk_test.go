@@ -67,10 +67,7 @@ func TestBulkPushBlocksCarriesPanelList(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
 	}
-	var payload string
-	if err := svc.db.QueryRow(`SELECT payload FROM fleet_commands WHERE machine_id='m1' AND type='sync-blocks'`).Scan(&payload); err != nil {
-		t.Fatal(err)
-	}
+	payload := queuedPayload(t, svc, "m1", "sync-blocks")
 	if payload != `{"ips":["203.0.113.0/24","198.51.100.9"]}` {
 		t.Fatalf("pushed %s, want the panel's list", payload)
 	}
@@ -127,11 +124,18 @@ func TestSingleSyncBlocksCarriesPanelList(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
 	}
-	var payload string
-	if err := svc.db.QueryRow(`SELECT payload FROM fleet_commands WHERE machine_id='m1' AND type='sync-blocks'`).Scan(&payload); err != nil {
-		t.Fatal(err)
-	}
+	payload := queuedPayload(t, svc, "m1", "sync-blocks")
 	if payload != `{"ips":["203.0.113.0/24"]}` {
 		t.Fatalf("queued %s, want the panel's list", payload)
 	}
+}
+
+// queuedPayload returns the payload of the command of type ctype queued for machine id.
+func queuedPayload(t *testing.T, svc *Service, id, ctype string) string {
+	t.Helper()
+	var payload string
+	if err := svc.db.QueryRow(`SELECT payload FROM fleet_commands WHERE machine_id = ? AND type = ?`, id, ctype).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }

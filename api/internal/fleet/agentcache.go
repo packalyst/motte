@@ -35,7 +35,7 @@ type agentCache struct {
 	mu        sync.Mutex
 	tag       string    // release tag the cached assets belong to (resolved from the forge)
 	checksums string    // cached checksums.txt content (the version marker)
-	sig       string    // base64 ed25519 signature over checksums (empty if signing is off)
+	sig       string    // base64 ed25519 signature over checksums (verified before it's kept)
 	lastCheck time.Time // when we last re-validated against the release
 
 	// Latest agent version (release tag_name, e.g. "0.1.21"), resolved from the
