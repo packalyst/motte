@@ -206,7 +206,7 @@ body {
 
 /* KTUI Modal overrides */
 .kt-modal-content {
-  max-height: 90vh;
+  max-height: calc(100dvh - 2rem); /* the overlay's p-4; dvh follows the phone's toolbars */
   overflow: hidden;
 }
 
@@ -366,6 +366,54 @@ input:-webkit-autofill:active {
   /* Action row at the bottom of a panel (Save, Open…), same bleed and dashed line as the note */
   .panel-foot {
     @apply -mx-4 -mb-4 mt-4 flex flex-wrap items-center gap-2 border-t border-dashed border-border px-4 py-3;
+  }
+
+  /* Phone section picker: stays under the top bar while the page scrolls (its parent must be the
+     page column, so it can stick the whole way down). The strip bleeds to the page edges (p-3)
+     so content scrolling underneath is hidden; the card inside holds the picker. Used by
+     MobileNav, and directly by pages with their own controls in it (Analytics). */
+  .sticky-bar {
+    @apply sticky top-0 z-30 -mx-3 bg-background/85 px-3 py-2 backdrop-blur-md;
+  }
+  .sticky-bar-card {
+    @apply flex flex-col gap-2 rounded-xl border border-border bg-card p-2 shadow-sm;
+  }
+
+  /* Phone section menu as an app tab bar (MobileNav look="bottom"): a floating frosted dock at
+     the bottom, icon over label. The open section is in the primary colour with a short bar
+     above it that slides from item to item (.bottom-nav-indicator, placed by --n items and the
+     open one's index --a); a count badge sits on the icon. Shown below lg; while one is on the
+     page, the page scroller gets room at the bottom so the dock never covers its last lines
+     (the rule after this block). */
+  .bottom-nav {
+    @apply fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 flex rounded-[22px] border border-border/70 bg-card/85 px-1 py-1.5 shadow-[0_12px_32px_rgb(0_0_0/0.28)] backdrop-blur-xl;
+  }
+  .bottom-nav-indicator {
+    @apply pointer-events-none absolute top-0 left-1 flex justify-center transition-transform duration-500 ease-[cubic-bezier(0.2,1.3,0.3,1)];
+    width: calc((100% - 0.5rem) / var(--n));
+    transform: translateX(calc(100% * var(--a)));
+  }
+  .bottom-nav-indicator::before {
+    content: '';
+    @apply h-[3px] w-6 rounded-b-full bg-primary shadow-[0_2px_10px_var(--color-primary)];
+  }
+  .bottom-nav-item {
+    @apply relative flex min-w-0 flex-1 cursor-pointer flex-col items-center gap-1 pt-1.5 pb-0.5 text-[10px] font-medium text-muted-foreground transition-colors active:scale-95;
+  }
+  .bottom-nav-item[aria-current='page'] {
+    @apply font-semibold text-primary;
+  }
+  .bottom-nav-item:disabled {
+    @apply cursor-default opacity-40;
+  }
+  .bottom-nav-icon {
+    @apply relative grid place-items-center transition-transform duration-300;
+  }
+  .bottom-nav-item[aria-current='page'] .bottom-nav-icon {
+    @apply -translate-y-px scale-110;
+  }
+  .bottom-nav-badge {
+    @apply absolute -top-1.5 -right-2.5 grid h-4 min-w-4 place-items-center rounded-full border-2 border-card bg-destructive px-1 text-[9px] font-semibold leading-none text-white;
   }
 
   /* Inline text action beside a section heading ("+ Add …", "+ New session") */
@@ -636,6 +684,13 @@ input:-webkit-autofill:active {
   }
 }
 
+/* Room under the page for a bottom tab bar (.bottom-nav, below lg) */
+@media (max-width: 1023px) {
+  .app-scroller:has(.bottom-nav) {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+}
+
 /* Mobile optimizations for data-table */
 @media (max-width: 639px) {
   .data-table-header {
@@ -648,6 +703,30 @@ input:-webkit-autofill:active {
   .data-table-footer {
     @apply p-2.5;
   }
+
+  /* .table-stack: on a phone each row becomes a compact card instead of a sideways-scrolling
+     table, from the same markup. Mark the cells:
+       .stack-main  the row's title (first line, takes the space)
+       .stack-end   actions (first line, right)
+       .stack-check a selection checkbox (left gutter; add .has-check to the table)
+       .stack-hide  not shown on a phone
+     Every other cell goes on the following line(s), side by side, as small meta. Inside a
+     cell, .stack-inline puts a two-line block (value over detail) on one line instead. */
+  .table-stack, .table-stack tbody { @apply block; }
+  .table-stack thead { @apply hidden; }
+  .data-table .table-stack tbody tr {
+    @apply relative flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-3;
+  }
+  /* forces the meta cells onto their own line, after the title and actions */
+  .table-stack tbody tr::after { content: ''; @apply order-2 basis-full; }
+  .data-table .table-stack td { @apply order-3 p-0 text-xs; }
+  .data-table .table-stack td.stack-main { @apply order-1 min-w-0 flex-1; }
+  .data-table .table-stack td.stack-end { @apply order-2; }
+  .data-table .table-stack.has-check tbody tr { @apply pl-10; }
+  .data-table .table-stack td.stack-check { @apply absolute left-3 top-3.5; }
+  .data-table .table-stack td.stack-hide { @apply hidden; }
+  .data-table .table-stack .stack-inline { @apply flex items-center gap-1.5; }
+  .data-table .table-stack .stack-inline > * { @apply m-0 border-0 p-0; }
 }
 
 /* ============================================================================

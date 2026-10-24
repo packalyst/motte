@@ -45,7 +45,7 @@
   const shortName = $derived(name.length > NAME_MAX ? name.slice(0, NAME_MAX - 1).trimEnd() + '…' : name)
 </script>
 
-<article class="relative flex flex-col rounded-lg border shadow-sm transition hover:shadow-md
+<article class="relative flex min-w-0 flex-col rounded-lg border shadow-sm transition hover:shadow-md
   has-[.card-open:focus-visible]:ring-2 has-[.card-open:focus-visible]:ring-primary/40
   {highlight ? 'border-warning/50' : online ? 'border-success/30' : gone ? 'border-dashed border-destructive/40' : 'border-border'}
   {gone ? 'bg-destructive/5' : 'bg-card'}">
@@ -86,7 +86,7 @@
         <div class="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-muted-foreground">
           {#if subtitle}
             <Icon name={subtitleIcon} size={11} class="shrink-0" />
-            <span class="truncate">{subtitle}</span>
+            <span class="min-w-0 truncate">{subtitle}</span>
           {/if}
         </div>
         {#each flags as f, i (i)}

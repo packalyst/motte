@@ -68,6 +68,13 @@
     if (r.kind === 'daemon') return { variant: 'success', label: 'Running' }
     return { variant: 'muted', label: 'Idle' }
   }
+
+  const ms = (v) => (v < 1 ? '<1' : Math.round(v)) + ' ms'
+  // Scheduled jobs first (they have controls), always-on loops after.
+  const groups = $derived([
+    { id: 'jobs', title: 'Scheduled jobs', sub: 'Run on a timer; run now or pause any of them', icon: 'clock', items: routines.filter((r) => r.kind !== 'daemon') },
+    { id: 'daemons', title: 'Always on', sub: 'Background loops that run continuously; status only', icon: 'activity-heartbeat', items: routines.filter((r) => r.kind === 'daemon') },
+  ].filter((g) => g.items.length))
 </script>
 
 <div class="space-y-4">
@@ -77,108 +84,85 @@
     description="Background jobs the panel runs on a schedule — status, last/next run, and manual controls."
   />
 
-  <div class="data-table">
-    {#if error}
-      <div class="p-3 m-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">{error}</div>
-    {:else if !loading && routines.length === 0}
-      <div class="data-table-empty">
-        <EmptyState icon="clock" title="No routines registered" description="Background routines appear here as they register with the supervisor." />
-      </div>
-    {:else}
-      <div class="data-table-content">
-        <table>
-          <thead>
-                <tr>
-                  <th>Routine</th>
-                  <th>Status</th>
-                  <th class="hidden md:table-cell">Schedule</th>
-                  <th class="hidden sm:table-cell">Last run</th>
-                  <th class="hidden lg:table-cell">Next</th>
-                  <th class="hidden lg:table-cell text-right">Runs</th>
-                  <th class="text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each routines as r (r.name)}
-                  {@const b = statusBadge(r)}
-                  <tr class="align-top">
-                    <td>
-                      <div class="flex items-center gap-1.5">
-                        <span class="font-medium text-foreground font-mono text-xs">{r.name}</span>
-                        <!-- Mobile: description behind an info tooltip to save space -->
-                        <span class="sm:hidden inline-flex" data-kt-tooltip>
-                          <Icon name="info-circle" size={13} class="text-muted-foreground" />
-                          <span data-kt-tooltip-content class="kt-tooltip hidden">{r.description}</span>
-                        </span>
-                      </div>
-                      <div class="hidden sm:block text-xs text-muted-foreground">{r.description}</div>
-                      <!-- Mobile: fold the hidden columns (schedule/last/next) into one line -->
-                      <div class="sm:hidden text-[11px] text-muted-foreground mt-0.5">
-                        {r.schedule}{#if r.kind !== 'daemon'} · last {when(r.last_run)} · next {when(r.next_run)}{/if}
-                        {#if r.last_error}<span class="text-destructive"> · failed</span>{/if}
-                      </div>
-                    </td>
-                    <td>
-                      <div class="flex items-center gap-1.5">
-                        {#if r.status === 'running'}
-                          <span class="w-2.5 h-2.5 border-2 border-info border-t-transparent rounded-full animate-spin"></span>
-                        {/if}
-                        <Badge variant={b.variant} size="sm">{b.label}</Badge>
-                      </div>
-                    </td>
-                    <td class="hidden md:table-cell text-muted-foreground">{r.schedule}</td>
-                    <td class="hidden sm:table-cell">
-                      {#if r.kind === 'daemon'}
-                        <span class="text-muted-foreground">—</span>
-                      {:else}
-                        <div>{when(r.last_run)}</div>
-                        {#if r.last_error}
-                          <div class="text-xs text-destructive truncate max-w-[16rem]" title={r.last_error}>failed: {r.last_error}</div>
-                        {:else if r.last_duration_ms != null}
-                          <div class="text-xs text-muted-foreground">{r.last_duration_ms < 1 ? '<1' : Math.round(r.last_duration_ms)} ms</div>
-                        {/if}
-                      {/if}
-                    </td>
-                    <td class="hidden lg:table-cell text-muted-foreground">{r.kind === 'daemon' ? '—' : when(r.next_run)}</td>
-                    <td class="hidden lg:table-cell text-right">
-                      {#if r.kind === 'daemon' || !r.history?.length}
-                        <span class="font-mono text-muted-foreground">{r.kind === 'daemon' ? '—' : r.runs}</span>
-                      {:else}
-                        <!-- Run count; hover shows the recent-run history (replaces the dots) -->
-                        <span class="font-mono text-muted-foreground cursor-help underline decoration-dotted" data-kt-tooltip>
-                          {r.runs}
-                          <span data-kt-tooltip-content class="kt-tooltip hidden text-left">
-                            {#each [...r.history].reverse() as h}
-                              <div class={h.error ? 'text-destructive' : ''}>{when(h.at)} · {h.error ? 'failed' : 'ok'}{h.duration_ms != null ? ` · ${h.duration_ms < 1 ? '<1' : Math.round(h.duration_ms)}ms` : ''}</div>
-                            {/each}
-                          </span>
-                        </span>
-                      {/if}
-                    </td>
-                    <td class="text-right">
-                      {#if r.kind === 'daemon'}
-                        <span class="text-xs text-muted-foreground">read-only</span>
-                      {:else}
-                        <div class="flex justify-end">
-                          <div class="kt-btn-group">
-                            <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run</Button>
-                            {#if r.paused}
-                              <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
-                            {:else}
-                              <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
-                            {/if}
-                          </div>
-                        </div>
-                      {/if}
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-      </div>
-      <div class="data-table-footer">
-        <span class="data-table-footer-info">Hover a run count to see recent-run history. Daemons are always-on loops — status only.</span>
-      </div>
-    {/if}
-  </div>
+  {#if error}
+    <div class="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+  {:else if !loading && routines.length === 0}
+    <EmptyState icon="clock" title="No routines registered" description="Background routines appear here as they register with the supervisor." />
+  {:else}
+    {#each groups as g (g.id)}
+      <section class="space-y-2" aria-label={g.title}>
+        <div class="px-0.5">
+          <h2 class="text-[13px] font-semibold text-foreground">{g.title} <span class="font-normal text-muted-foreground">({g.items.length})</span></h2>
+          <p class="text-[11px] text-muted-foreground">{g.sub}</p>
+        </div>
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+          {#each g.items as r (r.name)}
+            {@const b = statusBadge(r)}
+            {@const daemon = r.kind === 'daemon'}
+            <article class="panel flex min-w-0 flex-col">
+              <div class="panel-head">
+                <span class="panel-icon {r.status === 'error' || r.last_error ? 'text-destructive' : r.status === 'running' || daemon ? 'text-success' : ''}">
+                  {#if r.status === 'running'}
+                    <span class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-info border-t-transparent"></span>
+                  {:else}
+                    <Icon name={g.icon} size={17} />
+                  {/if}
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="panel-title truncate font-mono">{r.name}</div>
+                  <div class="panel-sub">{r.description}</div>
+                </div>
+                <Badge variant={b.variant} size="sm">{b.label}</Badge>
+              </div>
+
+              <dl class="grid grid-cols-3 gap-3 text-[11px]">
+                <div class="min-w-0">
+                  <dt class="text-muted-foreground">Schedule</dt>
+                  <dd class="mt-0.5 truncate font-medium text-foreground">{r.schedule}</dd>
+                </div>
+                <div class="min-w-0">
+                  <dt class="text-muted-foreground">Last run</dt>
+                  <dd class="mt-0.5 truncate font-medium text-foreground">{daemon ? '—' : when(r.last_run)}{#if !daemon && r.last_duration_ms != null && !r.last_error}<span class="font-normal text-muted-foreground">&nbsp;· {ms(r.last_duration_ms)}</span>{/if}</dd>
+                </div>
+                <div class="min-w-0">
+                  <dt class="text-muted-foreground">Next</dt>
+                  <dd class="mt-0.5 truncate font-medium text-foreground">{daemon ? '—' : when(r.next_run)}</dd>
+                </div>
+              </dl>
+
+              {#if !daemon && r.history?.length}
+                <!-- recent runs, oldest to newest: green ok, red failed (hover one for details) -->
+                <div class="mt-3 flex items-center gap-2">
+                  <div class="flex h-4 flex-1 items-end gap-[3px]" aria-label="Recent runs">
+                    {#each r.history as h, i (i)}
+                      <span data-kt-tooltip class="h-full max-w-2.5 flex-1 rounded-sm {h.error ? 'bg-destructive' : 'bg-success/70'}">
+                        <span data-kt-tooltip-content class="kt-tooltip hidden">{when(h.at)} · {h.error ? 'failed' : 'ok'}{h.duration_ms != null ? ` · ${ms(h.duration_ms)}` : ''}</span>
+                      </span>
+                    {/each}
+                  </div>
+                  <span class="shrink-0 text-[11px] tabular-nums text-muted-foreground">{r.runs} {r.runs === 1 ? 'run' : 'runs'}</span>
+                </div>
+              {/if}
+
+              {#if r.last_error}
+                <p class="mt-3 line-clamp-2 break-words rounded-md bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">Last run failed: {r.last_error}</p>
+              {/if}
+
+              {#if !daemon}
+                <div class="grow"></div><!-- footers line up across a row of cards -->
+                <div class="panel-foot">
+                  <Button size="xs" variant="secondary" icon="player-play" onclick={() => run(r.name)} disabled={busy === r.name}>Run now</Button>
+                  {#if r.paused}
+                    <Button size="xs" variant="outline" icon="player-play" onclick={() => resume(r.name)} disabled={busy === r.name}>Resume</Button>
+                  {:else}
+                    <Button size="xs" variant="outline" icon="player-pause" onclick={() => pause(r.name)} disabled={busy === r.name}>Pause</Button>
+                  {/if}
+                </div>
+              {/if}
+            </article>
+          {/each}
+        </div>
+      </section>
+    {/each}
+  {/if}
 </div>
