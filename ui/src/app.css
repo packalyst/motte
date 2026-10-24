@@ -685,6 +685,16 @@ input:-webkit-autofill:active {
   }
 }
 
+/* Installed app (home-screen PWA): iOS 26 sizes its viewport short of the screen (by about the
+   status bar's height), so a frame sized to the visible height (dvh) stops above the bottom edge
+   and leaves an empty strip. In the installed app there are no browser bars to come and go, so
+   the large viewport height is the whole screen. Unlayered, so it beats the h-dvh utility. */
+@media (display-mode: standalone) {
+  .app-frame {
+    height: 100lvh;
+  }
+}
+
 /* Room under the page for a bottom tab bar (.bottom-nav, below lg) */
 @media (max-width: 1023px) {
   .app-scroller:has(.bottom-nav) {
