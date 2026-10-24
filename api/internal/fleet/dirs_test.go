@@ -147,8 +147,10 @@ func TestScanExcludeAddsNeedAdminStepUp(t *testing.T) {
 
 	// An admin removes /srv/cache (queued); until the machine reports again its report still
 	// lists it, but re-adding it is an addition all the same.
-	if _, err := svc.db.Exec(`INSERT INTO fleet_commands (id, machine_id, type, payload, status, created_at) VALUES ('c1','m1','rescan','{"exclude":[]}','pending',?)`,
-		time.Now().UTC().Format(time.RFC3339)); err != nil {
+	// A later rescan without a list leaves it as the admin set it.
+	if _, err := svc.db.Exec(`INSERT INTO fleet_commands (id, machine_id, type, payload, status, created_at) VALUES
+		('c1','m1','rescan','{"exclude":[]}','pending',?), ('c2','m1','rescan','{}','pending',?)`,
+		time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Add(time.Second).Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	if _, status, _ := svc.guardScanExcludes(as("operator"), "m1", json.RawMessage(`{"exclude":["/srv/cache"]}`), "", ""); status != http.StatusForbidden {
@@ -166,5 +168,20 @@ func TestScanExcludeGuardAfterValidation(t *testing.T) {
 	svc.handleEnqueueCommand(rr, asOwner(httptest.NewRequest(http.MethodPost, "/api/fleet/command", strings.NewReader(body))))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("invalid folder: status %d (%s), want 400 before any step-up", rr.Code, rr.Body.String())
+	}
+}
+
+// The skip-folder check doesn't wait for the machine to be online: a machine coming online between
+// two checks must never let an unchecked rescan through.
+func TestScanExcludeGuardedWhileOffline(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	rr := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/fleet/command",
+		strings.NewReader(`{"machine_id":"m1","type":"rescan","payload":{"exclude":["/opt"]}}`))
+	r = r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "operator", Username: "op1"}))
+	svc.handleEnqueueCommand(rr, r)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("operator adding a folder on an offline machine: status %d, want 403", rr.Code)
 	}
 }

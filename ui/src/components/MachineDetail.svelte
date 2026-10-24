@@ -9,7 +9,7 @@
    */
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { apiGet, apiPost, toast, confirm, stepUpConfirm, currentUser, hasRole, hashParam, setHashParam } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm, stepUpConfirm, withStepUp, STEPUP_CANCELLED, currentUser, hasRole, hashParam, setHashParam } from '../stores/app.js'
   import { consoleSessions, openConsoleEvents, refreshSessions, closeSession, openConsoleAt } from '../lib/consoleEvents.js'
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
@@ -459,7 +459,7 @@
     const endpoint = opts.endpoint || '/api/fleet/command'
     const base = opts.endpoint ? { machine_id: machine.id } : { machine_id: machine.id, type, payload }
     try {
-      const res = await withStepUp((extra) => apiPost(endpoint, { ...base, ...extra }), opts.title || type)
+      const res = await withStepUp((extra) => apiPost(endpoint, { ...base, ...extra }), stepUpFor(opts.title || type))
       if (res === STEPUP_CANCELLED) return
       toast(opts.done ? opts.done(res) : `${type} queued`, 'success')
       if (opts.after) opts.after()
@@ -468,24 +468,12 @@
     }
   }
 
-  // withStepUp sends a request; a sensitive one the panel answers 428 until the operator's
-  // current password (+ TOTP) is supplied, so it prompts and retries once. STEPUP_CANCELLED
-  // when the operator closes the prompt.
-  const STEPUP_CANCELLED = Symbol('step-up cancelled')
-  async function withStepUp(send, what) {
-    try {
-      return await send({})
-    } catch (e) {
-      if (e.status !== 428) throw e
-      const su = await stepUpConfirm({
-        title: `Confirm "${what}"`,
-        message: `This is a sensitive action on ${machine.name}. Re-enter your credentials to authorize it.`,
-        confirmText: 'Authorize', variant: 'destructive',
-      })
-      if (!su?.confirmed || !su?.password) return STEPUP_CANCELLED
-      return await send({ currentPassword: su.password, totpCode: su.totp || '' })
-    }
-  }
+  // The re-auth prompt for a sensitive action on this machine (see withStepUp).
+  const stepUpFor = (what) => ({
+    title: `Confirm "${what}"`,
+    message: `This is a sensitive action on ${machine.name}. Re-enter your credentials to authorize it.`,
+    confirmText: 'Authorize', variant: 'destructive',
+  })
 
   async function blockOn() {
     const ip = blockIP.trim()
@@ -518,7 +506,7 @@
   // later scan); the same or a shorter list doesn't. False keeps the dialog open.
   async function startScan(exclude) {
     try {
-      const res = await withStepUp((extra) => apiPost('/api/fleet/command', { machine_id: machine.id, type: 'rescan', payload: { exclude }, ...extra }), 'Skip folders in scans')
+      const res = await withStepUp((extra) => apiPost('/api/fleet/command', { machine_id: machine.id, type: 'rescan', payload: { exclude }, ...extra }), stepUpFor('Skip folders in scans'))
       if (res === STEPUP_CANCELLED) return false
       toast('Scan started', 'success')
       return true

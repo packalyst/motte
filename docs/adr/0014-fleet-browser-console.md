@@ -28,7 +28,11 @@ from the allowlist command path.
 
 **Sessions** run inside `tmux new -A -s panel-<id>` on the agent (PTY via creack/pty), so a dropped
 or reconnected browser **reattaches the same shell**; a bare login shell is the fallback if tmux is
-absent.
+absent. tmux's status bar is off (the panel shows the session). Under systemd the tmux server runs in
+a transient scope of its own, so the shells also outlive an agent restart (an update, a port
+change); only turning the console off (or a local-policy lock, or uninstalling) ends them, also when
+it was turned off while the agent was down. A viewer joining a session someone else holds is shown
+its current screen (a snapshot, cursor included) before live output.
 
 **Gating (compensating controls for offering a real shell):**
 - **Per-host enable, default OFF** — a `fleet_machines.console_enabled` column *and* an agent-side

@@ -213,28 +213,25 @@ func (s *Service) savedScanExcludes(machineID string) []string {
 	if raw, err := s.lastReport(machineID); err == nil && raw != "" {
 		_ = json.Unmarshal([]byte(raw), &rep)
 	}
-	rows, err := s.db.Query(`SELECT payload FROM fleet_commands WHERE machine_id = ? AND type = 'rescan'
-		ORDER BY created_at DESC, rowid DESC`, machineID)
-	if err != nil {
+	// The newest rescan that carries a list (one without leaves the list as it was).
+	var p string
+	err := s.db.QueryRow(`SELECT payload FROM fleet_commands WHERE machine_id = ? AND type = 'rescan'
+		AND json_valid(payload) AND json_type(payload, '$.exclude') = 'array'
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, machineID).Scan(&p)
+	if errors.Is(err, sql.ErrNoRows) {
+		return rep.ScanExclude
+	}
+	last, set, perr := parseScanExcludes(json.RawMessage(p))
+	if err != nil || perr != nil || !set {
 		return nil // can't tell: nothing counts as already skipped (the strict side)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var p sql.NullString
-		if rows.Scan(&p) != nil {
-			return nil
-		}
-		if last, set, _ := parseScanExcludes(json.RawMessage(p.String)); set {
-			var both []string
-			for _, d := range rep.ScanExclude {
-				if slices.Contains(last, d) {
-					both = append(both, d)
-				}
-			}
-			return both
+	var both []string
+	for _, d := range rep.ScanExclude {
+		if slices.Contains(last, d) {
+			both = append(both, d)
 		}
 	}
-	return rep.ScanExclude
+	return both
 }
 
 // auditScanExcludes records a queued change to a machine's folders to skip. The paths are quoted

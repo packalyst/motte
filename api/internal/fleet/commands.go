@@ -249,12 +249,17 @@ func (s *Service) enqueue(machineID, ctype string, payload json.RawMessage, ttl 
 	return id, err
 }
 
-// cancelPending withdraws a machine's undelivered commands of one type (a newer one replaces
-// them, or the reason for them is gone).
+// cancelPending withdraws the undelivered commands of one type (a newer one replaces them, or the
+// reason for them is gone): one machine's, or every machine's when machineID is "".
 func (s *Service) cancelPending(machineID, ctype string) {
-	if _, err := s.db.Exec(`UPDATE fleet_commands SET status='expired', done_at=?
-		WHERE machine_id = ? AND type = ? AND status = 'pending'`, time.Now().UTC().Format(time.RFC3339), machineID, ctype); err != nil {
-		log.Printf("fleet: cancel pending %s for %s: %v", ctype, machineID, err)
+	q := `UPDATE fleet_commands SET status='expired', done_at=? WHERE type = ? AND status = 'pending'`
+	args := []any{time.Now().UTC().Format(time.RFC3339), ctype}
+	if machineID != "" {
+		q += ` AND machine_id = ?`
+		args = append(args, machineID)
+	}
+	if _, err := s.db.Exec(q, args...); err != nil {
+		log.Printf("fleet: cancel pending %s for %q: %v", ctype, machineID, err)
 	}
 }
 

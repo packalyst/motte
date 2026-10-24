@@ -242,6 +242,22 @@ export function stepUpConfirm(options = {}) {
   })
 }
 
+// withStepUp sends a request; a sensitive one the panel answers 428 until the user's current
+// password (+ TOTP) is supplied (unless a recent step-up still covers it), so it then prompts with
+// stepUpConfirm(options) and retries once. send(extra) gets {} first, then { currentPassword,
+// totpCode }. Resolves to send's result, or STEPUP_CANCELLED when the user closes the prompt.
+export const STEPUP_CANCELLED = Symbol('step-up cancelled')
+export async function withStepUp(send, options = {}) {
+  try {
+    return await send({})
+  } catch (e) {
+    if (e?.status !== 428) throw e
+  }
+  const su = await stepUpConfirm(options)
+  if (!su?.confirmed || !su?.password) return STEPUP_CANCELLED
+  return await send({ currentPassword: su.password, totpCode: su.totp || '' })
+}
+
 // Close confirm modal (called by ConfirmModal component)
 export function closeConfirmModal(confirmed) {
   confirmModalStore.update(state => {

@@ -79,7 +79,7 @@ func TestPortMigrationKeepsOldPortForStragglers(t *testing.T) {
 }
 
 // During a port change the listener can still be switched off (both ports close), and the old
-// port can be closed early; any other change waits.
+// port can be closed early (with a step-up); any other change waits.
 func TestPortMigrationConfigEscapes(t *testing.T) {
 	post := func(svc *Service, body string) *httptest.ResponseRecorder {
 		rr := httptest.NewRecorder()
@@ -95,12 +95,14 @@ func TestPortMigrationConfigEscapes(t *testing.T) {
 	if rr := post(svc, `{"enabled":true,"port":7003}`); rr.Code != http.StatusConflict {
 		t.Fatalf("a new port mid-migration: %d, want 409", rr.Code)
 	}
-	if rr := post(svc, `{"enabled":true,"port":7002,"finish_migration":true}`); rr.Code != http.StatusOK {
-		t.Fatalf("finish now: %d %s", rr.Code, rr.Body.String())
+	// Closing the old port early can cut machines off: it takes a step-up.
+	if rr := post(svc, `{"enabled":true,"port":7002,"finish_migration":true}`); rr.Code != http.StatusPreconditionRequired {
+		t.Fatalf("finish now without step-up: %d, want 428", rr.Code)
 	}
-	if active, _ := svc.migrationState(); active {
-		t.Fatal("still migrating after finishing it")
+	if active, _ := svc.migrationState(); !active {
+		t.Fatal("finished without a step-up")
 	}
+	svc.finishMigration("owner1", "")
 
 	startTestMigration(svc, time.Now(), "m1")
 	if rr := post(svc, `{"enabled":false,"port":7002}`); rr.Code != http.StatusOK {
