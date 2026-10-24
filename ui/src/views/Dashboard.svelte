@@ -315,7 +315,7 @@
     </nav>
 
     <!-- Sidebar footer (clear of the home indicator on phones) -->
-    <div class="border-t border-border p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] space-y-3">
+    <div class="border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] space-y-3">
       <!-- Clients: online out of all, then each kind (opens Clients narrowed to it) -->
       <div class="space-y-2 text-[11px]">
         <button type="button" onclick={() => openClients('')} title="Open Clients"
@@ -483,7 +483,7 @@
     <!-- Content area with pull-to-refresh -->
     <section bind:this={scroller} class="flex-1 overflow-hidden overflow-y-auto overscroll-contain bg-background">
       <PullToRefresh onRefresh={handlePullRefresh} {scroller}>
-        <div class="p-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))] lg:p-4 lg:pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        <div class="p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:p-4 lg:pb-[max(1rem,env(safe-area-inset-bottom))]">
           {#if loading}
             <div class="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
               <div class="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-foreground"></div>
