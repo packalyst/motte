@@ -24,7 +24,7 @@ so uninstall leaves the host pristine (`base_dir` / `data_dir` / `conf_dir`):
 - **Intrusion detection (CrowdSec)** — the agent reads CrowdSec's local decisions and enforces them itself via its own nftables table (replaces the bouncer). `agent/tool_crowdsec.go`.
 - **Host facts** — OS, kernel, CPU, RAM, listening ports, read natively from `/proc`, `/sys`, `/etc` (no subprocess); hardware/OS/kernel once at start, the rest every minute. `agent/hostfacts.go`.
 - **FIM (osquery)** — File Integrity Monitoring via a supervised `osqueryd`. `agent/tool_osquery.go`.
-- **Enforcement** — blocks/unblocks source IPs via its own nftables table (`inet wgscout`, set `blocked_ips`). `agent/enforce.go`.
+- **Enforcement** — blocks source IPs via its own nftables table (`inet wgscout`: sets `blocked_ips` / `blocked_ips6` for manual blocks and CrowdSec bans, `panel_blocklist` for the panel-pushed list). The agent's saved state (`<data_dir>/blocks.json`, root-only) is the truth, with each entry's sources (manual, crowdsec, panel); the kernel table is rebuilt from it in one atomic `nft -f` transaction at start (a reboot empties the kernel's rules), on every change, when dry-run is turned off, and by a once-a-minute self-heal if the table went missing. An address stays blocked while any source still wants it; unblocking also drops CrowdSec's ban. `agent/enforce.go`.
 - **Kernel maintenance** — install newest kernel, reboot to activate, purge superseded kernels + rescan, as a reboot-surviving state machine. `agent/kernelmaint.go` (`KernelMaint`).
 
 The **sub-agents (tools)** are installed only from a pinned `manifest.json`
@@ -33,7 +33,7 @@ checksum-verified byte-for-byte. Everything runs as an argv — never `sh -c` of
 untrusted input (`agent/tool.go`, `agent/manifest.go`).
 
 The single report snapshot the agent publishes is `Report` (`agent/report.go`):
-`agent`, `host`, `time`, `dry_run`, `log_level`, `metrics`, `blocked`, and the
+`agent`, `host`, `time`, `dry_run`, `log_level`, `metrics`, `blocks` (with sources), `block_error`, and the
 optional sub-agent sections `intrusion` / `cves` / `facts` / `kernel` (absent
 until their tool has gathered).
 

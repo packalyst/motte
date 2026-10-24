@@ -74,7 +74,7 @@ func summarize(raw string) *MachineSummary {
 			Mem  float64 `json:"mem"`
 			Disk float64 `json:"disk"`
 		} `json:"metrics"`
-		Blocked   []string `json:"blocked"`
+		Blocks    []struct{} `json:"blocks"` // counted only (entries are {ip, sources})
 		Intrusion struct {
 			ActiveBans int `json:"active_bans"`
 		} `json:"intrusion"`
@@ -94,7 +94,7 @@ func summarize(raw string) *MachineSummary {
 	s := &MachineSummary{
 		CPU: r.Metrics.CPU, Mem: r.Metrics.Mem, Disk: r.Metrics.Disk,
 		CVETotal: r.CVEs.Total, CVECritical: r.CVEs.Counts["CRITICAL"],
-		Bans: r.Intrusion.ActiveBans, Blocked: len(r.Blocked), FIM: r.Facts.FIMCount,
+		Bans: r.Intrusion.ActiveBans, Blocked: len(r.Blocks), FIM: r.Facts.FIMCount,
 		Agent: r.Agent,
 	}
 	if name := r.Facts.OS["name"]; name != "" {

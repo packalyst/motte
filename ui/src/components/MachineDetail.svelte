@@ -477,7 +477,7 @@
   async function unblockOn(ip = null) {
     const t = (ip ?? blockIP).trim()
     if (!t) return
-    await cmd('unblock', { ip: t }, { title: 'Unblock IP', message: `Unblock ${t} on ${machine.name}?`, after: () => { if (ip == null) blockIP = '' } })
+    await cmd('unblock', { ip: t }, { title: 'Unblock IP', message: `Unblock ${t} on ${machine.name}? If CrowdSec banned it, that ban is removed too, so it isn't blocked again.`, after: () => { if (ip == null) blockIP = '' } })
   }
   const updateKernel = () => cmd('update-kernel', null, {
     title: 'Update kernel', variant: 'destructive', confirmText: 'Update & reboot', alert: true,
@@ -518,7 +518,8 @@
     ['key', 'WG', wgVal],
   ])
   // IPs this host is currently enforcing a block on (from the live report).
-  const blockedIPs = $derived(report?.blocked || [])
+  const blockedIPs = $derived(report?.blocks || []) // [{ ip, sources: ['manual'|'crowdsec'] }]
+  const SOURCE = { manual: 'manual', crowdsec: 'CrowdSec' }
   const panelBlocked = $derived(report?.panel_blocked ?? 0)
   // A push/clear is in flight until the agent runs it — disable the buttons meanwhile.
   const blocklistBusy = $derived(commands.some((c) => (c.type === 'sync-blocks' || c.type === 'clear-blocks') && (c.status === 'pending' || c.status === 'delivered')))
@@ -1142,13 +1143,22 @@
           <Button variant="destructive" size="sm" icon="ban" onclick={blockOn} disabled={!blockIP.trim()}>Block</Button>
           <Button variant="outline" size="sm" icon="circle-check" onclick={() => unblockOn()} disabled={!blockIP.trim()}>Unblock</Button>
         </div>
+        {#if report?.block_error}
+          <div class="mt-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <Icon name="alert-triangle" size={14} class="mt-px shrink-0" />
+            <span class="min-w-0 break-words">The firewall rules couldn't be applied, so these blocks may not be enforced right now. The agent retries every minute. ({report.block_error})</span>
+          </div>
+        {/if}
         {#if blockedIPs.length}
           <div class="mt-3 max-h-48 overflow-y-auto -mr-1 pr-1">
-            {#each blockedIPs as ip}
+            {#each blockedIPs as b (b.ip)}
               <div class="flex items-center gap-2 py-1.5 border-t border-border first:border-t-0 text-sm">
                 <Icon name="ban" size={13} class="text-destructive shrink-0" />
-                <span class="font-mono truncate flex-1">{ip}</span>
-                <button onclick={() => unblockOn(ip)} class="text-[11px] text-muted-foreground hover:text-foreground transition cursor-pointer shrink-0">unblock</button>
+                <span class="font-mono truncate">{b.ip}</span>
+                {#each b.sources || [] as src (src)}
+                  <span class="shrink-0 rounded px-1.5 py-px text-[10px] {src === 'crowdsec' ? 'bg-warning/10 text-warning' : 'bg-muted text-muted-foreground'}">{SOURCE[src] || src}</span>
+                {/each}
+                <button onclick={() => unblockOn(b.ip)} class="ml-auto text-[11px] text-muted-foreground hover:text-foreground transition cursor-pointer shrink-0">unblock</button>
               </div>
             {/each}
           </div>
