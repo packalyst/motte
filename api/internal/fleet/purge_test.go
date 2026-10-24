@@ -12,6 +12,7 @@ func seedMachineData(t *testing.T, svc *Service, id string) string {
 	for _, q := range []string{
 		`INSERT INTO fleet_commands (id, machine_id, type, status, created_at) VALUES ('c-` + id + `', ?, 'rescan', 'done', '2026-01-01T00:00:00Z')`,
 		`INSERT INTO fleet_cves (machine_id, cve_id) VALUES (?, 'CVE-1')`,
+		`INSERT INTO fleet_scans (machine_id, scanned_at, trigger, status) VALUES (?, '2026-01-01T00:00:00Z', 'manual', 'ok')`,
 		`INSERT INTO fleet_fim (machine_id, path) VALUES (?, '/etc/passwd')`,
 		`INSERT INTO fleet_metrics (machine_id, bucket, samples) VALUES (?, 0, 1)`,
 	} {

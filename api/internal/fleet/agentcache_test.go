@@ -87,3 +87,32 @@ func TestAgentCacheRejectsUnlistedAssets(t *testing.T) {
 		t.Fatalf("want no-checksum error, got %v", err)
 	}
 }
+
+// countingForge reports how often the latest release was asked for.
+type countingForge struct {
+	testForge
+	n *int
+}
+
+func (f countingForge) LatestTag(context.Context, *http.Client) (string, error) {
+	*f.n++
+	return "agent-v0.1.55", nil
+}
+
+// "Check for updates" skips the 30-minute cache, but asks the forge at most once a minute.
+func TestRecheckLatestVersionRateLimited(t *testing.T) {
+	n := 0
+	c := &agentCache{forge: countingForge{n: &n}, http: http.DefaultClient}
+	if v := c.LatestVersion(context.Background()); v != "0.1.55" || n != 1 {
+		t.Fatalf("first lookup: %q after %d calls", v, n)
+	}
+	c.RecheckLatestVersion(context.Background())
+	c.RecheckLatestVersion(context.Background())
+	if n != 1 {
+		t.Fatalf("rechecks within a minute asked the forge %d times", n)
+	}
+	c.versionAt = time.Now().Add(-2 * time.Minute)
+	if v := c.RecheckLatestVersion(context.Background()); v != "0.1.55" || n != 2 {
+		t.Fatalf("recheck after a minute: %q after %d calls", v, n)
+	}
+}

@@ -35,6 +35,8 @@ var allowedCommands = map[string]bool{
 	"set-log-level":  true, // flip agent+sub-agent verbosity live (quiet|debug)
 	"set-panel-port": true, // tell the agent the panel's mTLS port changed (reconnect)
 	"set-console":    true, // enable/disable the interactive console channel (point 7)
+	"list-dirs":      true, // one folder's sub-folder names, for the scan dialog (dirs.go)
+	"set-tool":       true, // turn CrowdSec / osquery / vulnerability scanning on or off
 }
 
 // confirmCommands are the destructive / security-impacting actions the panel will only
@@ -53,6 +55,7 @@ var confirmCommands = map[string]bool{
 	"update-agent":  true, // swaps the wgscout binary and restarts the service
 	"set-dry-run":   true, // flips enforcement on/off — turning it OFF removes protection
 	"clear-blocks":  true, // empties the machine's panel-pushed blocklist
+	"set-tool":      true, // turning a security tool off removes that protection
 }
 
 // requiresStepUp reports whether ctype is a confirm-tier command.
@@ -69,6 +72,8 @@ var panelInternalCommands = map[string]bool{
 	"set-console":    true,
 	"set-log-level":  true,
 	"sync-blocks":    true,
+	"list-dirs":      true, // through POST /dirs only, which waits for and removes the request
+	"set-tool":       true, // which security tools run on a machine is an admin decision
 }
 
 // gatePanelInternalCommand blocks a panel-internal command type on the generic operator
@@ -149,6 +154,9 @@ func (s *Service) enqueueCore(r *http.Request, machineID, ctype string, payload 
 	}
 	if !linkOnline(machineID) {
 		return "", http.StatusConflict, fmt.Errorf("the machine is offline — commands can only be sent to machines that are online")
+	}
+	if err := validateCommandPayload(ctype, payload); err != nil {
+		return "", http.StatusBadRequest, err
 	}
 	id, err := s.enqueue(machineID, ctype, payload, commandTTL)
 	if err != nil {
@@ -256,7 +264,7 @@ func (s *Service) ListMachineCommands(machineID string, limit int) ([]MachineCom
 	s.expirePending(machineID) // an offline machine never polls, so expire here too for the log
 	rows, err := s.db.Query(
 		`SELECT id, type, status, result, created_at, done_at FROM fleet_commands
-		 WHERE machine_id = ? ORDER BY created_at DESC LIMIT ?`, machineID, limit)
+		 WHERE machine_id = ? AND type != 'list-dirs' ORDER BY created_at DESC LIMIT ?`, machineID, limit)
 	if err != nil {
 		return nil, err
 	}

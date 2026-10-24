@@ -99,6 +99,18 @@ func (c *agentCache) LatestVersion(ctx context.Context) string {
 	return v
 }
 
+// RecheckLatestVersion asks the forge again now instead of waiting out the 30-minute cache (the
+// "Check for updates" button), but at most once a minute, so repeated clicks can't run the
+// forge's API rate limit down.
+func (c *agentCache) RecheckLatestVersion(ctx context.Context) string {
+	c.mu.Lock()
+	if time.Since(c.versionAt) >= time.Minute {
+		c.versionAt = time.Time{}
+	}
+	c.mu.Unlock()
+	return c.LatestVersion(ctx)
+}
+
 // Get returns the cached (binary, manifest, install.sh) for arch, fetching+verifying from
 // the latest release on a cold cache or after a new release. Caller holds no lock.
 func (c *agentCache) Get(ctx context.Context, arch string) (bin, manifest, installSh []byte, err error) {

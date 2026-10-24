@@ -104,10 +104,10 @@ func summarize(raw string) *MachineSummary {
 }
 
 // machineDataTables hold per-machine data, removed with the machine (and swept for orphans at boot).
-var machineDataTables = []string{"fleet_commands", "fleet_cves", "fleet_fim", "fleet_metrics"}
+var machineDataTables = []string{"fleet_commands", "fleet_cves", "fleet_scans", "fleet_fim", "fleet_metrics"}
 
 // purgeMachineData deletes a machine's stored data inside tx: queued commands, vulnerabilities,
-// file-integrity events and usage history. Table names are compile-time constants.
+// scan history, file-integrity events and usage history. Table names are compile-time constants.
 func purgeMachineData(tx *sql.Tx, id string) error {
 	for _, tbl := range machineDataTables {
 		if _, err := tx.Exec(`DELETE FROM `+tbl+` WHERE machine_id = ?`, id); err != nil {

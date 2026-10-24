@@ -142,7 +142,7 @@ Panel-side management of the agent fleet: tokens `POST /token`, `GET /tokens`,
 `DELETE /tokens`; machines `GET /machines`, `POST /machine/delete`,
 `GET /machine/commands`; CA `GET /ca`; commands `POST /command`; telemetry
 `GET /report`, `GET /metrics`, `GET /endpoints`; config `POST /config`,
-`POST /push-blocks`; CVEs `GET /cves`, `GET /cves/groups`, `GET /cves/by-cve`,
+`POST /push-blocks`; CVEs `GET /cves`, `GET /cves/groups`, `GET /cves/by-cve`, scan history `GET /scans`, `GET /scans/changes`, scan-dialog folders `POST /dirs`, agent release check `POST /agent-version`,
 `GET /cves/export`, `POST /fix`. The **agent-facing** endpoints are on a
 separate mTLS listener, not `/api` (see below and [fleet-agent.md](fleet-agent.md)).
 

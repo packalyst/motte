@@ -110,6 +110,10 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 	}
 	// Self-heal any child rows left behind by a machine that no longer exists (see
 	// sweepOrphans). Reclaim the freed file space once if the cleanup was large.
+	// A folder-picker request outlives its waiting handler only if the panel stopped mid-wait.
+	if _, err := db.Exec(`DELETE FROM fleet_commands WHERE type = 'list-dirs'`); err != nil {
+		log.Printf("fleet: clearing folder-picker requests: %v", err)
+	}
 	if removed := sweepOrphans(db); removed > 1000 {
 		if _, err := db.Exec(`VACUUM`); err != nil {
 			log.Printf("fleet: VACUUM after orphan sweep failed: %v", err)
@@ -578,6 +582,29 @@ func ensureSchema(db *sql.DB) error {
 			scanned_at TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_fleet_cves_machine ON fleet_cves(machine_id, severity)`,
+		// One summary row per vulnerability scan (scans.go); the findings live in fleet_cves.
+		`CREATE TABLE IF NOT EXISTS fleet_scans (
+			machine_id  TEXT NOT NULL,
+			scanned_at  TEXT NOT NULL,
+			trigger     TEXT NOT NULL,
+			status      TEXT NOT NULL,
+			error       TEXT,
+			seconds     REAL,
+			peak_mem    INTEGER,
+			findings    INTEGER,
+			cves        INTEGER,
+			critical    INTEGER,
+			high        INTEGER,
+			medium      INTEGER,
+			low         INTEGER,
+			unknown     INTEGER,
+			fixable     INTEGER,
+			new_count   INTEGER,
+			fixed_count INTEGER,
+			new_ids     TEXT,
+			fixed_ids   TEXT,
+			PRIMARY KEY (machine_id, scanned_at)
+		)`,
 		`CREATE TABLE IF NOT EXISTS fleet_fim (
 			machine_id TEXT NOT NULL,
 			action     TEXT,

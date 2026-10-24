@@ -39,12 +39,13 @@ until their tool has gathered).
 
 ---
 
-## 2. Two run modes
+## 2. Run mode
 
-`agent/main.go` decides the mode from config: **panel mode** iff `panel_url != ""`.
-
-- **Standalone (Phase 1, dev/testing)** — no panel configured. An **unauthenticated** local HTTP control API on `listen_addr` (default `127.0.0.1:9877`): `GET /report`, `POST /block|/unblock|/apply-updates|/restart` (`agent/httpapi.go`). Because it can reboot the host / run apt / change the firewall, `main.go` **refuses to start it on a non-loopback address** (`main.go:183-185`).
-- **Panel-only (Phase 2, production)** — `panel_url` set. The agent **must enroll first**, then runs the mTLS report/command loop and **disables the local HTTP door entirely** — the panel is the only way in (`main.go:124-178`). If enrollment fails (panel down / bad token), it retries every 30s and starts **no** sub-agents until it succeeds.
+The agent runs only bound to a panel: `agent/main.go` refuses to start without `panel_url`. It
+**must enroll first**, then runs the mTLS report/command loop; the panel is the only way in, and
+there is no local control port. If enrollment fails (panel down / bad token), it retries every 30s
+and starts **no** sub-agents until it succeeds. (An early dev-only local HTTP API, unauthenticated
+on loopback, was removed: any local user could have used it to run apt or reboot the host.)
 
 ---
 
@@ -56,7 +57,7 @@ store (§7). Written on demand with `wgscout -config … -write-default-config`.
 
 Key fields (`Config` struct):
 
-- Transport: `listen_addr`, `panel_url`, `ca_fingerprint` (pinned `sha256:<hex>`, from the install command), `enroll_token` (one-time; consumed + scrubbed on first enroll).
+- Transport: `panel_url`, `ca_fingerprint` (pinned `sha256:<hex>`, from the install command), `enroll_token` (one-time; consumed + scrubbed on first enroll).
 - Loops: `metrics_interval` (default 15s — also the report cadence), `db_update_every` (12h, CrowdSec hub). CrowdSec decisions + host facts refresh every minute (fixed). No scan loop.
 - Firewall: **`dry_run` (default `true`)**, `nft_table` (`wgscout`), `nft_set` (`blocked_ips`).
 - `log_level`: `quiet` (default) or `debug`, flipped live by the `set-log-level` command.
