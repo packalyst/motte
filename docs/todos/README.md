@@ -13,7 +13,7 @@ keys, tokens, passwords, private IPs, or hostnames. Describe *what* and *why*, n
 
 ## Index
 - [drop-exec-headscale-rest.md](drop-exec-headscale-rest.md) — remove docker-socket-proxy
-  `EXEC=1` by moving the 3 headscale-CLI calls to REST (closes the lateral-to-root path).
+  `EXEC=1` by moving the 3 headscale-CLI calls to REST (defense in depth: only the api can reach the proxy).
 - [sshd-config-drop-in.md](sshd-config-drop-in.md) — mount only `/etc/ssh/sshd_config.d/` into
   the api container instead of the whole SSH config.
 - [session-token-httponly-cookie.md](session-token-httponly-cookie.md) — move the session

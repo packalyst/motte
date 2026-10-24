@@ -273,11 +273,13 @@ extend that dump so CI can `nft -c` them.
 ### 3.6 Least-privilege Docker access
 
 The api never mounts the raw Docker socket; it goes through `tecnativa/docker-socket-proxy`
-with only the capabilities it needs enabled (`docker-compose.yml:21-44`): `CONTAINERS`,
-`INFO`, `POST` + `ALLOW_START/STOP/RESTARTS`, `IMAGES`; **`NETWORKS=0`, `VOLUMES=0`**. The one
-remaining broad grant, `EXEC=1` (needed for the headscale CLI), is documented as a tracked
-follow-up to remove by moving to headscale's REST API (`docker-compose.yml:55-58`). Any new
-Docker capability need must be justified the same way.
+with only the capabilities it needs enabled (`docker-compose.yml`): `CONTAINERS`,
+`INFO`, `POST` + `ALLOW_START/STOP/RESTARTS`, `IMAGES`; **`NETWORKS=0`, `VOLUMES=0`**. The proxy
+has no network and no port: it listens on a root-only socket file that only the api mounts —
+never publish it on a port (a `127.0.0.1` port is reachable by every host-networked container
+and local user). The one remaining broad grant, `EXEC=1` (needed for the headscale CLI), is a
+tracked follow-up to remove by moving to headscale's REST API. Any new Docker capability need
+must be justified the same way.
 
 ### 3.7 SSRF guard on outbound fetches
 

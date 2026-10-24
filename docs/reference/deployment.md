@@ -50,10 +50,10 @@ run from the project root, so relative bind mounts resolve against the checkout.
 
 | Service | Image / build | Network mode | Notes |
 |---|---|---|---|
-| `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | `socket-proxy-net` (dedicated) | Filters the Docker API; publishes `127.0.0.1:2375`. |
+| `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | **`network_mode: none`** | Filters the Docker API; listens only on a root-only socket file (`/run/wgadmin-docker/docker.sock` on the host), mounted into `api` alone. |
 | `traefik` | `traefik:v3.7.16` | `vpn-network` (static IP `${TRAEFIK_CONTAINER_IP}`) | Reverse proxy; ports `${HTTP_PORT}:80`, `${HTTPS_PORT}:443`, `${TRAEFIK_PORT}:8080`. |
 | `headscale` | `headscale/headscale:0.25` | `vpn-network` (`${HEADSCALE_CONTAINER_IP}`) | Tailscale control plane + embedded DERP. `command: serve`, `cap_add: NET_ADMIN`. |
-| `api` | built from `./api` (arg `VERSION`) | **`network_mode: host`, `pid: host`, `privileged: true`** | The unified backend. Reaches Docker via `DOCKER_HOST=tcp://127.0.0.1:2375`. |
+| `api` | built from `./api` (arg `VERSION`) | **`network_mode: host`, `pid: host`, `privileged: true`** | The unified backend. Reaches Docker via `DOCKER_HOST=unix:///run/docker-proxy/docker.sock` (the proxy's socket). |
 | `adguard` | `adguard/adguardhome:v0.107.79` | **`network_mode: host`** | DNS + query logging. |
 | `ui` | built from `./ui` (`target: production`) | `vpn-network` (`${UI_CONTAINER_IP}`) | Svelte dashboard; Traefik routes `PathPrefix('/')` to it. |
 | `vpn-router` | `tailscale/tailscale:v1.104.1` | `network_mode: host` | **profile `vpn-router`** — bridges WG ↔ Headscale via subnet routing. |
@@ -63,7 +63,7 @@ run from the project root, so relative bind mounts resolve against the checkout.
 Key invariants (from the compose comments — read them, they encode security decisions):
 
 - **`api` is host-networked** and privileged: it manages nftables/WireGuard on the host. Traefik reaches it via `http://host.docker.internal:${API_PORT}` (the `unified-api` service in the dynamic config), **not** the `api` hostname. See [MEMORY: api-is-host-networked].
-- **`docker-socket-proxy` isolation** (`docker-compose.yml:49-60`): it sits on a dedicated single-member `socket-proxy-net` purely so Compose never auto-creates a `_default` network that would grab an overlapping `/16` and clash with `vpn-network`. `:2375` is published on `127.0.0.1`, so **every** host-networked container (`api`, `adguard`, `vpn-router`) shares that loopback and can reach it. `EXEC=1` is enabled (needed for the headscale CLI) — a documented risk with a tracked fix (move headscale ops to REST). See [MEMORY: drop-exec-headscale-rest].
+- **`docker-socket-proxy` isolation**: it has no network and no port. It listens only on a socket file (mode `0600`, root) in `/run/wgadmin-docker`, and only `api` mounts that folder, so no other container (the host-networked `adguard`, `vpn-router`, `dnsmasq` included) and no non-root user on the host can reach the Docker API. `EXEC=1` is still enabled (needed for the headscale CLI); dropping it is a tracked follow-up (move headscale ops to REST). See [MEMORY: drop-exec-headscale-rest].
 - **Socket-proxy permissions** (`docker-compose.yml:20-46`): read ops + start/stop/restart + EXEC + IMAGES enabled; BUILD/COMMIT/NETWORKS/VOLUMES/SECRETS/etc. explicitly `=0`. The panel can create/start/stop containers and pull images but cannot build (that's why `manage.sh` builds add-on images itself — see §5).
 
 ### Profiles
@@ -111,7 +111,6 @@ commit "bound logs on panel-created containers".)
 ### Networks
 
 - `vpn-network` — fixed name, IPAM subnet `${DOCKER_SUBNET}` / gateway `${DOCKER_GATEWAY}` (default `172.18.0.0/24`). Static container IPs are assigned from `.env`.
-- `socket-proxy-net` — fixed name, pinned tiny subnet `172.31.255.0/28`. **Not** marked `internal` (that would block the published `127.0.0.1:2375` port the api relies on).
 
 ### Dev override
 
