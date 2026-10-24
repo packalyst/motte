@@ -157,8 +157,10 @@ It is checked on every console action (re-read whenever the file changes), so an
 at once: `no_console` refuses `set-console`, keeps the console channel from starting or
 reconnecting, and ends a running one at its next action; `no_port_forward` refuses and ends
 console port forwards; `no_self_update` refuses `update-agent`
-(root updates the binary by hand). No file locks nothing; a file that can't be read or parsed
-locks everything, so a typo never quietly undoes a lock. `agent/policy.go`.
+(root updates the binary by hand). A console locked while running is torn down like turning it
+off (its shells end), and starts again on the next `set-console` once the lock is lifted. No file
+locks nothing; a file that can't be read or parsed, or names a key it doesn't know (a misspelt
+switch), locks everything, so a typo never quietly undoes a lock. `agent/policy.go`.
 
 ### Panel command lifecycle (`api/.../commands.go`)
 

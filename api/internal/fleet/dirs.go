@@ -192,6 +192,9 @@ func (s *Service) guardScanExcludes(r *http.Request, machineID string, payload j
 	}
 	if len(ch.added) > 0 {
 		if p := router.CurrentUser(r); p == nil || !auth.RoleAtLeast(p.Role, auth.RoleAdmin) {
+			actor, _ := s.actingAdmin(r)
+			events.Audit("fleet", "command_denied", events.SeverityWarning, actor, helper.GetClientIP(r),
+				fmt.Sprintf("Command \"rescan\" on %s denied: only an admin can add folders for scans to skip (%q)", machineID, ch.added))
 			return nil, http.StatusForbidden, errors.New("only an admin can add folders for scans to skip")
 		}
 		if status, err := s.verifyStepUp(r, "rescan (skip folders)", pwd, totp); err != nil {
@@ -242,8 +245,8 @@ func (s *Service) auditScanExcludes(r *http.Request, machineID string, ch *scanE
 	}
 	actor, _ := s.actingAdmin(r)
 	msg := fmt.Sprintf("Folders skipped by scans on %s changed: added %q, removed %q", machineID, ch.added, ch.removed)
-	if len(msg) > 2000 {
-		msg = msg[:2000] + "…"
+	if r := []rune(msg); len(r) > 2000 {
+		msg = string(r[:2000]) + "…"
 	}
 	events.Audit("fleet", "scan_excludes_changed", events.SeverityWarning, actor, helper.GetClientIP(r), msg)
 }
