@@ -391,7 +391,7 @@ default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none';
 img-src 'self' data: https:;
 style-src 'self' 'unsafe-inline' https://unpkg.com;
 script-src 'self';
-connect-src 'self' ws: wss: https://flagcdn.com https://unpkg.com https://*.tile.openstreetmap.org;
+connect-src 'self' ws: wss:;
 font-src 'self' data:
 ```
 
@@ -406,11 +406,9 @@ Key constraints and *why* (from the template's own comments):
 - **`img-src … data: https:`** — `data:` is required so the **2FA QR code renders as a
   `data:image/png;base64` URL** (§3) and other inline images; `https:` covers Leaflet
   map tiles.
-- **`connect-src`** must list every external host the app loads from, because the
-  **service worker re-fetches every request via `fetch()`** — so even `<img>` tiles and
-  flags become `connect-src`, not `img-src`. Hosts: `flagcdn.com` (country flags),
-  `*.tile.openstreetmap.org` (map tiles), `unpkg.com` (Leaflet CSS + marker icons),
-  plus same-origin `ws:`/`wss:` for the live WebSocket.
+- **`connect-src`** is the panel itself plus `ws:`/`wss:` for the live WebSocket, with no
+  external host: country flags are served by the panel, and the **service worker leaves
+  other origins alone**, so map tiles and marker icons load as plain images (`img-src`).
 - `frame-ancestors 'none'` = the modern clickjacking guard (matches `frameDeny`).
 
 ### Secrets handling

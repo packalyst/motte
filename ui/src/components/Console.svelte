@@ -172,8 +172,9 @@
   }
   const keyRows = [
     [{ l: 'Ctrl', mod: 'ctrl' }, { l: 'Alt', mod: 'alt' }, { l: 'Esc', s: '\x1b' }, { l: 'Tab', s: '\t' },
-      { l: '↑', s: '\x1b[A' }, { l: '↓', s: '\x1b[B' }, { l: '←', s: '\x1b[D' }, { l: '→', s: '\x1b[C' }],
-    [{ l: '⌨', kbd: true }, { l: '^C', s: '\x03' }, { l: '^D', s: '\x04' }, { l: 'PgUp', s: '\x1b[5~' },
+      { l: '↑', i: 'arrow-up', s: '\x1b[A' }, { l: '↓', i: 'arrow-down', s: '\x1b[B' },
+      { l: '←', i: 'arrow-left', s: '\x1b[D' }, { l: '→', i: 'arrow-right', s: '\x1b[C' }],
+    [{ l: '⌨', i: 'keyboard', kbd: true }, { l: '^C', s: '\x03' }, { l: '^D', s: '\x04' }, { l: 'PgUp', s: '\x1b[5~' },
       { l: 'PgDn', s: '\x1b[6~' }, { l: '|', s: '|' }, { l: '/', s: '/' }, { l: '-', s: '-' }],
   ]
   function pressKey(k) {
@@ -1069,12 +1070,14 @@
   <!-- Mobile key bar (touch only). pointerdown is cancelled so a tap never blurs the terminal and
        dismisses the on-screen keyboard. Ctrl/Alt light up while armed for the next key. -->
   {#if isTouch && activeTab && !readonly}
-    <div class="shrink-0 border-t border-white/10 bg-[#12161d] p-1.5 grid gap-1 select-none">
+    <div class="shrink-0 border-t border-white/[0.06] px-1.5 pt-1.5 pb-1 grid gap-1.5 select-none">
       {#each keyRows as row, ri (ri)}
-        <div class="grid grid-cols-8 gap-1">
+        <div class="grid grid-cols-8 gap-1.5">
           {#each row as k (k.l)}
-            <button onpointerdown={(e) => e.preventDefault()} onclick={() => pressKey(k)}
-              class="h-9 rounded text-xs font-medium {(k.mod === 'ctrl' && ctrlArmed) || (k.mod === 'alt' && altArmed) ? 'bg-[#58a6ff] text-white' : 'bg-white/5 text-white/80 active:bg-white/15'}">{k.l}</button>
+            <button onpointerdown={(e) => e.preventDefault()} onclick={() => pressKey(k)} aria-label={k.i ? k.l : undefined}
+              class="h-10 rounded-lg grid place-items-center text-[13px] font-medium transition-colors {(k.mod === 'ctrl' && ctrlArmed) || (k.mod === 'alt' && altArmed) ? 'bg-[#58a6ff] text-white' : 'bg-white/[0.07] text-white/85 active:bg-white/20'}">
+              {#if k.i}<Icon name={k.i} size={17} />{:else}{k.l}{/if}
+            </button>
           {/each}
         </div>
       {/each}

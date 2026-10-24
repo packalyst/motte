@@ -51,8 +51,10 @@
   // can be clicked any more). Once no modal is open, any backdrop left is an orphan: remove it.
   function sweepBackdrops() {
     if (document.querySelector('.kt-modal.open')) return
-    document.querySelectorAll('.kt-modal-backdrop').forEach((el) => el.remove())
-    document.body.style.overflow = ''
+    const stale = document.querySelectorAll('.kt-modal-backdrop')
+    if (!stale.length) return // nothing left behind: the scroll lock isn't ours to touch
+    stale.forEach((el) => el.remove())
+    document.body.style.overflow = '' // KTModal's lock, left with its backdrop
   }
 
   function handleHideEvent(e) {

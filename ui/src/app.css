@@ -209,8 +209,12 @@ body {
    console, the recording player and the like, the same padding (at least 1rem) for every modal. */
 .safe-inset {
   --safe-min: 0px; /* a layer that wants its own padding too sets this; the larger one wins */
+  --safe-bottom: env(safe-area-inset-bottom); /* 0 while the keyboard covers it (data-keyboard) */
   padding: max(var(--safe-min), env(safe-area-inset-top)) max(var(--safe-min), env(safe-area-inset-right))
-    max(var(--safe-min), env(safe-area-inset-bottom)) max(var(--safe-min), env(safe-area-inset-left));
+    max(var(--safe-min), var(--safe-bottom)) max(var(--safe-min), env(safe-area-inset-left));
+}
+.safe-inset[data-keyboard] {
+  --safe-bottom: 0px;
 }
 
 /* KTUI Modal overrides */
