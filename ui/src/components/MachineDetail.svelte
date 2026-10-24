@@ -28,7 +28,10 @@
   import RecordingList from './RecordingList.svelte'
   import UPlotChart from './UPlotChart.svelte'
   import { timeAgo, formatBytes, formatDate, formatExpiryDate } from '$lib/utils/format.js'
-  import { usageColor, usageTone, statusInfo, round, fmtUptime } from '$lib/fleet.js'
+  import { usageColor, usageTone, statusInfo, round, fmtUptime, SEV } from '$lib/fleet.js'
+  import ScanHistory from './ScanHistory.svelte'
+  import ScanDialog from './ScanDialog.svelte'
+  import JobProgress from './JobProgress.svelte'
 
   let { machine, latestAgent = null, onback, ondeleted, onviewcves } = $props()
 
@@ -139,14 +142,25 @@
     }
     return 0
   }
-  // Agent-version state for the Agent card: current vs latest published.
+  // Agent-version state for the Agent card: current vs latest published. "Check for updates"
+  // asks the panel to look again now (its answer is otherwise cached for 30 minutes).
+  let checkedLatest = $state(null)
+  let checkingLatest = $state(false)
+  const latest = $derived(checkedLatest || latestAgent)
   const agentUpdate = $derived.by(() => {
     const cur = report?.agent
-    if (!cur || !latestAgent) return { state: 'unknown', cur }        // no data / GitHub unreachable
-    if (cmpVer(cur, latestAgent) >= 0) return { state: 'current', cur }
-    if (cmpVer(cur, MIN_SELFUPDATE) < 0) return { state: 'reinstall', cur, latest: latestAgent }
-    return { state: 'updatable', cur, latest: latestAgent }          // self-update will work
+    if (!cur || !latest) return { state: 'unknown', cur }        // no data / GitHub unreachable
+    if (cmpVer(cur, latest) >= 0) return { state: 'current', cur }
+    if (cmpVer(cur, MIN_SELFUPDATE) < 0) return { state: 'reinstall', cur, latest }
+    return { state: 'updatable', cur, latest }          // self-update will work
   })
+  async function checkLatest() {
+    checkingLatest = true
+    try {
+      checkedLatest = (await apiPost('/api/fleet/agent-version', {}))?.agent_version || checkedLatest
+      if (!checkedLatest) toast('Couldn\'t reach the release page; try again later', 'error')
+    } catch (e) { toast('Check failed: ' + (e?.message || e), 'error') } finally { checkingLatest = false }
+  }
 
   let report = $state(null)
   let loading = $state(true)
@@ -219,6 +233,18 @@
   const services = $derived(facts?.services || null)
   // Longest top-service bar is scaled to the heaviest consumer in the list.
   const svcMax = $derived(Math.max(1, ...(services?.top || []).map((s) => s.mem || 0)))
+  // What the monitoring costs on this host, one row per part the agent runs (agent footprint)
+  const FOOTPRINT = {
+    agent: ['robot', 'wgscout agent'],
+    crowdsec: ['shield-lock', 'CrowdSec'],
+    osquery: ['file-search', 'osquery · file watch'],
+    scan: ['package', 'Vulnerability scan'],
+    console: ['terminal-2', 'Console sessions'],
+    maintenance: ['tool', 'Updates (apt)'],
+  }
+  const footprint = $derived(services?.footprint || null)
+  const footprintTotal = $derived((footprint?.parts || []).reduce((t, p) => ({ mem: t.mem + (p.mem || 0), cpu: t.cpu + (p.cpu || 0) }), { mem: 0, cpu: 0 }))
+  const scanRunning = $derived((footprint?.parts || []).some((p) => p.name === 'scan'))
 
   // FIM change count comes from the periodic report; the full list is fetched on demand.
   const fimCount = $derived(facts?.fim_count || 0)
@@ -245,14 +271,36 @@
   const scanning = $derived(!!report?.scanning)
   // The agent refuses installs, restarts and reboots while a scan runs (security commands still
   // go through), so those buttons wait for it too.
+  const jobRunning = $derived(report?.job?.status === 'running') // a package job; one at a time
+
+  // Agent tools a machine can turn off (Settings). report.tools is absent on an agent too old to
+  // report it; those tools are treated as on.
+  const TOOLS = [
+    { id: 'crowdsec', label: 'CrowdSec', desc: 'Reads login and service logs and bans attackers on its own.',
+      off: 'Its automatic bans are lifted and it is removed from the machine. Manual and panel blocks stay.' },
+    { id: 'osquery', label: 'File watch (osquery)', desc: 'Records changes to system files and programs.',
+      off: 'File-change tracking stops and its data is removed from the machine.' },
+    { id: 'trivy', label: 'Vulnerability scanning', desc: 'Scans installed packages and app lockfiles for known CVEs when you ask.',
+      off: 'The scanner and its database are removed from the machine. The scan history stays in the panel.' },
+  ]
+  const toolOn = (id) => report?.tools?.[id]?.enabled ?? true
+  function toolState(id) {
+    const t = report?.tools?.[id]
+    if (!t) return ''
+    if (t.error) return t.error
+    if (!t.enabled) return 'off'
+    if (!t.installed) return id === 'trivy' ? 'installs on the first scan' : 'installing…'
+    return id === 'trivy' || t.running ? '' : 'not running'
+  }
+  const setTool = (t, on) => cmd('set-tool', { tool: t.id, enabled: on }, {
+    title: `Turn ${on ? 'on' : 'off'} ${t.label}`,
+    message: on ? `Install and start ${t.label} on ${machine.name}? It downloads the pinned, checksum-verified release.`
+      : `Turn off ${t.label} on ${machine.name}? ${t.off}`,
+    confirmText: on ? 'Turn on' : 'Turn off', variant: on ? 'primary' : 'destructive',
+    done: () => `${t.label} turned ${on ? 'on' : 'off'}`,
+  })
   const canMaintain = $derived(st.reachable && !scanning)
   const scanned = $derived(!!cves?.scanned_at || !!cves?.total || !!cveSummary?.unique_cves)
-  const SEV = [
-    { sev: 'CRITICAL', label: 'critical', bar: 'bg-destructive' },
-    { sev: 'HIGH', label: 'high', bar: 'bg-warning' },
-    { sev: 'MEDIUM', label: 'medium', bar: 'bg-info' },
-    { sev: 'LOW', label: 'low', bar: 'bg-muted-foreground/50' },
-  ]
   const sevRows = $derived(SEV.map((s) => ({ ...s, n: cves?.counts?.[s.sev] || 0 })).filter((s) => s.n))
   const sevTotal = $derived(sevRows.reduce((a, s) => a + s.n, 0))
   // One request returns { report, commands } (same shape as the live WS push).
@@ -410,10 +458,15 @@
       : `Take ${machine.name} LIVE? It will enforce firewall blocks and apply updates for real.`,
     confirmText: enabled ? 'Dry-run' : 'Go live', variant: enabled ? 'primary' : 'destructive',
   })
-  const rescan = () => cmd('rescan', null, {
-    title: 'Scan for vulnerabilities', confirmText: 'Scan',
-    message: `Scan ${machine.name} for known vulnerabilities now? Trivy reads every installed package and app lockfile, so it takes a few minutes and uses some CPU and disk on the machine.`,
-  })
+  // Scan opens the dialog (folders to leave out); the dialog is the confirmation.
+  let scanDialog = $state(false)
+  const rescan = () => (scanDialog = true)
+  async function startScan(exclude) {
+    try {
+      await apiPost('/api/fleet/command', { machine_id: machine.id, type: 'rescan', payload: { exclude } })
+      toast('Scan started', 'success')
+    } catch (e) { toast('Scan not started: ' + (e?.message || e), 'error'); throw e }
+  }
   const updateAgent = () => cmd('update-agent', null, {
     title: 'Update agent',
     message: `Update the wgscout agent on ${machine.name}${agentUpdate.cur && agentUpdate.latest ? ` from ${agentUpdate.cur} to ${agentUpdate.latest}` : ' to the latest release'}? It downloads the release binary, verifies its checksum, checks it runs, swaps it in (keeping a backup), and restarts the agent — a brief reconnect, no reboot.`,
@@ -543,6 +596,14 @@
 
 {#snippet note(text)}
   <div class="panel-note">{text}</div>
+{/snippet}
+
+<!-- a security tool turned off on this machine: the card stays, saying so -->
+{#snippet toolOff(text)}
+  <div class="flex items-start gap-3 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+    <Icon name="power" size={16} class="mt-0.5 shrink-0" />
+    <span>{text}{#if isAdmin}{' '}Turn it back on in <button type="button" class="text-primary hover:underline cursor-pointer" onclick={() => go('overview')}>Overview → Settings</button>.{/if}</span>
+  </div>
 {/snippet}
 
 <!-- placeholder for a capability that isn't wired yet — honest "what this will do", no fake data -->
@@ -758,7 +819,7 @@
       <div class="grid gap-4 xl:grid-cols-2 xl:items-start">
         <!-- Settings: console access, recording and tags (who can see this machine) -->
         <div class="panel">
-          {@render head('settings', 'Settings', 'console access · recording · tags')}
+          {@render head('settings', 'Settings', 'console · recording · security tools · tags')}
           <div class="space-y-4">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
@@ -783,12 +844,27 @@
                 <Badge variant={consoleRecord ? 'destructive' : 'muted'} size="sm">{consoleRecord ? 'Always' : 'Off'}</Badge>
               {/if}
             </div>
+            {#each TOOLS as t (t.id)}
+              {@const state = toolState(t.id)}
+              <div class="flex items-start justify-between gap-3 border-t border-dashed border-border pt-4">
+                <div class="min-w-0">
+                  <div class="text-sm font-medium text-foreground">{t.label}{#if state}<span class="ml-1.5 text-[11px] font-normal text-muted-foreground">· {state}</span>{/if}</div>
+                  <div class="text-[11px] text-muted-foreground">{t.desc}</div>
+                </div>
+                {#if isAdmin}
+                  <Checkbox variant="switch" checked={toolOn(t.id)} disabled={!st.reachable || jobRunning || (t.id === 'trivy' && scanning)}
+                    onchange={() => setTool(t, !toolOn(t.id))} aria-label={t.label} />
+                {:else}
+                  <Badge variant={toolOn(t.id) ? 'success' : 'muted'} size="sm">{toolOn(t.id) ? 'On' : 'Off'}</Badge>
+                {/if}
+              </div>
+            {/each}
             <div class="border-t border-dashed border-border pt-4">
               <div class="mb-2 text-sm font-medium text-foreground">Tags</div>
               <TagEditor {tags} canEdit={isAdmin} onsave={saveTags} />
             </div>
           </div>
-          {@render note('Operators and viewers can be limited to machines with given tags (Settings → Team). Only admins change these settings; each change is logged.')}
+          {@render note('Operators and viewers can be limited to machines with given tags (Settings → Team). Only admins change these settings; switching the console or a security tool asks for your password again, and each change is logged.')}
         </div>
 
         <!-- Services -->
@@ -811,15 +887,32 @@
           {:else}
             <div class="text-sm text-muted-foreground py-1">No systemd services reported.</div>
           {/if}
-          {#if services?.agent}
-            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border text-xs">
-              <Icon name="robot" size={15} class="text-muted-foreground" />
-              <span class="text-muted-foreground">wgscout agent</span>
-              <span class="ml-auto tabular-nums font-medium">{formatBytes(services.agent.mem)}</span>
-              <span class="text-muted-foreground tabular-nums">· {(services.agent.cpu || 0).toFixed(1)}% CPU</span>
+          {#if footprint?.parts?.length}
+            <div class="mt-4 border-t border-dashed border-border pt-3">
+              <div class="mb-1.5 flex items-center gap-2 text-[11px] font-medium text-foreground">
+                Agent footprint
+                <span class="ml-auto tabular-nums text-muted-foreground">{formatBytes(footprintTotal.mem)} · {footprintTotal.cpu.toFixed(1)}% CPU</span>
+              </div>
+              {#each footprint.parts as p (p.name)}
+                {@const [icon, label] = FOOTPRINT[p.name] || ['circle', p.name]}
+                <div class="flex items-center gap-2 py-1 text-xs">
+                  <Icon name={icon} size={14} class="shrink-0 text-muted-foreground" />
+                  <span class="truncate">{label}</span>
+                  {#if p.name === 'scan'}<span class="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-info" title="running"></span>{/if}
+                  <span class="ml-auto shrink-0 tabular-nums font-medium">{formatBytes(p.mem)}</span>
+                  <span class="w-16 shrink-0 text-right tabular-nums text-muted-foreground">{(p.cpu || 0).toFixed(1)}% CPU</span>
+                </div>
+              {/each}
+              {#if !scanRunning && footprint.last_scan}
+                <div class="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+                  <Icon name="package" size={14} class="shrink-0" />
+                  <span class="truncate">Vulnerability scan · idle</span>
+                  <span class="ml-auto shrink-0 tabular-nums">last run {Math.round(footprint.last_scan.seconds)}s · peak {formatBytes(footprint.last_scan.peak_mem)}</span>
+                </div>
+              {/if}
             </div>
           {/if}
-          {@render note('Running systemd services and the five using the most memory (from each service’s cgroup), plus what the wgscout agent itself uses — so the monitoring’s own footprint is visible.')}
+          {@render note('Running systemd services and the five using the most memory (from each service’s cgroup). Below them, what the monitoring itself costs: the agent and each helper it runs, sampled every minute. The vulnerability scan runs at low priority in its own space, capped at half the machine’s memory.')}
         </div>
       </div>
 
@@ -949,7 +1042,9 @@
           </span>
         {/snippet}
         {@render head('package', 'Vulnerabilities', 'Trivy · OS packages + app lockfiles', 'text-warning', cveScanned)}
-        {#if !scanned}
+        {#if !toolOn('trivy')}
+          {@render toolOff('Vulnerability scanning is off for this machine, so it has no scanner installed and can\'t be scanned.')}
+        {:else if !scanned}
           <div class="flex items-start gap-3 rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
             <Icon name="scan" size={16} class="mt-0.5 shrink-0" />
             <span>Not scanned yet. Scans run only when you ask: they read every installed package, so they take a few minutes and some CPU on the machine.</span>
@@ -991,17 +1086,21 @@
           </div>
         {/if}
         <div class="mt-4 flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" icon="scan" loading={scanning} disabled={!st.reachable || scanning} onclick={rescan}>{scanning ? 'Scanning…' : scanned ? 'Scan again' : 'Scan now'}</Button>
-          <Button variant="outline" size="sm" icon="download" disabled={!canMaintain} onclick={applyUpdates}>Apply updates</Button>
-          <Button variant="outline" size="sm" icon="cpu" disabled={!canMaintain} onclick={updateKernel}>Update kernel</Button>
-          {#if cves?.total || cveSummary?.unique_cves}<Button variant="primary" size="sm" icon="list-details" class="sm:ml-auto" onclick={() => onviewcves?.(machine)}>View all & fix</Button>{/if}
+          {#if toolOn('trivy')}<Button variant="outline" size="sm" icon="scan" loading={scanning} disabled={!st.reachable || scanning || jobRunning} onclick={rescan}>{scanning ? 'Scanning…' : scanned ? 'Scan again' : 'Scan now'}</Button>{/if}
+          <Button variant="outline" size="sm" icon="download" loading={jobRunning && report?.job?.kind === 'apply-updates'} disabled={!canMaintain || jobRunning} onclick={applyUpdates}>Apply updates</Button>
+          <Button variant="outline" size="sm" icon="cpu" loading={jobRunning && report?.job?.kind === 'update-kernel'} disabled={!canMaintain || jobRunning} onclick={updateKernel}>Update kernel</Button>
+          {#if toolOn('trivy') && (cves?.total || cveSummary?.unique_cves)}<Button variant="primary" size="sm" icon="list-details" class="sm:ml-auto" onclick={() => onviewcves?.(machine)}>View all & fix</Button>{/if}
         </div>
+        {#if report?.job}<JobProgress job={report.job} />{/if}
         {#if report?.scan_error && !scanning}
           <div class="mt-2 flex items-start gap-1.5 text-[11px] text-destructive"><Icon name="alert-triangle" size={12} class="mt-px shrink-0" /><span class="break-words">Last scan failed: {report.scan_error}</span></div>
         {/if}
         {#if !st.reachable}<div class="mt-2 text-[11px] text-muted-foreground">The machine is {st.label}: scans and updates can run once it's back online.</div>{/if}
         {@render note('“Apply updates” installs pending package updates, which clears fixable OS-package CVEs. “Update kernel” installs the newest kernel and reboots. “View all & fix” lists every finding by OS and project so you can upgrade only the packages you pick.')}
       </div>
+
+      <ScanDialog bind:open={scanDialog} {machine} excluded={report?.scan_exclude || []} onscan={startScan} />
+      <ScanHistory machineId={machine.id} reloadKey={`${cves?.scanned_at || ''}|${report?.scan_error || ''}`} />
 
       <!-- Security events -->
       <div class="bg-card border rounded-xl p-4 {feed.length || fimCount ? 'border-destructive/40' : 'border-border'}">
@@ -1016,6 +1115,8 @@
               </div>
             {/each}
           </div>
+        {:else if !toolOn('crowdsec')}
+          {@render toolOff('CrowdSec is off for this machine: nothing bans attackers automatically. Manual and panel blocks still apply.')}
         {:else}
           <div class="text-sm text-success flex items-center gap-2 py-2"><Icon name="circle-check" size={15} />No active bans.</div>
         {/if}
@@ -1023,7 +1124,7 @@
         <div class="flex items-center gap-2 mt-3 pt-3 border-t border-border">
           <Icon name="file-search" size={16} class={fimCount ? 'text-warning' : 'text-muted-foreground'} />
           <span class="text-sm flex-1 min-w-0">
-            {#if fimCount}<span class="font-medium">{fimCount.toLocaleString()}</span> file-integrity change{fimCount === 1 ? '' : 's'}{:else}<span class="text-muted-foreground">No file-integrity changes</span>{/if}
+            {#if fimCount}<span class="font-medium">{fimCount.toLocaleString()}</span> file-integrity change{fimCount === 1 ? '' : 's'}{:else if !toolOn('osquery')}<span class="text-muted-foreground">File watch is off for this machine: file changes aren't tracked.</span>{:else}<span class="text-muted-foreground">No file-integrity changes</span>{/if}
           </span>
           {#if fimCount}<Button size="sm" variant="ghost" icon="eye" onclick={openFim}>View all</Button>{/if}
         </div>
@@ -1032,7 +1133,7 @@
 
       <!-- Blocking -->
       <div class="panel">
-        {@render head('ban', 'Blocking', `${blockedIPs.length} IP${blockedIPs.length === 1 ? '' : 's'} blocked (CrowdSec + manual)`, 'text-destructive')}
+        {@render head('ban', 'Blocking', `${blockedIPs.length} IP${blockedIPs.length === 1 ? '' : 's'} blocked (${toolOn('crowdsec') ? 'CrowdSec + manual' : 'manual; CrowdSec is off'})`, 'text-destructive')}
         <div class="flex flex-wrap items-center gap-2">
           <div class="flex-1 min-w-[180px]">
             <Input bind:value={blockIP} prefixIcon="world" placeholder="IP to block / unblock" class="font-mono"
@@ -1078,6 +1179,7 @@
         {@render head('robot', 'Agent', 'version · mode · logging · restart')}
         <div class="divide-y divide-dashed divide-border">
           {#snippet version()}
+            <Button variant="ghost" size="xs" icon="refresh" loading={checkingLatest} onclick={checkLatest}>Check for updates</Button>
             {#if agentUpdate.state === 'current'}
               <span class="inline-flex items-center gap-1 text-xs text-success"><Icon name="circle-check" size={13} />Up to date</span>
             {:else if agentUpdate.state === 'updatable'}
