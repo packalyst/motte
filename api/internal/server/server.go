@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -418,19 +419,20 @@ func (s *Service) authLogCandidates() []string {
 func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 	acc := newAuthAccum(now)
 	// Filtering by _COMM (indexed) keeps journald from scanning the whole journal — fast.
-	// We pass NO --since: with a since, journalctl's --lines returns the FIRST N entries in
-	// the window (oldest), which drops recent logins; without it, --lines returns the most
-	// recent N, which is what we want (the 30-day cutoff is re-applied per event in code).
+	// Logins are read newest-first within the 30-day window the page shows: --lines then counts
+	// MATCHING lines from the newest back and stops there. Without a window and newest-first,
+	// --lines picked the last N sshd lines BEFORE --grep — on a host under brute force those are
+	// all failures, so real logins vanished, after a walk through the whole journal (seconds).
 	// The queries are SPLIT so a flood of sudo or brute-force failures can't push the rare
 	// login lines out of any one --lines window.
 	sshComms := []string{"sshd", "sshd-session"}
-	logins, ok1 := journalGrep(append(sshComms, "useradd", "groupadd"), "", `Accepted |new user:|new group:`, 200)
-	sudo, ok2 := journalGrep([]string{"sudo"}, "", "", 300) // _COMM=sudo alone; the parser keeps COMMAND=/failures
+	logins, ok1 := journalGrep(append(sshComms, "useradd", "groupadd"), "30 days ago", `Accepted |new user:|new group:`, 200, true)
+	sudo, ok2 := journalGrep([]string{"sudo"}, "", "", 300, false) // _COMM=sudo alone; the parser keeps COMMAND=/failures
 	// Failed-SSH is a bounded time-window count (Failed1h/FailedPrev1h), NOT a newest-N list —
 	// so it KEEPS --since. Without it, a sparse-but-large sshd journal would be walked in full
 	// and blow the 6s timeout, silently pinning the brute-force counts at 0 (no fallback fires
 	// because the login/sudo sub-queries succeed).
-	failed, ok3 := journalGrep(sshComms, "3 hours ago", `Failed password`, 3000)
+	failed, ok3 := journalGrep(sshComms, "3 hours ago", `Failed password`, 3000, false)
 	if !ok1 && !ok2 && !ok3 {
 		return authScan{}, false // journal not reachable — fall back to the log file
 	}
@@ -445,8 +447,10 @@ func (s *Service) scanJournal(now time.Time) (authScan, bool) {
 
 // journalGrep runs a filtered journalctl over the host journal (authpriv facility) via
 // nsenter. ok=false only when journalctl couldn't run at all (so the caller falls back
-// to the log file); a non-zero exit with no matches is treated as "ran, empty".
-func journalGrep(comms []string, since, grep string, lines int) ([]string, bool) {
+// to the log file); a non-zero exit with no matches is treated as "ran, empty". newest reads the
+// journal newest-first (so --lines keeps the newest N matches) and returns the lines in time
+// order, as the parser expects.
+func journalGrep(comms []string, since, grep string, lines int, newest bool) ([]string, bool) {
 	// Speed comes from filtering by _COMM (the logging program) — an INDEXED journal field,
 	// so journald seeks straight to just these programs' entries instead of scanning the
 	// whole journal. --grep (unindexed message-text match) then runs only over that small
@@ -467,6 +471,9 @@ func journalGrep(comms []string, since, grep string, lines int) ([]string, bool)
 	if since != "" {
 		jargs = append(jargs, "--since", since)
 	}
+	if newest {
+		jargs = append(jargs, "--reverse")
+	}
 	args := append([]string{"-t", "1", "-m", "-u", "-i", "-n", "-p", "--"}, jargs...)
 	cmd := exec.CommandContext(ctx, "nsenter", args...)
 	out, err := cmd.Output()
@@ -479,7 +486,11 @@ func journalGrep(comms []string, since, grep string, lines int) ([]string, bool)
 		}
 		// ExitError: journalctl ran (exit 1 = no matches) — use whatever it printed.
 	}
-	return strings.Split(string(out), "\n"), true
+	res := strings.Split(string(out), "\n")
+	if newest {
+		slices.Reverse(res)
+	}
+	return res, true
 }
 
 // ---------- dpkg.log ----------
