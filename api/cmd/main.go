@@ -568,6 +568,11 @@ func main() {
 				flSvc.ReloadFromSettings()
 				done = append(done, "fleet")
 			}
+			// Domain routes and the L7 block setting come from the database: write them to Traefik.
+			if traefikSvc != nil {
+				traefikSvc.RestoreFWBlock(settings.GetTraefikFWBlock())
+				done = append(done, "domains")
+			}
 			return done
 		},
 	})
