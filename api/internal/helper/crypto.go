@@ -45,7 +45,7 @@ func InitEncryption() {
 	if WeakEncryptionKey {
 		// Materially weaker than a real random key; changing the derivation later would
 		// make existing ciphertext undecryptable, so we keep it and flag for rotation.
-		log.Printf("WARNING: ENCRYPTION_SECRET is not a 32-byte hex key — using a weaker SHA-256-derived key. Rotate to a strong key (openssl rand -hex 32) with: wire-panel rotate-key")
+		log.Printf("WARNING: ENCRYPTION_SECRET is not a 32-byte hex key — using a weaker SHA-256-derived key. Rotate to a strong key (openssl rand -hex 32) with: motte rotate-key")
 	}
 }
 

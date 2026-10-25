@@ -108,7 +108,7 @@ func (s *Service) handleExport(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "export failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	name := "wire-panel-" + time.Now().Format("20060102-150405") + ".wgbackup"
+	name := "motte-" + time.Now().Format("20060102-150405") + ".wgbackup"
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")

@@ -88,7 +88,7 @@ func (s *Service) runOffhost(ctx context.Context, actor string) error {
 	}
 	size = int64(len(data))
 
-	tmp, err := os.CreateTemp("", "wgscout-offhost-")
+	tmp, err := os.CreateTemp("", "motte-offhost-")
 	if err != nil {
 		runErr = err
 		return runErr
@@ -102,7 +102,7 @@ func (s *Service) runOffhost(ctx context.Context, actor string) error {
 	}
 	tmp.Close()
 
-	name := fmt.Sprintf("wire-panel-%s.wgbackup", time.Now().Format("20060102-150405"))
+	name := fmt.Sprintf("motte-%s.wgbackup", time.Now().Format("20060102-150405"))
 
 	var pinned bool
 	var okDests []string
@@ -165,7 +165,7 @@ func (s *Service) restoreFromOffhost(ctx context.Context, destID, name, passphra
 	}
 	defer be.close()
 
-	tmp, err := os.CreateTemp("", "wgscout-restore-")
+	tmp, err := os.CreateTemp("", "motte-restore-")
 	if err != nil {
 		return nil, err
 	}

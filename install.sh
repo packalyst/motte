@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Wire Panel installer — clones the panel into /opt/wire-panel, registers a
-# systemd service + a `wire-panel` command, and runs first-time setup.
+# Motte installer — clones the panel into /opt/motte, registers a
+# systemd service + a `motte` command, and runs first-time setup.
 #
 #   curl -fsSL https://raw.githubusercontent.com/packalyst/wireguard-admin-panel/main/install.sh | sudo bash
 #   # or: download it, then: sudo ./install.sh
@@ -10,12 +10,12 @@
 #
 set -e
 
-INSTALL_DIR="/opt/wire-panel"
+INSTALL_DIR="/opt/motte"
 REPO="https://github.com/packalyst/wireguard-admin-panel.git"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-echo -e "${GREEN}=== Wire Panel Installer ===${NC}"
+echo -e "${GREEN}=== Motte Installer ===${NC}"
 echo ""
 
 # Everything below needs root (writing /opt, /etc/systemd, /usr/local/bin).
@@ -35,7 +35,7 @@ done
 # Conflict guard — never clobber an existing install.
 if [ -e "$INSTALL_DIR" ]; then
     echo -e "${RED}✗ $INSTALL_DIR already exists.${NC}"
-    echo -e "  Manage the existing install with 'wire-panel', or remove the folder to reinstall."
+    echo -e "  Manage the existing install with 'motte', or remove the folder to reinstall."
     exit 1
 fi
 
@@ -45,7 +45,7 @@ cd "$INSTALL_DIR"
 chmod +x manage.sh
 chmod 750 "$INSTALL_DIR"
 
-# Register the systemd unit + `wire-panel` CLI. Reuses manage.sh so the install
+# Register the systemd unit + `motte` CLI. Reuses manage.sh so the install
 # logic lives in exactly one place.
 ./manage.sh install-service
 
@@ -58,5 +58,5 @@ if [ -t 0 ]; then
     exec ./manage.sh
 else
     # Piped install (curl | bash): no TTY for the interactive prompts.
-    echo -e "${GREEN}Install complete.${NC} Run ${CYAN}sudo wire-panel${NC} to configure and start the stack."
+    echo -e "${GREEN}Install complete.${NC} Run ${CYAN}sudo motte${NC} to configure and start the stack."
 fi

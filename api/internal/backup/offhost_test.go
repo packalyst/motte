@@ -85,10 +85,10 @@ func (f *fakeBackend) close() error           { return nil }
 func TestPruneKeepN(t *testing.T) {
 	base := time.Now()
 	f := &fakeBackend{objs: []remoteObject{
-		{Name: "wire-panel-3.wgbackup", ModTime: base.Add(3 * time.Hour)},
-		{Name: "wire-panel-1.wgbackup", ModTime: base.Add(1 * time.Hour)},
-		{Name: "wire-panel-4.wgbackup", ModTime: base.Add(4 * time.Hour)},
-		{Name: "wire-panel-2.wgbackup", ModTime: base.Add(2 * time.Hour)},
+		{Name: "motte-3.wgbackup", ModTime: base.Add(3 * time.Hour)},
+		{Name: "motte-1.wgbackup", ModTime: base.Add(1 * time.Hour)},
+		{Name: "motte-4.wgbackup", ModTime: base.Add(4 * time.Hour)},
+		{Name: "motte-2.wgbackup", ModTime: base.Add(2 * time.Hour)},
 	}}
 	if err := pruneKeepN(context.Background(), f, 2); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestPruneKeepN(t *testing.T) {
 		t.Fatalf("expected 2 removals, got %v", f.removed)
 	}
 	for _, name := range f.removed {
-		if name != "wire-panel-2.wgbackup" && name != "wire-panel-1.wgbackup" {
+		if name != "motte-2.wgbackup" && name != "motte-1.wgbackup" {
 			t.Errorf("pruned the wrong archive: %s", name)
 		}
 	}

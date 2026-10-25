@@ -1,5 +1,5 @@
 [Unit]
-Description=Wire Panel — WireGuard/Headscale admin stack
+Description=Motte — WireGuard, Headscale and fleet stack
 Documentation=https://github.com/packalyst/wireguard-admin-panel
 Requires=docker.service
 After=docker.service network-online.target
@@ -11,9 +11,9 @@ Wants=network-online.target
 # RemainAfterExit models "the stack is up" without supervising a foreground pid.
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/wire-panel
-ExecStart=/opt/wire-panel/manage.sh service-up
-ExecStop=/opt/wire-panel/manage.sh service-down
+WorkingDirectory=/opt/motte
+ExecStart=/opt/motte/manage.sh service-up
+ExecStop=/opt/motte/manage.sh service-down
 # First start after an install/migration may build images — don't time it out.
 TimeoutStartSec=0
 

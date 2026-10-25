@@ -188,7 +188,7 @@ services:
       - SOURCE_FORGE=${SOURCE_FORGE:-github}
       # So the panel can derive the locally-built turbotunnels image name
       # (<project>-turbotunnels) instead of assuming a fixed project name.
-      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-wire-panel}
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-motte}
     volumes:
       - api_data:/data
       - /var/log:/var/log:ro

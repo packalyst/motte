@@ -61,7 +61,7 @@ func imageName() string {
 	if p := helper.GetEnvOptional("COMPOSE_PROJECT_NAME", ""); p != "" {
 		return p + "-turbotunnels"
 	}
-	return "wire-panel-turbotunnels"
+	return "motte-turbotunnels"
 }
 
 // configHash returns a stable short hash of the tunnel config as the container

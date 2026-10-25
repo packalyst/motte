@@ -19,21 +19,21 @@ NC='\033[0m' # No Color
 
 # Managed-install locations (systemd service + protected folder). Used by the
 # `migrate` / `install-service` commands and install.sh.
-INSTALL_DIR="/opt/wire-panel"
-PROJECT_NAME="wire-panel"
-SYSTEMD_UNIT="/etc/systemd/system/wire-panel.service"
-CLI_WRAPPER="/usr/local/bin/wire-panel"
+INSTALL_DIR="/opt/motte"
+PROJECT_NAME="motte"
+SYSTEMD_UNIT="/etc/systemd/system/motte.service"
+CLI_WRAPPER="/usr/local/bin/motte"
 
 # Rebuild mode: regenerate configs from the saved .env and rebuild/restart the
 # stack without re-asking the interactive setup questions. Set by the `rebuild`
 # command, the menu, and the update flow.
 REBUILD_MODE=false
 
-# Command name shown in help/messages: `wire-panel` for the managed install,
+# Command name shown in help/messages: `motte` for the managed install,
 # `./manage.sh` when run from a plain checkout.
-if [ "$SCRIPT_DIR" = "$INSTALL_DIR" ]; then CMD="wire-panel"; else CMD="./manage.sh"; fi
+if [ "$SCRIPT_DIR" = "$INSTALL_DIR" ]; then CMD="motte"; else CMD="./manage.sh"; fi
 
-echo -e "${GREEN}=== Wire Panel ===${NC}"
+echo -e "${GREEN}=== Motte ===${NC}"
 echo ""
 
 # ===========================================
@@ -64,7 +64,7 @@ case "${1:-}" in
         echo "  update     Check for and install updates"
         echo "  backup     Back up SSL certificates"
         echo "  rotate-key Re-encrypt all secrets under a new encryption key"
-        if [ "$CMD" != "wire-panel" ]; then
+        if [ "$CMD" != "motte" ]; then
             echo "  migrate    Move this install to $INSTALL_DIR and register the service"
         fi
         echo "  help       Show this help"
@@ -103,7 +103,7 @@ case "${1:-}" in
         RUN_MIGRATE=true
         ;;
     install-service)
-        # Install/refresh the systemd unit + wire-panel CLI (used by install.sh).
+        # Install/refresh the systemd unit + motte CLI (used by install.sh).
         RUN_INSTALL_SERVICE=true
         ;;
     service-up)
@@ -626,22 +626,22 @@ reexec_as_root() {
     fi
 }
 
-# install_systemd_unit installs and enables the wire-panel service from the
+# install_systemd_unit installs and enables the motte service from the
 # in-repo unit file. Assumes the checkout already lives at $INSTALL_DIR.
 install_systemd_unit() {
     echo -e "${CYAN}Installing systemd unit...${NC}"
-    cp "$INSTALL_DIR/deploy/wire-panel.service" "$SYSTEMD_UNIT"
+    cp "$INSTALL_DIR/deploy/motte.service" "$SYSTEMD_UNIT"
     chmod 644 "$SYSTEMD_UNIT"
     systemctl daemon-reload
-    systemctl enable wire-panel.service >/dev/null 2>&1 || true
+    systemctl enable motte.service >/dev/null 2>&1 || true
     echo -e "  ${GREEN}✓${NC} $SYSTEMD_UNIT"
 }
 
-# install_cli_wrapper installs the `wire-panel` command so the install can be
+# install_cli_wrapper installs the `motte` command so the install can be
 # managed from anywhere.
 install_cli_wrapper() {
-    echo -e "${CYAN}Installing wire-panel command...${NC}"
-    cp "$INSTALL_DIR/deploy/wire-panel" "$CLI_WRAPPER"
+    echo -e "${CYAN}Installing motte command...${NC}"
+    cp "$INSTALL_DIR/deploy/motte" "$CLI_WRAPPER"
     chmod 755 "$CLI_WRAPPER"
     echo -e "  ${GREEN}✓${NC} $CLI_WRAPPER"
 }
@@ -738,7 +738,7 @@ migrate_to_opt() {
     mv "$SCRIPT_DIR" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     # mv preserves the source's (non-root) ownership. Since the systemd unit and
-    # the wire-panel wrapper run this tree as root, hand the whole install to root
+    # the motte wrapper run this tree as root, hand the whole install to root
     # so a non-root user can't edit a root-executed script (privilege escalation)
     # — and so chmod 600 on .env actually protects the secrets from that user.
     chown -R root:root "$INSTALL_DIR"
@@ -753,7 +753,7 @@ migrate_to_opt() {
     install_cli_wrapper
 
     echo -e "${YELLOW}Starting service (may build images, this can take a few minutes)...${NC}"
-    systemctl start wire-panel.service
+    systemctl start motte.service
 
     echo -e "${YELLOW}Verifying stack...${NC}"
     # Gate the old-volume delete on the api (DB-consuming) container specifically,
@@ -773,8 +773,8 @@ migrate_to_opt() {
     fi
 
     echo ""
-    echo -e "${GREEN}Migration complete.${NC} Manage it from anywhere with: ${CYAN}wire-panel${NC}"
-    echo -e "  (Host logrotate config refreshes on your next 'wire-panel update'.)"
+    echo -e "${GREEN}Migration complete.${NC} Manage it from anywhere with: ${CYAN}motte${NC}"
+    echo -e "  (Host logrotate config refreshes on your next 'motte update'.)"
 }
 
 # show_services prints one clean, colored status line per compose service — a
@@ -821,7 +821,7 @@ show_services() {
 rotate_key() {
     reexec_as_root rotate-key
 
-    echo -e "${GREEN}=== Wire Panel — Rotate Encryption Key ===${NC}"
+    echo -e "${GREEN}=== Motte — Rotate Encryption Key ===${NC}"
     echo ""
 
     [ -f .env ] || { echo -e "${RED}✗ .env not found — run setup first.${NC}"; exit 1; }
@@ -1772,7 +1772,7 @@ if [ ${#FIREWALL_CONFLICTS[@]} -gt 0 ]; then
     echo -e "${YELLOW}║${NC}  ${RED}⚠ FIREWALL CONFLICT DETECTED${NC}                              ${YELLOW}║${NC}"
     echo -e "${YELLOW}╠════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
-    echo -e "${YELLOW}║${NC}  Wireguard Admin uses nftables for its firewall.          ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}  Motte uses nftables for its firewall.                    ${YELLOW}║${NC}"
     echo -e "${YELLOW}║${NC}  The following services may conflict:                     ${YELLOW}║${NC}"
     echo -e "${YELLOW}║${NC}                                                            ${YELLOW}║${NC}"
     for conflict in "${FIREWALL_CONFLICTS[@]}"; do
@@ -1815,7 +1815,7 @@ if [ ${#FIREWALL_CONFLICTS[@]} -gt 0 ]; then
             done
             echo ""
             echo -e "${GREEN}✓ Firewall conflicts resolved${NC}"
-            echo -e "${CYAN}Note: Wireguard Admin will manage firewall rules via nftables${NC}"
+            echo -e "${CYAN}Note: Motte will manage firewall rules via nftables${NC}"
             ;;
         2)
             echo -e "${YELLOW}Continuing with potential conflicts...${NC}"
