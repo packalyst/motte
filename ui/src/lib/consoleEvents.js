@@ -31,7 +31,7 @@ function connect() {
     } else if (m.t === 'snapshot-result') {
       const k = m.machine_id + '|' + m.session
       const r = snapWaiters.get(k)
-      if (r) { snapWaiters.delete(k); r(m.data || '') }
+      if (typeof r === 'function') { snapWaiters.delete(k); r(m.data || '') }
     }
   }
   ws.onclose = () => {
