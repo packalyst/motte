@@ -1,6 +1,6 @@
 # Security Policy
 
-This project is a **security appliance** — a VPN/firewall admin panel. Vulnerabilities here can
+Motte is a **security appliance** — a VPN, firewall and fleet control panel. Vulnerabilities here can
 expose a network, so they are taken seriously and handled privately until fixed.
 
 ## Reporting a vulnerability
