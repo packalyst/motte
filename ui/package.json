@@ -27,6 +27,7 @@
     "leaflet": "^1.9.4",
     "marked": "^18.0.11",
     "mermaid": "^11.17.2",
+    "simple-keyboard": "3.8.194",
     "tailwindcss": "^4.1.17",
     "uplot": "^1.6.32"
   }
