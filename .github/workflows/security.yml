@@ -73,7 +73,7 @@ jobs:
         continue-on-error: true
         # SHA-pinned per GHSA-69fq-xp46-6x23 (the 2026-03 trivy-action tag-hijack);
         # must be >= v0.35.0 (first immutable-release-protected safe tag).
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
@@ -107,7 +107,7 @@ jobs:
           - containers/turbotunnels/Dockerfile
     steps:
       - uses: actions/checkout@v4
-      - uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         continue-on-error: true
         with:
           dockerfile: ${{ matrix.dockerfile }}
