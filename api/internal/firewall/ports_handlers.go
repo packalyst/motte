@@ -6,9 +6,10 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"api/internal/helper"
 	"api/internal/nftables"
@@ -237,34 +238,55 @@ func (s *Service) handleChangeSSHPort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update sshd_config
-	_, err = helper.SetSSHPort(req.Port)
-	if err != nil {
-		if _, delErr := s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(req.Port)); delErr != nil {
-			log.Printf("Warning: failed to rollback SSH port entry: %v", delErr)
+	newRow := strconv.Itoa(req.Port)
+	// undo puts sshd and the firewall back on the old port and reports why.
+	undo := func(msg string, restart bool) {
+		if _, err := helper.SetSSHPort(oldPort); err != nil {
+			log.Printf("Warning: failed to restore sshd_config port %d: %v", oldPort, err)
+		}
+		if restart {
+			if err := helper.RestartSSH(); err != nil {
+				log.Printf("Warning: failed to restart SSH on port %d: %v", oldPort, err)
+			}
+		}
+		if _, err := s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", newRow); err != nil {
+			log.Printf("Warning: failed to rollback SSH port entry: %v", err)
 		}
 		s.ApplyRules()
-		router.JSONError(w, "failed to update sshd_config: "+err.Error(), http.StatusInternalServerError)
+		router.JSONError(w, msg, http.StatusInternalServerError)
+	}
+
+	// Update sshd_config
+	if _, err = helper.SetSSHPort(req.Port); err != nil {
+		undo("failed to update sshd_config: "+err.Error(), false)
+		return
+	}
+	// A Port set in another file (e.g. /etc/ssh/sshd_config.d/) wins: this change wouldn't apply.
+	if ports, err := helper.SSHDEffectivePorts(); err == nil && !slices.Contains(ports, req.Port) {
+		undo(fmt.Sprintf("SSH's port is set in another config file (sshd uses %v): change it there, e.g. in /etc/ssh/sshd_config.d/", ports), false)
+		return
+	}
+	if err := helper.RestartSSH(); err != nil {
+		undo("failed to restart SSH: "+err.Error(), true)
+		return
+	}
+	// The old port is closed only once SSH really listens on the new one.
+	listening := false
+	for range 20 {
+		if helper.HostListensTCP(req.Port) {
+			listening = true
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !listening {
+		undo(fmt.Sprintf("SSH didn't start listening on port %d — kept on port %d", req.Port, oldPort), true)
 		return
 	}
 
-	// Restart SSH service
-	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "systemctl", "restart", "sshd")
-	if _, err := cmd.CombinedOutput(); err != nil {
-		cmd = exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "systemctl", "restart", "ssh")
-		if _, err2 := cmd.CombinedOutput(); err2 != nil {
-			helper.SetSSHPort(oldPort)
-			if _, delErr := s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(req.Port)); delErr != nil {
-				log.Printf("Warning: failed to rollback SSH port entry: %v", delErr)
-			}
-			s.ApplyRules()
-			router.JSONError(w, "failed to restart SSH", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Remove old SSH port from firewall
-	if oldPort != req.Port {
+	// Remove the old SSH port from the firewall, unless SSH still listens there too (sshd takes
+	// every Port it's given).
+	if oldPort != req.Port && !helper.HostListensTCP(oldPort) {
 		if _, err := s.db.Exec("DELETE FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND name = 'SSH'", strconv.Itoa(oldPort)); err != nil {
 			log.Printf("Warning: failed to delete old SSH port entry: %v", err)
 		}

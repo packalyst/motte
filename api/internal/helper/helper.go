@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -123,7 +122,7 @@ type essentialPortJSON struct {
 // BuildEssentialPorts builds the list of essential ports at boot time.
 //
 // Sources, in order:
-//  1. SSH port auto-detected from sshd_config (always).
+//  1. Every port the host's SSH server listens on (SSHPorts — always).
 //  2. Ports listed in a JSON file — either at ESSENTIAL_PORTS_FILE (env
 //     override) or at DefaultEssentialPortsFile. Missing/unreadable/invalid
 //     JSON is a warning, not fatal — Docker discovery still runs later.
@@ -132,7 +131,7 @@ type essentialPortJSON struct {
 func BuildEssentialPorts() []EssentialPort {
 	ports := []EssentialPort{}
 
-	if sshPort := detectSSHPort(); sshPort > 0 {
+	for _, sshPort := range SSHPorts() {
 		ports = append(ports, EssentialPort{Port: sshPort, Protocol: "tcp", Service: "SSH"})
 	}
 
@@ -179,55 +178,6 @@ func BuildEssentialPorts() []EssentialPort {
 
 	log.Printf("essential-ports: loaded %d entries from %s", len(entries), path)
 	return ports
-}
-
-// GetSSHPort reads the SSH port from sshd_config (exported version)
-func GetSSHPort() int {
-	return detectSSHPort()
-}
-
-// detectSSHPort reads the SSH port from sshd_config
-func detectSSHPort() int {
-	// Try common sshd_config locations
-	paths := SSHConfigPaths
-
-	for _, path := range paths {
-		port := readSSHPortFromFile(path)
-		if port > 0 {
-			return port
-		}
-	}
-
-	// Default SSH port
-	return 22
-}
-
-// readSSHPortFromFile reads SSH port from a single config file
-func readSSHPortFromFile(path string) int {
-	file, err := os.Open(path)
-	if err != nil {
-		return 0
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		// Skip comments
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		// Look for Port directive
-		if strings.HasPrefix(line, "Port ") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				if port, err := strconv.Atoi(parts[1]); err == nil {
-					return port
-				}
-			}
-		}
-	}
-	return 0
 }
 
 // ParseUserAgent extracts a readable device/browser name from User-Agent string
@@ -291,7 +241,7 @@ func SetSSHPort(newPort int) (int, error) {
 		return 0, fmt.Errorf("failed to read sshd_config: %w", err)
 	}
 
-	oldPort := detectSSHPort()
+	oldPort := GetSSHPort()
 	lines := strings.Split(string(content), "\n")
 	var newLines []string
 	portFound := false
