@@ -445,7 +445,7 @@
           </button>
           {#if githubDropdownOpen}
             <div class="kt-dropdown w-52">
-              <a href="https://github.com/packalyst/wireguard-admin-panel" target="_blank" rel="noopener noreferrer"
+              <a href="https://github.com/packalyst/motte" target="_blank" rel="noopener noreferrer"
                 class="kt-dropdown-item font-medium">
                 <Icon name="brand-github" size={14} class="kt-dropdown-item-icon" />
                 Motte

@@ -1,6 +1,6 @@
 [Unit]
 Description=Motte — WireGuard, Headscale and fleet stack
-Documentation=https://github.com/packalyst/wireguard-admin-panel
+Documentation=https://github.com/packalyst/motte
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target

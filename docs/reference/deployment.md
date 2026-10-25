@@ -18,7 +18,7 @@ There are two shapes of install, both ultimately driven by `manage.sh`:
 `install.sh` (repo root, 62 lines) does a one-line, root install:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/packalyst/wireguard-admin-panel/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/packalyst/motte/main/install.sh | sudo bash
 ```
 
 Flow (`install.sh`):
@@ -29,7 +29,7 @@ Flow (`install.sh`):
 5. Call `./manage.sh install-service` — registers the systemd unit + `motte` CLI (logic lives in `manage.sh` only, not duplicated).
 6. If a TTY is present, `exec ./manage.sh` to run first-time interactive setup; if piped (`curl | bash`, no TTY), it stops and tells the operator to run `sudo motte`.
 
-`INSTALL_DIR=/opt/motte` and `REPO=...packalyst/wireguard-admin-panel.git` are hardcoded in `install.sh`.
+`INSTALL_DIR=/opt/motte` and `REPO=...packalyst/motte.git` are hardcoded in `install.sh`.
 
 ### b) Plain checkout
 
