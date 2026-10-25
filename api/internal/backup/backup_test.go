@@ -181,3 +181,37 @@ func TestSealOpenUnit(t *testing.T) {
 		t.Fatal("aad mismatch should fail")
 	}
 }
+
+// A machine's last report is a cache its agent resends: a backup leaves it out (it can be megabytes),
+// and an import restores the machine without it.
+func TestExportLeavesOutMachineReport(t *testing.T) {
+	db := testDB(t)
+	if _, err := db.Exec(`CREATE TABLE fleet_machines (id TEXT PRIMARY KEY, name TEXT, last_report TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`INSERT INTO fleet_machines (id, name, last_report) VALUES ('m1', 'web-01', '{"cves":"BIG-REPORT"}')`)
+
+	blob, err := Export(db, "correct horse battery", "test", false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, doc, err := Open(blob, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := doc.Tables["fleet_machines"]
+	if len(rows) != 1 || rows[0]["name"] != "web-01" {
+		t.Fatalf("machine not exported: %+v", rows)
+	}
+	if _, ok := rows[0]["last_report"]; ok {
+		t.Fatal("last_report exported")
+	}
+	if err := Import(db, doc); err != nil {
+		t.Fatal(err)
+	}
+	var name string
+	var report sql.NullString
+	if err := db.QueryRow(`SELECT name, last_report FROM fleet_machines WHERE id='m1'`).Scan(&name, &report); err != nil || name != "web-01" || report.Valid {
+		t.Fatalf("machine not restored without its report: name=%q report=%v err=%v", name, report, err)
+	}
+}

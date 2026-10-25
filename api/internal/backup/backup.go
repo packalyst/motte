@@ -66,6 +66,12 @@ var secretCols = map[string][]string{
 	"fleet_ca":          {"key_enc"},
 }
 
+// volatileCols are left out of a backup: caches the panel rebuilds on its own. A machine's last
+// report (scan findings, ban lists) is megabytes per machine and its agent resends it within minutes.
+var volatileCols = map[string]map[string]bool{
+	"fleet_machines": {"last_report": true},
+}
+
 // tableLabels are human names for the import preview.
 var tableLabels = map[string]string{
 	"vpn_clients": "VPN peers", "vpn_acl_rules": "Peer ACL rules", "vpn_router_config": "Router config",
@@ -274,6 +280,9 @@ func dumpTable(db *sql.DB, table string) ([]map[string]any, error) {
 		}
 		m := make(map[string]any, len(cols))
 		for i, c := range cols {
+			if volatileCols[table][c] {
+				continue
+			}
 			v := vals[i]
 			if b, ok := v.([]byte); ok {
 				v = string(b)
