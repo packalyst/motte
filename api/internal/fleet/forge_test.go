@@ -11,23 +11,23 @@ import (
 func TestNewForgeValid(t *testing.T) {
 	cases := []struct {
 		url, forge string
-		wantAsset  string // AssetURL("agent-v1.2.3", "wgscout-linux-amd64")
+		wantAsset  string // AssetURL("agent-v1.2.3", "motte-agent-linux-amd64")
 	}{
 		{"https://github.com/packalyst/wireguard-admin-panel", "",
-			"https://github.com/packalyst/wireguard-admin-panel/releases/download/agent-v1.2.3/wgscout-linux-amd64"},
+			"https://github.com/packalyst/wireguard-admin-panel/releases/download/agent-v1.2.3/motte-agent-linux-amd64"},
 		{"https://github.com/packalyst/wireguard-admin-panel.git", "github",
-			"https://github.com/packalyst/wireguard-admin-panel/releases/download/agent-v1.2.3/wgscout-linux-amd64"},
+			"https://github.com/packalyst/wireguard-admin-panel/releases/download/agent-v1.2.3/motte-agent-linux-amd64"},
 		{"https://git.example.com/acme/panel", "gitea",
-			"https://git.example.com/acme/panel/releases/download/agent-v1.2.3/wgscout-linux-amd64"},
+			"https://git.example.com/acme/panel/releases/download/agent-v1.2.3/motte-agent-linux-amd64"},
 		{"https://gitlab.example.com/acme/panel", "gitlab",
-			"https://gitlab.example.com/acme/panel/-/releases/agent-v1.2.3/downloads/wgscout-linux-amd64"},
+			"https://gitlab.example.com/acme/panel/-/releases/agent-v1.2.3/downloads/motte-agent-linux-amd64"},
 	}
 	for _, c := range cases {
 		f, err := newForge(c.url, c.forge)
 		if err != nil {
 			t.Fatalf("newForge(%q,%q) error: %v", c.url, c.forge, err)
 		}
-		if got := f.AssetURL("agent-v1.2.3", "wgscout-linux-amd64"); got != c.wantAsset {
+		if got := f.AssetURL("agent-v1.2.3", "motte-agent-linux-amd64"); got != c.wantAsset {
 			t.Errorf("AssetURL for %q = %q, want %q", c.url, got, c.wantAsset)
 		}
 	}

@@ -35,9 +35,9 @@ malicious or stale release can no longer harm an agent:
 - **Anti-rollback.** After the staged binary passes signature + checksum verification, the agent
   reads the binary's own (now-authenticated) version and refuses to activate anything older than
   the highest version this host has ever run. That floor is persisted beside the binary
-  (`.wgscout.floor`), so a downgrade is refused even across a restart or reinstall — a compromised
+  (`.motte-agent.floor`), so a downgrade is refused even across a restart or reinstall — a compromised
   panel cannot push a known-vulnerable old release.
-- **Selftest-before-swap.** A dependency-free `wgscout selftest` subcommand (ed25519 roundtrip +
+- **Selftest-before-swap.** A dependency-free `motte-agent selftest` subcommand (ed25519 roundtrip +
   self-locate) is run on the staged binary before the atomic swap, catching a wrong-arch or
   broken-but-hash-matched build before it replaces the live one.
 - **Key rollover.** The baked-in `signPubKey` now accepts a *list* of public keys; a release

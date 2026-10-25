@@ -293,7 +293,7 @@ again, on top of a valid session:
 
 ## 4. Fleet mTLS (agent ↔ panel)
 
-The panel is a **private CA + enrollment service**; per-machine agents (`wgscout`)
+The panel is a **private CA + enrollment service**; per-machine agents (`motte-agent`)
 join once with a one-time token, get a client cert, and thereafter speak **mutual
 TLS**. Full agent lifecycle: [fleet-agent.md](fleet-agent.md). Package
 `api/internal/fleet`.

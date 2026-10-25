@@ -163,7 +163,7 @@ Details: [security reference](docs/reference/security.md).
 
 ## Architecture
 
-The supply chain for the fleet agent (`wgscout`) is built so that **no single compromise — the panel included — can push a malicious binary**. The forge, host, and repo are all configurable; nothing about a specific repository is baked into the Go binary.
+The supply chain for the fleet agent (`motte-agent`) is built so that **no single compromise — the panel included — can push a malicious binary**. The forge, host, and repo are all configurable; nothing about a specific repository is baked into the Go binary.
 
 ### Overall stack
 
@@ -180,7 +180,7 @@ flowchart TB
     api -.->|manages| headscale["headscale"]
     api -.->|manages| adguard["adguard DNS"]
     api --> fleetl["fleet mTLS listener :9443"]
-    agents["fleet agents (wgscout)"] -->|"mTLS :9443"| fleetl
+    agents["fleet agents (motte-agent)"] -->|"mTLS :9443"| fleetl
 ```
 
 ### Enrollment &amp; mTLS trust
@@ -193,7 +193,7 @@ sequenceDiagram
     participant Op as Operator
     participant Panel as Panel
     participant CA as Fleet CA
-    participant Agent as wgscout
+    participant Agent as motte-agent
     Op->>Panel: mint one-time token
     Op->>Agent: run panel-served install script
     Panel-->>Agent: script + panelURL + CA fingerprint + token
@@ -248,7 +248,7 @@ An agent updates by asking **its own panel** over the CA-pinned mTLS channel —
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Agent as wgscout
+    participant Agent as motte-agent
     participant Panel as Panel
     Note over Agent,Panel: mutual TLS (enrolled identity)
     Agent->>Panel: GET /update

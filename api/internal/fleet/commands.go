@@ -32,7 +32,7 @@ var allowedCommands = map[string]bool{
 	"fix-packages":   true, // targeted OS-package upgrades for selected CVEs
 	"update-kernel":  true, // install newest kernel meta-packages (+ reboot separately)
 	"set-dry-run":    true, // flip enforcement on/off (dry-run) live
-	"update-agent":   true, // self-update the wgscout binary to the latest verified release
+	"update-agent":   true, // self-update the motte-agent binary to the latest verified release
 	"set-log-level":  true, // flip agent+sub-agent verbosity live (quiet|debug)
 	"set-panel-port": true, // tell the agent the panel's mTLS port changed (reconnect)
 	"set-console":    true, // enable/disable the interactive console channel (point 7)
@@ -53,7 +53,7 @@ var confirmCommands = map[string]bool{
 	"apply-updates": true, // system package upgrades — can break the host or force a reboot
 	"update-kernel": true, // installs a new kernel; reboot to activate
 	"restart":       true, // restarts tools or the whole host
-	"update-agent":  true, // swaps the wgscout binary and restarts the service
+	"update-agent":  true, // swaps the motte-agent binary and restarts the service
 	"set-dry-run":   true, // flips enforcement on/off — turning it OFF removes protection
 	"clear-blocks":  true, // empties the machine's panel-pushed blocklist
 	"set-tool":      true, // turning a security tool off removes that protection
