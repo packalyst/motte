@@ -42,6 +42,9 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: "@xterm/addon-*"
         update-types: [version-update:semver-minor]
+      # Published by a bot every few days, usually with no code change; updated on purpose.
+      - dependency-name: simple-keyboard
+        update-types: [version-update:semver-patch]
 
   - package-ecosystem: github-actions
     directory: /
