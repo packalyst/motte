@@ -31,11 +31,17 @@ updates:
     open-pull-requests-limit: 3
     labels: [dependencies, ui]
     groups:
+      # xterm and its add-ons move together: an add-on's 0.x "minor" is built for the next xterm
+      # major, so updated alone it breaks the console.
+      xterm:
+        patterns: ["@xterm/*"]
       ui-minor-patch:
         update-types: [minor, patch]
     ignore:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
+      - dependency-name: "@xterm/addon-*"
+        update-types: [version-update:semver-minor]
 
   - package-ecosystem: github-actions
     directory: /
@@ -60,6 +66,9 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
+      # A new Go line (1.26 → 1.27) is adopted deliberately with go.mod and the agent; patches still come.
+      - dependency-name: golang
+        update-types: [version-update:semver-minor]
 
   - package-ecosystem: docker
     directory: /ui
