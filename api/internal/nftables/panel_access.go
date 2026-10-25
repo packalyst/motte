@@ -14,10 +14,10 @@ import (
 
 // PanelAccessTable optionally restricts inbound access to the panel's OWN API port
 // (API_PORT) to trusted sources only. It is a SEPARATE, clearly-named table
-// (inet wgadmin_panel_access) so it is obvious in `nft list ruleset` what it does.
+// (inet motte_panel_access) so it is obvious in `nft list ruleset` what it does.
 //
-// Why a dedicated table (not a rule in wgadmin_firewall): each concern here is its own
-// registered table (wgadmin_firewall, wgadmin_vpn_acl, ...). This one owns exactly one
+// Why a dedicated table (not a rule in motte_firewall): each concern here is its own
+// registered table (motte_firewall, motte_vpn_acl, ...). This one owns exactly one
 // policy — "who may reach the panel API directly" — so it can be reasoned about, toggled,
 // and inspected on its own.
 //
@@ -41,7 +41,7 @@ type PanelAccessTable struct {
 // NewPanelAccessTable creates the panel-access table builder.
 func NewPanelAccessTable(db *database.DB) *PanelAccessTable { return &PanelAccessTable{db: db} }
 
-func (t *PanelAccessTable) Name() string   { return "wgadmin_panel_access" }
+func (t *PanelAccessTable) Name() string   { return "motte_panel_access" }
 func (t *PanelAccessTable) Family() string { return "inet" }
 
 // Priority orders this table's emission in the combined script. It runs before the main
@@ -52,7 +52,7 @@ func (t *PanelAccessTable) Priority() int { return 5 }
 func (t *PanelAccessTable) Build() (string, error) {
 	var sb strings.Builder
 	// Idempotent create/delete/define, mirroring the other tables.
-	sb.WriteString("table inet wgadmin_panel_access\ndelete table inet wgadmin_panel_access\n\n")
+	sb.WriteString("table inet motte_panel_access\ndelete table inet motte_panel_access\n\n")
 
 	restrict := t.restrictEnabled()
 	port, portOK := apiPort()
@@ -62,7 +62,7 @@ func (t *PanelAccessTable) Build() (string, error) {
 	// trusted sources, emit an empty table (no filtering) — we must NEVER risk locking the
 	// panel out of its own management plane by dropping traffic we can't classify.
 	if !restrict || !portOK || len(trusted) == 0 {
-		sb.WriteString("table inet wgadmin_panel_access {\n}\n")
+		sb.WriteString("table inet motte_panel_access {\n}\n")
 		return sb.String(), nil
 	}
 
@@ -76,7 +76,7 @@ func (t *PanelAccessTable) Build() (string, error) {
 		fmt.Sprintf("tcp dport %d drop", port),
 	}
 
-	sb.WriteString("table inet wgadmin_panel_access {\n")
+	sb.WriteString("table inet motte_panel_access {\n")
 	sb.WriteString(BuildChain("input", "filter", "input", -10, "accept", rules))
 	sb.WriteString("}\n")
 	return sb.String(), nil

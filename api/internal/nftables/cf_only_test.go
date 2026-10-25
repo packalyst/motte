@@ -23,7 +23,7 @@ func TestCloudflareOnlyBuild_FailsOpen(t *testing.T) {
 	if strings.Contains(out, "drop") {
 		t.Fatalf("fail-open expected: empty table must contain no drop:\n%s", out)
 	}
-	if !strings.Contains(out, "table inet wgadmin_cf_only {\n}") {
+	if !strings.Contains(out, "table inet motte_cf_only {\n}") {
 		t.Fatalf("expected an empty table shell, got:\n%s", out)
 	}
 }

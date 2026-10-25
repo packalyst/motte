@@ -233,20 +233,20 @@ func (s *Service) CountSetElements(family, table, setName string) int {
 // GetFirewallSetCounts returns element counts for all firewall sets
 func (s *Service) GetFirewallSetCounts() map[string]int {
 	return map[string]int{
-		"blocked_ips":           s.CountSetElements("inet", "wgadmin_firewall", "blocked_ips"),
-		"blocked_ranges":        s.CountSetElements("inet", "wgadmin_firewall", "blocked_ranges"),
-		"blocked_countries":     s.CountSetElements("inet", "wgadmin_firewall", "blocked_countries"),
-		"blocked_asn":           s.CountSetElements("inet", "wgadmin_firewall", "blocked_asn"),
-		"blocked_ips_out":       s.CountSetElements("inet", "wgadmin_firewall", "blocked_ips_out"),
-		"blocked_ranges_out":    s.CountSetElements("inet", "wgadmin_firewall", "blocked_ranges_out"),
-		"blocked_countries_out": s.CountSetElements("inet", "wgadmin_firewall", "blocked_countries_out"),
-		"blocked_asn_out":       s.CountSetElements("inet", "wgadmin_firewall", "blocked_asn_out"),
-		"allowed_tcp_ports":     s.CountSetElements("inet", "wgadmin_firewall", "allowed_tcp_ports"),
-		"allowed_udp_ports":     s.CountSetElements("inet", "wgadmin_firewall", "allowed_udp_ports"),
-		"allowed_ips":           s.CountSetElements("inet", "wgadmin_firewall", "allowed_ips"),
-		"allowed_ranges":        s.CountSetElements("inet", "wgadmin_firewall", "allowed_ranges"),
-		"allowed_countries":     s.CountSetElements("inet", "wgadmin_firewall", "allowed_countries"),
-		"allowed_asn":           s.CountSetElements("inet", "wgadmin_firewall", "allowed_asn"),
+		"blocked_ips":           s.CountSetElements("inet", "motte_firewall", "blocked_ips"),
+		"blocked_ranges":        s.CountSetElements("inet", "motte_firewall", "blocked_ranges"),
+		"blocked_countries":     s.CountSetElements("inet", "motte_firewall", "blocked_countries"),
+		"blocked_asn":           s.CountSetElements("inet", "motte_firewall", "blocked_asn"),
+		"blocked_ips_out":       s.CountSetElements("inet", "motte_firewall", "blocked_ips_out"),
+		"blocked_ranges_out":    s.CountSetElements("inet", "motte_firewall", "blocked_ranges_out"),
+		"blocked_countries_out": s.CountSetElements("inet", "motte_firewall", "blocked_countries_out"),
+		"blocked_asn_out":       s.CountSetElements("inet", "motte_firewall", "blocked_asn_out"),
+		"allowed_tcp_ports":     s.CountSetElements("inet", "motte_firewall", "allowed_tcp_ports"),
+		"allowed_udp_ports":     s.CountSetElements("inet", "motte_firewall", "allowed_udp_ports"),
+		"allowed_ips":           s.CountSetElements("inet", "motte_firewall", "allowed_ips"),
+		"allowed_ranges":        s.CountSetElements("inet", "motte_firewall", "allowed_ranges"),
+		"allowed_countries":     s.CountSetElements("inet", "motte_firewall", "allowed_countries"),
+		"allowed_asn":           s.CountSetElements("inet", "motte_firewall", "allowed_asn"),
 	}
 }
 

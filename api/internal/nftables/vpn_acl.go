@@ -19,7 +19,7 @@ func NewVPNACLTable(db *database.DB) *VPNACLTable {
 	return &VPNACLTable{db: db}
 }
 
-func (t *VPNACLTable) Name() string   { return "wgadmin_vpn_acl" }
+func (t *VPNACLTable) Name() string   { return "motte_vpn_acl" }
 func (t *VPNACLTable) Family() string { return "inet" }
 func (t *VPNACLTable) Priority() int  { return 20 }
 
@@ -209,9 +209,9 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	}
 
 	// Delete existing table
-	sb.WriteString("table inet wgadmin_vpn_acl\ndelete table inet wgadmin_vpn_acl\n\n")
+	sb.WriteString("table inet motte_vpn_acl\ndelete table inet motte_vpn_acl\n\n")
 
-	sb.WriteString("table inet wgadmin_vpn_acl {\n")
+	sb.WriteString("table inet motte_vpn_acl {\n")
 	sb.WriteString(BuildSet("vips", "ipv4_addr", nil, vipIPs))
 	sb.WriteString("\n")
 	sb.WriteString("    chain forward {\n")

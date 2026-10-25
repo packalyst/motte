@@ -12,7 +12,7 @@ import (
 // /var/lib/misc). One file per network keeps parsing simple and per-network.
 const apiLeaseDir = "/dhcp-leases"
 
-func apiLeasePath(iface string) string { return apiLeaseDir + "/wgpanel-" + iface + ".leases" }
+func apiLeasePath(iface string) string { return apiLeaseDir + "/motte-" + iface + ".leases" }
 
 // removeLeaseFile deletes a network's dnsmasq lease file from the shared volume when the network is
 // deleted, so a network later created on the same NIC doesn't inherit stale leases (old devices

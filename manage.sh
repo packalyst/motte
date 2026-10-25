@@ -341,7 +341,7 @@ prompt_yes_no() {
     [[ "$response" =~ ^[Yy] ]]
 }
 
-CERT_BACKUP_DIR="/usr/local/wgadmin/certs"
+CERT_BACKUP_DIR="/usr/local/motte/certs"
 TRAEFIK_MAIN_LOG="traefik/logs/traefik.log"
 
 # Backup all certificates (whole acme.json) - uses SSL_DOMAIN from .env
@@ -1528,8 +1528,8 @@ if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
 
                 # Clean nftables tables created by the application
                 echo -e "${YELLOW}Cleaning nftables tables...${NC}"
-                sudo nft delete table inet wgadmin_firewall 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet wgadmin_firewall table" || true
-                sudo nft delete table inet wgadmin_vpn_acl 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet wgadmin_vpn_acl table" || true
+                sudo nft delete table inet motte_firewall 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet motte_firewall table" || true
+                sudo nft delete table inet motte_vpn_acl 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet motte_vpn_acl table" || true
 
                 echo -e "${GREEN}✓ Everything cleaned${NC}"
             fi
@@ -1886,9 +1886,9 @@ if [ -n "$GLOBAL_V6" ]; then
     if [ -n "$WAN_IFACE" ] && prompt_yes_no "Disable IPv6 on ${WAN_IFACE} at the OS level?" "n"; then
         # sysctl path: dots in interface names (VLANs, e.g. eth0.100) map to slashes.
         SYSCTL_KEY="net.ipv6.conf.${WAN_IFACE//./\/}.disable_ipv6"
-        SYSCTL_FILE="/etc/sysctl.d/99-wgadmin-ipv6.conf"
+        SYSCTL_FILE="/etc/sysctl.d/99-motte-ipv6.conf"
         if sudo sysctl -w "${SYSCTL_KEY}=1" >/dev/null 2>&1; then
-            printf '# Disable IPv6 on the WAN interface (wgadmin panel is IPv4-only)\n%s = 1\n' "$SYSCTL_KEY" | sudo tee "$SYSCTL_FILE" >/dev/null
+            printf '# Disable IPv6 on the WAN interface (Motte is IPv4-only)\n%s = 1\n' "$SYSCTL_KEY" | sudo tee "$SYSCTL_FILE" >/dev/null
             echo -e "${GREEN}✓ IPv6 disabled on ${WAN_IFACE} (persisted in ${SYSCTL_FILE})${NC}"
             echo -e "  ${CYAN}To re-enable later: sudo rm ${SYSCTL_FILE} && sudo sysctl -w ${SYSCTL_KEY}=0${NC}"
         else
@@ -2943,7 +2943,7 @@ fi
 
 # Logrotate config for Traefik logs
 if [ -f "traefik/logrotate.conf" ]; then
-    LOGROTATE_CONF="/etc/logrotate.d/wgadmin-traefik"
+    LOGROTATE_CONF="/etc/logrotate.d/motte-traefik"
     export TRAEFIK_LOGS_DIR="$(pwd)/traefik/logs"
     export TRAEFIK_LOG_ROTATE_COUNT="${TRAEFIK_LOG_ROTATE_COUNT:-7}"
     export TRAEFIK_LOG_MAX_SIZE="${TRAEFIK_LOG_MAX_SIZE:-50M}"

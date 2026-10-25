@@ -43,7 +43,7 @@ and is advisory only — data-plane is the real gate).
 1. **Managed interfaces (the safe foundation).**
    - UI: pick a non-WAN internal NIC, set subnet/CIDR, gateway IP (must be inside subnet),
      DHCP pool (inside subnet, no clash with gateway / WG range / other managed nets).
-   - Panel **owns** a netplan drop-in per managed net (e.g. `/etc/netplan/90-wgpanel-ens19.yaml`)
+   - Panel **owns** a netplan drop-in per managed net (e.g. `/etc/netplan/90-motte-ens19.yaml`)
      so the gateway IP is not a fragile manual edit. Apply with a **`netplan try`-style
      commit + auto-rollback**; detect drift; if the interface/IP is missing, DHCP refuses
      with a clear UI error.

@@ -9,7 +9,7 @@ import (
 // withSessionCookie adds the plain (non-HTTPS) session cookie so the request looks
 // cookie-authenticated to the CSRF gate.
 func withSessionCookie(r *http.Request) *http.Request {
-	r.AddCookie(&http.Cookie{Name: "wgpanel_session", Value: "tok"})
+	r.AddCookie(&http.Cookie{Name: "motte_session", Value: "tok"})
 	return r
 }
 

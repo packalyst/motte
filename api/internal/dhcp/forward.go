@@ -7,7 +7,7 @@ import (
 
 // Docker sets the host's FORWARD chain to policy DROP (priority 0) and only accepts its own bridge
 // traffic. A packet routed between a managed segment NIC and the WAN is not Docker's, matches
-// nothing, and hits that drop BEFORE it reaches our reachability chain (inet wgadmin_dhcp_net,
+// nothing, and hits that drop BEFORE it reaches our reachability chain (inet motte_dhcp_net,
 // priority +10) — an accept there can't rescue a packet an earlier base chain already dropped.
 // WireGuard faces the same wall and gets past it with `FORWARD -i/-o wg0 accept` (see
 // wireguard.setupNAT), which is also why VPN↔segment forwarding already works: it rides those wg0

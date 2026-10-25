@@ -13,7 +13,7 @@ direct packet can bypass the intended restriction.
 
 The **nftables ruleset is the authoritative gate**. Every reachability decision (peer isolation,
 virtual-IP exposure, DHCP-network reachability) is expressed as a default-deny nft table
-(`wgadmin_vpn_acl`, `wgadmin_dhcp_net`, …) rebuilt from the database. The Headscale policy is
+(`motte_vpn_acl`, `motte_dhcp_net`, …) rebuilt from the database. The Headscale policy is
 generated to **match** the nft gate so the two agree, but it is treated as advisory UX, not as
 the thing standing between a packet and a host.
 

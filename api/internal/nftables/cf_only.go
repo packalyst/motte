@@ -11,8 +11,8 @@ import (
 
 // CloudflareOnlyTable optionally restricts inbound access to the web ports (80/443)
 // to Cloudflare's edge ranges only — so nobody can bypass Cloudflare by hitting the
-// server's raw IP. It is a SEPARATE, clearly-named table (inet wgadmin_cf_only),
-// mirroring wgadmin_panel_access.
+// server's raw IP. It is a SEPARATE, clearly-named table (inet motte_cf_only),
+// mirroring motte_panel_access.
 //
 // Driven by the `web_cloudflare_only` setting:
 //   - OFF (default): an EMPTY shell — 80/443 stay open to everyone.
@@ -32,7 +32,7 @@ func NewCloudflareOnlyTable(db *database.DB) *CloudflareOnlyTable {
 	return &CloudflareOnlyTable{db: db}
 }
 
-func (t *CloudflareOnlyTable) Name() string   { return "wgadmin_cf_only" }
+func (t *CloudflareOnlyTable) Name() string   { return "motte_cf_only" }
 func (t *CloudflareOnlyTable) Family() string { return "inet" }
 
 // Priority orders this table's emission after panel-access (5); the chain hook
@@ -43,20 +43,20 @@ func (t *CloudflareOnlyTable) Priority() int { return 6 }
 func (t *CloudflareOnlyTable) Build() (string, error) {
 	var sb strings.Builder
 	// Idempotent create/delete/define, mirroring the other tables.
-	sb.WriteString("table inet wgadmin_cf_only\ndelete table inet wgadmin_cf_only\n\n")
+	sb.WriteString("table inet motte_cf_only\ndelete table inet motte_cf_only\n\n")
 
 	v4, v6 := splitCIDRs(helper.CloudflareCIDRs())
 
 	// FAIL OPEN: never risk dropping all web access. If the toggle is off, or we have
 	// no Cloudflare ranges to allow, emit an empty table (no filtering).
 	if !t.restrictEnabled() || len(v4)+len(v6) == 0 {
-		sb.WriteString("table inet wgadmin_cf_only {\n}\n")
+		sb.WriteString("table inet motte_cf_only {\n}\n")
 		return sb.String(), nil
 	}
 
 	trusted := trustedPanelSources() // loopback, Docker bridge, WireGuard, Headscale (v4)
 
-	sb.WriteString("table inet wgadmin_cf_only {\n")
+	sb.WriteString("table inet motte_cf_only {\n")
 	if len(v4) > 0 {
 		sb.WriteString(BuildSet("cf_v4", "ipv4_addr", []string{"interval", "auto-merge"}, v4))
 	}

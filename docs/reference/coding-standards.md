@@ -181,8 +181,8 @@ element deletes-and-fails the whole table, so this code has extra rules
 - **Emit shared rule blocks from one function** so two chains can't drift:
   `allowAndSaddrDropRules()` (`firewall.go:376-389`) is used by both the input and forward
   chains.
-- A dedicated concern = a dedicated, clearly-named table. `wgadmin_panel_access` and
-  `wgadmin_cf_only` are separate tables, not rules bolted onto `wgadmin_firewall`, so
+- A dedicated concern = a dedicated, clearly-named table. `motte_panel_access` and
+  `motte_cf_only` are separate tables, not rules bolted onto `motte_firewall`, so
   `nft list ruleset` is self-documenting (`panel_access.go:13-31`).
 
 ---

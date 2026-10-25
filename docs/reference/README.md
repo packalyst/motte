@@ -27,7 +27,7 @@ Two invariants run through everything: **the firewall is the gate** (default-dro
 | Doc | What it covers |
 |---|---|
 | [security.md](security.md) | The application security model — at-rest encryption & the rotate-key flow, human auth (login/sessions/2FA), fleet mTLS, web hardening/CSP & secrets handling, and the L3-vs-L7 access controls. |
-| [networking-firewall.md](networking-firewall.md) | The nftables design — the separate tables (`wgadmin_firewall`, `wgadmin_panel_access`, `wgadmin_cf_only`, `wgadmin_vpn_acl`), the set inventory, how ports open, jails, the two L3 access toggles, Cloudflare handling, and the L7 sentinel plugin. |
+| [networking-firewall.md](networking-firewall.md) | The nftables design — the separate tables (`motte_firewall`, `motte_panel_access`, `motte_cf_only`, `motte_vpn_acl`), the set inventory, how ports open, jails, the two L3 access toggles, Cloudflare handling, and the L7 sentinel plugin. |
 
 ### Frontend
 | Doc | What it covers |

@@ -18,7 +18,7 @@ and an unmanaged segment could route straight into the VPN.
   writes go through `nsenter -t 1` because the `api` has its own mount namespace.
 - **DHCP only:** the `dnsmasq` sidecar runs with `port=0` (DHCP, no DNS), config validated with
   `dnsmasq --test` before reload; reload is a container restart (no docker-exec).
-- **Reachability:** a default-deny nft table (`wgadmin_dhcp_net`) governs segment↔VPN reach; internet
+- **Reachability:** a default-deny nft table (`motte_dhcp_net`) governs segment↔VPN reach; internet
   egress NAT is **off by default**.
 
 ## Consequences

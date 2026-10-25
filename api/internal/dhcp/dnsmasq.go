@@ -29,7 +29,7 @@ func dnsmasqConfPath(iface string) (string, error) {
 	if !validIface(iface) {
 		return "", fmt.Errorf("invalid interface name %q", iface)
 	}
-	p := filepath.Join(dnsmasqConfDir, "wgpanel-"+iface+".conf")
+	p := filepath.Join(dnsmasqConfDir, "motte-"+iface+".conf")
 	if filepath.Dir(p) != dnsmasqConfDir {
 		return "", fmt.Errorf("refusing dnsmasq path outside %s: %q", dnsmasqConfDir, p)
 	}
@@ -44,7 +44,7 @@ func dnsmasqConfPath(iface string) (string, error) {
 // because the firewall gate keys on that IP. Blocked devices (validated MACs) get no address.
 func renderDnsmasqConf(n *Network, reservations []Client, blocked []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Managed by wgpanel — do not edit. Network: %s (%s)\n", n.Iface, n.CIDR)
+	fmt.Fprintf(&b, "# Managed by Motte — do not edit. Network: %s (%s)\n", n.Iface, n.CIDR)
 	// Global single-value keywords (port=0, …) live ONLY in the base conf. dnsmasq loads base +
 	// this file together, so repeating one here is an "illegal repeated keyword" that crash-loops
 	// the container. Keep this file to per-network directives only.
@@ -58,7 +58,7 @@ func renderDnsmasqConf(n *Network, reservations []Client, blocked []string) stri
 	if n.Domain != "" {
 		fmt.Fprintf(&b, "domain=%s\n", n.Domain)
 	}
-	fmt.Fprintf(&b, "dhcp-leasefile=/var/lib/misc/wgpanel-%s.leases\n", n.Iface)
+	fmt.Fprintf(&b, "dhcp-leasefile=/var/lib/misc/motte-%s.leases\n", n.Iface)
 
 	// Reservations (validated MAC/IP/name) pin a stable IP for approved devices — the firewall's
 	// per-device reachability gate keys on that IP, so an approved device keeps its access across
@@ -148,17 +148,17 @@ const dnsmasqBaseGlobals = "port=0\n"
 // but makes the running dnsmasq error "illegal repeated keyword" and crash-loop. The binary is in
 // the api image (dnsmasq-base); --test only checks the config, it does not bind or touch a NIC.
 func dnsmasqTest(content string) error {
-	dir, err := os.MkdirTemp("", "wgpanel-dnsmasq")
+	dir, err := os.MkdirTemp("", "motte-dnsmasq")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	if err := os.WriteFile(filepath.Join(dir, "wgpanel-candidate.conf"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "motte-candidate.conf"), []byte(content), 0o600); err != nil {
 		return err
 	}
 	base := filepath.Join(dir, "base.conf")
-	// conf-dir matches wgpanel-*.conf so it pulls the candidate but not base.conf itself.
-	if err := os.WriteFile(base, []byte(dnsmasqBaseGlobals+"conf-dir="+dir+",wgpanel-*.conf\n"), 0o600); err != nil {
+	// conf-dir matches motte-*.conf so it pulls the candidate but not base.conf itself.
+	if err := os.WriteFile(base, []byte(dnsmasqBaseGlobals+"conf-dir="+dir+",motte-*.conf\n"), 0o600); err != nil {
 		return err
 	}
 	out, err := exec.Command("dnsmasq", "--test", "--conf-file="+base).CombinedOutput()
