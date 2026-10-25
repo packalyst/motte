@@ -15,6 +15,9 @@ type EndpointConfig struct {
 	// router's default applies: read methods (GET/HEAD) need "viewer", mutating methods need
 	// "admin". Downgrade operational writes to "operator" or raise sensitive ones to "owner".
 	MinRole string `json:"min_role,omitempty"`
+	// MaxBodyMB raises the request body limit for this endpoint (default 10 MB), for one that
+	// takes a file. Only for a fixed path (no {params}).
+	MaxBodyMB int `json:"max_body_mb,omitempty"`
 }
 
 // ServiceConfig represents a service configuration

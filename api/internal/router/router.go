@@ -100,17 +100,19 @@ type ServiceHandlers map[string]HandlerFunc
 
 // Router manages HTTP routing based on configuration
 type Router struct {
-	mux      *http.ServeMux
-	config   *config.Config
-	handlers map[string]ServiceHandlers
+	mux        *http.ServeMux
+	config     *config.Config
+	handlers   map[string]ServiceHandlers
+	bodyLimits map[string]int64 // path → body limit, for endpoints with max_body_mb (filled by Build)
 }
 
 // New creates a new router with the given configuration
 func New(cfg *config.Config) *Router {
 	return &Router{
-		mux:      http.NewServeMux(),
-		config:   cfg,
-		handlers: make(map[string]ServiceHandlers),
+		mux:        http.NewServeMux(),
+		config:     cfg,
+		handlers:   make(map[string]ServiceHandlers),
+		bodyLimits: make(map[string]int64),
 	}
 }
 
@@ -144,6 +146,9 @@ func (r *Router) Build() http.Handler {
 			}
 
 			fullPattern := svcConfig.Prefix + endpoint.Path
+			if endpoint.MaxBodyMB > 0 && !strings.Contains(fullPattern, "{") {
+				r.bodyLimits[fullPattern] = int64(endpoint.MaxBodyMB) << 20
+			}
 			// Get actual pattern for mux registration
 			actualPattern := fullPattern
 			if strings.Contains(fullPattern, "{") {
@@ -376,13 +381,18 @@ func (r *Router) applyMiddleware(handler http.Handler) http.Handler {
 	return h
 }
 
-// bodySizeLimitMiddleware limits request body size to prevent memory exhaustion
+// bodySizeLimitMiddleware limits request body size to prevent memory exhaustion: 10 MB, or an
+// endpoint's own max_body_mb (a file upload).
 func (r *Router) bodySizeLimitMiddleware(next http.Handler) http.Handler {
 	const maxBodySize = 10 * 1024 * 1024 // 10MB
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Body != nil {
-			req.Body = http.MaxBytesReader(w, req.Body, maxBodySize)
+			limit := int64(maxBodySize)
+			if n, ok := r.bodyLimits[req.URL.Path]; ok {
+				limit = n
+			}
+			req.Body = http.MaxBytesReader(w, req.Body, limit)
 		}
 		next.ServeHTTP(w, req)
 	})
