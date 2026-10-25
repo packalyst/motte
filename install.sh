@@ -24,13 +24,17 @@ if [ "$EUID" -ne 0 ]; then
     exec sudo bash "$0" "$@"
 fi
 
-# Preflight.
-for cmd in git docker; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo -e "${RED}✗ '$cmd' is required but not installed.${NC}"
+# git is needed to fetch Motte; everything else (Docker, WireGuard, tools) is installed by
+# manage.sh install-deps below, after the clone.
+if ! command -v git >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        echo -e "${CYAN}Installing git...${NC}"
+        apt-get update -qq && apt-get install -y git
+    else
+        echo -e "${RED}✗ git is required: install it, then run this again.${NC}"
         exit 1
     fi
-done
+fi
 
 # Conflict guard — never clobber an existing install.
 if [ -e "$INSTALL_DIR" ]; then
@@ -44,6 +48,16 @@ git clone "$REPO" "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 chmod +x manage.sh
 chmod 750 "$INSTALL_DIR"
+
+# Check the OS (Motte is tested on Ubuntu 24.04 LTS) and install Docker, WireGuard and the tools
+# setup needs. An unsupported system stops here, before anything is registered — and the fresh
+# clone is removed again, so the installer can simply be run once more.
+if ! ./manage.sh install-deps; then
+    cd /
+    rm -rf "$INSTALL_DIR" # created by this run just above (the conflict guard refused an existing one)
+    echo -e "${RED}✗ Install stopped (see above). Nothing was registered.${NC}"
+    exit 1
+fi
 
 # Register the systemd unit + `motte` CLI. Reuses manage.sh so the install
 # logic lives in exactly one place.

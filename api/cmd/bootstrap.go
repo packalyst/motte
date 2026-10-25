@@ -11,7 +11,7 @@ import (
 // bootstrapAdGuardPasswordFromFile is a one-shot migration for first-install:
 // manage.sh writes the generated plaintext AdGuard admin password to a
 // bootstrap file inside the shared bind mount. On first boot, we consume it —
-// encrypt it into wgap's settings DB — then delete the file so the plaintext
+// encrypt it into the panel's settings database — then delete the file so the plaintext
 // no longer sits on disk.
 //
 // Idempotent: if the settings DB already has an adguard_password, or the

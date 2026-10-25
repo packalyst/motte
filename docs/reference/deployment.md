@@ -23,11 +23,14 @@ curl -fsSL https://raw.githubusercontent.com/packalyst/motte/main/install.sh | s
 
 Flow (`install.sh`):
 1. Re-exec under `sudo` if not root (writes `/opt`, `/etc/systemd`, `/usr/local/bin`).
-2. Preflight: require `git` and `docker` on PATH.
+2. Install `git` with apt if it's missing (other systems: stop and ask for it).
 3. Conflict guard: refuse if `/opt/motte` already exists (never clobber). (`install.sh:36`)
 4. `git clone` the repo into `/opt/motte`, `chmod +x manage.sh`, `chmod 750` the dir.
-5. Call `./manage.sh install-service` — registers the systemd unit + `motte` CLI (logic lives in `manage.sh` only, not duplicated).
-6. If a TTY is present, `exec ./manage.sh` to run first-time interactive setup; if piped (`curl | bash`, no TTY), it stops and tells the operator to run `sudo motte`.
+5. `./manage.sh install-deps`: check the OS and install what's missing without questions (Docker from
+   Docker's repository, WireGuard, gettext, curl, apache2-utils), then check the Docker version. If it
+   fails, the fresh clone is removed and nothing is registered.
+6. Call `./manage.sh install-service` — registers the systemd unit + `motte` CLI (logic lives in `manage.sh` only, not duplicated).
+7. If a TTY is present, `exec ./manage.sh` to run first-time interactive setup; if piped (`curl | bash`, no TTY), it stops and tells the operator to run `sudo motte`.
 
 `INSTALL_DIR=/opt/motte` and `REPO=...packalyst/motte.git` are hardcoded in `install.sh`.
 
@@ -186,6 +189,8 @@ Run as `motte <cmd>` (managed) or `./manage.sh <cmd>` (checkout). Most need Dock
 | `backup` | `backup_certificates` — back up SSL certs (§7) (`:1264`). |
 | `rebuild` | Non-interactive: regenerate configs from saved `.env` + rebuild, no prompts (`REBUILD_MODE=true`). |
 | `rotate-key` | Re-encrypt all secrets under a fresh `ENCRYPTION_SECRET` (see below) (`:1289`). |
+| `cleanup` | Free the Docker build cache and old untagged build layers (`docker_cleanup`). Never touches tagged images, volumes or other containers. |
+| `install-deps` | OS check + install missing dependencies without questions (used by `install.sh`). |
 | `migrate` | Move a checkout to `/opt/motte` + register the service (checkout only) (`:1284`). |
 | `install-service` | Install/refresh the systemd unit + `motte` CLI (used by `install.sh`) (`:1279`). |
 | `service-up` / `service-down` | Non-interactive lifecycle hooks the systemd unit calls (`:1269-1277`). |
@@ -203,7 +208,7 @@ off (`:1331-1443`). Options:
 5. **Update** — `check_for_updates`.
 6. **Backup** — `backup_certificates`.
 7. **Logs** — submenu picks all / ui / api / traefik / headscale / adguard.
-8. **Clean** — **destructive**: `docker compose down -v --rmi all --remove-orphans`, remove generated configs (`headscale/config.yaml`, `traefik/traefik.yml`, `traefik/dynamic.yml`, `acme.json`, `AdGuardHome.yaml`), wipe data dirs, and delete the app's nftables tables (`inet motte_firewall`, `inet motte_vpn_acl`).
+8. **Factory reset** (`factory_reset`) — **destructive**, confirmed by typing `RESET`: `docker compose down -v --rmi all --remove-orphans` (all profiles), remove the panel-created `vpn-router` and turbotunnels containers, generated configs (`headscale/config/config.yaml` + `acl.json`, `traefik/traefik.yml`, `traefik/dynamic/*.yml`, `acme.json`, `AdGuardHome.yaml`), Headscale/AdGuard/Traefik/VPN-router data, all five nftables tables (`inet motte_*`), the WireGuard interface, and the host files (sysctl, logrotate, netplan drop-ins). Keeps the folder, `.env` and the service.
 9. **Exit**.
 
 ### Lifecycle helpers
@@ -323,7 +328,7 @@ On first install only (`AdGuardHome.yaml` absent), `manage.sh` generates a rando
 16-char AdGuard password (`:2438-2469`), bcrypt-hashes it (via `htpasswd` or
 `python3 bcrypt`), and:
 - injects the hash into `AdGuardHome.yaml` via the one-time `envsubst` (the plaintext hash is **never** persisted to `.env`; `AdGuardHome.yaml` is the source of truth thereafter);
-- writes the **plaintext** to `adguard/conf/.password.bootstrap` (`chmod 600`) — the single hop by which `wgap-api` picks it up on first boot, encrypts it into its settings DB, then deletes the file;
+- writes the **plaintext** to `adguard/conf/.password.bootstrap` (`chmod 600`) — the single hop by which the panel API picks it up on first boot, encrypts it into its settings DB, then deletes the file;
 - prints the credentials once at the end of setup (`:2987-2999`).
 
 ---
