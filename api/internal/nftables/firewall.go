@@ -78,7 +78,7 @@ func NewFirewallTable(db *database.DB, countryProvider CountryZonesProvider, asn
 	return &FirewallTable{db: db, countryProvider: countryProvider, asnProvider: asnProvider}
 }
 
-func (t *FirewallTable) Name() string   { return "wgadmin_firewall" }
+func (t *FirewallTable) Name() string   { return "motte_firewall" }
 func (t *FirewallTable) Family() string { return "inet" }
 func (t *FirewallTable) Priority() int  { return 10 }
 
@@ -464,7 +464,7 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 
 	var sb strings.Builder
 
-	sb.WriteString(TableHeader("inet", "wgadmin_firewall"))
+	sb.WriteString(TableHeader("inet", "motte_firewall"))
 
 	// Sets - inbound
 	sb.WriteString(BuildSet("blocked_ips", "ipv4_addr", nil, blockedIPsIn))

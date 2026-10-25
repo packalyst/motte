@@ -77,7 +77,7 @@ type recHeader struct {
 	Height    int     `json:"height"`
 	Timestamp int64   `json:"timestamp"`
 	Title     string  `json:"title,omitempty"`
-	Meta      recMeta `json:"wgadmin"`
+	Meta      recMeta `json:"motte"`
 }
 
 type consoleRecorder struct {

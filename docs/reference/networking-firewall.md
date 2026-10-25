@@ -18,11 +18,11 @@ Rather than one monolithic table, the panel registers **four independent `inet` 
 
 | Table | File | Purpose | Hook priority (kernel eval order) | Base-chain policy | Composition |
 |---|---|---|---|---|---|
-| `wgadmin_panel_access` | `api/internal/nftables/panel_access.go` | Close the API port (8081) to the public when `api_direct_access=off` | `input` **priority -10** | `accept` | drop-subset-terminal |
-| `wgadmin_cf_only` | `api/internal/nftables/cf_only.go` | Restrict web ports 80/443 to Cloudflare edge (+ trusted) when `web_cloudflare_only=on` | `input` **and** `forward` **priority -10** | `accept` | drop-subset-terminal |
-| `wgadmin_firewall` | `api/internal/nftables/firewall.go` | Main firewall: port allow-list, IP/range/country/ASN block+allow, per-peer WAN block, IPv6 drop, MSS clamp | `input` **priority 0**, `forward` **-1**, `output` **0** | `input`: **drop**; `forward`/`output`: **accept** | default-drop (input) / default-accept + explicit drops (forward, output) |
-| `wgadmin_vpn_acl` | `api/internal/nftables/vpn_acl.go` | Peer-to-peer isolation, per-peer ACL rules, virtual-IP gating | `forward` **priority 0** | `accept` | default-deny backstop drops |
-| `wgadmin_dhcp_net` | `api/internal/dhcp/reachability.go` | Managed private-network reachability: which DHCP segments may reach the VPN (and vice-versa), plus optional internet egress | `forward` (filter) + `postrouting` (nat) | `accept` | default-deny reachability; internet-egress **masquerade off by default** |
+| `motte_panel_access` | `api/internal/nftables/panel_access.go` | Close the API port (8081) to the public when `api_direct_access=off` | `input` **priority -10** | `accept` | drop-subset-terminal |
+| `motte_cf_only` | `api/internal/nftables/cf_only.go` | Restrict web ports 80/443 to Cloudflare edge (+ trusted) when `web_cloudflare_only=on` | `input` **and** `forward` **priority -10** | `accept` | drop-subset-terminal |
+| `motte_firewall` | `api/internal/nftables/firewall.go` | Main firewall: port allow-list, IP/range/country/ASN block+allow, per-peer WAN block, IPv6 drop, MSS clamp | `input` **priority 0**, `forward` **-1**, `output` **0** | `input`: **drop**; `forward`/`output`: **accept** | default-drop (input) / default-accept + explicit drops (forward, output) |
+| `motte_vpn_acl` | `api/internal/nftables/vpn_acl.go` | Peer-to-peer isolation, per-peer ACL rules, virtual-IP gating | `forward` **priority 0** | `accept` | default-deny backstop drops |
+| `motte_dhcp_net` | `api/internal/dhcp/reachability.go` | Managed private-network reachability: which DHCP segments may reach the VPN (and vice-versa), plus optional internet egress | `forward` (filter) + `postrouting` (nat) | `accept` | default-deny reachability; internet-egress **masquerade off by default** |
 
 The **struct `Priority()`** value (panel_access=5, cf_only=6, firewall=10, vpn_acl=20; `service.go` sorts by it) only orders the *emission* of tables into the combined apply loop. What actually orders **kernel evaluation** is the **chain hook priority** in each `type … hook … priority N` line. Lower = earlier. So both toggle tables sit at `-10` (before the main firewall's `input` at `0`); the vpn_acl `forward` chain sits at `0` (after the main firewall's `forward` at `-1`).
 
@@ -55,7 +55,7 @@ Registration (`api/cmd/main.go:188-195`): `firewall` table is registered from `f
 
 ---
 
-## 2. The main firewall table (`wgadmin_firewall`)
+## 2. The main firewall table (`motte_firewall`)
 
 ### 2.1 Set inventory
 
@@ -152,14 +152,14 @@ Safety in `blockIP`/`blockIPWithOptions` (`blocking.go:33`): IPv6 values are ski
 
 Both are **fail-open**: if disabled, or if the code can't safely classify traffic, they emit an **empty shell table** so they can never drop the management plane. Both toggle-driven re-applies are wired through `settings.RequestFirewallApply` (`main.go:200`) so flipping the setting takes effect live.
 
-### 5.1 `api_direct_access` — close the API port (`wgadmin_panel_access`)
+### 5.1 `api_direct_access` — close the API port (`motte_panel_access`)
 
 - **ON (default):** empty table — the API (port `API_PORT`, e.g. 8081) stays reachable by direct IP. Required before a domain is configured (IP is the only way in).
 - **OFF:** an `input` chain at **priority -10** (before the main firewall) that drops the API port from the public internet but **accepts it from trusted sources** first, then `limit rate 5/minute log prefix "PANEL_ACCESS_DROP: "` and `tcp dport <port> drop`.
 
 `restrictEnabled` is true **only** when the setting is explicitly `"off"`; a missing setting or any read error → don't restrict (safe default for a fresh, domain-less install). Also fails open if the port can't be parsed or the trusted list is empty.
 
-### 5.2 `web_cloudflare_only` — restrict 80/443 to Cloudflare (`wgadmin_cf_only`)
+### 5.2 `web_cloudflare_only` — restrict 80/443 to Cloudflare (`motte_cf_only`)
 
 - **OFF (default):** empty shell — 80/443 open to everyone.
 - **ON:** **two** chains at **priority -10**, both accepting 80/443 from the trusted local sources + `::1`, then from `@cf_v4` / `@cf_v6` (the live Cloudflare set, §6), then `limit rate 5/minute log prefix "CF_ONLY_DROP: "` and dropping 80/443 from everything else. The shared rule builder is `cfRules(v4, v6, trusted, prefix)`:
@@ -191,7 +191,7 @@ Two **distinct** mechanisms — do not conflate them:
 
 - `defaultCloudflareCIDRs` (line 142) — bundled fallback (~15 v4 + ~7 v6 ranges) used at boot and whenever a refresh fails.
 - `StartCloudflareIPUpdater(ctx)` (line 212, started in `main.go:93`) — on boot and **every 24h**, fetches `https://www.cloudflare.com/ips-v4` and `…/ips-v6`. A **sanity floor** rejects a response with `< 10` ranges (bad/partial fetch) and keeps the current list. On success it swaps `cloudflareCIDRsStore` (an `atomic.Value`, read lock-free on the request hot path) and calls the **update hook**.
-- `SetCloudflareUpdateHook(fn)` (line 183) — `main.go:203` registers `nftSvc.RequestApply`, so after every successful refresh the `wgadmin_cf_only` table rebuilds its `@cf_v4`/`@cf_v6` sets from the fresh list. `CloudflareCIDRs()` (line 167) is what `cf_only.go` reads.
+- `SetCloudflareUpdateHook(fn)` (line 183) — `main.go:203` registers `nftSvc.RequestApply`, so after every successful refresh the `motte_cf_only` table rebuilds its `@cf_v4`/`@cf_v6` sets from the fresh list. `CloudflareCIDRs()` (line 167) is what `cf_only.go` reads.
 - `isCloudflareIP(ip)` (line 196) — membership test used by `GetClientIP` (below).
 - **It never fails closed** — any failure keeps the last-good list (defaults at minimum).
 
@@ -209,7 +209,7 @@ The sentinel plugin (§8) has its **own** copy of the Cloudflare CIDR list (`sen
 
 ---
 
-## 7. The VPN ACL (`wgadmin_vpn_acl`) and virtual IPs
+## 7. The VPN ACL (`motte_vpn_acl`) and virtual IPs
 
 `api/internal/nftables/vpn_acl.go` — a single `forward` chain (priority 0, policy accept) whose **default-deny backstop** at the bottom isolates peers unless an explicit rule allows them. Data comes from `vpn_clients` (with `acl_policy`), `vpn_acl_rules`, and `vpn_virtual_ips` (+ `vpn_virtual_ip_acl`).
 

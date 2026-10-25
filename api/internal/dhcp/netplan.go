@@ -21,7 +21,7 @@ var nsenterHost = []string{"-t", "1", "-m", "-u", "-i", "-n", "-p", "--"}
 // applyMu serializes interface changes so two saves can't race the bring-up/rollback.
 var applyMu sync.Mutex
 
-func dropInPath(iface string) string { return netplanDir + "/90-wgpanel-" + iface + ".yaml" }
+func dropInPath(iface string) string { return netplanDir + "/90-motte-" + iface + ".yaml" }
 
 // renderNetplan is the persisted drop-in: a static gateway address on the segment interface with
 // DHCP-client OFF (the box is the gateway, not a client). Survives reboot. Not applied live with
@@ -32,7 +32,7 @@ func renderNetplan(n *Network) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(`# Managed by wgpanel — do not edit by hand.
+	return fmt.Sprintf(`# Managed by Motte — do not edit by hand.
 # Owns the gateway address for the %q private network; deleting this file disables it at reboot.
 network:
   version: 2
@@ -137,14 +137,14 @@ func (s *Service) InterfaceReady(n *Network) error {
 // netplanConflict reports whether the interface is already defined in a netplan file the panel
 // does NOT own (i.e. a hand-written stanza), returning that filename. It's a pre-save warning so
 // an operator doesn't end up with two definitions fighting over one NIC. Text-scan heuristic (no
-// YAML dep): a non-wgpanel file with a line whose key is "<iface>:". Best-effort — empty on any
+// YAML dep): a non-Motte file with a line whose key is "<iface>:". Best-effort — empty on any
 // read error (the netplan generate during ApplyNetwork is still the hard validity gate).
 func netplanConflict(iface string) string {
 	out, err := exec.Command("nsenter", append(append([]string{}, nsenterHost...), "ls", "-1", netplanDir)...).Output()
 	if err != nil {
 		return ""
 	}
-	ownDropIn := "90-wgpanel-" + iface + ".yaml"
+	ownDropIn := "90-motte-" + iface + ".yaml"
 	for _, f := range strings.Fields(string(out)) {
 		if !strings.HasSuffix(f, ".yaml") && !strings.HasSuffix(f, ".yml") {
 			continue

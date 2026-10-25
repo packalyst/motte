@@ -50,7 +50,7 @@ run from the project root, so relative bind mounts resolve against the checkout.
 
 | Service | Image / build | Network mode | Notes |
 |---|---|---|---|
-| `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | **`network_mode: none`** | Filters the Docker API; listens only on a root-only socket file (`/run/wgadmin-docker/docker.sock` on the host), mounted into `api` alone. |
+| `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | **`network_mode: none`** | Filters the Docker API; listens only on a root-only socket file (`/run/motte-docker/docker.sock` on the host), mounted into `api` alone. |
 | `traefik` | `traefik:v3.7.16` | `vpn-network` (static IP `${TRAEFIK_CONTAINER_IP}`) | Reverse proxy; ports `${HTTP_PORT}:80`, `${HTTPS_PORT}:443`, `${TRAEFIK_PORT}:8080`. |
 | `headscale` | `headscale/headscale:0.25` | `vpn-network` (`${HEADSCALE_CONTAINER_IP}`) | Tailscale control plane + embedded DERP. `command: serve`, `cap_add: NET_ADMIN`. |
 | `api` | built from `./api` (arg `VERSION`) | **`network_mode: host`, `pid: host`, `privileged: true`** | The unified backend. Reaches Docker via `DOCKER_HOST=unix:///run/docker-proxy/docker.sock` (the proxy's socket). |
@@ -63,7 +63,7 @@ run from the project root, so relative bind mounts resolve against the checkout.
 Key invariants (from the compose comments — read them, they encode security decisions):
 
 - **`api` is host-networked** and privileged: it manages nftables/WireGuard on the host. Traefik reaches it via `http://host.docker.internal:${API_PORT}` (the `unified-api` service in the dynamic config), **not** the `api` hostname. See [MEMORY: api-is-host-networked].
-- **`docker-socket-proxy` isolation**: it has no network and no port. It listens only on a socket file (mode `0600`, root) in `/run/wgadmin-docker`, and only `api` mounts that folder, so no other container (the host-networked `adguard`, `vpn-router`, `dnsmasq` included) and no non-root user on the host can reach the Docker API. `EXEC=1` is still enabled (needed for the headscale CLI); dropping it is a tracked follow-up (move headscale ops to REST). See [MEMORY: drop-exec-headscale-rest].
+- **`docker-socket-proxy` isolation**: it has no network and no port. It listens only on a socket file (mode `0600`, root) in `/run/motte-docker`, and only `api` mounts that folder, so no other container (the host-networked `adguard`, `vpn-router`, `dnsmasq` included) and no non-root user on the host can reach the Docker API. `EXEC=1` is still enabled (needed for the headscale CLI); dropping it is a tracked follow-up (move headscale ops to REST). See [MEMORY: drop-exec-headscale-rest].
 - **Socket-proxy permissions** (`docker-compose.yml:20-46`): read ops + start/stop/restart + EXEC + IMAGES enabled; BUILD/COMMIT/NETWORKS/VOLUMES/SECRETS/etc. explicitly `=0`. The panel can create/start/stop containers and pull images but cannot build (that's why `manage.sh` builds add-on images itself — see §5).
 
 ### Profiles
@@ -203,7 +203,7 @@ off (`:1331-1443`). Options:
 5. **Update** — `check_for_updates`.
 6. **Backup** — `backup_certificates`.
 7. **Logs** — submenu picks all / ui / api / traefik / headscale / adguard.
-8. **Clean** — **destructive**: `docker compose down -v --rmi all --remove-orphans`, remove generated configs (`headscale/config.yaml`, `traefik/traefik.yml`, `traefik/dynamic.yml`, `acme.json`, `AdGuardHome.yaml`), wipe data dirs, and delete the app's nftables tables (`inet wgadmin_firewall`, `inet wgadmin_vpn_acl`).
+8. **Clean** — **destructive**: `docker compose down -v --rmi all --remove-orphans`, remove generated configs (`headscale/config.yaml`, `traefik/traefik.yml`, `traefik/dynamic.yml`, `acme.json`, `AdGuardHome.yaml`), wipe data dirs, and delete the app's nftables tables (`inet motte_firewall`, `inet motte_vpn_acl`).
 9. **Exit**.
 
 ### Lifecycle helpers
@@ -289,7 +289,7 @@ substituting `.env` vars into `*.template` files with `envsubst`. Templates foun
 | `traefik/dynamic-ssl-routers.yml.template` | (merged into `core.yml`) | Rendered only when `SSL_ENABLED=true`. |
 | `headscale/config/config.yaml.template` | `headscale/config/config.yaml` | **Regenerated.** `HEADSCALE_PUBLIC_URL`/`HEADSCALE_HOSTNAME` set to `https://SSL_DOMAIN` or `http://SERVER_IP` depending on SSL (`:2579-2590`). |
 | `adguard/conf/AdGuardHome.yaml.template` | `adguard/conf/AdGuardHome.yaml` | **PRESERVED after first install** — only generated when the output file does not exist (`:2808-2815`). It holds DNS rewrites, filter states, the password hash, query-log settings — all of which must survive re-runs. Log line: `· preserved`. |
-| `traefik/logrotate.conf` (no `.template` ext) | `/etc/logrotate.d/wgadmin-traefik` | **Regenerated** each run via `envsubst | sudo tee` (`:2817-2827`). Host logrotate for the Traefik `*.log` files (daily, `rotate`/`size` from `.env`, `copytruncate`). |
+| `traefik/logrotate.conf` (no `.template` ext) | `/etc/logrotate.d/motte-traefik` | **Regenerated** each run via `envsubst | sudo tee` (`:2817-2827`). Host logrotate for the Traefik `*.log` files (daily, `rotate`/`size` from `.env`, `copytruncate`). |
 
 Additional generated-but-not-templated files:
 - `traefik/dynamic/domains.yml` — placeholder created if missing (`# managed by API`); the api owns it thereafter.
@@ -334,7 +334,7 @@ Two independent backup mechanisms exist — do not confuse them:
 
 ### a) SSL certificate backup (manage.sh)
 
-`CERT_BACKUP_DIR=/usr/local/wgadmin/certs` (`manage.sh:332`). Functions
+`CERT_BACKUP_DIR=/usr/local/motte/certs` (`manage.sh:332`). Functions
 `backup_certificates`/`backup_certificate`/`restore_certificate`/`check_certificate_backup`
 (`:336-448`) snapshot `traefik/acme.json` (only if it actually contains
 certificates, verified with `jq`). Backups are timestamped

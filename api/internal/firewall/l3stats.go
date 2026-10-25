@@ -34,7 +34,7 @@ func (s *Service) readDropPackets() (int64, bool) {
 	if s.nft == nil {
 		return 0, false
 	}
-	out, err := s.nft.Exec("list", "table", "inet", "wgadmin_firewall")
+	out, err := s.nft.Exec("list", "table", "inet", "motte_firewall")
 	if err != nil {
 		return 0, false
 	}

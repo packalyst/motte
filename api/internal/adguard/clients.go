@@ -23,7 +23,7 @@ import (
 	"sync"
 )
 
-const managedPrefix = "wgpanel "
+const managedPrefix = "motte-managed "
 
 // ErrManagedElsewhere: AdGuard already has a persistent client for this address that the panel
 // didn't create; change it in AdGuard instead.
@@ -350,7 +350,7 @@ func NormalizeDomain(d string) (string, error) {
 // Each panel allow rule is written as two lines: a marker comment naming the client, then the rule.
 // Only lines under a panel marker are ever read, changed or removed — rules written by hand in
 // AdGuard are left alone.
-const allowMarker = "! wgpanel allow "
+const allowMarker = "! motte-managed allow "
 
 func allowRule(domain, ip string) string {
 	return "@@||" + domain + "^$client='" + ip + "'"

@@ -7,7 +7,7 @@ import (
 )
 
 // sessionCookieBase is the session cookie name. Over HTTPS it gains the __Host- prefix.
-const sessionCookieBase = "wgpanel_session"
+const sessionCookieBase = "motte_session"
 
 // EffectiveHTTPS reports whether the browser reached the panel over HTTPS, accounting for a
 // terminating reverse proxy (Traefik) that forwards plain HTTP internally. It trusts

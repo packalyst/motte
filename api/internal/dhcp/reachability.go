@@ -32,7 +32,7 @@ func privateReachRanges() []string {
 	return ranges
 }
 
-// ReachabilityTable builds `inet wgadmin_dhcp_net`: a default-deny forward chain exposing each
+// ReachabilityTable builds `inet motte_dhcp_net`: a default-deny forward chain exposing each
 // managed segment to only the opted-in VPN clients, plus an off-by-default masquerade for
 // internet-out. Registered with the firewall's nftables service so it rebuilds on every apply.
 type ReachabilityTable struct {
@@ -41,7 +41,7 @@ type ReachabilityTable struct {
 
 func NewReachabilityTable(db *database.DB) *ReachabilityTable { return &ReachabilityTable{db: db} }
 
-func (t *ReachabilityTable) Name() string   { return "wgadmin_dhcp_net" }
+func (t *ReachabilityTable) Name() string   { return "motte_dhcp_net" }
 func (t *ReachabilityTable) Family() string { return "inet" }
 
 // Priority 15: after the VPN ACL (20 builds later; priority here is the apply order used by the
@@ -192,7 +192,7 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 	}
 
 	var sb strings.Builder
-	sb.WriteString("table inet wgadmin_dhcp_net {\n")
+	sb.WriteString("table inet motte_dhcp_net {\n")
 	// private_ranges: destinations a segment must never reach via internet-out (RFC1918 + the live
 	// VPN/overlay ranges). Interval+auto-merge so overlapping CIDRs collapse cleanly.
 	sb.WriteString(nftables.BuildSet("private_ranges", "ipv4_addr", []string{"interval", "auto-merge"}, privateRanges))

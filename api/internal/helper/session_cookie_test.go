@@ -8,17 +8,17 @@ import (
 )
 
 func TestSessionCookieName(t *testing.T) {
-	if got := SessionCookieName(true); got != "__Host-wgpanel_session" {
-		t.Fatalf("secure name = %q, want __Host-wgpanel_session", got)
+	if got := SessionCookieName(true); got != "__Host-motte_session" {
+		t.Fatalf("secure name = %q, want __Host-motte_session", got)
 	}
-	if got := SessionCookieName(false); got != "wgpanel_session" {
-		t.Fatalf("insecure name = %q, want wgpanel_session", got)
+	if got := SessionCookieName(false); got != "motte_session" {
+		t.Fatalf("insecure name = %q, want motte_session", got)
 	}
 }
 
 func TestSessionTokenCookiePrecedenceOverBearer(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "wgpanel_session", Value: "cookie-tok"})
+	req.AddCookie(&http.Cookie{Name: "motte_session", Value: "cookie-tok"})
 	req.Header.Set("Authorization", "Bearer header-tok")
 	if got := SessionToken(req); got != "cookie-tok" {
 		t.Fatalf("SessionToken = %q, want cookie-tok (cookie must win)", got)
@@ -55,8 +55,8 @@ func TestSetSessionCookieAttributes(t *testing.T) {
 		t.Fatalf("expected 1 cookie, got %d", len(cookies))
 	}
 	c := cookies[0]
-	if c.Name != "__Host-wgpanel_session" {
-		t.Errorf("name = %q, want __Host-wgpanel_session", c.Name)
+	if c.Name != "__Host-motte_session" {
+		t.Errorf("name = %q, want __Host-motte_session", c.Name)
 	}
 	if !c.HttpOnly {
 		t.Error("cookie must be HttpOnly")

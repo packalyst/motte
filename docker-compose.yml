@@ -49,7 +49,7 @@ services:
       - GRPC=0            # No gRPC
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /run/wgadmin-docker:/run/docker-proxy
+      - /run/motte-docker:/run/docker-proxy
 
   # ============================================
   # TRAEFIK - Reverse Proxy with API & Dashboard
@@ -197,7 +197,7 @@ services:
       - ./adguard/work:/adguard/work:ro
       - ./headscale/config:/headscale/config
       # The filtered Docker API (docker-socket-proxy), never the raw Docker socket
-      - /run/wgadmin-docker:/run/docker-proxy
+      - /run/motte-docker:/run/docker-proxy
       - /etc/ssh/sshd_config:/etc/ssh/sshd_config
       # DHCP (managed private networks): the panel writes per-network dnsmasq configs here and
       # reads the lease files back — both shared with the dnsmasq container.

@@ -17,7 +17,7 @@ func TestDnsmasqConfPath(t *testing.T) {
 			t.Errorf("dnsmasqConfPath(%q) unexpected error: %v", iface, err)
 			continue
 		}
-		if want := "/dhcp-conf/wgpanel-" + iface + ".conf"; p != want {
+		if want := "/dhcp-conf/motte-" + iface + ".conf"; p != want {
 			t.Errorf("dnsmasqConfPath(%q) = %q, want %q", iface, p, want)
 		}
 	}

@@ -118,7 +118,7 @@ func TestSetClientBlocking(t *testing.T) {
 	if err := SetClientBlocking("wg:3", "10.8.0.5", false); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.clients) != 2 || f.clients[1]["name"] != "wgpanel wg:3" || f.clients[1]["filtering_enabled"] != false ||
+	if len(f.clients) != 2 || f.clients[1]["name"] != "motte-managed wg:3" || f.clients[1]["filtering_enabled"] != false ||
 		f.clients[1]["safebrowsing_enabled"] != true || f.clients[1]["use_global_settings"] != false {
 		t.Fatalf("unexpected entry: %+v", f.clients)
 	}
@@ -182,10 +182,10 @@ func TestAllowRulesOnlyTouchPanelRules(t *testing.T) {
 func TestSyncManaged(t *testing.T) {
 	f := &fakeAdGuard{
 		clients: []map[string]any{
-			{"name": "wgpanel wg:1", "ids": []any{"10.8.0.1"}},      // gone
-			{"name": "wgpanel lan:2", "ids": []any{"192.168.50.5"}}, // moved to .6
-			{"name": "wgpanel ts:3", "ids": []any{"100.64.0.3"}},    // unchanged
-			{"name": "printer", "ids": []any{"192.168.50.9"}},       // not ours
+			{"name": "motte-managed wg:1", "ids": []any{"10.8.0.1"}},      // gone
+			{"name": "motte-managed lan:2", "ids": []any{"192.168.50.5"}}, // moved to .6
+			{"name": "motte-managed ts:3", "ids": []any{"100.64.0.3"}},    // unchanged
+			{"name": "printer", "ids": []any{"192.168.50.9"}},             // not ours
 		},
 		rules: []string{
 			allowMarker + "wg:1", allowRule("a.example.com", "10.8.0.1"),
@@ -201,11 +201,11 @@ func TestSyncManaged(t *testing.T) {
 	names := []string{}
 	for _, c := range f.clients {
 		names = append(names, c["name"].(string))
-		if c["name"] == "wgpanel lan:2" && c["ids"].([]any)[0] != "192.168.50.6" {
+		if c["name"] == "motte-managed lan:2" && c["ids"].([]any)[0] != "192.168.50.6" {
 			t.Errorf("moved client not updated: %+v", c)
 		}
 	}
-	if strings.Join(names, ",") != "wgpanel lan:2,wgpanel ts:3,printer" {
+	if strings.Join(names, ",") != "motte-managed lan:2,motte-managed ts:3,printer" {
 		t.Errorf("unexpected entries after sync: %v", names)
 	}
 	want := []string{allowMarker + "ts:3", allowRule("c.example.com", "100.64.0.3"), allowRule("d.example.com", "10.8.0.1")}

@@ -18,7 +18,7 @@ func TestPanelAccessBuild_FailsOpen(t *testing.T) {
 	if strings.Contains(out, "drop") {
 		t.Fatalf("fail-open expected: empty table must contain no drop rule:\n%s", out)
 	}
-	if !strings.Contains(out, "table inet wgadmin_panel_access {\n}") {
+	if !strings.Contains(out, "table inet motte_panel_access {\n}") {
 		t.Fatalf("expected an empty table shell, got:\n%s", out)
 	}
 }

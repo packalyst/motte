@@ -135,7 +135,7 @@ func verifyArgon2(password, encoded string) (ok bool, needsRehash bool, err erro
 // dummySalt is a fixed, non-secret salt used only to spend one Argon2id computation on the
 // unknown-user login path, so its timing is comparable to a real verification (user
 // enumeration resistance). Its value is irrelevant; it only needs to be ≥8 bytes.
-var dummySalt = []byte("wgpanel-timing-equalizer")
+var dummySalt = []byte("motte-timing-equalizer")
 
 // dummyVerify performs one Argon2id computation and discards it. Call it when no user row
 // was found so an attacker cannot distinguish "no such user" from "wrong password" by timing.

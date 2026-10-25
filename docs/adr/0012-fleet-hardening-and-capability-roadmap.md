@@ -106,7 +106,7 @@ care. "Care: auth/signing" means a focused security review and tests before merg
 - *Now:* none; operators SSH in with an external client.
 - *To do:* agent opens a **persistent outbound WebSocket** to the panel over its existing **mTLS
   identity** (nothing new listens on the host); spawns a **PTY running `tmux new -A -s
-  wgpanel-<id>`** so sessions **detach/reattach** (survive refresh and network drops); panel relays
+  panel-<id>`** so sessions **detach/reattach** (survive refresh and network drops); panel relays
   frames; Svelte `ConsoleView` built on **xterm.js** (`addon-fit`, `addon-clipboard`,
   `addon-web-links`; `addon-image` for paste in a later phase). **Security:** per-host
   **console-enabled toggle (default OFF)**, **step-up (10) required to open**, full **audit (3)** +

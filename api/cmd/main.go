@@ -486,7 +486,7 @@ func main() {
 				}
 				_, err := db.Exec(`INSERT OR IGNORE INTO firewall_entries
 					(entry_type, value, action, direction, protocol, source, name, essential, enabled)
-					VALUES ('port', ?, 'allow', 'inbound', 'tcp', 'system', 'wgscout-fleet', 1, 1)`,
+					VALUES ('port', ?, 'allow', 'inbound', 'tcp', 'system', 'motte-agent-fleet', 1, 1)`,
 					strconv.Itoa(port))
 				fwSvc.RequestApply()
 				return err
@@ -495,7 +495,7 @@ func main() {
 				if fwSvc == nil {
 					return nil
 				}
-				_, err := db.Exec(`DELETE FROM firewall_entries WHERE entry_type='port' AND name='wgscout-fleet' AND value=?`,
+				_, err := db.Exec(`DELETE FROM firewall_entries WHERE entry_type='port' AND name='motte-agent-fleet' AND value=?`,
 					strconv.Itoa(port))
 				fwSvc.RequestApply()
 				return err
