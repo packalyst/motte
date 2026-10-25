@@ -65,6 +65,7 @@ case "${1:-}" in
         echo "  backup     Back up SSL certificates"
         echo "  rotate-key Re-encrypt all secrets under a new encryption key"
         echo "  cleanup    Free disk space: Docker build cache and old build layers"
+        echo "  uninstall  Remove Motte and its data; restore the system firewall setup turned off"
         if [ "$CMD" != "motte" ]; then
             echo "  migrate    Move this install to $INSTALL_DIR and register the service"
         fi
@@ -102,6 +103,9 @@ case "${1:-}" in
         ;;
     cleanup)
         RUN_CLEANUP=true
+        ;;
+    uninstall)
+        RUN_UNINSTALL=true
         ;;
     install-deps)
         # Check the OS and install what Motte needs, without questions (used by install.sh).
@@ -1077,16 +1081,83 @@ docker_cleanup() {
 # WireGuard key), Headscale/AdGuard/Traefik data and generated configs, the firewall tables, the
 # WireGuard interface and the host files. Kept: this folder, .env (the setup answers) and the
 # service. Asks the operator to type RESET.
-factory_reset() {
-    local confirm t f
-    echo -e "${RED}⚠ FACTORY RESET${NC}: deletes every WireGuard peer and key, Headscale devices, the panel database,"
-    echo "  AdGuard settings, certificates, firewall rules and fleet enrollment. This cannot be undone."
-    echo "  Kept: this folder, .env (your setup answers) and the motte service."
-    read -r -p "Type RESET to continue: " confirm
-    [ "$confirm" = "RESET" ] || { echo "Cancelled."; return 0; }
+# Host changes setup made outside this folder (a system firewall it turned off), so uninstall
+# can put them back. Kept outside the install folder, which uninstall removes.
+HOST_CHANGES=/var/lib/motte/host-changes
+NFT_BACKUP=/etc/nftables.conf.motte-bak
+
+record_host_change() {
+    sudo mkdir -p "$(dirname "$HOST_CHANGES")" && sudo chmod 700 "$(dirname "$HOST_CHANGES")"
+    grep -qx "$1" "$HOST_CHANGES" 2>/dev/null || echo "$1" | sudo tee -a "$HOST_CHANGES" >/dev/null
+    sudo chmod 600 "$HOST_CHANGES"
+}
+
+# foreign_nft_drop_tables lists loaded nftables tables that are neither Motte's nor Docker's
+# (iptables-nft) and drop incoming traffic by default — e.g. the system's own /etc/nftables.conf.
+# Every table is evaluated, so such a table silently drops what Motte allows (WireGuard, VPN DNS).
+foreign_nft_drop_tables() {
+    local fam name
+    sudo nft list tables 2>/dev/null | while read -r _ fam name; do
+        case "$name" in motte_*) continue ;; esac
+        case "$fam:$name" in ip:nat|ip:filter|ip:raw|ip:mangle|ip:security|ip6:nat|ip6:filter|ip6:raw|ip6:mangle|ip6:security) continue ;; esac
+        sudo nft list table "$fam" "$name" 2>/dev/null | grep -q 'hook input.*policy drop' && echo "$fam $name"
+    done
+}
+
+# disable_system_nftables hands the firewall to Motte: keeps a copy of /etc/nftables.conf, leaves a
+# note in its place, disables the service at boot and removes its loaded drop tables. Never stops
+# the service: its stop step runs "flush ruleset", which would wipe Motte's and Docker's rules too.
+disable_system_nftables() {
+    local fam name
+    if [ -f /etc/nftables.conf ] && [ ! -f "$NFT_BACKUP" ]; then
+        sudo cp -a /etc/nftables.conf "$NFT_BACKUP"
+    fi
+    printf '#!/usr/sbin/nft -f\n# Firewall is managed by Motte. Your previous file: %s\n# (restored by "motte uninstall").\n' "$NFT_BACKUP" |
+        sudo tee /etc/nftables.conf >/dev/null
+    sudo systemctl disable nftables 2>/dev/null || true
+    foreign_nft_drop_tables | while read -r fam name; do
+        sudo nft delete table "$fam" "$name" && echo -e "  ${GREEN}✓${NC} removed table $fam $name"
+    done
+    record_host_change nftables
+}
+
+# restore_host_changes puts back what setup turned off (asked at a terminal, one by one).
+restore_host_changes() {
+    local change changes
+    [ -f "$HOST_CHANGES" ] || return 0
+    # Read the list first: the questions below read the terminal, not this file.
+    mapfile -t changes <"$HOST_CHANGES"
+    for change in "${changes[@]}"; do
+        case "$change" in
+            nftables)
+                [ -f "$NFT_BACKUP" ] || continue
+                prompt_yes_no "Restore your previous system firewall (/etc/nftables.conf)?" "y" || continue
+                sudo mv -f "$NFT_BACKUP" /etc/nftables.conf
+                sudo systemctl enable nftables 2>/dev/null || true
+                # Loading it may flush every table (a default nftables.conf starts with "flush
+                # ruleset"), Docker's included: restart Docker so it puts its own rules back.
+                sudo systemctl restart nftables && echo -e "  ${GREEN}✓${NC} /etc/nftables.conf restored and loaded"
+                systemctl is-active --quiet docker && sudo systemctl restart docker
+                ;;
+            ufw)
+                prompt_yes_no "Turn UFW back on?" "y" && sudo ufw --force enable >/dev/null && echo -e "  ${GREEN}✓${NC} UFW enabled"
+                ;;
+            fail2ban)
+                prompt_yes_no "Turn Fail2ban back on?" "y" && sudo systemctl enable --now fail2ban && echo -e "  ${GREEN}✓${NC} Fail2ban enabled"
+                ;;
+        esac
+    done
+    sudo rm -f "$HOST_CHANGES"
+}
+
+# remove_motte_state deletes everything this install created on the host — containers (incl. the
+# ones the panel creates itself), images, data volumes, generated configs and service data, the
+# firewall tables and forwarding rules, the WireGuard interface and the host files. No questions.
+remove_motte_state() {
+    local t f rule
     # The menu runs before .env is loaded; the names below come from it.
     if [ -f .env ]; then set -a; . ./.env; set +a; fi
-    local router_data="${VPN_ROUTER_DATA:-/var/lib/tailscale-vpn-router}"
+    local router_data="${VPN_ROUTER_DATA:-/var/lib/tailscale-vpn-router}" wg="${WG_INTERFACE:-wg0}"
 
     echo -e "${YELLOW}Removing containers, images and data volumes...${NC}"
     docker compose --profile vpn-router --profile turbotunnels down -v --rmi all --remove-orphans || true
@@ -1099,18 +1170,66 @@ factory_reset() {
     rm -rf headscale/data/* adguard/work/* traefik/logs/* data/tailscale/*
     [ -d "$router_data" ] && rm -rf "${router_data:?}"/*
 
-    echo -e "${YELLOW}Removing firewall tables and the WireGuard interface...${NC}"
+    echo -e "${YELLOW}Removing firewall tables, forwarding rules and the WireGuard interface...${NC}"
     for t in motte_firewall motte_vpn_acl motte_cf_only motte_panel_access motte_dhcp_net; do
         sudo nft delete table inet "$t" 2>/dev/null && echo -e "  ${GREEN}✓${NC} inet $t"
     done
-    sudo ip link del "${WG_INTERFACE:-wg0}" 2>/dev/null && echo -e "  ${GREEN}✓${NC} ${WG_INTERFACE:-wg0}"
+    # The forwarding and NAT rules WireGuard set up through iptables.
+    sudo iptables -S FORWARD 2>/dev/null | grep -E -- "-[io] $wg -j ACCEPT" | sed 's/^-A /-D /' | while read -r rule; do
+        # shellcheck disable=SC2086 # the rule is a list of iptables arguments
+        sudo iptables $rule && echo -e "  ${GREEN}✓${NC} iptables $rule"
+    done
+    if [ -n "${WG_IP_RANGE:-}" ]; then
+        sudo iptables -t nat -S POSTROUTING 2>/dev/null | grep -F -- "-s $WG_IP_RANGE " | grep -- '-j MASQUERADE' | sed 's/^-A /-D /' | while read -r rule; do
+            # shellcheck disable=SC2086
+            sudo iptables -t nat $rule && echo -e "  ${GREEN}✓${NC} iptables -t nat $rule"
+        done
+    fi
+    sudo ip link del "$wg" 2>/dev/null && echo -e "  ${GREEN}✓${NC} $wg"
 
     echo -e "${YELLOW}Removing host files...${NC}"
     sudo rm -f /etc/sysctl.d/99-motte-ipv6.conf /etc/logrotate.d/motte-traefik
     for f in /etc/netplan/90-motte-*.yaml; do
         [ -f "$f" ] && sudo rm -f "$f" && echo -e "  ${GREEN}✓${NC} $f (run 'sudo netplan apply' or reboot to drop its addresses)"
     done
+}
+
+# factory_reset wipes everything so the next setup starts from zero. Kept: this folder, .env (the
+# setup answers) and the service. Asks the operator to type RESET.
+factory_reset() {
+    local confirm
+    echo -e "${RED}⚠ FACTORY RESET${NC}: deletes every WireGuard peer and key, Headscale devices, the panel database,"
+    echo "  AdGuard settings, certificates, firewall rules and fleet enrollment. This cannot be undone."
+    echo "  Kept: this folder, .env (your setup answers) and the motte service."
+    read -r -p "Type RESET to continue: " confirm
+    [ "$confirm" = "RESET" ] || { echo "Cancelled."; return 0; }
+    remove_motte_state
     echo -e "${GREEN}✓ Factory reset done.${NC} Run '$CMD' to set Motte up again."
+}
+
+# uninstall_motte removes Motte from this server: everything factory_reset removes, plus the
+# service, the motte command and (for the managed install) /opt/motte — and offers to put back the
+# system firewall setup turned off. Asks the operator to type UNINSTALL.
+uninstall_motte() {
+    local confirm
+    echo -e "${RED}⚠ UNINSTALL${NC}: removes Motte and all its data from this server — WireGuard peers and keys,"
+    echo "  Headscale devices, the panel database, AdGuard settings, certificates and firewall rules."
+    echo "  Make a backup first (Settings → Backup) if you may want it back."
+    read -r -p "Type UNINSTALL to continue: " confirm
+    [ "$confirm" = "UNINSTALL" ] || { echo "Cancelled."; return 0; }
+
+    sudo systemctl disable --now motte.service 2>/dev/null || true
+    remove_motte_state
+    sudo rm -f "$SYSTEMD_UNIT" "$CLI_WRAPPER" && sudo systemctl daemon-reload
+    sudo rm -rf /usr/local/motte # certificate backups
+    restore_host_changes
+    if [ "$SCRIPT_DIR" = "$INSTALL_DIR" ]; then
+        cd /
+        sudo rm -rf "${INSTALL_DIR:?}"
+        echo -e "${GREEN}✓ Motte uninstalled.${NC}"
+    else
+        echo -e "${GREEN}✓ Motte uninstalled.${NC} This checkout ($SCRIPT_DIR) is left in place; delete it yourself."
+    fi
 }
 
 install_docker() {
@@ -1605,6 +1724,11 @@ if [ "${RUN_CLEANUP:-}" = true ]; then
     exit 0
 fi
 
+if [ "${RUN_UNINSTALL:-}" = true ]; then
+    uninstall_motte
+    exit 0
+fi
+
 if [ "${RUN_START:-}" = true ]; then
     docker compose up -d
     exit $?
@@ -1848,6 +1972,15 @@ else
     echo -e "  ${GREEN}✓${NC} Fail2ban not installed"
 fi
 
+# Check the system's own nftables firewall (/etc/nftables.conf): its tables are evaluated next to
+# Motte's, and one that drops incoming traffic silently drops what Motte allows (WireGuard, VPN DNS).
+if [ -n "$(foreign_nft_drop_tables)" ] || { systemctl is-enabled --quiet nftables 2>/dev/null && grep -q 'policy drop' /etc/nftables.conf 2>/dev/null; }; then
+    FIREWALL_CONFLICTS+=("nftables")
+    echo -e "  ${YELLOW}⚠${NC} System nftables firewall (/etc/nftables.conf) drops traffic Motte allows (e.g. WireGuard)"
+else
+    echo -e "  ${GREEN}✓${NC} No system nftables firewall in the way"
+fi
+
 # Check iptables rules (that might conflict with nftables). Docker's own chains and rules are
 # expected (Docker adds them at startup) and are not counted.
 IPTABLES_RULES=$(sudo iptables -S 2>/dev/null | grep -vE '^-P |^-N |DOCKER' | wc -l)
@@ -1911,13 +2044,20 @@ if [ ${#FIREWALL_CONFLICTS[@]} -gt 0 ]; then
                     ufw)
                         echo -e "${YELLOW}Disabling UFW...${NC}"
                         sudo ufw disable
+                        record_host_change ufw
                         echo -e "${GREEN}✓ UFW disabled${NC}"
                         ;;
                     fail2ban)
                         echo -e "${YELLOW}Stopping Fail2ban...${NC}"
                         sudo systemctl stop fail2ban
                         sudo systemctl disable fail2ban
+                        record_host_change fail2ban
                         echo -e "${GREEN}✓ Fail2ban stopped and disabled${NC}"
+                        ;;
+                    nftables)
+                        echo -e "${YELLOW}Handing the system nftables firewall over to Motte...${NC}"
+                        disable_system_nftables
+                        echo -e "${GREEN}✓ /etc/nftables.conf kept as $NFT_BACKUP, service disabled at boot${NC}"
                         ;;
                 esac
             done
@@ -1940,6 +2080,11 @@ if [ ${#FIREWALL_CONFLICTS[@]} -gt 0 ]; then
                         ;;
                     fail2ban)
                         echo "  sudo systemctl stop fail2ban && sudo systemctl disable fail2ban"
+                        ;;
+                    nftables)
+                        echo "  sudo cp -a /etc/nftables.conf $NFT_BACKUP"
+                        echo "  sudo systemctl disable nftables   # disable only: 'stop' flushes every table"
+                        echo "  sudo nft list tables              # then delete the system table(s), e.g.: sudo nft delete table inet filter"
                         ;;
                 esac
             done

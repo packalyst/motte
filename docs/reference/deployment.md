@@ -191,6 +191,14 @@ Run as `motte <cmd>` (managed) or `./manage.sh <cmd>` (checkout). Most need Dock
 | `rotate-key` | Re-encrypt all secrets under a fresh `ENCRYPTION_SECRET` (see below) (`:1289`). |
 | `cleanup` | Free the Docker build cache and old untagged build layers (`docker_cleanup`). Never touches tagged images, volumes or other containers. |
 | `install-deps` | OS check + install missing dependencies without questions (used by `install.sh`). |
+| `uninstall` | `uninstall_motte`, confirmed by typing `UNINSTALL`: everything the factory reset removes, plus the service, the `motte` command, `/usr/local/motte` and (managed install) `/opt/motte`; then `restore_host_changes` offers to put back what setup turned off. |
+
+**Firewall conflicts at setup.** UFW, Fail2ban and a **system nftables firewall** (a loaded table, outside
+Motte and Docker, whose input chain drops by default — typically `/etc/nftables.conf`) are detected; every
+table is evaluated, so such a table silently drops what Motte allows (WireGuard, VPN DNS). The fix keeps
+`/etc/nftables.conf` as `/etc/nftables.conf.motte-bak`, leaves a note in its place, **disables** the service
+(never stops it: its stop step runs `flush ruleset`, wiping Motte's and Docker's tables) and deletes the
+loaded table. Each change is recorded in `/var/lib/motte/host-changes` for `uninstall` to restore.
 | `migrate` | Move a checkout to `/opt/motte` + register the service (checkout only) (`:1284`). |
 | `install-service` | Install/refresh the systemd unit + `motte` CLI (used by `install.sh`) (`:1279`). |
 | `service-up` / `service-down` | Non-interactive lifecycle hooks the systemd unit calls (`:1269-1277`). |
