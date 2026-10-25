@@ -1029,7 +1029,7 @@ check_for_updates() {
         echo -e "${YELLOW}Common causes: no internet, an egress firewall / GeoIP rule blocking${NC}"
         echo -e "${YELLOW}github, or an ssh origin without a key. For a firewalled host, an https${NC}"
         echo -e "${YELLOW}remote (public repo, port 443) is simplest:${NC}"
-        echo -e "  git remote set-url origin https://github.com/packalyst/wireguard-admin-panel.git"
+        echo -e "  git remote set-url origin https://github.com/packalyst/motte.git"
         return 1
     fi
 

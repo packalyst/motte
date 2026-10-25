@@ -184,7 +184,7 @@ services:
       - NFTABLES_ACL_PATH=${NFTABLES_ACL_PATH:-/etc/nftables.d/vpn-acl.nft}
       - HEADSCALE_BASE_DOMAIN=${HEADSCALE_BASE_DOMAIN}
       # Project source repo (full https URL) + forge type — agent releases + version check
-      - SOURCE_REPO=${SOURCE_REPO:-https://github.com/packalyst/wireguard-admin-panel}
+      - SOURCE_REPO=${SOURCE_REPO:-https://github.com/packalyst/motte}
       - SOURCE_FORGE=${SOURCE_FORGE:-github}
       # So the panel can derive the locally-built turbotunnels image name
       # (<project>-turbotunnels) instead of assuming a fixed project name.

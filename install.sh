@@ -3,7 +3,7 @@
 # Motte installer — clones the panel into /opt/motte, registers a
 # systemd service + a `motte` command, and runs first-time setup.
 #
-#   curl -fsSL https://raw.githubusercontent.com/packalyst/wireguard-admin-panel/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/packalyst/motte/main/install.sh | sudo bash
 #   # or: download it, then: sudo ./install.sh
 #
 # To move an EXISTING checkout into this layout instead, use: ./manage.sh migrate
@@ -11,7 +11,7 @@
 set -e
 
 INSTALL_DIR="/opt/motte"
-REPO="https://github.com/packalyst/wireguard-admin-panel.git"
+REPO="https://github.com/packalyst/motte.git"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 

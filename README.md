@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/packalyst/motte/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/packalyst/motte/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue">
   <img alt="Go" src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white">
   <img alt="Svelte 5" src="https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white">
@@ -94,7 +95,7 @@ protects and opens a browser shell on every machine in your fleet.
 module.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/packalyst/wireguard-admin-panel/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/packalyst/motte/main/install.sh | sudo bash
 ```
 
 This installs Motte into `/opt/motte`, registers a `motte` systemd service that starts on boot,
@@ -105,8 +106,8 @@ adds a `motte` command and starts the first-time setup. Then open `https://<your
 <summary>Install from a git checkout instead</summary>
 
 ```bash
-git clone https://github.com/packalyst/wireguard-admin-panel.git
-cd wireguard-admin-panel
+git clone https://github.com/packalyst/motte.git
+cd motte
 ./manage.sh            # interactive setup, then starts the stack
 ./manage.sh migrate    # optional: move this checkout to /opt/motte and register the service
 ```

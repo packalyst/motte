@@ -13,10 +13,10 @@ func TestNewForgeValid(t *testing.T) {
 		url, forge string
 		wantAsset  string // AssetURL("agent-v1.2.3", "motte-agent-linux-amd64")
 	}{
-		{"https://github.com/packalyst/wireguard-admin-panel", "",
-			"https://github.com/packalyst/wireguard-admin-panel/releases/download/agent-v1.2.3/motte-agent-linux-amd64"},
-		{"https://github.com/packalyst/wireguard-admin-panel.git", "github",
-			"https://github.com/packalyst/wireguard-admin-panel/releases/download/agent-v1.2.3/motte-agent-linux-amd64"},
+		{"https://github.com/packalyst/motte", "",
+			"https://github.com/packalyst/motte/releases/download/agent-v1.2.3/motte-agent-linux-amd64"},
+		{"https://github.com/packalyst/motte.git", "github",
+			"https://github.com/packalyst/motte/releases/download/agent-v1.2.3/motte-agent-linux-amd64"},
 		{"https://git.example.com/acme/panel", "gitea",
 			"https://git.example.com/acme/panel/releases/download/agent-v1.2.3/motte-agent-linux-amd64"},
 		{"https://gitlab.example.com/acme/panel", "gitlab",
