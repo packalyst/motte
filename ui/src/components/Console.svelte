@@ -862,7 +862,7 @@
           {#if !readonly}{@render toolbar(tab, true)}{/if}
         {/if}
         <!-- overflow-hidden lives here (not on the pane) so the toolbar's "…" menu isn't clipped. -->
-        <div id={'wt-' + tab.id} bind:this={tab.el} class="flex-1 min-h-0 px-1.5 pt-1.5 pb-3 overflow-hidden"></div>
+        <div id={'wt-' + tab.id} bind:this={tab.el} class="flex-1 min-h-0 px-1.5 pt-1.5 pb-4 lg:pb-1.5 overflow-hidden"></div>
         {@render statusBar(tab)}
       </div>
     {/each}
