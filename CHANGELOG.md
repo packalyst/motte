@@ -6,14 +6,16 @@ releases will be tagged as they are cut.
 
 ## [Unreleased]
 
-### Changed
-- **Renamed to Motte** (breaking — reinstall, then import a backup). Install path `/opt/motte`,
-  service and command `motte`, compose project `motte`; firewall tables `motte_*`; session cookie
-  `motte_session`; AdGuard clients the panel manages are named `motte-managed …`; DHCP and netplan
-  files `motte-<iface>`. The fleet agent is now **`motte-agent`** (folders, service, its
-  `motte_agent` firewall table and its release files) — existing agents must be reinstalled.
-
 ### Added
+- **One-line install on a fresh server**: the installer now adds git, Docker (from Docker's
+  repository), WireGuard and the tools setup needs, checks the Docker version (Docker 24 or newer;
+  an available update is offered, never forced) and states which systems are supported (Ubuntu 24.04
+  tested; Ubuntu 22.04 and Debian 12/13 expected to work; others stop).
+- **`motte cleanup`** and an offer after each interactive build to free the Docker build cache.
+- **Factory reset** (menu option 8, confirmed by typing `RESET`) now removes everything the install
+  created: all five firewall tables, the panel-created containers, the WireGuard interface and the
+  host files, which the old "Clean" option left behind.
+
 - **DHCP / managed private networks** — the panel can gateway an isolated LAN segment: a
   DHCP-only `dnsmasq` sidecar, interface addressing via a panel-owned netplan drop-in brought up
   scoped (never a global `netplan apply`) with validate → health-check → rollback, MAC-keyed
@@ -28,12 +30,19 @@ releases will be tagged as they are cut.
   `.editorconfig`, and architecture decision records under `docs/adr/`.
 
 ### Changed
+- **Renamed to Motte** (breaking — reinstall, then import a backup). Install path `/opt/motte`,
+  service and command `motte`, compose project `motte`; firewall tables `motte_*`; session cookie
+  `motte_session`; AdGuard clients the panel manages are named `motte-managed …`; DHCP and netplan
+  files `motte-<iface>`. The fleet agent is now **`motte-agent`** (folders, service, its
+  `motte_agent` firewall table and its release files) — existing agents must be reinstalled.
 - Grouped the panel-built helper images (`dnsmasq`, `turbotunnels`) under `containers/`; the
   repo root now holds only the first-class modules (`api`, `ui`, `agent`).
 - Update flow now prunes dangling images after a successful rebuild so repeated updates don't
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- Setup no longer writes a **blank AdGuard password** when `htpasswd` is missing and Python has no
+  `bcrypt`: `apache2-utils` is installed, and an empty hash stops setup.
 - **vpn**: virtual-IP targets inside the VPN range are rejected (a mis-pointed quarantine could
   otherwise cut off an unrelated peer); DNS-name collisions are detected instead of stacking
   duplicate AdGuard rewrites; established flows for a newly-isolated peer are flushed from

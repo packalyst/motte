@@ -64,6 +64,7 @@ case "${1:-}" in
         echo "  update     Check for and install updates"
         echo "  backup     Back up SSL certificates"
         echo "  rotate-key Re-encrypt all secrets under a new encryption key"
+        echo "  cleanup    Free disk space: Docker build cache and old build layers"
         if [ "$CMD" != "motte" ]; then
             echo "  migrate    Move this install to $INSTALL_DIR and register the service"
         fi
@@ -98,6 +99,13 @@ case "${1:-}" in
         ;;
     rotate-key)
         RUN_ROTATE_KEY=true
+        ;;
+    cleanup)
+        RUN_CLEANUP=true
+        ;;
+    install-deps)
+        # Check the OS and install what Motte needs, without questions (used by install.sh).
+        RUN_INSTALL_DEPS=true
         ;;
     migrate)
         RUN_MIGRATE=true
@@ -914,6 +922,197 @@ check_dependency() {
     fi
 }
 
+# supported_os reports whether this host is one Motte is tested on. Sets OS_ID, OS_VERSION and
+# OS_NAME. Returns 0 = tested (Ubuntu 24.04), 1 = expected to work but untested (Ubuntu 22.04,
+# Debian 12/13: same packages and tools), 2 = anything else.
+supported_os() {
+    OS_ID=""; OS_VERSION=""; OS_NAME="an unknown system"
+    if [ -f /etc/os-release ]; then
+        OS_ID=$(. /etc/os-release; echo "${ID:-}")
+        OS_VERSION=$(. /etc/os-release; echo "${VERSION_ID:-}")
+        OS_NAME=$(. /etc/os-release; echo "${PRETTY_NAME:-$ID}")
+    fi
+    case "$OS_ID $OS_VERSION" in
+        "ubuntu 24.04") return 0 ;;
+        "ubuntu 22.04"|"debian 12"|"debian 13") return 1 ;;
+    esac
+    return 2
+}
+
+# require_supported_os says how well this host is covered and, on a system Motte isn't built
+# for, stops unless the operator chooses to go on (asked at a terminal, or MOTTE_ALLOW_UNTESTED_OS=1).
+require_supported_os() {
+    local rc=0
+    supported_os || rc=$?
+    case "$rc" in
+        0) echo -e "${GREEN}✓${NC} $OS_NAME (tested)" ;;
+        1)
+            echo -e "${YELLOW}!${NC} $OS_NAME: expected to work, but Motte is tested on Ubuntu 24.04 LTS."
+            [ "$OS_ID" = debian ] && echo "  Managed DHCP networks need netplan, which Debian doesn't use."
+            ;;
+        *)
+            echo -e "${RED}✗${NC} $OS_NAME is not supported: Motte is built and tested on Ubuntu 24.04 LTS."
+            if [ "${MOTTE_ALLOW_UNTESTED_OS:-}" = 1 ]; then
+                echo "  Continuing (MOTTE_ALLOW_UNTESTED_OS=1)."
+            elif [ -t 0 ] && prompt_yes_no "Continue anyway at your own risk?" "n"; then
+                :
+            else
+                echo "  To try anyway, run again with MOTTE_ALLOW_UNTESTED_OS=1."
+                exit 1
+            fi
+            ;;
+    esac
+}
+
+# Docker below this major version lacks what the stack relies on (Compose v2, the socket-file
+# proxy setup).
+DOCKER_MIN_MAJOR=24
+
+# check_docker_version stops on a Docker that is too old, and offers (never forces) an update
+# from Docker's repository: updating Docker restarts every container on this server.
+check_docker_version() {
+    local ver major installed candidate pkgs="docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+    ver=$(docker version --format '{{.Server.Version}}' 2>/dev/null) || ver=""
+    if [ -z "$ver" ]; then
+        echo -e "  ${YELLOW}!${NC} Docker is installed but not running: sudo systemctl start docker"
+        return 1
+    fi
+    major=${ver%%.*}
+    if ! [ "$major" -ge "$DOCKER_MIN_MAJOR" ] 2>/dev/null; then
+        echo -e "  ${RED}✗${NC} Docker $ver is too old: Motte needs $DOCKER_MIN_MAJOR or newer."
+        echo "    Update it: sudo apt-get update && sudo apt-get install --only-upgrade $pkgs"
+        return 1
+    fi
+    echo -e "  ${GREEN}✓${NC} Docker $ver"
+    if command -v apt-cache >/dev/null 2>&1 && dpkg -s docker-ce >/dev/null 2>&1; then
+        installed=$(dpkg-query -W -f='${Version}' docker-ce 2>/dev/null)
+        candidate=$(apt-cache policy docker-ce 2>/dev/null | awk '/Candidate:/ {print $2}')
+        if [ -n "$candidate" ] && [ "$candidate" != "(none)" ] && [ "$candidate" != "$installed" ]; then
+            echo -e "  ${YELLOW}!${NC} Docker update available: $installed → $candidate"
+            if [ -t 0 ] && prompt_yes_no "  Update Docker now? (every container on this server restarts)" "n"; then
+                sudo apt-get install -y --only-upgrade $pkgs
+            else
+                echo "    Update later: sudo apt-get install --only-upgrade $pkgs"
+            fi
+        fi
+    elif dpkg -s docker.io >/dev/null 2>&1; then
+        echo "    (from Ubuntu's docker.io package; Docker's own repository gets fixes sooner)"
+    fi
+}
+
+# ensure_dependencies checks what Motte needs on the host and installs what's missing: asked at a
+# terminal, or straight away with --yes (install.sh).
+ensure_dependencies() {
+    local auto="${1:-}" dep
+    echo -e "${BLUE}Checking dependencies...${NC}"
+    MISSING_DEPS=()
+    check_dependency "docker" "Docker" || MISSING_DEPS+=("docker")
+    if command -v docker &> /dev/null && ! docker compose version &> /dev/null && ! command -v docker-compose &> /dev/null; then
+        echo -e "  ${RED}✗${NC} Docker Compose ${YELLOW}(missing)${NC}"
+        MISSING_DEPS+=("docker-compose")
+    fi
+    check_dependency "envsubst" "envsubst (gettext)" || MISSING_DEPS+=("envsubst")
+    check_dependency "curl" "curl" || MISSING_DEPS+=("curl")
+    check_dependency "htpasswd" "htpasswd (apache2-utils)" || MISSING_DEPS+=("htpasswd")
+    if ! lsmod | grep -q wireguard && ! check_dependency "wg" "WireGuard"; then
+        MISSING_DEPS+=("wireguard")
+    fi
+    echo ""
+
+    if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+        echo -e "${YELLOW}Missing: ${MISSING_DEPS[*]}${NC}"
+        if [ "$auto" != "--yes" ] && ! prompt_yes_no "Install missing dependencies?" "y"; then
+            echo -e "${RED}Cannot proceed without required dependencies${NC}"
+            exit 1
+        fi
+        for dep in "${MISSING_DEPS[@]}"; do
+            case "$dep" in
+                docker|docker-compose) install_docker || exit 1 ;;
+                wireguard) install_wireguard || exit 1 ;;
+                envsubst) install_packages gettext-base gettext || exit 1 ;;
+                curl) install_packages curl curl || exit 1 ;;
+                htpasswd) install_packages apache2-utils httpd-tools || exit 1 ;;
+            esac
+        done
+        echo ""
+    fi
+    if command -v docker &> /dev/null; then
+        check_docker_version || exit 1
+    fi
+    echo -e "${GREEN}✓ All dependencies satisfied${NC}"
+    echo ""
+}
+
+# install_packages <debian-package> <rhel-package> installs one tool from the system's packages.
+install_packages() {
+    if [ -f /etc/debian_version ]; then
+        sudo apt-get update -qq && sudo apt-get install -y "$1"
+    elif [ -f /etc/redhat-release ]; then
+        sudo yum install -y "$2"
+    else
+        echo -e "${RED}Install $1 manually${NC}"
+        return 1
+    fi
+}
+
+# docker_cleanup frees what builds leave behind: the build cache and old untagged build layers.
+# Tagged images (the Tailscale and Turbotunnels images look unused while those features are off),
+# volumes and other containers on this server are never touched. With "ask", it shows what can be
+# freed and asks first.
+docker_cleanup() {
+    local cache
+    cache=$(docker system df --format '{{.Type}}|{{.Reclaimable}}' 2>/dev/null | awk -F'|' '$1=="Build Cache" {print $2}')
+    if [ "${1:-}" = ask ]; then
+        case "$cache" in ""|0B|"0B "*) return 0 ;; esac
+        prompt_yes_no "Free disk space: build cache ($cache) and old build layers?" "n" || return 0
+    fi
+    echo -e "${YELLOW}Freeing build cache and old build layers...${NC}"
+    docker builder prune -f >/dev/null 2>&1 || true
+    docker image prune -f >/dev/null 2>&1 || true
+    docker system df
+}
+
+# factory_reset deletes everything this install created, so the next setup starts from zero: the
+# containers (incl. the ones the panel creates itself), images, data volumes (panel database,
+# WireGuard key), Headscale/AdGuard/Traefik data and generated configs, the firewall tables, the
+# WireGuard interface and the host files. Kept: this folder, .env (the setup answers) and the
+# service. Asks the operator to type RESET.
+factory_reset() {
+    local confirm t f
+    echo -e "${RED}⚠ FACTORY RESET${NC}: deletes every WireGuard peer and key, Headscale devices, the panel database,"
+    echo "  AdGuard settings, certificates, firewall rules and fleet enrollment. This cannot be undone."
+    echo "  Kept: this folder, .env (your setup answers) and the motte service."
+    read -r -p "Type RESET to continue: " confirm
+    [ "$confirm" = "RESET" ] || { echo "Cancelled."; return 0; }
+    # The menu runs before .env is loaded; the names below come from it.
+    if [ -f .env ]; then set -a; . ./.env; set +a; fi
+    local router_data="${VPN_ROUTER_DATA:-/var/lib/tailscale-vpn-router}"
+
+    echo -e "${YELLOW}Removing containers, images and data volumes...${NC}"
+    docker compose --profile vpn-router --profile turbotunnels down -v --rmi all --remove-orphans || true
+    docker rm -f "${VPN_ROUTER_NAME:-vpn-router}" "${COMPOSE_PROJECT_NAME:-$PROJECT_NAME}-turbotunnels" >/dev/null 2>&1 || true
+
+    echo -e "${YELLOW}Removing generated configs and service data...${NC}"
+    rm -f headscale/config/config.yaml headscale/config/acl.json traefik/traefik.yml traefik/acme.json \
+        adguard/conf/AdGuardHome.yaml adguard/conf/.password.bootstrap
+    rm -f traefik/dynamic/*.yml
+    rm -rf headscale/data/* adguard/work/* traefik/logs/* data/tailscale/*
+    [ -d "$router_data" ] && rm -rf "${router_data:?}"/*
+
+    echo -e "${YELLOW}Removing firewall tables and the WireGuard interface...${NC}"
+    for t in motte_firewall motte_vpn_acl motte_cf_only motte_panel_access motte_dhcp_net; do
+        sudo nft delete table inet "$t" 2>/dev/null && echo -e "  ${GREEN}✓${NC} inet $t"
+    done
+    sudo ip link del "${WG_INTERFACE:-wg0}" 2>/dev/null && echo -e "  ${GREEN}✓${NC} ${WG_INTERFACE:-wg0}"
+
+    echo -e "${YELLOW}Removing host files...${NC}"
+    sudo rm -f /etc/sysctl.d/99-motte-ipv6.conf /etc/logrotate.d/motte-traefik
+    for f in /etc/netplan/90-motte-*.yaml; do
+        [ -f "$f" ] && sudo rm -f "$f" && echo -e "  ${GREEN}✓${NC} $f (run 'sudo netplan apply' or reboot to drop its addresses)"
+    done
+    echo -e "${GREEN}✓ Factory reset done.${NC} Run '$CMD' to set Motte up again."
+}
+
 install_docker() {
     echo -e "${YELLOW}Installing Docker...${NC}"
 
@@ -939,6 +1138,7 @@ install_docker() {
               sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
             sudo apt-get update
             sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            sudo systemctl enable --now docker 2>/dev/null || true
             ;;
         centos|rhel|fedora)
             sudo yum install -y yum-utils
@@ -1394,6 +1594,17 @@ if [ "${RUN_ROTATE_KEY:-}" = true ]; then
 fi
 
 # Simple lifecycle commands (operate on the current checkout / managed install).
+if [ "${RUN_INSTALL_DEPS:-}" = true ]; then
+    require_supported_os
+    ensure_dependencies --yes
+    exit 0
+fi
+
+if [ "${RUN_CLEANUP:-}" = true ]; then
+    docker_cleanup
+    exit 0
+fi
+
 if [ "${RUN_START:-}" = true ]; then
     docker compose up -d
     exit $?
@@ -1446,7 +1657,7 @@ if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
     echo "    5) Update         Check for & install updates"
     echo "    6) Backup         Back up SSL certificates"
     echo "    7) Logs           Follow container logs"
-    echo "    8) Clean          Remove containers, volumes, images"
+    echo "    8) Factory reset  Delete all data and start over (asks you to type RESET)"
     echo "    9) Rotate key     Re-encrypt all secrets under a new key"
     echo ""
     echo "   10) Exit"
@@ -1509,30 +1720,7 @@ if [ "$DOCKER_RUNNING" = true ] && [ "$REBUILD_MODE" != true ]; then
             exit 0
             ;;
         8)
-            echo -e "${RED}⚠ WARNING: This will remove all containers, volumes, and images!${NC}"
-            if prompt_yes_no "Are you sure?" "n"; then
-                echo -e "${YELLOW}Cleaning everything...${NC}"
-                docker compose down -v --rmi all --remove-orphans
-
-                # Clean generated configs
-                rm -f headscale/config/config.yaml
-                rm -f traefik/traefik.yml
-                rm -f traefik/dynamic.yml
-                rm -f traefik/acme.json
-                rm -f adguard/conf/AdGuardHome.yaml
-
-                # Clean data directories
-                rm -rf headscale/data/*
-                rm -rf adguard/work/*
-                rm -rf traefik/logs/*
-
-                # Clean nftables tables created by the application
-                echo -e "${YELLOW}Cleaning nftables tables...${NC}"
-                sudo nft delete table inet motte_firewall 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet motte_firewall table" || true
-                sudo nft delete table inet motte_vpn_acl 2>/dev/null && echo -e "  ${GREEN}✓${NC} Removed inet motte_vpn_acl table" || true
-
-                echo -e "${GREEN}✓ Everything cleaned${NC}"
-            fi
+            factory_reset
             exit 0
             ;;
         9)
@@ -1554,89 +1742,8 @@ fi
 # Check Dependencies
 # ===========================================
 
-echo -e "${BLUE}Checking dependencies...${NC}"
-MISSING_DEPS=()
-
-if ! check_dependency "docker" "Docker"; then
-    MISSING_DEPS+=("docker")
-fi
-
-# Check Docker Compose (plugin or standalone)
-if command -v docker &> /dev/null; then
-    if docker compose version &> /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} Docker Compose"
-    elif command -v docker-compose &> /dev/null; then
-        echo -e "  ${GREEN}✓${NC} Docker Compose (standalone)"
-    else
-        echo -e "  ${RED}✗${NC} Docker Compose ${YELLOW}(missing)${NC}"
-        MISSING_DEPS+=("docker-compose")
-    fi
-else
-    echo -e "  ${RED}✗${NC} Docker Compose ${YELLOW}(missing)${NC}"
-    MISSING_DEPS+=("docker-compose")
-fi
-
-if ! check_dependency "envsubst" "envsubst (gettext)"; then
-    MISSING_DEPS+=("envsubst")
-fi
-
-if ! check_dependency "curl" "curl"; then
-    MISSING_DEPS+=("curl")
-fi
-
-# Check WireGuard
-if ! lsmod | grep -q wireguard && ! check_dependency "wg" "WireGuard"; then
-    MISSING_DEPS+=("wireguard")
-fi
-
-echo ""
-
-# Install missing dependencies
-if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
-    echo -e "${YELLOW}Missing dependencies detected:${NC}"
-    for dep in "${MISSING_DEPS[@]}"; do
-        echo "  - $dep"
-    done
-    echo ""
-
-    if prompt_yes_no "Install missing dependencies?" "y"; then
-        for dep in "${MISSING_DEPS[@]}"; do
-            case "$dep" in
-                docker|docker-compose)
-                    install_docker || exit 1
-                    ;;
-                wireguard)
-                    install_wireguard || exit 1
-                    ;;
-                envsubst)
-                    echo -e "${YELLOW}Installing gettext...${NC}"
-                    if [ -f /etc/debian_version ]; then
-                        sudo apt-get update && sudo apt-get install -y gettext-base
-                    elif [ -f /etc/redhat-release ]; then
-                        sudo yum install -y gettext
-                    fi
-                    echo -e "${GREEN}✓ gettext installed${NC}"
-                    ;;
-                curl)
-                    echo -e "${YELLOW}Installing curl...${NC}"
-                    if [ -f /etc/debian_version ]; then
-                        sudo apt-get update && sudo apt-get install -y curl
-                    elif [ -f /etc/redhat-release ]; then
-                        sudo yum install -y curl
-                    fi
-                    echo -e "${GREEN}✓ curl installed${NC}"
-                    ;;
-            esac
-        done
-        echo ""
-    else
-        echo -e "${RED}Cannot proceed without required dependencies${NC}"
-        exit 1
-    fi
-fi
-
-echo -e "${GREEN}✓ All dependencies satisfied${NC}"
-echo ""
+require_supported_os
+ensure_dependencies
 
 # In rebuild mode, skip every interactive step below (host-conflict checks and
 # the setup Q&A) and reuse the answers already saved in .env. The config
@@ -2582,16 +2689,24 @@ if [ ! -f "adguard/conf/AdGuardHome.yaml" ]; then
         echo "  Or: pip3 install bcrypt"
         exit 1
     fi
+    case "$ADGUARD_PASS_HASH" in
+        '$2'*) ;;
+        *)
+            echo -e "${RED}ERROR: the AdGuard password hash came out empty — not writing a blank password.${NC}"
+            echo "  Install apache2-utils (htpasswd) and run setup again: sudo apt install apache2-utils"
+            exit 1
+            ;;
+    esac
     export ADGUARD_PASS_HASH
 
-    # Write the plaintext to a bootstrap file so wgap-api can pick it up on
+    # Write the plaintext to a bootstrap file so the panel API can pick it up on
     # first boot, encrypt it into its own settings DB, then delete the file.
-    # This is the ONLY hop the plaintext ever takes to reach wgap.
+    # This is the ONLY hop the plaintext ever takes to reach the panel.
     mkdir -p adguard/conf
     printf '%s' "$GENERATED_PASSWORD" > adguard/conf/.password.bootstrap
     chmod 600 adguard/conf/.password.bootstrap
 
-    echo -e "${GREEN}✓ Generated AdGuard password (plaintext handed off to wgap-api via bootstrap file)${NC}"
+    echo -e "${GREEN}✓ Generated AdGuard password (plaintext handed off to the panel via bootstrap file)${NC}"
     echo -e "${YELLOW}  → AdGuard admin login: admin / ${GENERATED_PASSWORD}${NC}"
     echo -e "${YELLOW}    Save this password — it will not be shown again.${NC}"
 fi
@@ -3035,6 +3150,10 @@ echo ""
 # build cache are never touched. Best-effort so a prune hiccup can't fail the deploy.
 echo -e "${YELLOW}Cleaning up old build layers...${NC}"
 docker image prune -f >/dev/null 2>&1 || true
+# At a terminal, also offer to free the build cache (it grows with every build).
+if [ -t 0 ]; then
+    docker_cleanup ask
+fi
 
 echo ""
 

@@ -91,8 +91,14 @@ protects and opens a browser shell on every machine in your fleet.
 
 ## Quick start
 
-**You need:** a Linux server with root access, Docker with Compose, and the WireGuard kernel
-module.
+**You need:** a server running **Ubuntu 24.04 LTS** (the system Motte is built and tested on) with
+root access. The installer adds what's missing: git, Docker, WireGuard and a few tools.
+
+| System | Status |
+|---|---|
+| Ubuntu 24.04 LTS | Tested |
+| Ubuntu 22.04 LTS, Debian 12 / 13 | Expected to work, not tested; on Debian, managed DHCP networks need netplan |
+| Anything else | Not supported: the installer stops (or asks, at a terminal) |
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/packalyst/motte/main/install.sh | sudo bash
@@ -123,6 +129,7 @@ cd motte
 | `sudo motte start` / `stop` / `restart` | Control the stack |
 | `sudo motte update` | Check for and install updates |
 | `sudo motte rotate-key` | Re-encrypt all secrets under a new encryption key |
+| `sudo motte cleanup` | Free disk space: Docker build cache and old build layers |
 | `sudo motte help` | Every command, including the supply-chain options |
 
 ### Adding a machine to the fleet
