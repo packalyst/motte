@@ -1848,10 +1848,11 @@ else
     echo -e "  ${GREEN}✓${NC} Fail2ban not installed"
 fi
 
-# Check iptables rules (that might conflict with nftables)
-IPTABLES_RULES=$(sudo iptables -L -n 2>/dev/null | grep -v "^Chain\|^target\|^$" | wc -l)
+# Check iptables rules (that might conflict with nftables). Docker's own chains and rules are
+# expected (Docker adds them at startup) and are not counted.
+IPTABLES_RULES=$(sudo iptables -S 2>/dev/null | grep -vE '^-P |^-N |DOCKER' | wc -l)
 if [ "$IPTABLES_RULES" -gt 0 ]; then
-    echo -e "  ${YELLOW}⚠${NC} iptables has $IPTABLES_RULES active rules"
+    echo -e "  ${YELLOW}⚠${NC} iptables has $IPTABLES_RULES rule(s) besides Docker's: sudo iptables -S"
 fi
 
 # iptables backend sanity. The panel (and Docker) manage rules through the nft backend; a legacy
@@ -1864,7 +1865,7 @@ if [ -n "$IPTABLES_BIN" ] && [ "${IPTABLES_BIN%legacy}" != "$IPTABLES_BIN" ]; th
     echo -e "     switch with: sudo update-alternatives --set iptables /usr/sbin/iptables-nft"
 fi
 if command -v iptables-legacy &> /dev/null; then
-    LEGACY_RULES=$(sudo iptables-legacy -S 2>/dev/null | grep -vcE '^-P ')
+    LEGACY_RULES=$(sudo iptables-legacy -S 2>/dev/null | grep -vcE '^-P ' || true) # grep -c exits 1 on zero lines (set -e)
     if [ "${LEGACY_RULES:-0}" -gt 0 ]; then
         echo -e "  ${YELLOW}⚠${NC} $LEGACY_RULES rule(s) in the legacy iptables backend (often Tailscale) — evaluated alongside nft"
         echo -e "     review if traffic is unexpectedly dropped: sudo iptables-legacy -S"
