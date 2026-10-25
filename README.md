@@ -231,7 +231,7 @@ The root of trust is an **offline ed25519 key**. On the release machine, `make r
 
 ```mermaid
 flowchart TB
-    priv["signing.key (PRIVATE) — offline, never shipped"] --> mk["make release · wgsign sign"]
+    priv["signing.key (PRIVATE) — offline, never shipped"] --> mk["make release · motte-sign sign"]
     mk --> art["binary + checksums.txt + .sig"]
     art -->|publish| forge["Forge release"]
     pub["signing.pub (PUBLIC) — committed"] -->|ldflags| panelbin["panel binary — verifies before serving"]
@@ -291,6 +291,7 @@ flowchart LR
 |---|---|
 | [Reference](docs/reference/README.md) | How every part works, with file and line references: [architecture](docs/reference/architecture.md), [backend](docs/reference/backend.md), [frontend](docs/reference/frontend.md), [API](docs/reference/api-surface.md), [data model](docs/reference/data-model.md), [firewall](docs/reference/networking-firewall.md), [fleet agent](docs/reference/fleet-agent.md), [deployment](docs/reference/deployment.md), [security](docs/reference/security.md) |
 | [Decisions](docs/adr/README.md) | Architecture decision records: why the API is host-networked, why nftables is the gate, how backups and releases are sealed, and more |
+| [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) | What changed, how to contribute, and how to report a vulnerability privately |
 
 The **About** page inside the panel shows the running version, these diagrams and a live API
 reference generated from the running schema.

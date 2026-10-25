@@ -6,6 +6,13 @@ releases will be tagged as they are cut.
 
 ## [Unreleased]
 
+### Changed
+- **Renamed to Motte** (breaking — reinstall, then import a backup). Install path `/opt/motte`,
+  service and command `motte`, compose project `motte`; firewall tables `motte_*`; session cookie
+  `motte_session`; AdGuard clients the panel manages are named `motte-managed …`; DHCP and netplan
+  files `motte-<iface>`. The fleet agent is now **`motte-agent`** (folders, service, its
+  `motte_agent` firewall table and its release files) — existing agents must be reinstalled.
+
 ### Added
 - **DHCP / managed private networks** — the panel can gateway an isolated LAN segment: a
   DHCP-only `dnsmasq` sidecar, interface addressing via a panel-owned netplan drop-in brought up

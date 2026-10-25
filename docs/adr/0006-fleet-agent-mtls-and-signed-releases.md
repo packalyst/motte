@@ -14,7 +14,7 @@ MITM or a tampered mirror).
 - **Enrollment & transport:** each agent gets a client certificate at enrollment and connects
   over **mTLS**; the panel authenticates the agent by its cert. On **uninstall the cert is
   revoked** (fixed 2026-10-17) so access dies immediately, not at expiry.
-- **Releases:** agent binaries are **signed** (`tools/wgsign`, key `signing.key` which is never
+- **Releases:** agent binaries are **signed** (`tools/motte-sign`, key `signing.key` which is never
   committed) and the agent verifies the signature before applying an update. Release packaging is
   `make release` (config in `agent/release.env`).
 
