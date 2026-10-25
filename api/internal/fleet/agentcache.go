@@ -18,7 +18,7 @@ import (
 	"api/internal/helper"
 )
 
-// agentCache serves the wgscout agent assets (binary + manifest + install.sh) by pulling
+// agentCache serves the agent assets (binary + manifest + install.sh) by pulling
 // them LIVE from the GitHub release and caching them on the panel's disk — so the repo
 // carries no binaries and a new agent ships with a plain `gh release`, no panel rebuild.
 //
@@ -120,7 +120,7 @@ func (c *agentCache) Get(ctx context.Context, arch string) (bin, manifest, insta
 	if err := c.refreshLocked(ctx); err != nil {
 		return nil, nil, nil, err
 	}
-	binName := "wgscout-linux-" + arch
+	binName := "motte-agent-linux-" + arch
 	bin, err = c.ensureVerifiedLocked(ctx, binName)
 	if err != nil {
 		return nil, nil, nil, err
@@ -155,7 +155,7 @@ func (c *agentCache) Binary(ctx context.Context, arch string) ([]byte, error) {
 	if err := c.refreshLocked(ctx); err != nil {
 		return nil, err
 	}
-	return c.ensureVerifiedLocked(ctx, "wgscout-linux-"+arch)
+	return c.ensureVerifiedLocked(ctx, "motte-agent-linux-"+arch)
 }
 
 // refreshLocked re-validates the cache against the release at most once per ttl. It resolves

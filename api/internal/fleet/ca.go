@@ -1,6 +1,6 @@
 // Package fleet implements the panel side of the "panel tie" (Phase 2): it is a
 // private certificate authority + enrollment service that lets per-machine agents
-// (wgscout) register once with a one-time token, obtain a client certificate, and
+// (motte-agent) register once with a one-time token, obtain a client certificate, and
 // then talk to the panel over mutual TLS. The panel only ever obeys agents whose
 // certificate its own CA signed and that map to an enrolled, non-revoked machine.
 //
@@ -67,7 +67,7 @@ func generateCA(db *sql.DB) (*CA, error) {
 	now := time.Now()
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "wgscout-panel-ca"},
+		Subject:               pkix.Name{CommonName: "motte-panel-ca"},
 		NotBefore:             now.Add(-5 * time.Minute),
 		NotAfter:              now.AddDate(10, 0, 0), // 10y
 		IsCA:                  true,
@@ -188,7 +188,7 @@ func (c *CA) ServerCertificate(hosts []string) (tls.Certificate, error) {
 	now := time.Now()
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "wgscout-panel"},
+		Subject:      pkix.Name{CommonName: "motte-panel"},
 		NotBefore:    now.Add(-5 * time.Minute),
 		NotAfter:     now.AddDate(1, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

@@ -1,11 +1,11 @@
-# Fleet Agent (`wgscout`)
+# Fleet Agent (`motte-agent`)
 
 The per-machine fleet agent lets the panel monitor and lightly manage other Linux
 hosts. It lives in `agent/` (Go, **git-ignored** — see `.gitignore:53-54` and
 `agent/.gitignore`) and talks to the panel-side subsystem in
 `api/internal/fleet/`. Binaries are never committed; they ship as GitHub releases.
 
-Agent module: `agent/` (package `main`, binary `wgscout`). Agent version constant:
+Agent module: `agent/` (package `main`, binary `motte-agent`). Agent version constant:
 `agent/report.go:26` (`agentVersion = "0.1.22"` at time of writing).
 
 Related: [security.md](security.md) · [networking-firewall.md](networking-firewall.md) · [data-model.md](data-model.md) · [deployment.md](deployment.md) · [api-surface.md](api-surface.md)
@@ -20,11 +20,11 @@ Per-machine telemetry + light enforcement, all confined to its own directory tre
 so uninstall leaves the host pristine (`base_dir` / `data_dir` / `conf_dir`):
 
 - **Metrics** — CPU / memory / disk / load / uptime read directly from `/proc` (`agent/metrics.go`, `agent/report.go`).
-- **CVE scanning (Trivy)** — scans OS packages **and** app dependencies (npm/composer/pip/go lockfiles auto-discovered by `trivy fs`). Slow/expensive → **on demand only**: never on install, boot or a timer. Trivy is installed by the first scan, each scan refreshes its own DB when stale, and the last result is saved (`/var/lib/wgscout/trivy/last-scan.json`, 0600) so it survives restarts. The `rescan` command runs it in the background; the report carries `scanning` / `scan_error`. `agent/tool_trivy.go`, `Manager.Scan`.
+- **CVE scanning (Trivy)** — scans OS packages **and** app dependencies (npm/composer/pip/go lockfiles auto-discovered by `trivy fs`). Slow/expensive → **on demand only**: never on install, boot or a timer. Trivy is installed by the first scan, each scan refreshes its own DB when stale, and the last result is saved (`/var/lib/motte-agent/trivy/last-scan.json`, 0600) so it survives restarts. The `rescan` command runs it in the background; the report carries `scanning` / `scan_error`. `agent/tool_trivy.go`, `Manager.Scan`.
 - **Intrusion detection (CrowdSec)** — the agent reads CrowdSec's local decisions (`--limit 0`: all of them) and enforces them itself via its own nftables table (replaces the bouncer). Rules: the SSH set only, no GeoIP enrichment (converged at install and every hub update); the daemon runs with `GOMEMLIMIT=64MiB GOGC=25`. Its local API listens on 127.0.0.1 only and no Central API / Console is configured. `agent/tool_crowdsec.go`.
 - **Host facts** — OS, kernel, CPU, RAM, listening ports, read natively from `/proc`, `/sys`, `/etc` (no subprocess); hardware/OS/kernel once at start, the rest every minute. `agent/hostfacts.go`.
 - **FIM (osquery)** — File Integrity Monitoring via a supervised `osqueryd`: system and `/usr/local` programs, the agent's binaries, `/etc`, SSH keys, scheduled tasks (`/var/spool/cron`), system services (`/usr/lib/systemd/system`), and the agent's config folder with the tools' settings in it (only CrowdSec's rule downloads are left out). Each report carries up to 1000 changed files, the latest change per file, shared out between folders so a flood in one can't push a change elsewhere out of view; a final `DROPPED` entry counts what didn't fit. The agent's own writes are dropped: its config files by content and time, a tool's folder while the agent installs, starts, updates or removes that tool. Everything else there is reported. `agent/tool_osquery.go`, `agent/ownwrites.go`.
-- **Enforcement** — blocks source IPs via its own nftables table (`inet wgscout`: sets `blocked_ips` / `blocked_ips6` for manual blocks and CrowdSec bans, `panel_blocklist` for the panel-pushed list). The agent's saved state (`<data_dir>/blocks.json`, root-only) is the truth, with each entry's sources (manual, crowdsec, panel); the kernel table is rebuilt from it in one atomic `nft -f` transaction at start (a reboot empties the kernel's rules), on every change, when dry-run changes, and by a once-a-minute self-heal (a failed save or apply, or a table that went missing). Dry-run enforces nothing: the table is removed and the list kept. An address stays blocked while any source still wants it; unblocking also drops CrowdSec's ban. The same drops sit in two chains: `input` (traffic for the host) and `forward` (traffic through it, above all to Docker-published ports, which are rewritten to the container before they'd reach `input`). Only replies to connections the host or a container opened are accepted ahead of the drops, so a ban also ends a blocked address's existing sessions. Addresses that would hurt the host (loopback, its own, multicast, link-local) are refused, and the panel list also refuses private and reserved addresses (single or range: RFC 1918, 100.64/10 CGNAT/Tailscale), so a push can't cut off the operator's own VPN or LAN. If nft rejects the rules while a panel list is present (a timeout, a limit), the manual and CrowdSec bans are applied without it and the failure is reported, so one bad list never leaves the host with no rules. `agent/enforce.go`.
+- **Enforcement** — blocks source IPs via its own nftables table (`inet motte_agent`: sets `blocked_ips` / `blocked_ips6` for manual blocks and CrowdSec bans, `panel_blocklist` for the panel-pushed list). The agent's saved state (`<data_dir>/blocks.json`, root-only) is the truth, with each entry's sources (manual, crowdsec, panel); the kernel table is rebuilt from it in one atomic `nft -f` transaction at start (a reboot empties the kernel's rules), on every change, when dry-run changes, and by a once-a-minute self-heal (a failed save or apply, or a table that went missing). Dry-run enforces nothing: the table is removed and the list kept. An address stays blocked while any source still wants it; unblocking also drops CrowdSec's ban. The same drops sit in two chains: `input` (traffic for the host) and `forward` (traffic through it, above all to Docker-published ports, which are rewritten to the container before they'd reach `input`). Only replies to connections the host or a container opened are accepted ahead of the drops, so a ban also ends a blocked address's existing sessions. Addresses that would hurt the host (loopback, its own, multicast, link-local) are refused, and the panel list also refuses private and reserved addresses (single or range: RFC 1918, 100.64/10 CGNAT/Tailscale), so a push can't cut off the operator's own VPN or LAN. If nft rejects the rules while a panel list is present (a timeout, a limit), the manual and CrowdSec bans are applied without it and the failure is reported, so one bad list never leaves the host with no rules. `agent/enforce.go`.
 - **Kernel maintenance** — install newest kernel, reboot to activate, purge superseded kernels + rescan, as a reboot-surviving state machine. `agent/kernelmaint.go` (`KernelMaint`).
 
 The **sub-agents (tools)** are installed only from a pinned `manifest.json`
@@ -52,17 +52,17 @@ on loopback, was removed: any local user could have used it to run apt or reboot
 
 ## 3. Config (`agent/config.go`)
 
-Plaintext JSON at `/etc/wgscout/config.json` (default). **No secrets in the JSON,
+Plaintext JSON at `/etc/motte-agent/config.json` (default). **No secrets in the JSON,
 no secrets from env** — operational config only. Secrets live in the encrypted
-store (§7). Written on demand with `wgscout -config … -write-default-config`.
+store (§7). Written on demand with `motte-agent -config … -write-default-config`.
 
 Key fields (`Config` struct):
 
 - Transport: `panel_url`, `ca_fingerprint` (pinned `sha256:<hex>`, from the install command), `enroll_token` (one-time; consumed + scrubbed on first enroll).
 - Loops: `metrics_interval` (default 15s — also the report cadence), `db_update_every` (12h, CrowdSec hub). CrowdSec decisions + host facts refresh every minute (fixed). No scan loop.
-- Firewall: **`dry_run` (default `true`)**, `nft_table` (`wgscout`), `nft_set` (`blocked_ips`).
+- Firewall: **`dry_run` (default `true`)**, `nft_table` (`motte_agent`), `nft_set` (`blocked_ips`).
 - `log_level`: `quiet` (default) or `debug`, flipped live by the `set-log-level` command.
-- Layout: `base_dir` (`/opt/wgscout`), `data_dir` (`/var/lib/wgscout`), `conf_dir` (`/etc/wgscout`), `manifest_path`.
+- Layout: `base_dir` (`/opt/motte-agent`), `data_dir` (`/var/lib/motte-agent`), `conf_dir` (`/etc/motte-agent`), `manifest_path`.
 - `tools`: `{trivy, crowdsec, osquery}` booleans (all `true` by default).
 - `scan_roots`: Trivy scan roots (empty ⇒ whole `/`).
 
@@ -151,7 +151,7 @@ offline machine can ask for the step-up before the request is refused as offline
 
 ### Local policy (a lock the panel can't change)
 
-Root on a server can create `/etc/wgscout/local-policy.json` to switch capabilities off
+Root on a server can create `/etc/motte-agent/local-policy.json` to switch capabilities off
 whatever the panel asks — useful on sensitive hosts, since whoever controls the panel
 otherwise controls the console, agent updates and host maintenance:
 
@@ -200,14 +200,14 @@ plus CVE handlers (`CVEGroups`, `ListCVEs`, `ListCVEsByCVE`, `ExportCVEs`,
 
 ## 6. Uninstall / deregister
 
-`wgscout uninstall` → `RunUninstall` (`agent/uninstall.go`). Order matters:
+`motte-agent uninstall` → `RunUninstall` (`agent/uninstall.go`). Order matters:
 1. **Deregister from the panel first** (`deregisterFromPanel`), while still enrolled, over the agent's mTLS identity → `POST /deregister`. **Best-effort — never blocks uninstall.**
-2. `systemctl disable --now wgscout` (stop the daemon + supervised children, wait 1.5s so file removal doesn't race them).
+2. `systemctl disable --now motte-agent` (stop the daemon + supervised children, wait 1.5s so file removal doesn't race them).
 3. Remove sub-agents + their data (`mgr.UninstallAll()`).
-4. Drop the `inet wgscout` nftables table.
+4. Drop the `inet motte_agent` nftables table.
 5. Wipe secrets + key material.
 6. `rm -rf base_dir / data_dir / conf_dir`.
-7. Remove the systemd unit; unlink the binary itself (`removeSelf`, guarded to the real `wgscout` name so it never deletes a test binary).
+7. Remove the systemd unit; unlink the binary itself (`removeSelf`, guarded to the real `motte-agent` name so it never deletes a test binary).
 
 ### The deregister → MarkUninstalled flow
 
@@ -259,8 +259,8 @@ parsing, so `"$@"` survives the sudo hand-off) and, when no local binary is give
 downloads from the repo's **latest** GitHub release (`AGENT_RELEASE=agent-vX.Y.Z`
 pins a specific one).
 
-`agent/systemd/wgscout.service`: `Type=simple`,
-`ExecStart=/usr/local/bin/wgscout -config /etc/wgscout/config.json`,
+`agent/systemd/motte-agent.service`: `Type=simple`,
+`ExecStart=/usr/local/bin/motte-agent -config /etc/motte-agent/config.json`,
 `Restart=always`, **`User=root`** with `AmbientCapabilities=CAP_NET_ADMIN
 CAP_NET_RAW` (it manages nftables, supervises tools, reads host logs). Hardening is
 kept permissive on purpose (`ProtectHome=false`, `ProtectSystem=false`).
@@ -293,10 +293,10 @@ available" indicator (`FleetEndpoints`).
 Per memory [agent-release-process]: ship with `make release TAG=agent-vX.Y.Z`.
 
 `make release` = `test build manifest checksums` then `gh release create`:
-- **build**: cross-compile `wgscout-linux-amd64` + `wgscout-linux-arm64`, `CGO_ENABLED=0`, `-trimpath -ldflags "-s -w"` (static, any-libc).
+- **build**: cross-compile `motte-agent-linux-amd64` + `motte-agent-linux-arm64`, `CGO_ENABLED=0`, `-trimpath -ldflags "-s -w"` (static, any-libc).
 - **manifest** (`gen-manifest.sh`): resolves the **latest** upstream releases of Trivy, osquery, CrowdSec, records a verified sha256 per tool/arch (fail-closed), and writes `manifest.json` with the correct in-archive bin paths. Run at release time only; agents never chase "latest" at runtime — the manifest is pinned + immutable per release.
 - **checksums**: `sha256sum` of both binaries → `checksums.txt`.
-- publishes `wgscout-linux-{amd64,arm64}`, `manifest.json`, `checksums.txt`, and `install.sh` as the release assets, `--generate-notes`.
+- publishes `motte-agent-linux-{amd64,arm64}`, `manifest.json`, `checksums.txt`, and `install.sh` as the release assets, `--generate-notes`.
 
 `install.sh` and the panel's cache both track `releases/latest`, so **there's no
 version to bump in code** — publishing a new release is the whole ship. To reissue,

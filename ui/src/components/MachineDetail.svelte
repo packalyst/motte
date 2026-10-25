@@ -235,7 +235,7 @@
   const svcMax = $derived(Math.max(1, ...(services?.top || []).map((s) => s.mem || 0)))
   // What the monitoring costs on this host, one row per part the agent runs (agent footprint)
   const FOOTPRINT = {
-    agent: ['robot', 'wgscout agent'],
+    agent: ['robot', 'Motte agent'],
     crowdsec: ['shield-lock', 'CrowdSec'],
     osquery: ['file-search', 'osquery · file watch'],
     scan: ['package', 'Vulnerability scan'],
@@ -517,7 +517,7 @@
   }
   const updateAgent = () => cmd('update-agent', null, {
     title: 'Update agent',
-    message: `Update the wgscout agent on ${machine.name}${agentUpdate.cur && agentUpdate.latest ? ` from ${agentUpdate.cur} to ${agentUpdate.latest}` : ' to the latest release'}? It downloads the release binary, verifies its checksum, checks it runs, swaps it in (keeping a backup), and restarts the agent — a brief reconnect, no reboot.`,
+    message: `Update the Motte agent on ${machine.name}${agentUpdate.cur && agentUpdate.latest ? ` from ${agentUpdate.cur} to ${agentUpdate.latest}` : ' to the latest release'}? It downloads the release binary, verifies its checksum, checks it runs, swaps it in (keeping a backup), and restarts the agent — a brief reconnect, no reboot.`,
     confirmText: 'Update agent',
   })
 
@@ -1260,7 +1260,7 @@
               </span>
             {/if}
           {/snippet}
-          {@render row('Version', report?.agent ? `wgscout ${report.agent}` : 'Not reported yet', version)}
+          {@render row('Version', report?.agent ? `motte-agent ${report.agent}` : 'Not reported yet', version)}
 
           {#snippet mode()}
             {#if dryRun}

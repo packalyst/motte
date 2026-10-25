@@ -71,9 +71,9 @@ func releaseCache(t *testing.T, listed, served map[string]string) *agentCache {
 }
 
 var release = map[string]string{
-	"wgscout-linux-amd64": "binary",
-	"manifest.json":       `{"tools":{}}`,
-	"install.sh":          "#!/bin/sh\necho install\n",
+	"motte-agent-linux-amd64": "binary",
+	"manifest.json":           `{"tools":{}}`,
+	"install.sh":              "#!/bin/sh\necho install\n",
 }
 
 // Every asset the installer hands out, not only the binary, must match the signed checksums.
@@ -83,7 +83,7 @@ func TestAgentCacheServesVerifiedAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(bin) != release["wgscout-linux-amd64"] || string(manifest) != release["manifest.json"] || string(installSh) != release["install.sh"] {
+	if string(bin) != release["motte-agent-linux-amd64"] || string(manifest) != release["manifest.json"] || string(installSh) != release["install.sh"] {
 		t.Fatal("served assets differ from the release")
 	}
 }
@@ -105,7 +105,7 @@ func TestAgentCacheRejectsTamperedAssets(t *testing.T) {
 
 // An asset missing from checksums.txt (an old-style release) is never served unverified.
 func TestAgentCacheRejectsUnlistedAssets(t *testing.T) {
-	listed := map[string]string{"wgscout-linux-amd64": release["wgscout-linux-amd64"]}
+	listed := map[string]string{"motte-agent-linux-amd64": release["motte-agent-linux-amd64"]}
 	c := releaseCache(t, listed, release)
 	if _, _, _, err := c.Get(context.Background(), "amd64"); err == nil || !strings.Contains(err.Error(), "no checksum") {
 		t.Fatalf("want no-checksum error, got %v", err)

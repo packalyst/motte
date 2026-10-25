@@ -15,7 +15,7 @@ func TestVerifyChecksumsSig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg := []byte("abc123  wgscout-linux-amd64\ndef456  wgscout-linux-arm64\n")
+	msg := []byte("abc123  motte-agent-linux-amd64\ndef456  motte-agent-linux-arm64\n")
 	good := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, msg))
 
 	orig := signPubKey
@@ -71,7 +71,7 @@ func TestVerifyChecksumsSigKeyRollover(t *testing.T) {
 	pub1, priv1, _ := ed25519.GenerateKey(rand.Reader)
 	pub2, priv2, _ := ed25519.GenerateKey(rand.Reader)
 	_, priv3, _ := ed25519.GenerateKey(rand.Reader) // not baked in
-	msg := []byte("abc123  wgscout-linux-amd64\n")
+	msg := []byte("abc123  motte-agent-linux-amd64\n")
 
 	orig := signPubKey
 	defer func() { signPubKey = orig }()

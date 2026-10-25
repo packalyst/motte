@@ -87,26 +87,26 @@ type installScriptData struct {
 func renderInstallScript(d installScriptData) string {
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n")
-	b.WriteString("# wgscout self-extracting installer — served by the panel, fully self-contained.\n")
+	b.WriteString("# motte-agent self-extracting installer — served by the panel, fully self-contained.\n")
 	b.WriteString("set -eu\n")
 	b.WriteString("TMP=$(mktemp -d)\n")
 	b.WriteString(`trap 'rm -rf "$TMP"' EXIT` + "\n")
 	b.WriteString("command -v base64 >/dev/null 2>&1 || { echo 'error: base64 not found' >&2; exit 1; }\n\n")
 
-	b.WriteString(`base64 -d > "$TMP/wgscout" <<'__WGSCOUT_BIN__'` + "\n")
-	b.WriteString(d.BinaryB64 + "\n__WGSCOUT_BIN__\n\n")
+	b.WriteString(`base64 -d > "$TMP/motte-agent" <<'__MOTTE_AGENT_BIN__'` + "\n")
+	b.WriteString(d.BinaryB64 + "\n__MOTTE_AGENT_BIN__\n\n")
 
-	b.WriteString(`base64 -d > "$TMP/manifest.json" <<'__WGSCOUT_MAN__'` + "\n")
-	b.WriteString(d.ManifestB64 + "\n__WGSCOUT_MAN__\n\n")
+	b.WriteString(`base64 -d > "$TMP/manifest.json" <<'__MOTTE_AGENT_MAN__'` + "\n")
+	b.WriteString(d.ManifestB64 + "\n__MOTTE_AGENT_MAN__\n\n")
 
-	b.WriteString(`base64 -d > "$TMP/install.sh" <<'__WGSCOUT_SH__'` + "\n")
-	b.WriteString(d.InstallerB64 + "\n__WGSCOUT_SH__\n\n")
+	b.WriteString(`base64 -d > "$TMP/install.sh" <<'__MOTTE_AGENT_SH__'` + "\n")
+	b.WriteString(d.InstallerB64 + "\n__MOTTE_AGENT_SH__\n\n")
 
-	b.WriteString(`chmod +x "$TMP/wgscout"` + "\n")
+	b.WriteString(`chmod +x "$TMP/motte-agent"` + "\n")
 	// Hand off to the real installer with the binary/manifest local and the enrollment
 	// params baked in. "$@" forwards any extra flags the operator appended (e.g. --live).
 	fmt.Fprintf(&b, "sh \"$TMP/install.sh\" install \\\n"+
-		"  --binary \"$TMP/wgscout\" --manifest \"$TMP/manifest.json\" \\\n"+
+		"  --binary \"$TMP/motte-agent\" --manifest \"$TMP/manifest.json\" \\\n"+
 		"  --panel %s --ca-fp %s --token %s \"$@\"\n",
 		shQuote(d.PanelURL), shQuote(d.CAFingerprint), shQuote(d.Token))
 	return b.String()
@@ -121,7 +121,7 @@ func writeErrorScript(w http.ResponseWriter, msg string) {
 		"printf '%%s\\n' >&2 "+
 		"'' "+
 		"'   .--. ' "+
-		"'  ( o o )   wgscout' "+
+		"'  ( o o )   motte-agent' "+
 		"'   >--<    could not set you up:' "+
 		"'' "+
 		"%s "+

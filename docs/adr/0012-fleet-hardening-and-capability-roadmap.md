@@ -10,7 +10,7 @@
 
 We reviewed the panel's remote-administration, auth, and fleet-ops posture against what modern
 self-hosted admin tooling offers, and found a set of gaps worth closing. The panel and its
-`wgscout` agent are strong on their core job — WireGuard, the nftables firewall, DHCP-managed LANs,
+`motte-agent` are strong on their core job — WireGuard, the nftables firewall, DHCP-managed LANs,
 and fleet security telemetry (CVE, FIM, metrics, posture) — but lack an interactive host console,
 some auth hardening, and a few operational refinements.
 
