@@ -32,6 +32,17 @@ const observer = new MutationObserver((mutations) => {
 })
 observer.observe(document.body, { childList: true, subtree: true })
 
+// Phones have no hover: iOS fakes a mouseenter on a tap and sends no mouseleave until the next tap
+// elsewhere, so a hover tooltip would stay up (over a modal the tap opened). Hover tooltips don't
+// show on a touch-only screen.
+if (window.matchMedia?.('(hover: none)').matches) {
+  document.addEventListener('show', (e) => {
+    const el = e.target
+    if (!(el instanceof Element) || !el.hasAttribute('data-kt-tooltip-initialized')) return
+    if (KTTooltip.getInstance(el)?.getTriggerOption() === 'hover' && e.detail?.payload) e.detail.payload.cancel = true
+  })
+}
+
 const app = mount(App, {
   target: document.getElementById('app'),
 })
