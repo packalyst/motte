@@ -53,6 +53,7 @@
           ],
           "handler": "Preview",
           "min_role": "owner",
+          "max_body_mb": 32,
           "description": "Decrypt a backup and report what an import would replace"
         },
         {
@@ -62,6 +63,7 @@
           ],
           "handler": "Import",
           "min_role": "owner",
+          "max_body_mb": 32,
           "description": "Apply a backup (faithful replace) then reconcile live state"
         },
         {
