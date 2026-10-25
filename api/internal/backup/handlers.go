@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -185,6 +186,10 @@ func (s *Service) decodeFile(w http.ResponseWriter, r *http.Request) (fileReq, b
 	// which runs ahead of every handler — no local MaxBytesReader needed here.
 	var req fileReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if tooLarge := new(http.MaxBytesError); errors.As(err, &tooLarge) {
+			router.JSONError(w, fmt.Sprintf("backup file is too large (limit %d MB)", tooLarge.Limit>>20), http.StatusRequestEntityTooLarge)
+			return req, false
+		}
 		router.JSONError(w, "bad request", http.StatusBadRequest)
 		return req, false
 	}

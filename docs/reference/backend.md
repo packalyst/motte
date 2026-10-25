@@ -46,7 +46,7 @@ one-shots. Enumerated:
 | `logs` | Log ingestion + query. `Service` manages watchers (`logs/sources`: traefik, adguard, outbound, conntrack), hourly rollups, retention, top-talkers, per-peer usage. |
 | `turbotunnels` | Optional forward-proxy container lifecycle; public rotation + webhook triggers; auth-log streaming into firewall jail + logs. |
 | `fleet` | Per-machine fleet agent backend (Phase 2): panel CA, agent enrollment, machine registry, mTLS listener, command queue, metrics, CVE tracking, self-extracting installer. See [fleet-agent.md](fleet-agent.md). |
-| `backup` | Passphrase-encrypted export / faithful-replace import of the whole panel config; reconciles live state after import via injected callbacks. |
+| `backup` | Passphrase-encrypted export / faithful-replace import of the whole panel config; reconciles live state after import via injected callbacks. Caches the panel rebuilds itself are left out (a machine's `last_report`, resent by its agent). |
 | `server` | Read-only host-security telemetry for the "Server" page (logins, sudo, new accounts, package installs, listening ports, uptime, TLS certs). |
 | `serverstats` | Single `/proc` collector broadcasting host CPU/mem to the `server_stats` WS channel; subscriber-gated. |
 | `stats` | Process-level stats (uptime, mem, goroutines, GC, WS client count) for the dashboard. |
