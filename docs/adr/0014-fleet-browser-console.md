@@ -42,6 +42,11 @@ by a session reset changes nothing. File actions run in order on their own gorou
 doesn't hold up keystrokes. The git panel also refuses a repository whose own config names
 programs git would run (content filters, includes).
 
+**On a phone** the console brings its own iPhone-style keyboard (`simple-keyboard`, pinned exactly;
+key labels come only from the panel's own layouts) instead of the system one, which on iOS always
+carries Safari's "^ v ✓" bar. Above it, a scrollable row holds the keys phone keyboards lack (esc,
+tab, sticky ctrl/alt, ^C, arrows…); its end button slides the keyboard down and up.
+
 **Gating (compensating controls for offering a real shell):**
 - **Per-host enable, default OFF** — a `fleet_machines.console_enabled` column *and* an agent-side
   `ConsoleEnabled` flag; both must be on. The agent never opens the channel otherwise.

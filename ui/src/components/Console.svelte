@@ -15,6 +15,9 @@
   import { keyboardAware } from '../lib/utils/viewport.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
+  import TermKeyboard from './TermKeyboard.svelte'
+  import { slide } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
 
   // The console is machine-agnostic: every tab carries its OWN machine, so one console can hold
   // sessions from different hosts (the global console). Grants are cached per machine.
@@ -149,8 +152,9 @@
     overflowFor = null
     fn()
   }
-  // --- mobile key bar (touch devices): keys phone keyboards lack. Ctrl/Alt are sticky modifiers
-  // applied to the NEXT keystroke, whether it comes from the bar or the on-screen keyboard. ---
+  // --- phone keys (touch devices): our own iPhone-style keyboard (TermKeyboard) replaces the
+  // system one, so iOS adds no "^ v ✓" bar above it, plus a scrollable row of the keys phone
+  // keyboards lack. Ctrl/Alt are sticky modifiers applied to the NEXT keystroke. ---
   const isTouch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches
   let ctrlArmed = $state(false)
   let altArmed = $state(false)
@@ -170,19 +174,23 @@
     activeSocket()?.sendInput(applyMods(seq))
     activeTab?.term?.focus()
   }
-  const keyRows = [
-    [{ l: 'Ctrl', mod: 'ctrl' }, { l: 'Alt', mod: 'alt' }, { l: 'Esc', s: '\x1b' }, { l: 'Tab', s: '\t' },
-      { l: '↑', i: 'arrow-up', s: '\x1b[A' }, { l: '↓', i: 'arrow-down', s: '\x1b[B' },
-      { l: '←', i: 'arrow-left', s: '\x1b[D' }, { l: '→', i: 'arrow-right', s: '\x1b[C' }],
-    [{ l: '⌨', i: 'keyboard', kbd: true }, { l: '^C', s: '\x03' }, { l: '^D', s: '\x04' }, { l: 'PgUp', s: '\x1b[5~' },
-      { l: 'PgDn', s: '\x1b[6~' }, { l: '|', s: '|' }, { l: '/', s: '/' }, { l: '-', s: '-' }],
+  const keyRow = [
+    { l: 'esc', s: '\x1b' }, { l: 'tab', s: '\t' }, { l: 'ctrl', mod: 'ctrl' }, { l: 'alt', mod: 'alt' },
+    { l: '^C', s: '\x03' }, { l: '←', i: 'arrow-left', s: '\x1b[D' }, { l: '↑', i: 'arrow-up', s: '\x1b[A' },
+    { l: '↓', i: 'arrow-down', s: '\x1b[B' }, { l: '→', i: 'arrow-right', s: '\x1b[C' },
+    { l: '^D', s: '\x04' }, { l: '^L', s: '\x0c' }, { l: '/', s: '/' }, { l: '|', s: '|' },
+    { l: '~', s: '~' }, { l: '-', s: '-' }, { l: '_', s: '_' }, { l: '$', s: '$' }, { l: '*', s: '*' },
+    { l: 'home', s: '\x1b[H' }, { l: 'end', s: '\x1b[F' }, { l: 'pgup', s: '\x1b[5~' }, { l: 'pgdn', s: '\x1b[6~' },
   ]
   function pressKey(k) {
     if (k.mod === 'ctrl') ctrlArmed = !ctrlArmed
     else if (k.mod === 'alt') altArmed = !altArmed
-    else if (k.kbd) { const t = activeTab?.term; if (document.activeElement?.closest?.('.xterm')) t?.blur(); else t?.focus() }
     else sendKey(k.s)
   }
+  // Our keyboard is up (slides down/up from the key row's button). Tapping the terminal while it's
+  // down brings it back.
+  let kbOpen = $state(true)
+  function termTapped() { if (!kbOpen) kbOpen = true }
 
   function copySelection(tab) {
     const sel = tab.term?.getSelection() || ''
@@ -323,6 +331,10 @@
     term.loadAddon(search)
     term.loadAddon(new WebLinksAddon())
     term.open(el)
+    if (isTouch) {
+      term.textarea?.setAttribute('inputmode', 'none') // our keyboard instead of the system one
+      el.addEventListener('pointerup', termTapped)
+    }
     fit.fit()
     tab.term = term
     tab.fit = fit
@@ -850,7 +862,7 @@
           {#if !readonly}{@render toolbar(tab, true)}{/if}
         {/if}
         <!-- overflow-hidden lives here (not on the pane) so the toolbar's "…" menu isn't clipped. -->
-        <div id={'wt-' + tab.id} bind:this={tab.el} class="flex-1 min-h-0 p-1.5 overflow-hidden"></div>
+        <div id={'wt-' + tab.id} bind:this={tab.el} class="flex-1 min-h-0 px-1.5 pt-1.5 pb-3 overflow-hidden"></div>
         {@render statusBar(tab)}
       </div>
     {/each}
@@ -1034,20 +1046,31 @@
   {/if}
   </div>
 
-  <!-- Mobile key bar (touch only). pointerdown is cancelled so a tap never blurs the terminal and
-       dismisses the on-screen keyboard. Ctrl/Alt light up while armed for the next key. -->
+  <!-- Phone keys (touch only): the key row, then our keyboard. pointerdown is cancelled so a tap never
+       takes focus from the terminal. Ctrl/Alt light up while armed for the next key. -->
   {#if isTouch && activeTab && !readonly}
-    <div class="shrink-0 border-t border-white/[0.06] px-1.5 pt-1.5 pb-1 grid gap-1.5 select-none">
-      {#each keyRows as row, ri (ri)}
-        <div class="grid grid-cols-8 gap-1.5">
-          {#each row as k (k.l)}
+    <div class="shrink-0 select-none bg-[#1c1c1e]">
+      <div class="flex items-center h-11 border-t border-white/[0.06]">
+        <div class="keyrow flex-1 min-w-0 flex items-center gap-1 overflow-x-auto h-full px-1.5">
+          {#each keyRow as k (k.l)}
+            {@const armed = (k.mod === 'ctrl' && ctrlArmed) || (k.mod === 'alt' && altArmed)}
             <button onpointerdown={(e) => e.preventDefault()} onclick={() => pressKey(k)} aria-label={k.i ? k.l : undefined}
-              class="h-10 rounded-lg grid place-items-center text-[13px] font-medium transition-colors {(k.mod === 'ctrl' && ctrlArmed) || (k.mod === 'alt' && altArmed) ? 'bg-[#58a6ff] text-white' : 'bg-white/[0.07] text-white/85 active:bg-white/20'}">
-              {#if k.i}<Icon name={k.i} size={17} />{:else}{k.l}{/if}
+              class="shrink-0 h-7 min-w-[40px] px-2.5 rounded-[7px] grid place-items-center text-[15px] transition-colors {armed ? 'bg-[#e5e5ea] text-[#1c1c1e] font-medium' : 'text-white/85 active:bg-white/15'}">
+              {#if k.i}<Icon name={k.i} size={18} />{:else}{k.l}{/if}
             </button>
           {/each}
         </div>
-      {/each}
+        <button onpointerdown={(e) => e.preventDefault()} onclick={() => (kbOpen = !kbOpen)} aria-label={kbOpen ? 'Hide keyboard' : 'Show keyboard'}
+          class="shrink-0 h-full w-12 grid place-items-center border-l border-white/10 text-white/70 active:bg-white/10 active:text-white">
+          <Icon name={kbOpen ? 'chevron-down' : 'keyboard'} size={18} />
+        </button>
+      </div>
+      {#if kbOpen}
+        <!-- data-term-keyboard: it fills the home-indicator area itself (app.css .safe-inset) -->
+        <div data-term-keyboard class="pb-[env(safe-area-inset-bottom)]" transition:slide={{ duration: 240, easing: cubicOut }} onintroend={fitAll} onoutroend={fitAll}>
+          <TermKeyboard onkey={sendKey} />
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -1094,4 +1117,11 @@
 <style>
   /* Native <button>s don't carry a pointer cursor; every control in the console chrome is clickable. */
   button:not(:disabled) { cursor: pointer; }
+  /* the key row scrolls without a bar, and its keys fade out at the edges instead of being cut */
+  .keyrow {
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 10px, #000 calc(100% - 22px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 10px, #000 calc(100% - 22px), transparent 100%);
+  }
+  .keyrow::-webkit-scrollbar { display: none; }
 </style>
