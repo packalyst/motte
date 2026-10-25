@@ -49,7 +49,7 @@ func newBackend(d Destination) (backend, error) {
 // archiveName reports whether an object name is one of our archives (so listing/pruning never
 // touches unrelated files sharing the bucket/dir).
 func isArchiveName(name string) bool {
-	return strings.HasPrefix(path.Base(name), "wire-panel-") && strings.HasSuffix(name, ".wgbackup")
+	return strings.HasPrefix(path.Base(name), "motte-") && strings.HasSuffix(name, ".wgbackup")
 }
 
 // ---- S3-compatible (minio-go) ----

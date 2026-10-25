@@ -99,7 +99,7 @@ func fetchRemoteTip(ctx context.Context, repo, branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "git/2.0 (wire-panel)")
+	req.Header.Set("User-Agent", "git/2.0 (motte)")
 	// SSRF-guard the forge fetch: block link-local/cloud-metadata on every hop (incl. redirects)
 	// while still allowing a self-hosted internal forge and following normal CDN redirects.
 	resp, err := helper.SafeInternalHTTPClient(10 * time.Second).Do(req)

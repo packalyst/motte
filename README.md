@@ -1,112 +1,165 @@
-# WireGuard Admin Panel
+<p align="center">
+  <img src="ui/public/icon.svg" alt="Motte" width="96" height="96">
+</p>
 
-**One dashboard for a full self-hosted networking stack** — WireGuard & Headscale VPNs, DNS filtering, reverse-proxy routing, forward proxies, an intrusion-detection firewall, a per-machine fleet agent, and traffic analytics.
+<h1 align="center">Motte</h1>
 
-It unifies manual WireGuard peer management with Headscale (Tailscale-compatible) control, AdGuard Home DNS filtering, a Traefik reverse proxy, and an nftables firewall — plus the operational tooling around them (analytics, host security, CVE scanning, encrypted backup/migrate) behind a single authenticated UI and REST API.
+<p align="center">
+  <strong>Your infrastructure. Your stronghold.</strong><br>
+  A self-hosted control panel for your VPNs, DNS, reverse proxy, firewall and server fleet.
+</p>
+
+<p align="center">
+  <img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white">
+  <img alt="Svelte 5" src="https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white">
+  <img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white">
+</p>
 
 ---
 
+Motte runs on one Linux server and brings the pieces of a private network under one login:
+WireGuard and Headscale (Tailscale-compatible) VPNs, AdGuard Home DNS, a Traefik reverse proxy,
+an nftables firewall that is the single gate for all traffic, and a signed agent that watches,
+protects and opens a browser shell on every machine in your fleet.
+
+- **Contents:** [Features](#features) · [Quick start](#quick-start) · [Configuration](#configuration) · [Security](#security) · [Architecture](#architecture) · [Documentation](#documentation) · [Development](#development) · [License](#license)
+
 ## Features
 
-| Area | What you get |
-|------|--------------|
-| **VPN** | WireGuard peers (with QR codes) + Headscale nodes in one view; VPN-to-VPN ACLs enforced in nftables; cross-network routing between the two |
-| **Virtual IPs** | Give a peer a virtual IP and gate reachability with ACLs — e.g. expose a single LAN device (a camera) over the VPN without opening the whole network |
-| **DNS** | AdGuard Home integration: query logging, filtering controls, DNS rewrites for VPN hostnames |
-| **Reverse proxy** | Traefik management + domain routes: expose internal services on custom domains (VPN-only or public) with per-route middleware, TLS, and AdGuard rewrites |
-| **Tunnels** | Authenticated HTTP/SOCKS5 forward proxies — direct or chained through a VPN node — with per-tunnel credentials, live stats, and provider IP rotation |
-| **Webhooks** | Validating pass-through triggers: declare a strict inbound contract (method, params, patterns) and forward to any URL |
-| **Firewall** | nftables rules, port allowlisting, manual/auto IP blocking, fail2ban-style jails with CIDR escalation, blocklist import |
-| **Geolocation** | Country-based traffic blocking (MaxMind / IP2Location / IPdeny), IP lookup, auto DB updates |
-| **Analytics** | Unified inbound / DNS / outbound / firewall logs, per-node usage, top talkers, a world map, and time-series charts from 1 hour to all time (backed by hourly rollups) |
-| **Fleet** | Enroll remote machines over mTLS: live CPU/mem/disk metrics with history, CVE scanning grouped by OS/project, targeted package fixes, and one-click agent self-update |
-| **Host security** | Read-only telemetry for the panel server: resource usage, listening ports, certificate expiry, recent package changes |
-| **Backup & migrate** | Passphrase-encrypted export of the full configuration (AES-256-GCM) and import onto a fresh host |
-| **Security** | Session auth (bcrypt) + TOTP 2FA, API keys, rate limiting, device/location tracking, encrypted secrets at rest |
-| **PWA** | Installable on mobile/desktop, push notifications, offline detection, map visualization |
+### Networks and VPN
 
-The About page inside the panel lists every capability, the running **build version**, and a live API reference.
+| | |
+|---|---|
+| **WireGuard + Headscale** | Manage WireGuard peers (with QR codes) and Headscale nodes from one client list; route between the two networks. |
+| **Access rules** | VPN-to-VPN and per-client rules enforced in nftables, not only advisory ACLs. |
+| **Virtual IPs** | Give a single LAN device (a camera, a printer) its own VPN address and decide who can reach it. |
+| **Private LANs** | The panel can be the DHCP gateway for a private network on a spare interface (dnsmasq). |
+| **DNS** | AdGuard Home with query logs, filtering per client and rewrites for VPN host names. |
+| **Domains** | Publish internal services on your own domains through Traefik: VPN-only or public, with TLS. |
+| **Tunnels** | Authenticated HTTP/SOCKS5 forward proxies, direct or through a VPN node, with IP rotation and webhooks. |
 
-## Tech Stack
+### Firewall and threat protection
 
-**Backend** — Go 1.24 · SQLite (WAL) · gorilla/websocket · wgctrl · MaxMind/IP2Location
-**Frontend** — Svelte 5 (runes) · Tailwind CSS 4 · Vite 7 · uPlot charts · Leaflet maps
-**Infrastructure** — Docker Compose · Traefik · Headscale · AdGuard Home · nftables
+| | |
+|---|---|
+| **One gate** | Default-drop nftables firewall rebuilt from the database; changes are checked with `nft -c` before they apply. |
+| **Blocking** | Manual and automatic IP blocks, fail2ban-style jails that escalate to whole ranges, blocklist imports. |
+| **Geo-blocking** | Block or allow by country (MaxMind, IP2Location or IPdeny), with automatic database updates. |
+| **Panel lockdown** | Once a domain is set, close direct-IP access so the API is reachable only through the domain, localhost and the VPN. |
 
-## Installation
+### Fleet
 
-### Prerequisites
-- Linux server with root access
-- Docker & Docker Compose
-- WireGuard kernel module
+| | |
+|---|---|
+| **Agent** | A small signed agent enrolls each server over mutual TLS and reports health, CVEs and blocks. |
+| **Vulnerabilities** | Trivy scans of OS packages and app lockfiles, grouped by OS and project, with targeted fixes. |
+| **Protection** | CrowdSec bans and panel-pushed blocklists enforced in the agent's own firewall table; osquery file-integrity monitoring. |
+| **Maintenance** | Apply updates, fix broken packages and update the kernel as live jobs; dry-run mode until you switch it on. |
+| **Local veto** | Root on a server can switch the console, self-update or maintenance off for that machine, whatever the panel says. |
+| **Self-update** | One click; the agent checks the release signature itself before it swaps. |
 
-### Quick start (managed install)
+### Browser console
+
+| | |
+|---|---|
+| **Real shell** | A full terminal to any fleet machine in the browser, over the agent's existing mTLS link. Nothing new to open. |
+| **Sessions that survive** | tmux-backed: close the tab or lose the network and pick up where you were. Tabs and split view. |
+| **Built-in tools** | File manager (upload, download, edit), git status, Docker, diagnostics, snippets and a command history. |
+| **Recording and sharing** | Optional encrypted session recordings with a player, and read-only share links. |
+| **Phone ready** | Its own iPhone-style keyboard and a row of terminal keys (esc, tab, ctrl, alt, arrows). |
+| **Gated** | Off by default per machine, admin to switch on, re-authentication before opening a console, every session audited. |
+
+### Monitoring
+
+| | |
+|---|---|
+| **Analytics** | Inbound, DNS, outbound and firewall logs in one place: top talkers, a world map, charts from an hour to all time. |
+| **Live stats** | CPU, memory, disk and network for the panel host and every machine, with history. |
+| **Alerts** | Thresholds on CPU, memory and disk, delivered by push notification, webhook or email. |
+| **Host security** | Listening ports, certificate expiry and recent package changes on the panel server. |
+| **Routines** | Every background job visible, with last and next run, pause and run-now. |
+
+### Operations
+
+| | |
+|---|---|
+| **Backups** | Passphrase-sealed export of the whole configuration and a one-step import onto a new host; scheduled off-host copies to S3 or SFTP. |
+| **Updates** | The panel tells you when a new version is out; `motte update` pulls and rebuilds. Optional image pinning and verification. |
+| **App** | Installable on phone and desktop (PWA) with push notifications. |
+
+## Quick start
+
+**You need:** a Linux server with root access, Docker with Compose, and the WireGuard kernel
+module.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/packalyst/wireguard-admin-panel/main/install.sh | sudo bash
 ```
-This clones the panel into `/opt/wire-panel`, registers a `wire-panel.service` systemd unit (starts on boot), installs a `wire-panel` command, and runs first-time setup. Afterwards manage it from anywhere with `sudo wire-panel` (interactive), `sudo wire-panel update`, `sudo systemctl {start,stop,status} wire-panel`.
 
-### Manual install
+This installs Motte into `/opt/motte`, registers a `motte` systemd service that starts on boot,
+adds a `motte` command and starts the first-time setup. Then open `https://<your-domain>/` (or
+`http://<server-ip>/`) and create the owner account in the setup wizard.
+
+<details>
+<summary>Install from a git checkout instead</summary>
+
 ```bash
 git clone https://github.com/packalyst/wireguard-admin-panel.git
 cd wireguard-admin-panel
-chmod +x manage.sh
-./manage.sh
+./manage.sh            # interactive setup, then starts the stack
+./manage.sh migrate    # optional: move this checkout to /opt/motte and register the service
 ```
 
-`manage.sh` checks/installs dependencies, auto-detects your public IP, walks you through interactive setup, generates the configuration, stamps the build version, and starts every service. Re-run it any time to reconfigure; `./manage.sh update` pulls and rebuilds.
+</details>
 
-### Migrate an existing checkout to the managed layout
-Already running from a plain `git clone`? Move it into `/opt/wire-panel` + systemd in one step — it stops the stack, carries the database volume across (verified before the old one is removed), and brings everything back up:
-```bash
-./manage.sh migrate
-```
+### Everyday commands
 
-### Access
-| Service | URL |
-|---------|-----|
-| Dashboard | `http://YOUR_SERVER_IP/` |
-| Traefik dashboard | `http://YOUR_SERVER_IP:8080` |
-| AdGuard Home | `http://YOUR_SERVER_IP:8083` |
-| API | `http://YOUR_SERVER_IP:8081` |
+| Command | What it does |
+|---|---|
+| `sudo motte` | Interactive menu |
+| `sudo motte status` / `logs` | Service status, follow container logs |
+| `sudo motte start` / `stop` / `restart` | Control the stack |
+| `sudo motte update` | Check for and install updates |
+| `sudo motte rotate-key` | Re-encrypt all secrets under a new encryption key |
+| `sudo motte help` | Every command, including the supply-chain options |
 
-### First login
-Default credentials are `admin` / `admin` — **change them immediately after first login.**
+### Adding a machine to the fleet
+
+On the **Clients** page, add a machine to get an enrollment token and run the one-line installer it shows on
+the server you want to add. The agent pins the panel's certificate, enrolls once and starts in
+dry-run mode.
 
 ## Configuration
 
-Core settings live in `.env` (see `.env.example` for the full list).
+Settings live in `.env`, created from [`.env.example`](.env.example) during setup.
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `SERVER_IP` | Public IP of your server | Required |
-| `ENCRYPTION_SECRET` | Key for encrypting secrets at rest | Required — `openssl rand -hex 32` |
-| `WG_INTERFACE` | WireGuard interface name | `wg0` |
+|---|---|---|
+| `SERVER_IP` | Public IP of the server | detected |
+| `ENCRYPTION_SECRET` | Key for secrets at rest (`openssl rand -hex 32`) | generated |
+| `SSL_DOMAIN` | Domain for the panel and Let's Encrypt | — |
 | `WG_PORT` | WireGuard UDP port | `51820` |
-| `WG_IP_RANGE` | IP range for WireGuard peers | `10.8.0.0/16` |
-| `WG_SERVER_IP` | WireGuard gateway IP | `10.8.0.1` |
-| `HEADSCALE_IP_RANGE` | IP range for Headscale clients | `100.64.0.0/16` |
-| `HEADSCALE_BASE_DOMAIN` | DNS base domain for Headscale | `vpn.local` |
+| `WG_IP_RANGE` | WireGuard client range | `10.8.0.0/16` |
+| `HEADSCALE_IP_RANGE` | Headscale client range | `100.64.0.0/16` |
 
-**Service ports** — `HTTP_PORT` (80), `HTTPS_PORT` (443), `TRAEFIK_PORT` (8080), `API_PORT` (8081), `ADGUARD_PORT` (8083), `DNS_PORT` (53), `STUN_PORT` (3478).
+**What's exposed:** only the ports open in the panel's firewall, starting with `80`/`443`
+(Traefik), WireGuard (`51820/udp`) and STUN (`3478/udp`). The Traefik dashboard, AdGuard's admin
+UI and the Headscale API listen on localhost only, and the firewall keeps the panel API closed to
+everything but Traefik, localhost and the VPN.
 
-**Security** — `TRUSTED_PROXIES` (IPs allowed to set `X-Forwarded-For`, defaults to the Traefik container) · `IGNORE_NETWORKS` (networks excluded from the firewall, defaults to private ranges).
+## Security
 
-### SSL / HTTPS
-Enable Let's Encrypt certificates in `.env`:
-```bash
-SSL_ENABLED=true
-SSL_DOMAIN=vpn.example.com
-LETSENCRYPT_EMAIL=admin@example.com
-```
+Motte holds the keys to your network, so it is built to fail closed:
 
-## Backup & migrate
+- **The firewall is the gate.** nftables decides what reaches what; access rules elsewhere are advisory.
+- **Accounts:** owner, admin, operator and viewer roles with per-machine scopes; TOTP and passkeys; re-authentication before sensitive actions; optional idle lock.
+- **Sessions** live in an HttpOnly, SameSite=Strict cookie with CSRF checks and a strict Content Security Policy.
+- **Secrets at rest** are encrypted with AES-256-GCM, with a key-rotation command; backups are sealed with Argon2id.
+- **Docker access** goes through a filtering proxy that only the panel can reach (a root-only socket).
+- **The fleet** is mutual TLS from a private CA, and agent releases are signed with an offline ed25519 key that both the panel and the agent verify. A compromised panel still cannot push a tampered agent.
 
-From **Settings → Backup**, export a passphrase-encrypted archive of your full configuration (AES-256-GCM, PBKDF2-SHA256). Import it onto a fresh install to migrate the panel between hosts — it restores users, settings, VPN clients, routes, and fleet configuration in one step.
-
-## Fleet agent
-
-A lightweight per-machine agent (distributed via GitHub Releases) enrolls with the panel over **mTLS** and reports metrics, CVE scans (Trivy), and inventory. Manage machines, drill into vulnerabilities, apply targeted OS-package fixes, and trigger agent self-updates from the **Machines** page. Install it with the panel-served installer; enrollment is one-time-token based.
+Details: [security reference](docs/reference/security.md).
 
 ## Architecture
 
@@ -118,7 +171,7 @@ The `api` runs in the host network namespace (privileged, `CAP_NET_ADMIN`) becau
 
 ```mermaid
 flowchart TB
-    browser["Browser"] -->|443| traefik["traefik v3.6"]
+    browser["Browser"] -->|443| traefik["traefik"]
     traefik -->|"PathPrefix /"| ui["ui (Svelte)"]
     traefik -->|"host.docker.internal:8081"| api["api (Go) · privileged · host-networked"]
     traefik -->|"/agent install route"| api
@@ -232,52 +285,34 @@ flowchart LR
 | **SHA-256 checksums** (verified twice) | Integrity of each downloaded binary, checked by panel *and* agent, fail-closed |
 | **TLS / mutual TLS** | Report/command/update endpoints reject certless or foreign-cert connections at the handshake |
 
+## Documentation
+
+| | |
+|---|---|
+| [Reference](docs/reference/README.md) | How every part works, with file and line references: [architecture](docs/reference/architecture.md), [backend](docs/reference/backend.md), [frontend](docs/reference/frontend.md), [API](docs/reference/api-surface.md), [data model](docs/reference/data-model.md), [firewall](docs/reference/networking-firewall.md), [fleet agent](docs/reference/fleet-agent.md), [deployment](docs/reference/deployment.md), [security](docs/reference/security.md) |
+| [Decisions](docs/adr/README.md) | Architecture decision records: why the API is host-networked, why nftables is the gate, how backups and releases are sealed, and more |
+
+The **About** page inside the panel shows the running version, these diagrams and a live API
+reference generated from the running schema.
+
 ## Development
 
-Enable hot reload during setup (`./manage.sh` → answer `y` to development mode) or set `DEV_MODE=true` in `.env`. Svelte changes then reflect instantly without a rebuild.
-
-## Project structure
+Answer `y` to development mode during `./manage.sh` (or set `DEV_MODE=true` in `.env`) for hot
+reload of the UI. CI checks formatting, `go vet`, the Go tests and the UI build on every push, plus
+advisory security scans (gosec, govulncheck, staticcheck).
 
 ```
-├── api/                     # Go backend
-│   ├── cmd/                 # Entry point (main.version stamped at build)
-│   ├── configs/             # Endpoint configuration (endpoints.json)
-│   └── internal/
-│       ├── auth/ (+pwa/)    # Auth, 2FA, push, device location
-│       ├── vpn/ wireguard/ headscale/   # Unified VPN, WG peers, HS proxy
-│       ├── firewall/ nftables/          # Rules, jails, traffic; nftables tables
-│       ├── domains/ traefik/            # Domain routes; reverse-proxy config
-│       ├── turbotunnels/                # Forward proxies + IP rotation + webhooks
-│       ├── logs/ retention/             # Analytics, rollups, central retention
-│       ├── fleet/ server/ serverstats/  # Fleet agent, host security, live stats
-│       ├── geolocation/ adguard/ docker/
-│       ├── backup/ settings/ setup/ events/ stats/
-│       ├── database/ helper/ router/ ws/
-├── ui/                      # Svelte 5 frontend
-│   └── src/{views,components,stores,lib}/
-├── headscale/ traefik/ adguard/   # Service configs
-├── deploy/                  # systemd unit + wire-panel CLI wrapper
-├── docker-compose.yml       # Container orchestration
-├── install.sh               # Managed install (clone → /opt/wire-panel + service)
-└── manage.sh                # Install / update / configure / migrate
+├── api/                 Go backend: cmd/ (entry point), configs/ (endpoints), internal/ (one package per area)
+├── ui/                  Svelte 5 frontend: src/{views,components,stores,lib}
+├── containers/          Images built here (dnsmasq, turbotunnels)
+├── headscale/ traefik/ adguard/   Service configuration
+├── deploy/              systemd unit and the motte command
+├── docs/                Reference and decision records
+├── docker-compose.yml   The stack
+├── install.sh           Managed install to /opt/motte
+└── manage.sh            Configure, update, migrate, rotate keys
 ```
-
-## API
-
-RESTful JSON with `Authorization: Bearer <token>`. Services are grouped by prefix:
-
-`/api/auth` · `/api/pwa` · `/api/wg` · `/api/hs` · `/api/vpn` · `/api/fw` · `/api/geo` · `/api/traefik` · `/api/domains` · `/api/adguard` · `/api/turbotunnels` · `/api/logs` · `/api/fleet` · `/api/server` · `/api/docker` · `/api/backup` · `/api/events` · `/api/settings` · `/api/ws`
-
-The **About → API Reference** tab renders every endpoint live from the running schema.
-
-## Security notes
-
-- All endpoints require authentication except initial setup.
-- WireGuard private keys are stripped before database storage; sensitive settings (API keys, tokens, authkeys) are encrypted at rest.
-- Headscale API access is restricted to VPN networks; the Docker socket is reached only through docker-socket-proxy with limited permissions.
-- Rate limiting is applied to authentication and sensitive endpoints; security headers are set on all responses.
-- The panel's direct-IP access can be closed once a domain is configured, leaving the API reachable only via the domain, localhost, and WireGuard.
 
 ## License
 
-MIT
+[GNU Affero General Public License v3.0](LICENSE).

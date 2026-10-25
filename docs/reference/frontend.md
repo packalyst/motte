@@ -429,12 +429,9 @@ Other `lib/utils`: `data.js` (`debounce`, `filterByFields`, sorting), `clipboard
   `promptInstall`, `canInstall`), and `getPlatformCapabilities` with iOS-16.4+ push special-casing.
 - `index.js` re-exports both.
 
-**Manifest** — `index.html` links **`/api/manifest.json`** (backend-served, so it can inject
-runtime values). **Caveat/flag:** the file in `ui/public/` is named **`manifest.json_`** (trailing
-underscore, `ui/public/manifest.json_`) so Vite/nginx do **not** serve it at `/manifest.json`; the
-authoritative manifest is the backend route. If you're rebuilding, don't assume the static file is
-live — the app points at the API. (Content: name "Wire Panel", `display: standalone`,
-`theme/background #16161a`, 192/512 PNG + SVG icons.)
+**Manifest** — `index.html` links **`/api/manifest.json`**, served by the backend
+(`router.handleManifest`) so it can carry the domain: name `Motte - <domain>`, short name `Motte`,
+`display: standalone`, 192/512 PNG + SVG icons. There is no static manifest in `ui/public/`.
 
 ---
 

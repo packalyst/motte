@@ -1,6 +1,6 @@
 # Deployment & Operations
 
-How the Wire Panel stack is installed, run, and operated. Everything is
+How the Motte stack is installed, run, and operated. Everything is
 orchestrated by `docker-compose.yml` + a large `manage.sh`, driven by a single
 `.env`. This document is the reference for install methods, the compose
 topology, every `manage.sh` command, config generation, and backups.
@@ -13,7 +13,7 @@ Related: [architecture.md](architecture.md) · [networking-firewall.md](networki
 
 There are two shapes of install, both ultimately driven by `manage.sh`:
 
-### a) Managed install to `/opt/wire-panel` (recommended)
+### a) Managed install to `/opt/motte` (recommended)
 
 `install.sh` (repo root, 62 lines) does a one-line, root install:
 
@@ -24,19 +24,19 @@ curl -fsSL https://raw.githubusercontent.com/packalyst/wireguard-admin-panel/mai
 Flow (`install.sh`):
 1. Re-exec under `sudo` if not root (writes `/opt`, `/etc/systemd`, `/usr/local/bin`).
 2. Preflight: require `git` and `docker` on PATH.
-3. Conflict guard: refuse if `/opt/wire-panel` already exists (never clobber). (`install.sh:36`)
-4. `git clone` the repo into `/opt/wire-panel`, `chmod +x manage.sh`, `chmod 750` the dir.
-5. Call `./manage.sh install-service` — registers the systemd unit + `wire-panel` CLI (logic lives in `manage.sh` only, not duplicated).
-6. If a TTY is present, `exec ./manage.sh` to run first-time interactive setup; if piped (`curl | bash`, no TTY), it stops and tells the operator to run `sudo wire-panel`.
+3. Conflict guard: refuse if `/opt/motte` already exists (never clobber). (`install.sh:36`)
+4. `git clone` the repo into `/opt/motte`, `chmod +x manage.sh`, `chmod 750` the dir.
+5. Call `./manage.sh install-service` — registers the systemd unit + `motte` CLI (logic lives in `manage.sh` only, not duplicated).
+6. If a TTY is present, `exec ./manage.sh` to run first-time interactive setup; if piped (`curl | bash`, no TTY), it stops and tells the operator to run `sudo motte`.
 
-`INSTALL_DIR=/opt/wire-panel` and `REPO=...packalyst/wireguard-admin-panel.git` are hardcoded in `install.sh`.
+`INSTALL_DIR=/opt/motte` and `REPO=...packalyst/wireguard-admin-panel.git` are hardcoded in `install.sh`.
 
 ### b) Plain checkout
 
 Clone anywhere and run `./manage.sh`. This runs the same setup + bring-up but
 without systemd/CLI registration. Convert a plain checkout to the managed layout
 later with `./manage.sh migrate` (see §4, migrate). In a plain checkout the help
-text and messages use `./manage.sh`; in `/opt/wire-panel` they use `wire-panel`
+text and messages use `./manage.sh`; in `/opt/motte` they use `motte`
 (chosen by `CMD` at `manage.sh:34` based on whether `SCRIPT_DIR == INSTALL_DIR`).
 
 ---
@@ -87,7 +87,7 @@ fixed `name:` values). Docker prefixes it with the compose project name:
 `<project>_api_data`. The project name defaults to the **folder name** unless
 `COMPOSE_PROJECT_NAME` is set.
 
-**Gotcha:** `.env.example` pins `COMPOSE_PROJECT_NAME=wire-panel` (`.env.example:7`)
+**Gotcha:** `.env.example` pins `COMPOSE_PROJECT_NAME=motte` (`.env.example:7`)
 precisely so the volume/network names don't depend on the folder name. Renaming
 the folder or changing `COMPOSE_PROJECT_NAME` on an existing install **orphans
 the `api_data` volume (your database)**. Never change it on an existing install.
@@ -130,7 +130,7 @@ everything for `envsubst` and compose.
 
 Notable groups in `.env.example` (see the file for the full annotated list):
 
-- **Deployment**: `COMPOSE_PROJECT_NAME=wire-panel` (do not change — see gotcha above).
+- **Deployment**: `COMPOSE_PROJECT_NAME=motte` (do not change — see gotcha above).
 - **Server**: `SERVER_IP` (public IP; used by Headscale/WG/DERP/routing rules).
 - **Ports**: `HTTP_PORT` 80, `HTTPS_PORT` 443, `TRAEFIK_PORT` 8080, `API_PORT` 8081, `ADGUARD_PORT` 8083, `HEADSCALE_INTERNAL_PORT` 8085, `STUN_PORT` 3478, `WG_PORT` 51820, `DNS_PORT` 53.
 - **WireGuard**: `WG_INTERFACE=wg0`, `WG_IP_RANGE=10.8.0.0/16`, `WG_SERVER_IP=10.8.0.1`, `WG_DNS`.
@@ -164,7 +164,7 @@ if absent. Every command that mutates `.env` goes through it.
 
 `manage.sh` (~3000 lines) is both a CLI and an interactive menu. Structure:
 
-- **Header** (`:1-110`): `set -e`, `cd $SCRIPT_DIR`, color vars (`RED/GREEN/YELLOW/BLUE/CYAN/NC`), managed-install constants (`INSTALL_DIR`, `PROJECT_NAME`, `SYSTEMD_UNIT=/etc/systemd/system/wire-panel.service`, `CLI_WRAPPER=/usr/local/bin/wire-panel`), `REBUILD_MODE=false`, and `CMD` (display name).
+- **Header** (`:1-110`): `set -e`, `cd $SCRIPT_DIR`, color vars (`RED/GREEN/YELLOW/BLUE/CYAN/NC`), managed-install constants (`INSTALL_DIR`, `PROJECT_NAME`, `SYSTEMD_UNIT=/etc/systemd/system/motte.service`, `CLI_WRAPPER=/usr/local/bin/motte`), `REBUILD_MODE=false`, and `CMD` (display name).
 - **Dispatch** (`case "${1:-}"`, `:44-110`): maps a subcommand to a `RUN_*=true` flag (or handles `help`/`rebuild` inline). The flags are acted on later, after the helper functions are defined (`:1259-1318`), because those functions live below the dispatch.
 - **Helper/colored output**: `check_dependency`, `prompt_yes_no`, box-drawing status panels throughout. All user-facing output is colored via the vars above; tool output goes to the operator, not the user.
 - **`reexec_as_root <subcmd>`** (`:533-538`): re-runs `manage.sh <subcmd>` under `sudo` for privileged paths (writing `/opt`, `/etc/systemd`, `/usr/local/bin`) so they can't half-apply. Called at the top of `migrate`, `rotate-key`, `install-service`.
@@ -172,7 +172,7 @@ if absent. Every command that mutates `.env` goes through it.
 
 ### Command reference
 
-Run as `wire-panel <cmd>` (managed) or `./manage.sh <cmd>` (checkout). Most need Docker/root.
+Run as `motte <cmd>` (managed) or `./manage.sh <cmd>` (checkout). Most need Docker/root.
 
 | Command | What it does |
 |---|---|
@@ -186,8 +186,8 @@ Run as `wire-panel <cmd>` (managed) or `./manage.sh <cmd>` (checkout). Most need
 | `backup` | `backup_certificates` — back up SSL certs (§7) (`:1264`). |
 | `rebuild` | Non-interactive: regenerate configs from saved `.env` + rebuild, no prompts (`REBUILD_MODE=true`). |
 | `rotate-key` | Re-encrypt all secrets under a fresh `ENCRYPTION_SECRET` (see below) (`:1289`). |
-| `migrate` | Move a checkout to `/opt/wire-panel` + register the service (checkout only) (`:1284`). |
-| `install-service` | Install/refresh the systemd unit + `wire-panel` CLI (used by `install.sh`) (`:1279`). |
+| `migrate` | Move a checkout to `/opt/motte` + register the service (checkout only) (`:1284`). |
+| `install-service` | Install/refresh the systemd unit + `motte` CLI (used by `install.sh`) (`:1279`). |
 | `service-up` / `service-down` | Non-interactive lifecycle hooks the systemd unit calls (`:1269-1277`). |
 | `help` | Usage list (`:54-72`). |
 
@@ -208,34 +208,34 @@ off (`:1331-1443`). Options:
 
 ### Lifecycle helpers
 
-`service_up`/`service_down` (`:570-578`) just `cd $INSTALL_DIR && docker compose up -d`/`down`. They are what `deploy/wire-panel.service` calls, so compose reads `COMPOSE_PROJECT_NAME` + vars from `.env` in `/opt/wire-panel`.
+`service_up`/`service_down` (`:570-578`) just `cd $INSTALL_DIR && docker compose up -d`/`down`. They are what `deploy/motte.service` calls, so compose reads `COMPOSE_PROJECT_NAME` + vars from `.env` in `/opt/motte`.
 
 ### `install-service` / systemd / CLI wrapper
 
 `install_service` (`:562-566`) → `reexec_as_root` then:
-- `install_systemd_unit` (`:542-549`): copy `deploy/wire-panel.service` → `/etc/systemd/system/`, `daemon-reload`, `systemctl enable`.
-- `install_cli_wrapper` (`:553-558`): copy `deploy/wire-panel` → `/usr/local/bin/wire-panel`, `chmod 755`.
+- `install_systemd_unit` (`:542-549`): copy `deploy/motte.service` → `/etc/systemd/system/`, `daemon-reload`, `systemctl enable`.
+- `install_cli_wrapper` (`:553-558`): copy `deploy/motte` → `/usr/local/bin/motte`, `chmod 755`.
 
-`deploy/wire-panel.service` is a **`Type=oneshot` + `RemainAfterExit=yes`** unit
+`deploy/motte.service` is a **`Type=oneshot` + `RemainAfterExit=yes`** unit
 (models "the stack is up" without supervising a pid, since containers are
 `restart: unless-stopped`). `ExecStart=manage.sh service-up`,
-`ExecStop=manage.sh service-down`, `WorkingDirectory=/opt/wire-panel`,
+`ExecStop=manage.sh service-down`, `WorkingDirectory=/opt/motte`,
 `TimeoutStartSec=0` (first boot may build images), `Requires=docker.service`,
 `WantedBy=multi-user.target`.
 
-`deploy/wire-panel` is a 1-line wrapper: `exec /opt/wire-panel/manage.sh "$@"` —
-so `sudo wire-panel <cmd>` == `sudo /opt/wire-panel/manage.sh <cmd>`.
+`deploy/motte` is a 1-line wrapper: `exec /opt/motte/manage.sh "$@"` —
+so `sudo motte <cmd>` == `sudo /opt/motte/manage.sh <cmd>`.
 
 ### migrate (checkout → /opt, with volume copy-rename)
 
 `migrate_to_opt` (`:585-689`) moves a plain checkout to the managed layout. It:
-1. `reexec_as_root migrate`; refuse if already at `/opt` or if `/opt/wire-panel` exists.
-2. Read the **current** project name from this checkout's `.env` `COMPOSE_PROJECT_NAME` (fallback: folder name), so `old_vol=<old_project>_api_data`, `new_vol=wire-panel_api_data`.
+1. `reexec_as_root migrate`; refuse if already at `/opt` or if `/opt/motte` exists.
+2. Read the **current** project name from this checkout's `.env` `COMPOSE_PROJECT_NAME` (fallback: folder name), so `old_vol=<old_project>_api_data`, `new_vol=motte_api_data`.
 3. `docker compose down`.
 4. If the volume name changes, **copy-rename** it: create `new_vol`, `docker run ... alpine cp -a /from/. /to/`, then **verify** `app.db` exists in the copy before proceeding (aborts, leaving the old volume untouched, if not).
-5. `mv $SCRIPT_DIR /opt/wire-panel`, then **`chown -R root:root` + `chmod 750`** the tree (so a non-root user can't edit a root-executed script — privilege-escalation guard) and `chmod 600 .env`.
-6. `update_env_value COMPOSE_PROJECT_NAME wire-panel` (pin the name so the folder no longer determines the volume).
-7. `install_systemd_unit` + `install_cli_wrapper`, then `systemctl start wire-panel.service`.
+5. `mv $SCRIPT_DIR /opt/motte`, then **`chown -R root:root` + `chmod 750`** the tree (so a non-root user can't edit a root-executed script — privilege-escalation guard) and `chmod 600 .env`.
+6. `update_env_value COMPOSE_PROJECT_NAME motte` (pin the name so the folder no longer determines the volume).
+7. `install_systemd_unit` + `install_cli_wrapper`, then `systemctl start motte.service`.
 8. Verify the **`api`** container is up (gates the old-volume delete specifically on the DB-consuming container, so a partial bring-up can't report success), then `docker volume rm old_vol`. If unhealthy, the old volume is **kept** for investigation.
 
 This is why the volume rename + the `root:root`/`600` ownership changes matter:
@@ -351,7 +351,7 @@ Separate from `manage.sh`: the panel exposes a **passphrase-encrypted backup** o
 its own configuration (`api/internal/backup`, routes under `/api/backup`, UI in
 `SettingsView.svelte`):
 - `POST /api/backup/export {passphrase, users, fleet}` → streams a
-  `wire-panel-<ts>.wgbackup` download (passphrase-sealed; `MinPassphrase` enforced).
+  `motte-<ts>.wgbackup` download (passphrase-sealed; `MinPassphrase` enforced).
 - `POST /api/backup/preview {passphrase, backup}` → decrypts and reports what an import *would* do (no writes).
 - `POST /api/backup/import {passphrase, backup, confirm}` → faithful replace, then `Reconcile()` re-applies live state (nftables, WireGuard, ACLs, fleet listener) and reports the touched subsystems.
 

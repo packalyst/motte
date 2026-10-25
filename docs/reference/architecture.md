@@ -1,6 +1,6 @@
 # Architecture
 
-High-level map of the WireGuard Admin Panel: what it is, the components it ships, how they are wired into containers and networks, and the design invariants that hold the whole thing together.
+High-level map of Motte: what it is, the components it ships, how they are wired into containers and networks, and the design invariants that hold the whole thing together.
 
 > Sibling docs: [README](./README.md) · [backend](./backend.md) · [api-surface](./api-surface.md) · [data-model](./data-model.md) · [security](./security.md) · [networking & firewall](./networking-firewall.md) · [frontend](./frontend.md) · [deployment](./deployment.md) · [fleet agent](./fleet-agent.md) · [coding standards](./coding-standards.md) · [rebuild from scratch](./rebuild-from-scratch.md)
 
@@ -166,7 +166,7 @@ Each subsystem is guarded by `config.IsServiceEnabled(...)`; a service that fail
 | Auth/2FA, CSP, sentinel, secret handling, threat model | [security](./security.md) |
 | nftables tables, jails, geo-blocking, VPN ACLs, WireGuard/Headscale routing | [networking & firewall](./networking-firewall.md) |
 | Svelte 5 UI, stores, PWA | [frontend](./frontend.md) |
-| `manage.sh`, `install.sh`, systemd, `/opt/wire-panel`, `.env` | [deployment](./deployment.md) |
+| `manage.sh`, `install.sh`, systemd, `/opt/motte`, `.env` | [deployment](./deployment.md) |
 | Fleet CA, enrollment, agent binary, CVE scanning | [fleet-agent](./fleet-agent.md) |
 | Recreating the whole system in another language | [rebuild from scratch](./rebuild-from-scratch.md) |
 

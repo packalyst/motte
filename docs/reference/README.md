@@ -1,6 +1,6 @@
 # Reference documentation
 
-This folder is a complete reference for the WireGuard/Headscale admin panel — enough to **recreate the system from scratch in any language**, or to know **exactly where and how to change** any behavior. Every doc is grounded in the actual source and cites concrete `file:line` locations.
+This folder is a complete reference for Motte, the WireGuard/Headscale admin panel — enough to **recreate the system from scratch in any language**, or to know **exactly where and how to change** any behavior. Every doc is grounded in the actual source and cites concrete `file:line` locations.
 
 ## What this project is
 
