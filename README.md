@@ -130,6 +130,7 @@ cd motte
 | `sudo motte update` | Check for and install updates |
 | `sudo motte rotate-key` | Re-encrypt all secrets under a new encryption key |
 | `sudo motte cleanup` | Free disk space: Docker build cache and old build layers |
+| `sudo motte uninstall` | Remove Motte and its data; offers to restore the system firewall setup turned off |
 | `sudo motte help` | Every command, including the supply-chain options |
 
 ### Adding a machine to the fleet

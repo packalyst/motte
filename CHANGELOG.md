@@ -11,6 +11,10 @@ releases will be tagged as they are cut.
   repository), WireGuard and the tools setup needs, checks the Docker version (Docker 24 or newer;
   an available update is offered, never forced) and states which systems are supported (Ubuntu 24.04
   tested; Ubuntu 22.04 and Debian 12/13 expected to work; others stop).
+- **`motte uninstall`**: removes Motte and its data, and offers to restore what setup turned off
+  (the system nftables firewall, UFW, Fail2ban). Setup now also detects a **system nftables firewall**
+  (`/etc/nftables.conf`) that drops traffic Motte allows (it silently blocked WireGuard) and can hand
+  it over to Motte, keeping a backup.
 - **`motte cleanup`** and an offer after each interactive build to free the Docker build cache.
 - **Factory reset** (menu option 8, confirmed by typing `RESET`) now removes everything the install
   created: all five firewall tables, the panel-created containers, the WireGuard interface and the
