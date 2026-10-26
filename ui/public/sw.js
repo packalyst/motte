@@ -49,9 +49,12 @@ self.addEventListener('fetch', (e) => {
   }
 
   // Page loads: network first; if the panel can't be reached, the offline page (which retries,
-  // so a brief blip such as an IP switch recovers on its own).
+  // so a brief blip such as an IP switch recovers on its own). A 444 counts as unreachable: it's
+  // the VPN-only / blocked answer (Traefik's guard drops the request), which the browser would
+  // otherwise show as a bare "HTTP ERROR 444".
   if (request.mode === 'navigate') {
-    e.respondWith(fetch(request).catch(() => caches.match(OFFLINE).then((cached) => cached || Response.error())))
+    const offline = () => caches.match(OFFLINE).then((cached) => cached || Response.error())
+    e.respondWith(fetch(request).then((res) => (res.status === 444 ? offline() : res)).catch(offline))
     return
   }
 
