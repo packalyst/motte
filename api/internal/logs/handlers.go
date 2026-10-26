@@ -139,7 +139,8 @@ func (s *Service) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 		COALESCE(l.logs_service, '') as logs_service,
 		COALESCE(l.logs_query_type, '') as logs_query_type,
 		COALESCE(l.logs_upstream, '') as logs_upstream,
-		COALESCE(l.logs_rule, '') as logs_rule
+		COALESCE(l.logs_rule, '') as logs_rule,
+		COALESCE(l.logs_rule_source, '') as logs_rule_source
 	FROM logs l
 	LEFT JOIN vpn_clients c ON l.logs_src_ip = c.ip
 	WHERE 1=1`
@@ -190,7 +191,7 @@ func (s *Service) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 			&entry.Domain, &entry.Protocol, &entry.Status, &entry.Duration,
 			&entry.Bytes, &entry.Cached, &entry.Method, &entry.Path,
 			&entry.Router, &entry.Service, &entry.QueryType, &entry.Upstream,
-			&entry.Rule,
+			&entry.Rule, &entry.RuleSource,
 		)
 		if err != nil {
 			continue

@@ -439,9 +439,10 @@
       { icon: 'globe', tone: 'warning', value: blockedServices.length, label: 'blocked services' },
     ]} />
 
-    <!-- Segmented tab bar — pills on desktop, MobileNav (a select under the top bar) on phones -->
+    <!-- Segmented tab bar — pills on desktop, MobileNav's app tab bar at the bottom below lg
+         (like the machine page) -->
     <div class="space-y-3">
-      <div class="hidden sm:flex gap-0.5 bg-muted p-1 rounded-lg w-fit">
+      <div class="hidden lg:flex gap-0.5 bg-muted p-1 rounded-lg w-fit">
         {#each tabs as t}
           <button
             onclick={() => setTab(t.id)}
@@ -452,7 +453,7 @@
           </button>
         {/each}
       </div>
-      <MobileNav items={tabs} active={activeTab} onselect={setTab} label="DNS sections" from="sm" />
+      <MobileNav items={tabs} active={activeTab} onselect={setTab} label="DNS sections" look="bottom" />
 
       <!-- Overview is two panels of its own; the other tabs share one panel -->
       <div class={activeTab === 'overview' ? 'space-y-4' : 'panel'}>

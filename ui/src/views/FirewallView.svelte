@@ -887,7 +887,7 @@
                             </Badge>
                           </button>
                         </td>
-                        <td class="data-table-cell-nowrap">
+                        <td class="data-table-cell-nowrap stack-right">
                           {#if entry.expiresAt}
                             <Badge variant="warning" size="sm">
                               {formatTimeRemaining(entry.expiresAt)}
