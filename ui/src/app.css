@@ -454,6 +454,12 @@ input:-webkit-autofill:active {
   .btn-group .custom_btns:hover {
     @apply bg-muted;
   }
+  /* .btn-group-loose: on a phone the group drops its frame and dividers — plain icons with room
+     between them, e.g. a card's edit/delete beside its title. Unchanged from sm up. */
+  @media (width < 40rem) {
+    .btn-group.btn-group-loose { @apply gap-1 rounded-none border-0; }
+    .btn-group.btn-group-loose .custom_btns { @apply rounded-md border-0; }
+  }
   .btn-group .custom_btns:disabled {
     @apply opacity-40 cursor-not-allowed hover:bg-transparent;
   }
