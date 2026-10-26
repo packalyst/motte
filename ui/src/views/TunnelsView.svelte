@@ -647,7 +647,8 @@
                   {/if}
                   {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating</Badge>{/if}
                   {#if (t.webhooks || []).length}<Badge variant="primary" size="sm">Webhook</Badge>{/if}
-                  {#if chained}<span class="truncate font-mono text-[11px] text-muted-foreground">via {t.upstream.host}</span>{/if}
+                  <!-- own line on a phone, so the badges keep the row -->
+                  {#if chained}<span class="basis-full truncate font-mono text-[11px] text-muted-foreground sm:basis-auto">via {t.upstream.host}</span>{/if}
                 </div>
               </div>
             </div>
@@ -669,12 +670,13 @@
               {/if}
             </div>
             </div>
-            <div class="flex shrink-0 items-center gap-2" onclick={(e) => e.stopPropagation()} role="presentation">
-              <div class="btn-group">
+            <!-- beside the name on a phone (plain icons), at the end of the row from sm up -->
+            <div class="order-2 flex shrink-0 items-center gap-2 self-start sm:order-none sm:self-center" onclick={(e) => e.stopPropagation()} role="presentation">
+              <div class="btn-group btn-group-loose">
                 <GroupButton icon="pencil" tooltip="Edit tunnel" onclick={() => openEdit(i)} />
                 <GroupButton icon="trash" tone="destructive" tooltip="Delete tunnel" onclick={() => deleteTunnel(i)} />
               </div>
-              <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform {isOpen ? 'rotate-180' : ''}" />
+              <Icon name="chevron-down" size={18} class="hidden text-muted-foreground transition-transform sm:block {isOpen ? 'rotate-180' : ''}" />
             </div>
           </div>
 
@@ -736,6 +738,12 @@
               {/each}
             </div>
           {/if}
+          <!-- Phone: a plain "Show/Hide details" bar at the card's foot (from sm up the chevron says it) -->
+          <button type="button" aria-expanded={isOpen} onclick={() => toggleExpand(t.id)}
+            class="flex w-full cursor-pointer items-center justify-center gap-1.5 border-t border-border py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted/30 hover:text-foreground sm:hidden">
+            {isOpen ? 'Hide details' : 'Show details'}
+            <Icon name="chevron-down" size={14} class="transition-transform {isOpen ? 'rotate-180' : ''}" />
+          </button>
         </div>
       {/each}
     </div>
