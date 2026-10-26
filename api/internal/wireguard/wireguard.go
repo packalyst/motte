@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"api/internal/helper"
@@ -37,6 +38,7 @@ func encryptPeerKeys(peer *Peer) (privateKeyEnc, presharedKeyEnc string, err err
 type Service struct {
 	config    Config
 	peerStore *PeerStore
+	keyMu     sync.RWMutex // guards config.ServerPriKey/ServerPubKey (a backup import replaces them)
 }
 
 // Package-level service instance for cross-service access
@@ -166,7 +168,8 @@ func New(dataDir string) (*Service, error) {
 		return nil, fmt.Errorf("failed to initialize WireGuard: %v", err)
 	}
 
-	log.Printf("WireGuard service initialized, server public key: %s", svc.config.ServerPubKey)
+	_, pub := svc.serverKeys()
+	log.Printf("WireGuard service initialized, server public key: %s", pub)
 	return svc, nil
 }
 
@@ -195,6 +198,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 }
 
 func (s *Service) generateClientConfig(peer *Peer, mode string) string {
+	_, serverPub := s.serverKeys()
 	allowedIPs := "0.0.0.0/0, ::/0"
 	dns := s.config.DNS
 
@@ -227,7 +231,7 @@ PresharedKey = %s
 Endpoint = %s
 AllowedIPs = %s
 PersistentKeepalive = 25
-`, s.config.ServerPubKey, peer.PresharedKey, s.config.Endpoint, allowedIPs)
+`, serverPub, peer.PresharedKey, s.config.Endpoint, allowedIPs)
 
 	return conf
 }

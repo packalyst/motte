@@ -46,6 +46,10 @@ type Deps struct {
 	// Reconcile re-applies live state after an import (nftables, WireGuard, ACLs,
 	// fleet listener). Returns the subsystems it touched, for the response.
 	Reconcile func() []string
+	// WireGuardKey returns the WireGuard server's private key for an export, and
+	// RestoreWireGuardKey installs one from an import. Nil when WireGuard is disabled here.
+	WireGuardKey        func() string
+	RestoreWireGuardKey func(privateKey string) error
 }
 
 type Service struct{ deps Deps }
@@ -103,7 +107,7 @@ func (s *Service) handleExport(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
-	data, err := Export(db, req.Passphrase, s.deps.PanelVersion, req.Users, req.Fleet)
+	data, err := Export(db, req.Passphrase, s.deps.PanelVersion, req.Users, req.Fleet, s.wireguardKey())
 	if err != nil {
 		router.JSONError(w, "export failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -153,24 +157,46 @@ func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	db := s.db()
-	if db == nil {
-		router.JSONError(w, "database unavailable", http.StatusInternalServerError)
+	reconciled, err := s.apply(doc)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if err := Import(db, doc); err != nil {
-		router.JSONError(w, "import failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var reconciled []string
-	if s.deps.Reconcile != nil {
-		reconciled = s.deps.Reconcile()
 	}
 	router.JSON(w, map[string]any{
 		"ok":         true,
 		"includes":   hdr.Includes,
 		"reconciled": reconciled,
 	})
+}
+
+// wireguardKey is the WireGuard server key to seal into an export ("" when WireGuard is off).
+func (s *Service) wireguardKey() string {
+	if s.deps.WireGuardKey == nil {
+		return ""
+	}
+	return s.deps.WireGuardKey()
+}
+
+// apply imports a backup document (faithful replace), installs its WireGuard server key, then
+// re-applies live state. Shared by the upload import and the off-host restore.
+func (s *Service) apply(doc *Document) ([]string, error) {
+	db := s.db()
+	if db == nil {
+		return nil, fmt.Errorf("database unavailable")
+	}
+	if err := Import(db, doc); err != nil {
+		return nil, fmt.Errorf("import failed: %w", err)
+	}
+	if doc.WireGuardKey != "" && s.deps.RestoreWireGuardKey != nil {
+		if err := s.deps.RestoreWireGuardKey(doc.WireGuardKey); err != nil {
+			return nil, fmt.Errorf("restore WireGuard key: %w", err)
+		}
+	}
+	var reconciled []string
+	if s.deps.Reconcile != nil {
+		reconciled = s.deps.Reconcile()
+	}
+	return reconciled, nil
 }
 
 type fileReq struct {

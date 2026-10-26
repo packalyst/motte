@@ -45,6 +45,11 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- **Backups** now carry DHCP networks, off-host backup settings, alert rules, notification channels
+  and the **WireGuard server key**, so a restore on a new server keeps WireGuard clients working.
+  The file format is now `motte-backup` (older `wg-panel-backup` files are no longer read). An
+  import that can't re-encrypt a secret stops instead of storing it as plaintext.
+- A missing `server_public.key` no longer makes the panel generate a new WireGuard identity.
 - Setup no longer writes a **blank AdGuard password** when `htpasswd` is missing and Python has no
   `bcrypt`: `apache2-utils` is installed, and an empty hash stops setup.
 - **vpn**: virtual-IP targets inside the VPN range are rejected (a mis-pointed quarantine could

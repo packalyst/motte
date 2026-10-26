@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	fileFormat  = "wg-panel-backup"
+	fileFormat  = "motte-backup"
 	fileVersion = 1
 	// MinPassphrase is the shortest passphrase we accept — a backup carries every
 	// secret the panel holds, so a weak passphrase is a real risk offline once a
@@ -51,8 +51,12 @@ var (
 	coreTables = []string{
 		"vpn_clients", "vpn_acl_rules", "vpn_router_config", "vpn_virtual_ips", "vpn_virtual_ip_acl",
 		"firewall_entries", "jails", "domain_routes", "settings",
+		// After the VPN tables: deleting a WireGuard peer cascades into the DHCP access rules.
+		"dhcp_networks", "dhcp_clients", "dhcp_client_acl", "backup_offhost_config",
 	}
-	userTables  = []string{"users", "users_notification_preferences"}
+	// Per-user rows; they only make sense with the users they belong to. Passkeys are left out:
+	// their credential IDs are binary, which the backup's JSON can't carry intact.
+	userTables  = []string{"users", "users_notification_preferences", "alert_rules", "notification_channels"}
 	fleetTables = []string{"fleet_ca", "fleet_machines"}
 )
 
@@ -60,10 +64,12 @@ var (
 // plaintext on export, re-encrypted under the destination host on import. The
 // settings table is handled separately via its per-row `encrypted` flag.
 var secretCols = map[string][]string{
-	"vpn_clients":       {"private_key_enc", "preshared_key_enc"},
-	"vpn_router_config": {"authkey_enc"},
-	"users":             {"totp_secret_enc"},
-	"fleet_ca":          {"key_enc"},
+	"vpn_clients":           {"private_key_enc", "preshared_key_enc"},
+	"vpn_router_config":     {"authkey_enc"},
+	"users":                 {"totp_secret_enc"},
+	"fleet_ca":              {"key_enc"},
+	"notification_channels": {"webhook_url_enc"},
+	"backup_offhost_config": {"config_enc"},
 }
 
 // volatileCols are left out of a backup: caches the panel rebuilds on its own. A machine's last
@@ -79,6 +85,9 @@ var tableLabels = map[string]string{
 	"firewall_entries": "Firewall entries", "jails": "Jails", "domain_routes": "Domain routes", "settings": "Settings",
 	"users": "Admin users", "users_notification_preferences": "Notification prefs",
 	"fleet_ca": "Fleet CA", "fleet_machines": "Fleet machines",
+	"dhcp_networks": "DHCP networks", "dhcp_clients": "DHCP clients", "dhcp_client_acl": "DHCP access rules",
+	"backup_offhost_config": "Off-host backup settings", "alert_rules": "Alert rules",
+	"notification_channels": "Notification channels",
 }
 
 // allowed is the full whitelist of table names we ever touch. Every table name that
@@ -118,13 +127,15 @@ type envelope struct {
 	Data  string `json:"data"`  // base64 AES-256-GCM(document json)
 }
 
-// Document is the sealed payload: table name -> rows.
+// Document is the sealed payload: table name -> rows, plus the WireGuard server's private key
+// (a file, not a table) so its clients keep working after a restore on a new host.
 type Document struct {
-	Tables map[string][]map[string]any `json:"tables"`
+	Tables       map[string][]map[string]any `json:"tables"`
+	WireGuardKey string                      `json:"wireguard_key,omitempty"`
 }
 
 // Export gathers the requested tiers into a passphrase-sealed backup file.
-func Export(db *sql.DB, passphrase, panelVersion string, includeUsers, includeFleet bool) ([]byte, error) {
+func Export(db *sql.DB, passphrase, panelVersion string, includeUsers, includeFleet bool, wireguardKey string) ([]byte, error) {
 	includes := []string{"core"}
 	tables := append([]string{}, coreTables...)
 	if includeUsers {
@@ -136,7 +147,7 @@ func Export(db *sql.DB, passphrase, panelVersion string, includeUsers, includeFl
 		includes = append(includes, "fleet")
 	}
 
-	doc := Document{Tables: map[string][]map[string]any{}}
+	doc := Document{Tables: map[string][]map[string]any{}, WireGuardKey: wireguardKey}
 	for _, t := range tables {
 		rows, err := dumpTable(db, t)
 		if err != nil {
@@ -221,6 +232,9 @@ func Plan(db *sql.DB, doc *Document) []TablePlan {
 			tp.Existing = countRows(db, t)
 		}
 		out = append(out, tp)
+	}
+	if doc.WireGuardKey != "" {
+		out = append(out, TablePlan{Table: "wireguard_key", Label: "WireGuard server key", Existing: 1, Incoming: 1})
 	}
 	return out
 }
@@ -308,7 +322,9 @@ func restoreTable(tx *sql.Tx, table string, rows []map[string]any) error {
 		return err
 	}
 	for _, row := range rows {
-		encryptSecrets(table, row)
+		if err := encryptSecrets(table, row); err != nil {
+			return err
+		}
 		var cols []string
 		var ph []string
 		var args []any
@@ -356,24 +372,30 @@ func decryptSecrets(table string, m map[string]any) error {
 	return nil
 }
 
-// encryptSecrets re-seals a row's plaintext secret fields under this host's key for import.
-func encryptSecrets(table string, m map[string]any) {
-	for _, sc := range secretCols[table] {
-		s, ok := m[sc].(string)
+// encryptSecrets re-seals a row's plaintext secret fields under this host's key for import. A
+// failure stops the import: a secret must never land in the database as plaintext.
+func encryptSecrets(table string, m map[string]any) error {
+	seal := func(field string) error {
+		s, ok := m[field].(string)
 		if !ok || s == "" {
-			continue
+			return nil
 		}
-		if enc, err := helper.Encrypt(s); err == nil {
-			m[sc] = enc
+		enc, err := helper.Encrypt(s)
+		if err != nil {
+			return fmt.Errorf("encrypt %s.%s: %w", table, field, err)
+		}
+		m[field] = enc
+		return nil
+	}
+	for _, sc := range secretCols[table] {
+		if err := seal(sc); err != nil {
+			return err
 		}
 	}
 	if table == "settings" && truthy(m["encrypted"]) {
-		if s, ok := m["value"].(string); ok && s != "" {
-			if enc, err := helper.Encrypt(s); err == nil {
-				m["value"] = enc
-			}
-		}
+		return seal("value")
 	}
+	return nil
 }
 
 // bindValue coerces a JSON-decoded value into something the sqlite driver stores with

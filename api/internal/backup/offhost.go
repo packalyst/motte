@@ -81,7 +81,7 @@ func (s *Service) runOffhost(ctx context.Context, actor string) error {
 	}
 
 	// The sealed bundle is the same artifact a user can download by hand.
-	data, err := Export(db, cfg.Passphrase, s.deps.PanelVersion, cfg.IncludeUsers, cfg.IncludeFleet)
+	data, err := Export(db, cfg.Passphrase, s.deps.PanelVersion, cfg.IncludeUsers, cfg.IncludeFleet, s.wireguardKey())
 	if err != nil {
 		runErr = fmt.Errorf("export: %w", err)
 		return runErr
@@ -184,18 +184,7 @@ func (s *Service) restoreFromOffhost(ctx context.Context, destID, name, passphra
 	if err != nil {
 		return nil, err
 	}
-	db := s.db()
-	if db == nil {
-		return nil, fmt.Errorf("database unavailable")
-	}
-	if err := Import(db, doc); err != nil {
-		return nil, fmt.Errorf("import failed: %w", err)
-	}
-	var reconciled []string
-	if s.deps.Reconcile != nil {
-		reconciled = s.deps.Reconcile()
-	}
-	return reconciled, nil
+	return s.apply(doc)
 }
 
 // Start launches the scheduler: a ticker that fires the daily backup at the configured hour when
