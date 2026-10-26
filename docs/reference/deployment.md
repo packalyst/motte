@@ -368,6 +368,19 @@ its own configuration (`api/internal/backup`, routes under `/api/backup`, UI in
 - `POST /api/backup/preview {passphrase, backup}` → decrypts and reports what an import *would* do (no writes).
 - `POST /api/backup/import {passphrase, backup, confirm}` → faithful replace, then `Reconcile()` re-applies live state (nftables, WireGuard, ACLs, fleet listener) and reports the touched subsystems.
 
+What a backup (`"format": "motte-backup"`) holds:
+
+| Part | Contents |
+|---|---|
+| Always | WireGuard peers, peer ACLs, virtual IPs + their ACLs, VPN router config, firewall entries, jails, domain routes, settings, DHCP networks/clients/access rules, off-host backup settings, and the **WireGuard server private key** (so clients keep working after a restore on a new host; applied live on import) |
+| `users` | Admin users, notification preferences, alert rules, notification channels |
+| `fleet` | Fleet CA, fleet machines (without their cached last report) |
+| Never | Passkeys (binary credential IDs), push subscriptions, sessions, logs/analytics, fleet scans/metrics, console recordings; Headscale's and AdGuard's own data and the certificates live outside the panel database |
+
+Secrets (peer keys, encrypted settings, the webhook URL, the off-host credentials, the fleet CA key)
+are decrypted into the sealed file and re-encrypted under the importing host's key; a failure to
+re-encrypt stops the import rather than storing plaintext.
+
 This is a portable panel-config backup/migrate feature (session-gated, like the
 rest of the panel API); the SSL cert backup above is the ops-level cert safety
 net. See [data-model.md](data-model.md) / [api-surface.md](api-surface.md) for the

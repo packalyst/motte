@@ -543,6 +543,18 @@ func main() {
 	backupSvc := backup.New(backup.Deps{
 		DB:           database.Get,
 		PanelVersion: version,
+		WireGuardKey: func() string {
+			if wg := wireguard.GetService(); wg != nil {
+				return wg.ServerPrivateKey()
+			}
+			return ""
+		},
+		RestoreWireGuardKey: func(key string) error {
+			if wg := wireguard.GetService(); wg != nil {
+				return wg.ReplaceServerKey(key)
+			}
+			return nil // WireGuard is off here: nothing to apply the key to
+		},
 		Reconcile: func() []string {
 			var done []string
 			if fwSvc != nil {

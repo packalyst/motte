@@ -65,7 +65,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	db.Exec(`INSERT INTO settings (key,value,encrypted) VALUES ('headscale_url','https://hs.example',0)`)
 	db.Exec(`INSERT INTO settings (key,value,encrypted) VALUES ('api_key', ?, 1)`, mustEnc(t, "SECRET-API-KEY"))
 
-	blob, err := Export(db, "correct horse battery", "test", false, false)
+	blob, err := Export(db, "correct horse battery", "test", false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 func TestOpenWrongPassphrase(t *testing.T) {
 	db := testDB(t)
 	db.Exec(`INSERT INTO settings (key,value,encrypted) VALUES ('x','y',0)`)
-	blob, err := Export(db, "the right passphrase", "test", false, false)
+	blob, err := Export(db, "the right passphrase", "test", false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestOpenWrongPassphrase(t *testing.T) {
 func TestOpenTamperedHeader(t *testing.T) {
 	db := testDB(t)
 	db.Exec(`INSERT INTO settings (key,value,encrypted) VALUES ('x','y',0)`)
-	blob, _ := Export(db, "the right passphrase", "test", false, false)
+	blob, _ := Export(db, "the right passphrase", "test", false, false, "")
 	// Flip a cleartext-header VALUE (panel_version test→prod). It's bound as GCM AAD,
 	// so the open must reject it. (Tampering a KEY wouldn't test this — Go's JSON
 	// unmarshal matches struct tags case-insensitively.)
@@ -156,7 +156,7 @@ func TestOpenTamperedHeader(t *testing.T) {
 func TestOpenTamperedKDFParams(t *testing.T) {
 	db := testDB(t)
 	db.Exec(`INSERT INTO settings (key,value,encrypted) VALUES ('x','y',0)`)
-	blob, _ := Export(db, "the right passphrase", "test", false, false)
+	blob, _ := Export(db, "the right passphrase", "test", false, false, "")
 	// Downgrade the iteration count in the cleartext envelope. It's now bound as AAD,
 	// so the open must reject it (defends a future iter-downgrade attack).
 	tampered := strings.Replace(string(blob), `"iter": 3`, `"iter": 1`, 1)
@@ -191,7 +191,7 @@ func TestExportLeavesOutMachineReport(t *testing.T) {
 	}
 	db.Exec(`INSERT INTO fleet_machines (id, name, last_report) VALUES ('m1', 'web-01', '{"cves":"BIG-REPORT"}')`)
 
-	blob, err := Export(db, "correct horse battery", "test", false, true)
+	blob, err := Export(db, "correct horse battery", "test", false, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,5 +213,68 @@ func TestExportLeavesOutMachineReport(t *testing.T) {
 	var report sql.NullString
 	if err := db.QueryRow(`SELECT name, last_report FROM fleet_machines WHERE id='m1'`).Scan(&name, &report); err != nil || name != "web-01" || report.Valid {
 		t.Fatalf("machine not restored without its report: name=%q report=%v err=%v", name, report, err)
+	}
+}
+
+// A user's webhook URL travels decrypted inside the sealed file and is re-encrypted under the
+// importing host's key; the WireGuard server key rides along and is handed to the restore hook.
+func TestExportImportUserSecretsAndWireGuardKey(t *testing.T) {
+	db := testDB(t)
+	if _, err := db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);
+		CREATE TABLE notification_channels (user_id INTEGER PRIMARY KEY, webhook_url_enc TEXT NOT NULL DEFAULT '', webhook_enabled INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`INSERT INTO users (id, username) VALUES (1, 'owner')`)
+	if _, err := db.Exec(`INSERT INTO notification_channels (user_id, webhook_url_enc, webhook_enabled) VALUES (1, ?, 1)`,
+		mustEnc(t, "https://hooks.example.test/SECRET-TOKEN")); err != nil {
+		t.Fatal(err)
+	}
+	const wgKey = "WG-PRIVATE-KEY-MATERIAL"
+
+	blob, err := Export(db, "correct horse battery", "test", true, false, wgKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(blob); strings.Contains(s, "SECRET-TOKEN") || strings.Contains(s, wgKey) {
+		t.Fatal("secret visible in the sealed file")
+	}
+	_, doc, err := Open(blob, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.WireGuardKey != wgKey {
+		t.Fatalf("WireGuard key = %q", doc.WireGuardKey)
+	}
+	if last := Plan(db, doc); last[len(last)-1].Table != "wireguard_key" {
+		t.Fatalf("preview doesn't list the WireGuard key: %+v", last)
+	}
+
+	db.Exec(`DELETE FROM notification_channels`)
+	var restored string
+	svc := New(Deps{DB: func() *sql.DB { return db }, RestoreWireGuardKey: func(k string) error { restored = k; return nil }})
+	if _, err := svc.apply(doc); err != nil {
+		t.Fatal(err)
+	}
+	if restored != wgKey {
+		t.Fatalf("restore hook got %q", restored)
+	}
+	var enc string
+	if err := db.QueryRow(`SELECT webhook_url_enc FROM notification_channels WHERE user_id=1`).Scan(&enc); err != nil {
+		t.Fatal(err)
+	}
+	if dec, err := helper.Decrypt(enc); err != nil || dec != "https://hooks.example.test/SECRET-TOKEN" {
+		t.Fatalf("webhook not re-encrypted: enc=%q dec=%q err=%v", enc, dec, err)
+	}
+}
+
+func TestOpenRejectsOldFormat(t *testing.T) {
+	db := testDB(t)
+	blob, err := Export(db, "correct horse battery", "test", false, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := strings.Replace(string(blob), `"motte-backup"`, `"wg-panel-backup"`, 1)
+	if _, _, err := Open([]byte(old), "correct horse battery"); err == nil {
+		t.Fatal("a wg-panel-backup file opened")
 	}
 }

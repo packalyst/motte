@@ -276,8 +276,9 @@ func (s *Service) handleGetPeerQR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleGetServer(w http.ResponseWriter, r *http.Request) {
+	_, publicKey := s.serverKeys()
 	router.JSON(w, map[string]interface{}{
-		"publicKey":        s.config.ServerPubKey,
+		"publicKey":        publicKey,
 		"endpoint":         s.config.Endpoint,
 		"port":             s.config.ListenPort,
 		"ipRange":          s.config.IPRange,

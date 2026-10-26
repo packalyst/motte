@@ -16,35 +16,59 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
+// initServerKeys loads the server's private key, or generates one on first start. The public key
+// is always derived from it, so a lost public-key file can never cost the server its identity.
 func (s *Service) initServerKeys() error {
-	priKeyPath := filepath.Join(s.config.DataDir, "server_private.key")
-	pubKeyPath := filepath.Join(s.config.DataDir, "server_public.key")
-
-	if priKeyData, err := os.ReadFile(priKeyPath); err == nil {
-		s.config.ServerPriKey = strings.TrimSpace(string(priKeyData))
-		if pubKeyData, err := os.ReadFile(pubKeyPath); err == nil {
-			s.config.ServerPubKey = strings.TrimSpace(string(pubKeyData))
-			return nil
+	if data, err := os.ReadFile(filepath.Join(s.config.DataDir, "server_private.key")); err == nil {
+		key, err := wgtypes.ParseKey(strings.TrimSpace(string(data)))
+		if err != nil {
+			return fmt.Errorf("server_private.key is not a WireGuard key: %v", err)
 		}
+		return s.setServerKey(key)
 	}
-
-	priKey, err := wgtypes.GeneratePrivateKey()
+	key, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
 		return fmt.Errorf("failed to generate private key: %v", err)
 	}
-
-	s.config.ServerPriKey = priKey.String()
-	s.config.ServerPubKey = priKey.PublicKey().String()
-
-	if err := os.WriteFile(priKeyPath, []byte(s.config.ServerPriKey), 0600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(pubKeyPath, []byte(s.config.ServerPubKey), 0644); err != nil {
-		return err
-	}
-
 	log.Println("Generated new server keys")
-	return nil
+	return s.setServerKey(key)
+}
+
+// setServerKey makes key the server's key: in memory, and in the key files.
+func (s *Service) setServerKey(key wgtypes.Key) error {
+	s.keyMu.Lock()
+	s.config.ServerPriKey, s.config.ServerPubKey = key.String(), key.PublicKey().String()
+	s.keyMu.Unlock()
+	if err := os.WriteFile(filepath.Join(s.config.DataDir, "server_private.key"), []byte(key.String()), 0600); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.config.DataDir, "server_public.key"), []byte(key.PublicKey().String()), 0644)
+}
+
+// serverKeys returns the server's private and public key.
+func (s *Service) serverKeys() (private, public string) {
+	s.keyMu.RLock()
+	defer s.keyMu.RUnlock()
+	return s.config.ServerPriKey, s.config.ServerPubKey
+}
+
+// ServerPrivateKey returns the server's private key, sealed into a backup.
+func (s *Service) ServerPrivateKey() string {
+	private, _ := s.serverKeys()
+	return private
+}
+
+// ReplaceServerKey installs a restored private key (a backup import) and applies it to the live
+// interface, so the clients configured for that key connect to this server.
+func (s *Service) ReplaceServerKey(private string) error {
+	key, err := wgtypes.ParseKey(strings.TrimSpace(private))
+	if err != nil {
+		return fmt.Errorf("not a WireGuard key")
+	}
+	if err := s.setServerKey(key); err != nil {
+		return err
+	}
+	return s.syncConfig()
 }
 
 func (s *Service) initWireGuard() error {
@@ -179,7 +203,7 @@ func (s *Service) syncConfig() error {
 PrivateKey = %s
 ListenPort = %d
 
-`, s.config.ServerPriKey, s.config.ListenPort)
+`, s.ServerPrivateKey(), s.config.ListenPort)
 
 	// Virtual IPs routed to each peer (keyed by the peer's own VPN IP). These are
 	// extra /32s a peer "hosts" (mapped to a LAN device by a DNAT on the peer). They
