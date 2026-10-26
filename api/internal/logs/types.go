@@ -78,12 +78,14 @@ type LogEntry struct {
 	QueryType     string    `json:"logs_query_type,omitempty"`
 	Upstream      string    `json:"logs_upstream,omitempty"`
 	Rule          string    `json:"logs_rule,omitempty"`
+	RuleSource    string    `json:"logs_rule_source,omitempty"` // DNS: what blocked/rewrote it — a blocklist's name, "Custom rule", "Blocked service: …"
 }
 
 // Config holds logs service configuration
 type Config struct {
 	TraefikLogPath    string
 	AdGuardLogPath    string
+	AdGuardConfPath   string // AdGuardHome.yaml: names the blocklists a DNS rule came from
 	KernLogPath       string
 	WgIPPrefix        string
 	HeadscaleIPPrefix string

@@ -45,6 +45,7 @@ func New() (*Service, error) {
 	config := Config{
 		TraefikLogPath:    helper.GetEnv("TRAEFIK_LOGS"),
 		AdGuardLogPath:    helper.GetEnv("ADGUARD_LOGS"),
+		AdGuardConfPath:   helper.GetEnvOptional("ADGUARD_CONFIG", ""),
 		KernLogPath:       helper.GetEnv("KERN_LOG"),
 		WgIPPrefix:        helper.GetEnvOptional("WG_IP_PREFIX", "10.8.0."),
 		HeadscaleIPPrefix: helper.GetEnvOptional("HEADSCALE_IP_PREFIX", "100.64."),

@@ -469,7 +469,8 @@ func createSchema(db *sql.DB) error {
 		-- DNS extras
 		logs_query_type TEXT,
 		logs_upstream TEXT,
-		logs_rule TEXT
+		logs_rule TEXT,
+		logs_rule_source TEXT
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_logs_type_time ON logs(logs_type, logs_timestamp DESC);
@@ -936,6 +937,13 @@ func runMigrations(db *sql.DB) {
 					tx.Rollback()
 				}
 			}
+		}
+	}
+
+	// DNS log rows name what blocked or rewrote them (after the rebuild above, which would drop it).
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('logs') WHERE name = 'logs_rule_source'`).Scan(&count); err == nil && count == 0 {
+		if _, err := db.Exec(`ALTER TABLE logs ADD COLUMN logs_rule_source TEXT`); err == nil {
+			log.Printf("Migration: added logs_rule_source column to logs")
 		}
 	}
 }

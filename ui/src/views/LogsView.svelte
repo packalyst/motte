@@ -399,6 +399,10 @@
                 <td class="text-right stack-end">
                   {#if log.logs_status}
                     <Badge variant={statusInfo.variant} size="sm">{statusInfo.label}</Badge>
+                    <!-- DNS: what blocked or rewrote it (a blocklist, custom rule, blocked service…); the exact rule on hover -->
+                    {#if log.logs_rule_source}
+                      <div class="ml-auto mt-0.5 max-w-44 truncate text-[10px] text-muted-foreground" title={log.logs_rule || log.logs_rule_source}>{log.logs_rule_source}</div>
+                    {/if}
                   {:else}
                     <span class="stack-empty text-muted-foreground">—</span>
                   {/if}
