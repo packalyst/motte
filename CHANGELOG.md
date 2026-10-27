@@ -7,6 +7,20 @@ releases will be tagged as they are cut.
 ## [Unreleased]
 
 ### Added
+- **DNS rewrites, reworked**: a searchable list with each rewrite's type (IPv4, IPv6, alias,
+  wildcard), an on/off switch, editing in one step (AdGuard's update, so a failed change never
+  loses the old rewrite) and a confirmation before delete. Rewrites kept by Domain Routes are
+  marked and locked there. Tooltips inside dialogs now sit next to their label.
+- **DNS block rules, reworked**: one searchable list with Blocked / Allowed filters, the panel's
+  per-client exceptions shown as "Allowed for *client*" (locked, linked to the client) and rules
+  written by hand in AdGuard shown read-only. Rules are now added and removed one at a time:
+  saving no longer sends back the whole list, which could drop a client exception added
+  meanwhile, and only plain domain names are accepted.
+- **DNS blocklists, reworked**: a searchable table with each list's source, rule count, last
+  update and on/off, a warning on a list that never downloaded, and a confirmation before removal.
+  A blocklist address must be a public `https://` link: never this server, the private or VPN
+  networks, or an address with a login in it (it is AdGuard that downloads it). The Overview's
+  "active blocklists" count no longer reads 0 until the Filters tab was opened.
 - **One-line install on a fresh server**: the installer now adds git, Docker (from Docker's
   repository), WireGuard and the tools setup needs, checks the Docker version (Docker 24 or newer;
   an available update is offered, never forced) and states which systems are supported (Ubuntu 24.04

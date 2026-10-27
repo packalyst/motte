@@ -3,6 +3,7 @@ package adguard
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"api/internal/events"
 	"api/internal/helper"
@@ -434,7 +437,42 @@ type Filter struct {
 	URL  string `json:"url"`
 }
 
-var validFilteringActions = []string{"add", "remove", "toggle", "refresh", "setRules"}
+// maxFilterName bounds a blocklist name; maxFilterURL an address already in AdGuard (remove, toggle).
+const (
+	maxFilterName = 100
+	maxFilterURL  = 2048
+)
+
+// cleanFilterName trims a blocklist name and checks it: 1-100 characters, no control characters.
+func cleanFilterName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || utf8.RuneCountInString(name) > maxFilterName || !utf8.ValidString(name) {
+		return "", false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", false
+		}
+	}
+	return name, true
+}
+
+// knownFilterURL is the light check for an address that names a list AdGuard already has (remove,
+// toggle): bounded and free of control characters. Not SanitizeBlocklistURL — a list added in
+// AdGuard itself (http, or a local file) must stay removable.
+func knownFilterURL(u string) bool {
+	if u == "" || len(u) > maxFilterURL {
+		return false
+	}
+	for _, r := range u {
+		if r < ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+var validFilteringActions = []string{"add", "remove", "toggle", "refresh", "addRule", "removeRule"}
 
 // handleFilteringAction handles unified filtering actions
 func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) {
@@ -444,7 +482,8 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 		URL     string   `json:"url,omitempty"`
 		Name    string   `json:"name,omitempty"`
 		Enabled *bool    `json:"enabled,omitempty"`
-		Rules   []string `json:"rules,omitempty"`
+		Domain  string   `json:"domain,omitempty"` // addRule / removeRule
+		Allow   bool     `json:"allow,omitempty"`  // addRule / removeRule: an allow rule, not a block
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -466,10 +505,25 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 			router.JSONError(w, "filters field required for action: add", http.StatusBadRequest)
 			return
 		}
-		// Add filters in batch
-		var added []string
-		var errors []string
+		// Every list is checked before any is added: a public https address (AdGuard downloads
+		// it, so never this server or the private/VPN networks) and a bounded name.
+		lists := make([]Filter, 0, len(req.Filters))
 		for _, f := range req.Filters {
+			u, err := helper.SanitizeBlocklistURL(f.URL)
+			if err != nil {
+				router.JSONError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			name, ok := cleanFilterName(f.Name)
+			if !ok {
+				router.JSONError(w, "Give the list a name (up to 100 characters)", http.StatusBadRequest)
+				return
+			}
+			lists = append(lists, Filter{Name: name, URL: u})
+		}
+		// Add filters in batch
+		var added, failed []string
+		for _, f := range lists {
 			body, _ := json.Marshal(map[string]interface{}{
 				"name":      f.Name,
 				"url":       f.URL,
@@ -477,24 +531,24 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 			})
 			resp, err := s.doRequest("POST", "/control/filtering/add_url", newBytesReader(body))
 			if err != nil {
-				errors = append(errors, f.URL+": "+err.Error())
+				failed = append(failed, f.URL+": "+err.Error())
 				continue
 			}
 			resp.Body.Close()
 			if resp.StatusCode >= 400 {
-				errors = append(errors, f.URL+": failed")
+				failed = append(failed, f.URL+": failed")
 				continue
 			}
 			added = append(added, f.URL)
 		}
 		result := map[string]interface{}{"action": "add", "added": added}
-		if len(errors) > 0 {
-			result["errors"] = errors
+		if len(failed) > 0 {
+			result["errors"] = failed
 		}
 		router.JSON(w, result)
 
 	case "remove":
-		if req.URL == "" {
+		if !knownFilterURL(req.URL) {
 			router.JSONError(w, "url field required for action: remove", http.StatusBadRequest)
 			return
 		}
@@ -514,10 +568,12 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 		router.JSON(w, map[string]interface{}{"action": "remove", "url": req.URL})
 
 	case "toggle":
-		if req.URL == "" || req.Enabled == nil {
-			router.JSONError(w, "url and enabled fields required for action: toggle", http.StatusBadRequest)
+		name, ok := cleanFilterName(req.Name) // set_url replaces the name too, so it's required
+		if !knownFilterURL(req.URL) || req.Enabled == nil || !ok {
+			router.JSONError(w, "url, name and enabled fields required for action: toggle", http.StatusBadRequest)
 			return
 		}
+		req.Name = name
 		body, _ := json.Marshal(map[string]interface{}{
 			"url":       req.URL,
 			"whitelist": false,
@@ -554,24 +610,22 @@ func (s *Service) handleFilteringAction(w http.ResponseWriter, r *http.Request) 
 		json.NewDecoder(resp.Body).Decode(&result)
 		router.JSON(w, map[string]interface{}{"action": "refresh", "result": result})
 
-	case "setRules":
-		if req.Rules == nil {
-			router.JSONError(w, "rules field required for action: setRules", http.StatusBadRequest)
-			return
+	case "addRule", "removeRule":
+		// One rule at a time, through SetCustomRule's locked edit: the domain is checked to be a
+		// plain hostname, and nothing else in the list (the panel's client exceptions, rules
+		// written by hand in AdGuard) can be lost to a stale copy.
+		domain, err := NormalizeDomain(req.Domain) // the clean form is what's saved, logged and returned
+		if err == nil {
+			err = SetCustomRule(domain, req.Allow, req.Action == "addRule")
 		}
-		body, _ := json.Marshal(map[string]interface{}{
-			"rules": req.Rules,
-		})
-		resp, err := s.doRequest("POST", "/control/filtering/set_rules", newBytesReader(body))
 		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusFailedDependency)
+			adguardEditError(w, err)
 			return
 		}
-		defer resp.Body.Close()
-		if proxyError(w, resp) {
-			return
-		}
-		router.JSON(w, map[string]interface{}{"action": "setRules", "count": len(req.Rules)})
+		verb := map[string]string{"addRule": "added", "removeRule": "removed"}[req.Action]
+		kind := map[bool]string{false: "block", true: "allow"}[req.Allow]
+		events.Log("adguard", "rule_"+req.Action, events.SeverityInfo, fmt.Sprintf("%s rule %s: %s", kind, verb, domain))
+		router.JSON(w, map[string]interface{}{"action": req.Action, "domain": domain, "allow": req.Allow})
 
 	default:
 		w.WriteHeader(http.StatusBadRequest)
@@ -586,9 +640,13 @@ func (s *Service) handleGetRewrites(w http.ResponseWriter, r *http.Request) {
 	s.proxyGet(w, "/control/rewrite/list")
 }
 
-var validRewriteActions = []string{"add", "delete"}
+var validRewriteActions = []string{"add", "delete", "update"}
 
-// handleRewriteAction handles unified rewrite actions
+// valid reports whether both values are present and pass validRewriteValue.
+func (e Rewrite) valid() bool {
+	return validRewriteValue(e.Domain) && validRewriteValue(e.Answer)
+}
+
 // validRewriteValue accepts a bounded, printable, whitespace-free string — enough to hold
 // a domain (incl. wildcards), an IP, or a CNAME answer, while rejecting control chars and
 // oversized input. Not a strict domain/IP validator by design (see caller).
@@ -604,23 +662,18 @@ func validRewriteValue(s string) bool {
 	return true
 }
 
+// handleRewriteAction handles the rewrite actions: add, delete, and update (replace one rewrite —
+// matched by domain and answer — with another, including on/off, in one AdGuard call, so a
+// failed change never leaves the old rewrite deleted).
 func (s *Service) handleRewriteAction(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action string `json:"action"`
-		Domain string `json:"domain,omitempty"`
-		Answer string `json:"answer,omitempty"`
+		Action  string  `json:"action"`
+		Domain  string  `json:"domain,omitempty"`
+		Answer  string  `json:"answer,omitempty"`
+		Enabled *bool   `json:"enabled,omitempty"` // update only, required there
+		Target  Rewrite `json:"target"`            // update only: the rewrite to replace
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
-		return
-	}
-
-	// Validate action
-	if req.Action == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		router.JSON(w, map[string]interface{}{
-			"error":        "action field required",
-			"validActions": validRewriteActions,
-		})
 		return
 	}
 
@@ -628,57 +681,63 @@ func (s *Service) handleRewriteAction(w http.ResponseWriter, r *http.Request) {
 	// do NOT force a strict domain/IP shape — AdGuard rewrite domains allow wildcards and
 	// answers may be an IP or a CNAME — but we reject control chars, whitespace and
 	// oversized values so nothing injection-shaped is passed through unvalidated.
-	if req.Domain != "" && !validRewriteValue(req.Domain) {
-		router.JSONError(w, "invalid domain", http.StatusBadRequest)
-		return
-	}
-	if req.Answer != "" && !validRewriteValue(req.Answer) {
-		router.JSONError(w, "invalid answer", http.StatusBadRequest)
-		return
-	}
-
+	entry := Rewrite{Domain: req.Domain, Answer: req.Answer}
 	switch req.Action {
-	case "add":
-		if req.Domain == "" || req.Answer == "" {
-			router.JSONError(w, "domain and answer fields required for action: add", http.StatusBadRequest)
+	case "add", "delete":
+		if !entry.valid() {
+			router.JSONError(w, "valid domain and answer required for action: "+req.Action, http.StatusBadRequest)
 			return
 		}
-		body, _ := json.Marshal(map[string]string{"domain": req.Domain, "answer": req.Answer})
-		resp, err := s.doRequest("POST", "/control/rewrite/add", newBytesReader(body))
-		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusFailedDependency)
+		if s.forwardRewrite(w, "POST", "/control/rewrite/"+req.Action, entry) {
+			router.JSON(w, map[string]interface{}{"action": req.Action, "domain": req.Domain, "answer": req.Answer})
+		}
+	case "update":
+		// enabled is required: AdGuard's own default for a missing value isn't something to rely on
+		if !entry.valid() || !req.Target.valid() || req.Enabled == nil {
+			router.JSONError(w, "valid target, domain, answer and enabled required for action: update", http.StatusBadRequest)
 			return
 		}
-		defer resp.Body.Close()
-		if proxyError(w, resp) {
-			return
+		entry.Enabled = req.Enabled
+		target := Rewrite{Domain: req.Target.Domain, Answer: req.Target.Answer} // matched by these two only
+		body := map[string]Rewrite{"target": target, "update": entry}
+		if s.forwardRewrite(w, "PUT", "/control/rewrite/update", body) {
+			router.JSON(w, map[string]interface{}{"action": "update", "domain": req.Domain, "answer": req.Answer, "enabled": *req.Enabled})
 		}
-		router.JSON(w, map[string]interface{}{"action": "add", "domain": req.Domain, "answer": req.Answer})
-
-	case "delete":
-		if req.Domain == "" || req.Answer == "" {
-			router.JSONError(w, "domain and answer fields required for action: delete", http.StatusBadRequest)
-			return
-		}
-		body, _ := json.Marshal(map[string]string{"domain": req.Domain, "answer": req.Answer})
-		resp, err := s.doRequest("POST", "/control/rewrite/delete", newBytesReader(body))
-		if err != nil {
-			router.JSONError(w, err.Error(), http.StatusFailedDependency)
-			return
-		}
-		defer resp.Body.Close()
-		if proxyError(w, resp) {
-			return
-		}
-		router.JSON(w, map[string]interface{}{"action": "delete", "domain": req.Domain})
-
+	case "":
+		w.WriteHeader(http.StatusBadRequest)
+		router.JSON(w, map[string]interface{}{"error": "action field required", "validActions": validRewriteActions})
 	default:
 		w.WriteHeader(http.StatusBadRequest)
-		router.JSON(w, map[string]interface{}{
-			"error":        "unknown action: " + req.Action,
-			"validActions": validRewriteActions,
-		})
+		router.JSON(w, map[string]interface{}{"error": "unknown action: " + req.Action, "validActions": validRewriteActions})
 	}
+}
+
+// adguardEditError answers a failed rule edit: a bad domain is the caller's (400); anything else
+// is AdGuard's, logged here and kept out of the response.
+func adguardEditError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrInvalidDomain) {
+		router.JSONError(w, "Enter a plain domain name, e.g. ads.example.com", http.StatusBadRequest)
+		return
+	}
+	log.Printf("adguard: rule edit: %v", err)
+	router.JSONError(w, "AdGuard request failed — check that AdGuard is running and its credentials in Settings", http.StatusFailedDependency)
+}
+
+// forwardRewrite sends one rewrite call to AdGuard. It writes the error response and returns
+// false when AdGuard can't be reached or refuses; true means the caller writes the success.
+func (s *Service) forwardRewrite(w http.ResponseWriter, method, path string, payload any) bool {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		router.JSONError(w, "invalid rewrite", http.StatusBadRequest)
+		return false
+	}
+	resp, err := s.doRequest(method, path, newBytesReader(body))
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusFailedDependency)
+		return false
+	}
+	defer resp.Body.Close()
+	return !proxyError(w, resp)
 }
 
 // Helper functions using stdlib
@@ -690,10 +749,12 @@ func newBytesReader(b []byte) io.Reader {
 	return bytes.NewReader(b)
 }
 
-// Rewrite represents a DNS rewrite entry
+// Rewrite is one DNS rewrite as AdGuard's API has it. Enabled is sent only on update (an add
+// leaves AdGuard's default, on); delete matches by domain and answer.
 type Rewrite struct {
-	Domain string `json:"domain"`
-	Answer string `json:"answer"`
+	Domain  string `json:"domain"`
+	Answer  string `json:"answer"`
+	Enabled *bool  `json:"enabled,omitempty"`
 }
 
 // GetRewrites returns all DNS rewrites

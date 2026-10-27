@@ -1079,7 +1079,7 @@
             "PUT"
           ],
           "handler": "UpdateFiltering",
-          "description": "Filtering actions (action: add|remove|toggle|refresh|setRules)"
+          "description": "Filtering actions (action: add|remove|toggle|refresh|addRule|removeRule)"
         },
         {
           "path": "/rewrites",
@@ -1095,7 +1095,7 @@
             "PUT"
           ],
           "handler": "UpdateRewrites",
-          "description": "Rewrite actions (action: add|delete)"
+          "description": "Rewrite actions (action: add|delete|update)"
         }
       ]
     },

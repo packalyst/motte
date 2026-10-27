@@ -27,6 +27,9 @@ const managedPrefix = "motte-managed "
 
 // ErrManagedElsewhere: AdGuard already has a persistent client for this address that the panel
 // didn't create; change it in AdGuard instead.
+// ErrInvalidDomain: not a plain hostname (see NormalizeDomain).
+var ErrInvalidDomain = errors.New("not a valid domain name")
+
 var ErrManagedElsewhere = errors.New("AdGuard already has its own client entry for this address — change it in AdGuard")
 
 // rulesMu serialises the panel's read-modify-write of AdGuard's user rules and client entries.
@@ -342,7 +345,7 @@ var domainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0
 func NormalizeDomain(d string) (string, error) {
 	d = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
 	if len(d) > 253 || !domainRe.MatchString(d) {
-		return "", errors.New("not a valid domain name")
+		return "", ErrInvalidDomain
 	}
 	return d, nil
 }
@@ -459,6 +462,37 @@ func SetAllowed(key, ip, domain string, allow bool) error {
 		out := withoutPairs(rules, drop)
 		if allow {
 			out = append(out, allowMarker+key, allowRule(domain, ip))
+		}
+		return out
+	})
+}
+
+// customRule is the user-rules line that blocks (allow=false) or allows a domain for everyone.
+func customRule(domain string, allow bool) string {
+	if allow {
+		return "@@||" + domain + "^"
+	}
+	return "||" + domain + "^"
+}
+
+// SetCustomRule adds (present=true) or removes the everyone-wide block or allow rule for domain.
+// It changes that one line only — under the same lock as the panel's own rule edits — so the
+// panel's client exceptions and rules written by hand in AdGuard are never touched.
+func SetCustomRule(domain string, allow, present bool) error {
+	domain, err := NormalizeDomain(domain)
+	if err != nil {
+		return err
+	}
+	rule := customRule(domain, allow)
+	return editRules(func(rules []string) []string {
+		out := make([]string, 0, len(rules)+1)
+		for _, r := range rules {
+			if r != rule {
+				out = append(out, r)
+			}
+		}
+		if present {
+			out = append(out, rule)
 		}
 		return out
 	})

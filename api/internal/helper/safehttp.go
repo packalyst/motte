@@ -20,6 +20,22 @@ var ssrfExtraBlocked = func() []*net.IPNet {
 	return out
 }()
 
+// IsNonPublicIP reports whether ip is anything but a public unicast address: private, loopback,
+// link-local, multicast, unspecified, CGNAT (100.64.0.0/10 — the Tailscale/Headscale overlay) or
+// 0.0.0.0/8. Shared by the dial-time guard below and URL checks made before a fetch.
+func IsNonPublicIP(ip net.IP) bool {
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	for _, n := range ssrfExtraBlocked {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // SafeExternalHTTPClient returns an *http.Client for fetching operator-supplied URLs that
 // must only ever reach PUBLIC hosts (e.g. remote blocklists). Its dialer validates the
 // RESOLVED IP at connect time via Control, so a hostname that resolves to a public IP at
@@ -37,17 +53,8 @@ func SafeExternalHTTPClient(timeout time.Duration) *http.Client {
 		if ip == nil {
 			return fmt.Errorf("refusing to dial unresolvable address %q", address)
 		}
-		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
-			ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		if IsNonPublicIP(ip) {
 			return fmt.Errorf("refusing to connect to non-public address %s (SSRF guard)", ip)
-		}
-		// net.IP.IsPrivate doesn't cover CGNAT/shared space (100.64.0.0/10, RFC 6598) —
-		// which this deployment uses for the Tailscale/Headscale overlay — nor the reserved
-		// 0.0.0.0/8. Block them explicitly so an SSRF can't reach the VPN plane.
-		for _, n := range ssrfExtraBlocked {
-			if n.Contains(ip) {
-				return fmt.Errorf("refusing to connect to reserved address %s (SSRF guard)", ip)
-			}
 		}
 		return nil
 	}
