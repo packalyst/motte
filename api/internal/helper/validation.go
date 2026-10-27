@@ -289,36 +289,42 @@ func ValidateBlocklistURL(rawURL string) error {
 	return err
 }
 
-// SanitizeBlocklistURL validates and returns a sanitized blocklist URL
-// Returns the canonical URL string to break taint tracking
+// maxBlocklistURL bounds a blocklist address (AdGuard stores it in its config).
+const maxBlocklistURL = 2048
+
+// SanitizeBlocklistURL validates a remote blocklist address and returns it in canonical form:
+// https only, a host, no login in the address, and not this server or a private/VPN address
+// written as localhost or a literal IP. A public name that resolves to an internal address
+// can't be caught from the text alone: fetchers the panel runs itself also dial through
+// SafeExternalHTTPClient, which checks the resolved address; AdGuard fetches its own lists.
 func SanitizeBlocklistURL(rawURL string) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return "", &ValidationError{Field: "url", Message: "URL is required"}
 	}
-
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if len(rawURL) > maxBlocklistURL {
+		return "", &ValidationError{Field: "url", Message: "URL is too long"}
+	}
+	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return "", &ValidationError{Field: "url", Message: "invalid URL format"}
 	}
-
-	// Only allow https for external blocklists
 	if parsed.Scheme != "https" {
 		return "", &ValidationError{Field: "url", Message: "blocklist URL must use https"}
 	}
-
-	// Must have a host
-	if parsed.Host == "" {
+	if parsed.User != nil {
+		return "", &ValidationError{Field: "url", Message: "blocklist URL must not contain a login"}
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "" {
 		return "", &ValidationError{Field: "url", Message: "URL must have a host"}
 	}
-
-	// Block private/internal IPs to prevent SSRF
-	host := parsed.Hostname()
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-			return "", &ValidationError{Field: "url", Message: "blocklist URL cannot point to private/internal addresses"}
-		}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return "", &ValidationError{Field: "url", Message: "blocklist URL cannot point to this server"}
 	}
-
+	if ip := net.ParseIP(host); ip != nil && IsNonPublicIP(ip) {
+		return "", &ValidationError{Field: "url", Message: "blocklist URL cannot point to private/internal addresses"}
+	}
 	// Return the canonical URL string (breaks taint tracking)
 	return parsed.String(), nil
 }
