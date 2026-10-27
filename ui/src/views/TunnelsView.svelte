@@ -568,7 +568,8 @@
       <div class="min-w-0 flex-1">
         <div class="panel-title flex items-center gap-2">
           Proxy
-          {#if status}<Badge variant={proxyState.variant} size="sm"><span class="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current"></span>{proxyState.label}</Badge>{/if}
+          <!-- state: at the row's end on a phone, beside the title from sm up -->
+          {#if status}<span class="ml-auto sm:ml-0"><Badge variant={proxyState.variant} size="sm"><span class="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current"></span>{proxyState.label}</Badge></span>{/if}
         </div>
         <div class="panel-sub">{config.tunnels.length} tunnel{config.tunnels.length === 1 ? '' : 's'}<span class="hidden sm:inline">{' · '}applied when the proxy (re)starts</span></div>
       </div>
@@ -647,23 +648,30 @@
                 <span class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card {running ? 'bg-success' : 'bg-muted-foreground/50'}" title={running ? 'Serving' : 'Proxy not running'}></span>
               </span>
               <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2">
+                <div class="relative flex items-center gap-2">
                   <span class="h-2 w-2 shrink-0 rounded-full sm:hidden {running ? 'bg-success' : 'bg-muted-foreground/50'}" title={running ? 'Serving' : 'Proxy not running'}></span>
                   <span class="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t.name}</span>
-                  <!-- phone: edit/delete behind one ⋯ menu -->
-                  <div class="-my-1 sm:hidden" onclick={(e) => e.stopPropagation()} role="presentation">
-                    <DropdownButton variant="ghost" size="xs" ariaLabel="Tunnel actions" items={[
+                  <!-- phone: details toggle + edit/delete (⋯) as one group -->
+                  <div class="btn-group sm:hidden" onclick={(e) => e.stopPropagation()} role="presentation">
+                    <button type="button" class="custom_btns w-auto! gap-1 px-2 text-xs" aria-expanded={isOpen} onclick={() => toggleExpand(t.id)}>
+                      Details <Icon name="chevron-down" size={14} class="transition-transform {isOpen ? 'rotate-180' : ''}" />
+                    </button>
+                    <DropdownButton grouped ariaLabel="Tunnel actions" items={[
                       { label: 'Edit', icon: 'pencil', onclick: () => openEdit(i) },
                       { label: 'Delete', icon: 'trash', variant: 'destructive', onclick: () => deleteTunnel(i) },
                     ]} />
                   </div>
                 </div>
-                <!-- phone: a quiet line; desktop: badges -->
-                {#if tags.length}<div class="mt-0.5 text-xs text-muted-foreground sm:hidden">{tags.map((g) => g.label).join(' · ')}</div>{/if}
-                <div class="mt-0.5 flex flex-wrap items-center gap-1">
-                  {#each tags as g}<span class="hidden sm:inline-flex"><Badge variant={g.variant} size="sm">{g.label}</Badge></span>{/each}
-                  {#if chained}<span class="truncate font-mono text-[11px] text-muted-foreground">via {t.upstream.host}</span>{/if}
-                </div>
+                {#if tags.length || chained}
+                  <!-- phone: a dashed rule under the name, then a quiet line; desktop: badges -->
+                  <div class="mt-2.5 border-t border-dashed border-border pt-2.5 sm:mt-0.5 sm:border-0 sm:pt-0">
+                    {#if tags.length}<div class="text-xs text-muted-foreground sm:hidden">{tags.map((g) => g.label).join(' · ')}</div>{/if}
+                    <div class="flex flex-wrap items-center gap-1">
+                      {#each tags as g}<span class="hidden sm:inline-flex"><Badge variant={g.variant} size="sm">{g.label}</Badge></span>{/each}
+                      {#if chained}<span class="truncate font-mono text-[11px] text-muted-foreground">via {t.upstream.host}</span>{/if}
+                    </div>
+                  </div>
+                {/if}
               </div>
             </div>
             <!-- listeners (protocol:port) and the last 24h: their own line on a phone -->
@@ -691,11 +699,6 @@
               </div>
               <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform {isOpen ? 'rotate-180' : ''}" />
             </div>
-            <!-- phone: says what a tap does (the whole row toggles; from sm up the chevron says it) -->
-            <span class="order-4 flex w-full items-center justify-end gap-1 text-xs font-medium text-muted-foreground sm:hidden">
-              {isOpen ? 'Hide details' : 'Show details'}
-              <Icon name="chevron-down" size={14} class="transition-transform {isOpen ? 'rotate-180' : ''}" />
-            </span>
           </div>
 
           <!-- Expanded body: endpoints, credentials, rotation and webhook URLs -->
