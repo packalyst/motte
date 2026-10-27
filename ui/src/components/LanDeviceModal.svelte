@@ -5,6 +5,7 @@
    * `deviceId`; closing sets it back to null. Every change is admin-only and audited on the server;
    * onchanged() lets the parent refresh. Access starts empty: nobody reaches a device until granted.
    */
+  import { tick } from 'svelte'
   import { apiGet, apiPost, apiPut, apiDelete, currentUser, hasRole, toast, confirm } from '../stores/app.js'
   import { timeAgo } from '$lib/utils/format.js'
   import { approveDevice, blockDevice, unblockDevice, setDeviceInternet } from '$lib/lan.js'
@@ -89,6 +90,12 @@
   const block = () => act(() => blockDevice(device.id), 'Blocked')
   const unblock = () => act(() => unblockDevice(device.id), 'Unblocked')
   const setInternet = (on) => act(() => setDeviceInternet(device.id, on), on ? 'Internet on' : 'Internet off')
+  // The header's name opens the Name field below (the one place a device is renamed).
+  async function editName() {
+    tab = 'overview'
+    await tick()
+    document.getElementById('lan-device-name')?.focus()
+  }
   const saveReservation = () => act(() => apiPut(base(), { ip: resIP.trim(), name: resName.trim() }), 'Saved')
   function toggleAccess(vpn) {
     const has = allowed.includes(vpn.id)
@@ -122,9 +129,19 @@
 
 <Modal bind:open size="lg" bodyClass="p-0">
   {#snippet header()}
-    <div class="flex items-center gap-2.5 min-w-0">
-      <span class="grid h-7 w-7 shrink-0 place-items-center rounded-lg" style="background: color-mix(in oklch, var(--client-lan) 14%, transparent); color: var(--client-lan)"><Icon name="router" size={14} /></span>
-      <span class="truncate font-semibold text-foreground">{device?.name || device?.mac || 'LAN device'}</span>
+    <!-- like a VPN client's window: type icon (green when online) and name in one badge; admins click it to rename -->
+    <div class="flex min-h-control min-w-0 items-center gap-2">
+      {#snippet nameBadge()}
+        <Icon name="router" size={14} class={device?.online ? 'text-success' : 'text-muted-foreground'} />
+        <span class="truncate font-medium text-foreground">{device?.name || device?.mac || 'LAN device'}</span>
+      {/snippet}
+      {#if isAdmin && device}
+        <button onclick={editName} title="Rename" class="kt-badge kt-badge-outline kt-badge-secondary min-w-0 cursor-pointer">
+          {@render nameBadge()}<Icon name="edit" size={12} class="text-muted-foreground" />
+        </button>
+      {:else}
+        <span class="kt-badge kt-badge-outline kt-badge-secondary min-w-0">{@render nameBadge()}</span>
+      {/if}
       {#if status}<Badge variant={status[1]} size="sm">{status[0]}</Badge>{/if}
     </div>
   {/snippet}
@@ -145,7 +162,7 @@
           <div class="pt-3 border-t border-border">
             <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">Name and reserved address</h4>
             <div class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
-              <Input label="Name" bind:value={resName} placeholder="e.g. front-camera" prefixIcon="tag" />
+              <Input id="lan-device-name" label="Name" bind:value={resName} placeholder="e.g. front-camera" prefixIcon="tag" />
               <Input label="Reserved IP" bind:value={resIP} placeholder="always give it this IP" prefixIcon="network" class="font-mono" />
               <Button icon="device-floppy" loading={busy} onclick={saveReservation}>Save</Button>
             </div>

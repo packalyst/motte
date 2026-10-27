@@ -1,7 +1,7 @@
 <script>
   /**
    * ClientModal — the detail modal for one VPN client (WireGuard peer or Tailscale node):
-   * Overview, Traffic, QR & Config (+ virtual IPs), Access and Actions. Open it by setting `node`
+   * Overview (with its top destinations), Config (QR + virtual IPs), Access, Ad blocking and Actions. Open it by setting `node`
    * (a toNode() object); closing sets it back to null. onchanged() asks the parent to reload its
    * data after a change; vpnClients/routes are the parent's current lists.
    */
@@ -24,6 +24,7 @@
   import Tabs from './Tabs.svelte'
   import OptionCard from './OptionCard.svelte'
   import BarList from './BarList.svelte'
+  import Skeleton from './Skeleton.svelte'
   import TagEditor from './TagEditor.svelte'
 
   let { node: selectedNode = $bindable(null), vpnClients = [], routes = [], onchanged = undefined } = $props()
@@ -168,8 +169,7 @@
   const isAdmin = $derived(hasRole($currentUser, 'admin'))
   const detailTabs = $derived([
     { id: 'overview', label: 'Overview' },
-    { id: 'traffic', label: 'Traffic' },
-    ...(selectedNode?._type === 'wireguard' ? [{ id: 'qr', label: 'QR & Config' }] : []),
+    ...(selectedNode?._type === 'wireguard' ? [{ id: 'qr', label: 'Config' }] : []),
     { id: 'access', label: 'Access' },
     ...(isAdmin ? [{ id: 'adblock', label: 'Ad blocking' }] : []),
     { id: 'actions', label: 'Actions' },
@@ -181,24 +181,24 @@
   let peerUsage = $state(null)
   let peerUsageLoading = $state(false)
   let peerUsagePeriod = $state('day')
-  let conntrackStatus = $state(null)   // { enabled, running, lastError, processed }
+  let peerUsageSeq = 0 // only the latest request may land (period clicks can overlap)
 
+  // The previous list stays (dimmed) while a new period loads; another client's never does.
   async function loadPeerUsage() {
     const ip = selectedNode?._ip
-    if (!ip) { peerUsage = null; return }
+    if (peerUsage?.ip !== ip) peerUsage = null
+    if (!ip) return
+    const seq = ++peerUsageSeq
     peerUsageLoading = true
-    // Watcher status explains an empty breakdown (disabled / erroring / no flows yet).
+    let res
     try {
-      const statuses = await apiGet('/api/logs/status')
-      conntrackStatus = (Array.isArray(statuses) ? statuses : []).find(s => s.name === 'conntrack') || null
-    } catch { conntrackStatus = null }
-    try {
-      peerUsage = await apiGet(`/api/logs/peer-usage?peer=${encodeURIComponent(ip)}&period=${peerUsagePeriod}`)
-    } catch (e) {
-      peerUsage = { destinations: [], error: e.message }
-    } finally {
-      peerUsageLoading = false
+      res = await apiGet(`/api/logs/peer-usage?peer=${encodeURIComponent(ip)}&period=${peerUsagePeriod}`)
+    } catch {
+      res = { destinations: [] } // shown as "no data"
     }
+    if (seq !== peerUsageSeq) return
+    peerUsage = { ...res, ip }
+    peerUsageLoading = false
   }
 
   // Reset both the accumulated WireGuard totals (dashboard up/down) and the
@@ -213,17 +213,17 @@
       peerUsage = null
       toast('Traffic reset', 'success')
       onchanged?.()
-      if (activeTab === 'traffic') loadPeerUsage()
+      if (activeTab === 'overview') loadPeerUsage()
     } catch (e) {
       toast('Failed to reset: ' + e.message, 'error')
     }
   }
 
-  // Load usage when the Traffic tab is opened or the period changes.
+  // Load usage when the Overview is shown or the period changes.
   $effect(() => {
-    if (activeTab === 'traffic' && selectedNode) {
-      peerUsagePeriod // track
-      loadPeerUsage()
+    if (activeTab === 'overview' && selectedNode) {
+      selectedNode._ip; peerUsagePeriod // track these only: the loader reads its own state
+      untrack(loadPeerUsage)
     }
   })
 
@@ -286,10 +286,12 @@
     }
   }
 
-  // Load QR when tab changes to 'qr' for wireguard peer
+  // Load QR when tab changes to 'qr' for wireguard peer. untrack: the effect follows the peer, tab
+  // and mode only — not loadQrCode's own loading state, or a failed load would retry endlessly.
   $effect(() => {
     if (selectedNode?._type === 'wireguard' && activeTab === 'qr') {
-      loadQrCode(selectedNode._wgId, tunnelMode)
+      const id = selectedNode._wgId, mode = tunnelMode
+      untrack(() => loadQrCode(id, mode))
     }
   })
 
@@ -313,6 +315,11 @@
   let newVipLabel = $state('')
   let newVipTargetIp = $state('')
   let newVipTargetPort = $state('')
+  // A typed port must be a real one: dropping a bad one would forward every port instead.
+  const vipPortProblem = $derived.by(() => {
+    const p = newVipTargetPort.trim()
+    return !p || (/^\d{1,5}$/.test(p) && +p >= 1 && +p <= 65535) ? '' : 'Port must be a number from 1 to 65535 (leave it blank to open all ports)'
+  })
   let expandedVipCmd = $state(null) // vip id whose forwarding commands are inline-expanded
   let vipCmdText = $state('')       // fetched setup commands
   let vipRemoveText = $state('')    // fetched teardown commands
@@ -338,13 +345,13 @@
   async function addVip() {
     const label = newVipLabel.trim()
     if (!label) { toast('Give the virtual IP a name — it names the forwarding rule', 'error'); return }
+    if (vipPortProblem) return
     try {
       const body = { label, restricted: true }
       if (newVipTargetIp.trim()) {
         body.targetIp = newVipTargetIp.trim()
         // Optional: a port forwards only that TCP port; blank forwards all ports.
-        const p = parseInt(newVipTargetPort)
-        if (p > 0) body.targetPort = p
+        if (newVipTargetPort.trim()) body.targetPort = +newVipTargetPort.trim()
       }
       await apiPost(`/api/wg/peers/${selectedNode._wgId}/vips`, body)
       newVipLabel = ''; newVipTargetIp = ''; newVipTargetPort = ''
@@ -356,6 +363,11 @@
   // Inline (in-modal) confirm — a stacked confirm modal breaks the parent modal.
   let confirmRemoveVipId = $state(null)
   let removingVip = $state(false)
+  // While one is being deleted, it's the only card shown: the question can't be mistaken for another's.
+  const shownVips = $derived.by(() => {
+    const one = confirmRemoveVipId && vips.find((v) => v.id === confirmRemoveVipId)
+    return one ? [one] : vips
+  })
   async function doRemoveVip(vip) {
     removingVip = true
     try {
@@ -416,6 +428,9 @@
       if (expandedVipCmd === reqId) vipCmdLoading = false
     }
   }
+
+  // Whether this vip's set-up ('add') or tear-down ('remove') commands are the ones showing.
+  const showingVipCmd = (vip, mode) => expandedVipCmd === vip.id && vipCmdMode === mode
 
   // Other peers that can be granted access to a virtual IP (exclude the host peer itself).
   const vipPeerChoices = $derived(
@@ -545,10 +560,8 @@
 <Modal bind:open={showNodeModal} size="wide" bodyClass="p-0">
   {#snippet header()}
     {#if selectedNode}
-      <div class="flex items-center gap-3">
-        <div class="w-6 h-6 rounded flex items-center justify-center {selectedNode._online ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}">
-          <Icon name={deviceIcon(selectedNode)} size={12} />
-        </div>
+      <!-- min-h-control: the name and its rename input take the same room, so nothing jumps -->
+      <div class="flex min-h-control items-center">
         <div class="flex-1 min-w-0">
           {#if editingName}
             <div class="flex items-center gap-2">
@@ -559,8 +572,13 @@
               />
             </div>
           {:else}
-            <div class="flex items-center gap-2 mt-0.5">
-              <button onclick={() => editingName = true} title="Rename" class="kt-badge kt-badge-sm kt-badge-outline kt-badge-secondary inline-flex items-center gap-1 cursor-pointer">{selectedNode._displayName}<Icon name="edit" size={10} /></button>
+            <div class="flex items-center gap-2">
+              <!-- the client's name, with its type icon (green when online); click to rename -->
+              <button onclick={() => editingName = true} title="Rename" class="kt-badge kt-badge-outline kt-badge-secondary min-w-0 cursor-pointer">
+                <Icon name={deviceIcon(selectedNode)} size={14} class={selectedNode._online ? 'text-success' : 'text-muted-foreground'} />
+                <span class="truncate font-medium text-foreground">{selectedNode._displayName}</span>
+                <Icon name="edit" size={12} class="text-muted-foreground" />
+              </button>
               <!-- the rest of the state badges: hidden on phones, where the name alone fits -->
               <span class="hidden items-center gap-2 sm:flex">
               <Badge variant={selectedNode._online ? 'success' : 'muted'} size="sm">{selectedNode._online ? 'Online' : 'Offline'}</Badge>
@@ -592,9 +610,6 @@
               <ContentBlock variant="data" size="sm" solid light label="Uploaded" value={formatBytes(selectedNode.totalTx)} rightIcon="upload" />
               <ContentBlock variant="data" size="sm" solid light label="Downloaded" value={formatBytes(selectedNode.totalRx)} rightIcon="download" />
               <ContentBlock variant="data" size="sm" solid light label="Public Key" value={selectedNode.publicKey} copyable mono />
-            </div>
-            <div class="mt-2 flex justify-end">
-              <Button onclick={resetPeerTotals} size="sm" variant="secondary" icon="refresh">Reset traffic</Button>
             </div>
           {:else}
             <!-- Tailscale Overview - Combined -->
@@ -644,51 +659,40 @@
             </div>
           {/if}
 
-        {:else if activeTab === 'traffic'}
-          <!-- Traffic Tab - per-destination byte breakdown (conntrack) -->
-          <div class="space-y-3">
-            <div class="flex items-center justify-between gap-2">
-              <div class="text-xs text-muted-foreground">Where this peer's traffic went, by bytes.</div>
-              <Segmented size="sm" label="Period" bind:value={peerUsagePeriod}
-                options={[{ value: 'hour', label: 'Hour' }, { value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }]} />
+          <!-- Top destinations: where this client's traffic went (the conntrack watcher's byte counts) -->
+          <div class="mt-4 pt-3 border-t border-border space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Top destinations</h4>
+              <div class="flex items-center gap-2">
+                <Segmented size="sm" label="Period" bind:value={peerUsagePeriod}
+                  options={[{ value: 'hour', label: 'Hour' }, { value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }]} />
+                {#if selectedNode._type === 'wireguard'}
+                  <Button onclick={resetPeerTotals} size="sm" variant="secondary" icon="refresh" tooltip="Set this client's totals and destinations back to zero">Reset traffic</Button>
+                {/if}
+              </div>
             </div>
-
-            <!-- conntrack watcher problems: explain why the list may be empty -->
-            {#if conntrackStatus && !conntrackStatus.enabled}
-              <div class="flex items-start gap-2 p-2 bg-warning/10 rounded text-[11px]">
-                <Icon name="alert-triangle" size={13} class="text-warning mt-0.5 shrink-0" />
-                <div>The <span class="font-mono">conntrack</span> watcher is <strong>disabled</strong>. Enable it in Settings → General → Log Watchers to record per-destination traffic.</div>
+            {#if peerUsage?.destinations?.length}
+              <div class="transition-opacity {peerUsageLoading ? 'opacity-50' : ''}" aria-busy={peerUsageLoading}>
+                <BarList data={peerUsage.destinations.slice(0, 5).map(d => ({ ...d, label: d.domain || d.dest_ip }))} labelKey="label" valueKey="bytes_total" labelWidth="w-40" format={formatBytes} barClass="bg-info" />
               </div>
-            {:else if conntrackStatus?.lastError}
-              <div class="flex items-start gap-2 p-2 bg-destructive/10 rounded text-[11px]">
-                <Icon name="alert-triangle" size={13} class="text-destructive mt-0.5 shrink-0" />
-                <div class="break-all">conntrack error: {conntrackStatus.lastError}</div>
+              <p class="text-[10px] text-muted-foreground">Counted since the conntrack watcher was turned on, so it can be less than the totals above.</p>
+            {:else if peerUsageLoading}
+              <div class="space-y-2.5" aria-busy="true" aria-label="Loading destinations">
+                {#each [100, 70, 45] as w}
+                  <div class="flex items-center gap-3"><Skeleton class="h-3 w-40" /><Skeleton class="h-3" style="width: {w * 0.4}%" /></div>
+                {/each}
               </div>
-            {/if}
-
-            {#if peerUsageLoading}
-              <div class="text-xs text-muted-foreground py-6 text-center">Loading…</div>
-            {:else if peerUsage?.destinations?.length}
-              {@const rows = peerUsage.destinations.slice(0, 5).map(d => ({ ...d, label: d.domain || d.dest_ip }))}
-              <div class="grid grid-cols-2 gap-3">
-                <ContentBlock variant="data" size="sm" solid light label="Uploaded (measured)" value={formatBytes(peerUsage.total_up)} rightIcon="upload" />
-                <ContentBlock variant="data" size="sm" solid light label="Downloaded (measured)" value={formatBytes(peerUsage.total_down)} rightIcon="download" />
-              </div>
-              <BarList data={rows} labelKey="label" valueKey="bytes_total" labelWidth="w-40" format={formatBytes} barClass="bg-info" />
-              <p class="text-[10px] text-muted-foreground">
-                Measured from when the conntrack watcher was enabled (updates every ~10s as connections transfer data, including still-open ones). Traffic from before it was enabled isn't included, so this won't match the peer's lifetime WireGuard total.
-              </p>
             {:else}
-              <div class="text-center py-6 space-y-1">
+              <div class="text-center py-4 space-y-1">
                 <Icon name="chart-bar" size={24} class="mx-auto text-muted-foreground/50" />
                 <div class="text-sm text-foreground">No destination data yet</div>
-                <div class="text-[11px] text-muted-foreground">Enable the <span class="font-mono">conntrack</span> watcher in Settings → Logs, then generate some traffic.</div>
+                <div class="text-[11px] text-muted-foreground">Turn on the <span class="font-mono">conntrack</span> watcher in Settings → General → Log Watchers, then generate some traffic.</div>
               </div>
             {/if}
           </div>
 
         {:else if activeTab === 'qr'}
-          <!-- WireGuard QR & Config Tab - Side by side layout -->
+          <!-- WireGuard Config tab: QR and config side by side -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- Left: Tunnel selector + actions -->
             <div class="space-y-4">
@@ -763,11 +767,17 @@
             </div>
             <div class="flex flex-col sm:flex-row gap-2 mt-2">
               <Input bind:value={newVipLabel} placeholder="Name (required, e.g. Tapo camera)" prefixIcon="tag" class="flex-1" />
-              <Input bind:value={newVipTargetIp} placeholder="Device IP (optional)" prefixIcon="device-laptop" class="flex-1" />
-              <Input bind:value={newVipTargetPort} placeholder="Port" class="w-full sm:w-20" />
-              <Button onclick={addVip} icon="plus">Add</Button>
+              <Input bind:value={newVipTargetIp} placeholder="LAN device IP, e.g. 192.168.1.40" prefixIcon="device-laptop" class="flex-1" />
+              <!-- port and Add share a line on phones; from sm up they join the row -->
+              <div class="flex gap-2 sm:contents">
+                <Input bind:value={newVipTargetPort} placeholder="Port" prefixIcon="hash" inputmode="numeric" class="min-w-0 flex-1 sm:w-24 sm:flex-none" />
+                <Button onclick={addVip} icon="plus" disabled={!!vipPortProblem} class="shrink-0">Add</Button>
+              </div>
             </div>
-            <div class="text-xs text-muted-foreground mt-1">The VPN IP is auto-assigned; the name labels the forwarding rule. Device IP forwards to a LAN device — with a Port it exposes only that TCP port, blank forwards all. No Device IP = a bare routed IP.</div>
+            {#if vipPortProblem}
+              <p class="mt-1 flex items-center gap-1.5 text-xs text-destructive"><Icon name="alert-triangle" size={14} />{vipPortProblem}</p>
+            {/if}
+            <div class="text-xs text-muted-foreground mt-1">Its VPN address is assigned for you. Leave the device IP blank for an extra address of this client itself, or fill it in to reach a device on its network (a camera, a NAS). Add a port to open only that port; leave it blank to open all.</div>
 
             {#if postDeleteTeardown}
               <!-- Post-delete: hand over the peer-side teardown so a forgotten cleanup can't leave an orphan chain -->
@@ -799,9 +809,8 @@
               </div>
             {:else}
               <div class="space-y-2.5 mt-3">
-                {#each vips as vip (vip.id)}
+                {#each shownVips as vip (vip.id)}
                   <div class="rounded-lg border border-border bg-card overflow-hidden">
-                    <!-- Header: address + status + actions -->
                     {#if confirmRemoveVipId === vip.id}
                       <!-- Delete mode: replaces the whole card body (like the node actions delete) -->
                       <div class="p-3 space-y-3 bg-destructive/5">
@@ -821,38 +830,32 @@
                         </div>
                       </div>
                     {:else}
-                      <!-- Header: title, then badges + action group (own line on mobile) -->
-                      <div class="flex flex-col sm:flex-row sm:items-center gap-2.5 p-3">
-                        <div class="flex items-center gap-3 min-w-0 flex-1">
-                          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                            <Icon name="network" size={18} />
-                          </span>
-                          <div class="min-w-0">
-                            <div class="font-mono text-sm font-medium truncate">
-                              {vip.ip}{#if vip.targetIp}<span class="text-muted-foreground"> → {vip.targetIp}{#if vip.targetPort}:{vip.targetPort}{/if}</span>{/if}
-                            </div>
-                            {#if vip.label}<div class="text-xs text-muted-foreground truncate">{vip.label}</div>{/if}
+                      <!-- Header: icon, name and addresses on the left; actions with the state badges under them on the right -->
+                      <div class="flex items-start gap-3 p-3">
+                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <Icon name="network" size={18} />
+                        </span>
+                        <div class="min-w-0 flex-1 space-y-1">
+                          <div class="truncate text-sm font-medium text-foreground">{vip.label || 'Virtual IP'}</div>
+                          <div class="truncate font-mono text-xs text-muted-foreground">
+                            {vip.ip}{#if vip.targetIp}<span class="mx-1">→</span>{vip.targetIp}{#if vip.targetPort}:{vip.targetPort}{/if}{/if}
                           </div>
                         </div>
-                        <div class="flex items-center gap-2 shrink-0">
-                          {#if vip.quarantine}<Badge variant="destructive">Quarantined</Badge>{/if}
-                          <Badge variant={vip.restricted ? 'warning' : 'success'}>{vip.restricted ? 'Restricted' : 'Open'}</Badge>
-                          <!-- Grouped actions (Docker-style: btn-group / custom_btns) -->
-                          <div class="btn-group shrink-0">
+                        <div class="flex shrink-0 flex-col items-end gap-1.5">
+                          <!-- Grouped actions: the commands toggles stay highlighted while their commands show -->
+                          <div class="kt-btn-group shrink-0">
                             {#if vip.targetIp}
-                              <button class="custom_btns text-primary! hover:bg-primary/10! {expandedVipCmd === vip.id && vipCmdMode === 'add' ? 'bg-primary/15!' : ''}" data-kt-tooltip onclick={() => showVipCmd(vip, 'add')}>
-                                <Icon name="code" size={14} />
-                                <span data-kt-tooltip-content class="kt-tooltip hidden">Set-up commands</span>
-                              </button>
-                              <button class="custom_btns text-warning! hover:bg-warning/10! {expandedVipCmd === vip.id && vipCmdMode === 'remove' ? 'bg-warning/15!' : ''}" data-kt-tooltip onclick={() => showVipCmd(vip, 'remove')}>
-                                <Icon name="plug" size={14} />
-                                <span data-kt-tooltip-content class="kt-tooltip hidden">Tear-down commands</span>
-                              </button>
+                              <Button variant="outline" size="xs" icon="code" class="text-primary hover:bg-primary/10 {showingVipCmd(vip, 'add') ? 'bg-primary/15' : ''}"
+                                tooltip="Set-up commands" aria-label="Set-up commands" aria-pressed={showingVipCmd(vip, 'add')} onclick={() => showVipCmd(vip, 'add')} />
+                              <Button variant="outline" size="xs" icon="plug" class="text-warning hover:bg-warning/10 {showingVipCmd(vip, 'remove') ? 'bg-warning/15' : ''}"
+                                tooltip="Tear-down commands" aria-label="Tear-down commands" aria-pressed={showingVipCmd(vip, 'remove')} onclick={() => showVipCmd(vip, 'remove')} />
                             {/if}
-                            <button class="custom_btns text-destructive! hover:bg-destructive/10!" data-kt-tooltip onclick={() => confirmRemoveVipId = vip.id}>
-                              <Icon name="trash" size={14} />
-                              <span data-kt-tooltip-content class="kt-tooltip hidden">Delete virtual IP</span>
-                            </button>
+                            <Button variant="outline" size="xs" icon="trash" class="text-destructive hover:bg-destructive/10"
+                              tooltip="Delete virtual IP" aria-label="Delete virtual IP" onclick={() => confirmRemoveVipId = vip.id} />
+                          </div>
+                          <div class="flex flex-wrap justify-end gap-1.5">
+                            <Badge variant={vip.restricted ? 'warning' : 'success'} size="sm">{vip.restricted ? 'Restricted' : 'Open'}</Badge>
+                            {#if vip.quarantine}<Badge variant="destructive" size="sm">Quarantined</Badge>{/if}
                           </div>
                         </div>
                       </div>
@@ -878,7 +881,8 @@
 
                       <!-- Controls -->
                       <div class="border-t border-border bg-muted/20 px-3 py-2.5 space-y-2.5">
-                        <div class="flex flex-wrap gap-x-6 gap-y-2">
+                        <!-- one switch per line: text on the left, switch on the right -->
+                        <div class="space-y-2">
                           <Checkbox variant="switch" label="Restrict to selected peers" checked={vip.restricted} onchange={() => toggleVipRestrict(vip)} />
                           <Checkbox variant="switch" label="Quarantine" checked={vip.quarantine} onchange={() => toggleVipQuarantine(vip)} />
                         </div>
@@ -886,7 +890,7 @@
                         {#if vip.restricted}
                           <div class="border-t border-border/50 pt-2.5">
                             <div class="text-xs text-muted-foreground mb-2">
-                              Allowed peers{#if !(vip.allowedClientIds?.length)}<span class="text-destructive"> — none yet (unreachable)</span>{/if}
+                              Allowed peers{#if !(vip.allowedClientIds?.length)}<span class="ml-1 text-destructive">— none yet (unreachable)</span>{/if}
                             </div>
                             {#if vipPeerChoices.length === 0}
                               <div class="text-xs text-muted-foreground">No other peers to allow.</div>
@@ -932,9 +936,9 @@
               <div>
                 <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Access Policy</div>
                 <div class="grid grid-cols-3 gap-2">
-                  <OptionCard icon="ban" title="Block All" description="Isolated" size="sm" color="destructive" active={aclPolicy === 'block_all'} onclick={() => aclPolicy = 'block_all'} />
-                  <OptionCard icon="list-check" title="Selected" description="Choose below" size="sm" active={aclPolicy === 'selected'} onclick={() => aclPolicy = 'selected'} />
-                  <OptionCard icon="checks" title="Allow All" description="Full access" size="sm" color="success" active={aclPolicy === 'allow_all'} onclick={() => aclPolicy = 'allow_all'} />
+                  <OptionCard icon="ban" title="Block All" description="Isolated" hideDescOnPhone size="sm" color="destructive" active={aclPolicy === 'block_all'} onclick={() => aclPolicy = 'block_all'} />
+                  <OptionCard icon="list-check" title="Selected" description="Choose below" hideDescOnPhone size="sm" active={aclPolicy === 'selected'} onclick={() => aclPolicy = 'selected'} />
+                  <OptionCard icon="checks" title="Allow All" description="Full access" hideDescOnPhone size="sm" color="success" active={aclPolicy === 'allow_all'} onclick={() => aclPolicy = 'allow_all'} />
                 </div>
               </div>
 
