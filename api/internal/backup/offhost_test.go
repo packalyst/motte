@@ -112,3 +112,32 @@ func TestPruneKeepN(t *testing.T) {
 		t.Errorf("keepN=0 should delete nothing, got %v", f2.removed)
 	}
 }
+
+// A pinned host key only follows a destination that still points at the same SSH server.
+func TestHostKeyFollowsSameServer(t *testing.T) {
+	prev := Destination{ID: "d", Type: "sftp", Host: "nas.example.com", Port: 22, HostKey: "ssh-ed25519 OLD"}
+	for name, c := range map[string]struct {
+		in   Destination
+		want string
+	}{
+		"same server, key echoed":    {Destination{ID: "d", Type: "sftp", Host: "nas.example.com", HostKey: "ssh-ed25519 OLD"}, "ssh-ed25519 OLD"},
+		"same server, key omitted":   {Destination{ID: "d", Type: "sftp", Host: "NAS.example.com ", Port: 22}, "ssh-ed25519 OLD"},
+		"new host, old key echoed":   {Destination{ID: "d", Type: "sftp", Host: "nas2.example.com", HostKey: "ssh-ed25519 OLD"}, ""},
+		"new port, old key echoed":   {Destination{ID: "d", Type: "sftp", Host: "nas.example.com", Port: 2222, HostKey: "ssh-ed25519 OLD"}, ""},
+		"new host, its own key seen": {Destination{ID: "d", Type: "sftp", Host: "nas2.example.com", HostKey: "ssh-ed25519 NEW"}, "ssh-ed25519 NEW"},
+	} {
+		if got := mergeDestinationSecretsFrom(c.in, prev).HostKey; got != c.want {
+			t.Errorf("%s: host key %q, want %q", name, got, c.want)
+		}
+	}
+}
+
+// Restore takes a plain archive name only.
+func TestRestoreRejectsPaths(t *testing.T) {
+	s := &Service{}
+	for _, name := range []string{"../motte-a.wgbackup", "x/../../motte-a.wgbackup", "dir/motte-a.wgbackup", "/etc/motte-a.wgbackup", "other.wgbackup"} {
+		if _, err := s.restoreFromOffhost(context.Background(), "d", name, ""); err == nil || err.Error() != "invalid archive name" {
+			t.Errorf("%q: err %v, want invalid archive name", name, err)
+		}
+	}
+}

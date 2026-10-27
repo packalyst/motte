@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 
 	"api/internal/helper"
@@ -159,10 +160,30 @@ func mergeDestinationSecretsFrom(d, prev Destination) Destination {
 	if d.PrivateKey == redactedSecret {
 		d.PrivateKey = prev.PrivateKey
 	}
-	if d.HostKey == "" {
+	switch {
+	case !sameSSHServer(d, prev):
+		// The pinned key belongs to the old server: carried to a new one, every backup would fail
+		// with a host-key mismatch. The new server is pinned on its first connection instead.
+		if d.HostKey == prev.HostKey {
+			d.HostKey = ""
+		}
+	case d.HostKey == "":
 		d.HostKey = prev.HostKey
 	}
 	return d
+}
+
+// sameSSHServer reports whether two destinations reach the same SSH server, so a host key pinned
+// for one is valid for the other.
+func sameSSHServer(a, b Destination) bool {
+	return strings.EqualFold(strings.TrimSpace(a.Host), strings.TrimSpace(b.Host)) && sshPort(a) == sshPort(b)
+}
+
+func sshPort(d Destination) int {
+	if d.Port == 0 {
+		return 22
+	}
+	return d.Port
 }
 
 // validate checks a config is coherent enough to run a scheduled backup.
