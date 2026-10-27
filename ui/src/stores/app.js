@@ -338,7 +338,7 @@ async function api(endpoint, options = {}) {
 
   // Handle 401 Unauthorized - session expired
   if (res.status === 401) {
-    const error = await res.text().catch(() => 'Session expired')
+    const error = errorText(await res.text().catch(() => ''))
     // Trigger global logout if not on login/setup endpoints
     if (!endpoint.includes('/api/auth/login') && !endpoint.includes('/api/setup/')) {
       clearSessionTokens()
@@ -353,16 +353,25 @@ async function api(endpoint, options = {}) {
   // treating it as a generic error (never logs out; unlocking restores access).
   if (res.status === 423) {
     if (globalLockHandler) globalLockHandler()
-    const error = await res.text().catch(() => 'Session locked')
+    const error = errorText(await res.text().catch(() => ''))
     const err = new Error(error || 'Session locked')
     err.status = 423
     throw err
   }
 
-  const error = await res.text().catch(() => res.statusText)
+  const error = errorText(await res.text().catch(() => ''))
   const err = new Error(error || res.statusText)
   err.status = res.status // let callers branch on it (e.g. 428 → step-up re-auth)
   throw err
+}
+
+// The API answers errors as {"error": "..."}: the message is that text, not the JSON around it.
+function errorText(body) {
+  try {
+    const j = JSON.parse(body)
+    if (typeof j?.error === 'string') return j.error
+  } catch { /* not JSON: the body is the message */ }
+  return body
 }
 
 // HTTP method helpers
@@ -374,14 +383,14 @@ export const apiDelete = (endpoint, data) => api(endpoint, { method: 'DELETE', b
 // Raw text fetch (for config downloads etc)
 export async function apiGetText(endpoint) {
   const res = await fetch(endpoint, { headers: getAuthHeaders() })
-  if (!res.ok) throw new Error(await res.text() || res.statusText)
+  if (!res.ok) throw new Error(errorText(await res.text()) || res.statusText)
   return res.text()
 }
 
 // Blob fetch (for images like QR codes)
 export async function apiGetBlob(endpoint) {
   const res = await fetch(endpoint, { headers: getAuthHeaders() })
-  if (!res.ok) throw new Error(await res.text() || res.statusText)
+  if (!res.ok) throw new Error(errorText(await res.text()) || res.statusText)
   return res.blob()
 }
 
@@ -393,7 +402,7 @@ export async function apiPostBlob(endpoint, data) {
     headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
     body: data ? JSON.stringify(data) : undefined,
   })
-  if (!res.ok) throw new Error((await res.text()) || res.statusText)
+  if (!res.ok) throw new Error(errorText(await res.text()) || res.statusText)
   const blob = await res.blob()
   const cd = res.headers.get('Content-Disposition') || ''
   const m = cd.match(/filename="?([^"]+)"?/)

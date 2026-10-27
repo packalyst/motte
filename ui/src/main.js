@@ -32,16 +32,19 @@ const observer = new MutationObserver((mutations) => {
 })
 observer.observe(document.body, { childList: true, subtree: true })
 
-// Phones have no hover: iOS fakes a mouseenter on a tap and sends no mouseleave until the next tap
-// elsewhere, so a hover tooltip would stay up (over a modal the tap opened). Hover tooltips don't
-// show on a touch-only screen.
-if (window.matchMedia?.('(hover: none)').matches) {
-  document.addEventListener('show', (e) => {
-    const el = e.target
-    if (!(el instanceof Element) || !el.hasAttribute('data-kt-tooltip-initialized')) return
-    if (KTTooltip.getInstance(el)?.getTriggerOption() === 'hover' && e.detail?.payload) e.detail.payload.cancel = true
-  })
-}
+// Touch has no hover: a tap fakes a mouseenter (iOS sends no mouseleave until the next tap
+// elsewhere), so a hover tooltip would stay up, over a modal the tap opened. So hover tooltips
+// don't show on a touch-only screen, nor right after a touch on one that also has a mouse or
+// trackpad (tablets, many Android phones, touch laptops), whose media query says it can hover.
+const touchOnly = window.matchMedia?.('(hover: none)').matches
+let lastTouch = 0
+document.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') lastTouch = Date.now() }, { capture: true, passive: true })
+document.addEventListener('show', (e) => {
+  const el = e.target
+  if (!(el instanceof Element) || !el.hasAttribute('data-kt-tooltip-initialized')) return
+  if (!touchOnly && Date.now() - lastTouch > 1000) return
+  if (KTTooltip.getInstance(el)?.getTriggerOption() === 'hover' && e.detail?.payload) e.detail.payload.cancel = true
+})
 
 const app = mount(App, {
   target: document.getElementById('app'),
