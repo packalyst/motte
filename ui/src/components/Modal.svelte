@@ -120,7 +120,7 @@
   onclick={(e) => { if (dismissible && e.target === modalElement) handleClose() }}
 >
   <!-- centred on every screen size (the overlay is fixed full-screen with p-4) -->
-  <div class="kt-modal-content w-full {sizes[size]} top-1/2 -translate-y-1/2">
+  <div class="kt-modal-content my-auto w-full {sizes[size]}">
     <div class="kt-modal-header {headerClass}">
       {#if header}
         {@render header()}
