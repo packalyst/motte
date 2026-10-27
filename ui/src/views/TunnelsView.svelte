@@ -13,7 +13,6 @@
   import EmptyState from '../components/EmptyState.svelte'
   import ContentBlock from '../components/ContentBlock.svelte'
   import InfoCard from '../components/InfoCard.svelte'
-  import GroupButton from '../components/GroupButton.svelte'
   import DropdownButton from '../components/DropdownButton.svelte'
   import StatStrip from '../components/StatStrip.svelte'
 
@@ -652,11 +651,11 @@
                   <span class="h-2 w-2 shrink-0 rounded-full sm:hidden {running ? 'bg-success' : 'bg-muted-foreground/50'}" title={running ? 'Serving' : 'Proxy not running'}></span>
                   <span class="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t.name}</span>
                   <!-- phone: details toggle + edit/delete (⋯) as one group -->
-                  <div class="btn-group sm:hidden" onclick={(e) => e.stopPropagation()} role="presentation">
-                    <button type="button" class="custom_btns w-auto! gap-1 px-2 text-xs" aria-expanded={isOpen} onclick={() => toggleExpand(t.id)}>
+                  <div class="kt-btn-group sm:hidden" onclick={(e) => e.stopPropagation()} role="presentation">
+                    <Button variant="outline" size="xs" aria-expanded={isOpen} onclick={() => toggleExpand(t.id)}>
                       Details <Icon name="chevron-down" size={14} class="transition-transform {isOpen ? 'rotate-180' : ''}" />
-                    </button>
-                    <DropdownButton grouped ariaLabel="Tunnel actions" items={[
+                    </Button>
+                    <DropdownButton variant="outline" size="xs" ariaLabel="Tunnel actions" items={[
                       { label: 'Edit', icon: 'pencil', onclick: () => openEdit(i) },
                       { label: 'Delete', icon: 'trash', variant: 'destructive', onclick: () => deleteTunnel(i) },
                     ]} />
@@ -692,12 +691,12 @@
               {/if}
             </div>
             </div>
-            <div class="hidden shrink-0 items-center gap-2 sm:flex" onclick={(e) => e.stopPropagation()} role="presentation">
-              <div class="btn-group">
-                <GroupButton icon="pencil" tooltip="Edit tunnel" onclick={() => openEdit(i)} />
-                <GroupButton icon="trash" tone="destructive" tooltip="Delete tunnel" onclick={() => deleteTunnel(i)} />
-              </div>
-              <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform {isOpen ? 'rotate-180' : ''}" />
+            <!-- desktop: edit, delete and the open/close toggle as one group -->
+            <div class="kt-btn-group hidden shrink-0 sm:flex" onclick={(e) => e.stopPropagation()} role="presentation">
+              <Button variant="outline" size="xs" icon="pencil" tooltip="Edit tunnel" aria-label="Edit tunnel" onclick={() => openEdit(i)} />
+              <Button variant="outline" size="xs" icon="trash" class="text-destructive hover:bg-destructive/10" tooltip="Delete tunnel" aria-label="Delete tunnel" onclick={() => deleteTunnel(i)} />
+              <Button variant="outline" size="xs" icon="chevron-down" iconClass="transition-transform {isOpen ? 'rotate-180' : ''}"
+                tooltip={isOpen ? 'Hide details' : 'Show details'} aria-label={isOpen ? 'Hide details' : 'Show details'} aria-expanded={isOpen} onclick={() => toggleExpand(t.id)} />
             </div>
           </div>
 
