@@ -330,25 +330,13 @@
       <Input bind:value={q} prefixIcon="search" placeholder="Search CVE id or package…" onkeydown={(e) => e.key === 'Enter' && applyFilters()} />
     </div>
     <!-- grouped actions — contextual to the selected scope -->
-    <div class="btn-group">
-      <button onclick={exportCSV} class="custom_btns" data-kt-tooltip>
-        <Icon name="download" size={15} />
-        <span data-kt-tooltip-content class="kt-tooltip hidden">Export CSV (current filters)</span>
-      </button>
-      <button onclick={rescan} disabled={!!busy} class="custom_btns" data-kt-tooltip>
-        <Icon name="refresh" size={15} />
-        <span data-kt-tooltip-content class="kt-tooltip hidden">Rescan now (Trivy)</span>
-      </button>
+    <div class="kt-btn-group">
+      <Button variant="surface" iconOnly icon="download" tooltip="Export CSV (current filters)" aria-label="Export CSV" onclick={exportCSV} />
+      <Button variant="surface" iconOnly icon="refresh" tooltip="Rescan now (Trivy)" aria-label="Rescan now" disabled={!!busy} onclick={rescan} />
       {#if project === 'OS'}
-        <button onclick={updateSystem} disabled={!!busy} class="custom_btns" data-kt-tooltip>
-          <Icon name="package" size={15} />
-          <span data-kt-tooltip-content class="kt-tooltip hidden">Update system packages, then rescan</span>
-        </button>
+        <Button variant="surface" iconOnly icon="package" tooltip="Update system packages, then rescan" aria-label="Update system packages" disabled={!!busy} onclick={updateSystem} />
       {:else if project === 'Kernel'}
-        <button onclick={updateKernel} disabled={!!busy} class="custom_btns" data-kt-tooltip>
-          <Icon name="cpu" size={15} />
-          <span data-kt-tooltip-content class="kt-tooltip hidden">Update kernel &amp; reboot</span>
-        </button>
+        <Button variant="surface" iconOnly icon="cpu" tooltip="Update kernel &amp; reboot" aria-label="Update kernel and reboot" disabled={!!busy} onclick={updateKernel} />
       {/if}
     </div>
   </div>

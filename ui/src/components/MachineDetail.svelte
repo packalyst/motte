@@ -22,7 +22,6 @@
   import Sparkline from './Sparkline.svelte'
   import SessionCard from './SessionCard.svelte'
   import TagEditor from './TagEditor.svelte'
-  import GroupButton from './GroupButton.svelte'
   import Checkbox from './Checkbox.svelte'
   import SectionNav from './SectionNav.svelte'
   import RecordingList from './RecordingList.svelte'
@@ -690,12 +689,12 @@
         {#if report}<span class="hidden items-center gap-1 tabular-nums sm:inline-flex"><Icon name="cpu" size={11} />{st.online ? '' : 'last known · '}CPU {round(m.cpu)}% · MEM {round(m.mem)}% · load {(m.load1 ?? 0).toFixed(2)}</span>{/if}
       </div>
     </div>
-    {#if !st.gone}<div class="btn-group shrink-0">
-      <GroupButton icon="refresh" tooltip="Refresh" onclick={refresh} />
+    {#if !st.gone}<div class="kt-btn-group shrink-0">
+      <Button variant="surface" iconOnly icon="refresh" tooltip="Refresh" aria-label="Refresh" onclick={refresh} />
       {#if canOpenConsole && consoleEnabled}
-        <GroupButton icon="terminal-2" tone="primary" tooltip="Open console" onclick={() => openConsole()} />
+        <Button variant="surface" iconOnly icon="terminal-2" class="text-primary hover:bg-primary/10" tooltip="Open console" aria-label="Open console" onclick={() => openConsole()} />
       {/if}
-      <GroupButton icon="trash" tone="destructive" tooltip="Delete machine" onclick={del} />
+      <Button variant="surface" iconOnly icon="trash" class="text-destructive hover:bg-destructive/10" tooltip="Delete machine" aria-label="Delete machine" onclick={del} />
     </div>{/if}
   </div>
 {/snippet}
