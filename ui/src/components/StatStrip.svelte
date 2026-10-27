@@ -20,7 +20,8 @@
   }
   const tint = (c) => `background: color-mix(in oklch, ${c} 14%, transparent); color: ${c}`
   // literal classes for Tailwind; phones always two across
-  const COLS = { 2: 'grid-cols-2', 3: 'grid-cols-2 lg:grid-cols-3', 4: 'grid-cols-2 lg:grid-cols-4' }
+  // (three on a two-across phone: the first one spans the row instead of leaving an empty cell)
+  const COLS = { 2: 'grid-cols-2', 3: 'grid-cols-2 lg:grid-cols-3 [&>:first-child]:col-span-2 lg:[&>:first-child]:col-span-1', 4: 'grid-cols-2 lg:grid-cols-4' }
 </script>
 
 <section aria-label={label} class="grid gap-px overflow-hidden rounded-xl border border-border bg-border {COLS[items.length] || COLS[4]}">

@@ -2,10 +2,11 @@
   // DockerSettings — the panel's containers (Settings → Docker): state, live stats, restart/stop/start,
   // logs and image analysis. Live list over the "docker" WS channel.
   import { onMount, onDestroy } from 'svelte'
-  import { toast, apiPost, apiGet } from '../stores/app.js'
+  import { toast, apiPost, apiGet, confirm, stepUpConfirm } from '../stores/app.js'
   import { subscribe, unsubscribe, subscribeToLogs, unsubscribeFromLogs, dockerStore, dockerLogsStore, containerStatsStore } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Badge from './Badge.svelte'
+  import StatStrip from './StatStrip.svelte'
   import Button from './Button.svelte'
   import Modal from './Modal.svelte'
   import Checkbox from './Checkbox.svelte'
@@ -86,42 +87,34 @@
     return status || 'Unknown'
   }
 
-  // Actions - WebSocket will push updates when container state changes
+  // Actions - the WebSocket pushes the new state when a container changes
+  const DONE = { restart: 'restarted', stop: 'stopped', start: 'started' }
+  async function containerAction(name, verb, body) {
+    actionInProgress = name + '-' + verb
+    try {
+      await apiPost(`/api/docker/containers/${name}/${verb}`, body)
+      toast(`Container ${name} ${DONE[verb]}`, 'success')
+    } catch (e) {
+      toast(`Failed to ${verb} ${name}: ${e.message}`, 'error')
+    } finally {
+      actionInProgress = null
+    }
+  }
+
   async function restartContainer(name) {
-    actionInProgress = name + '-restart'
-    try {
-      await apiPost(`/api/docker/containers/${name}/restart`)
-      toast(`Container ${name} restarted`, 'success')
-    } catch (e) {
-      toast('Failed to restart: ' + e.message, 'error')
-    } finally {
-      actionInProgress = null
-    }
+    const ok = await confirm({ title: 'Restart container', message: `Restart ${name}?`, description: "It's offline for a few seconds while it restarts.", confirmText: 'Restart', variant: 'primary' })
+    if (ok) containerAction(name, 'restart')
   }
 
+  // Stopping can take the panel, Traefik or the VPN offline: the server asks for the password.
   async function stopContainer(name) {
-    actionInProgress = name + '-stop'
-    try {
-      await apiPost(`/api/docker/containers/${name}/stop`)
-      toast(`Container ${name} stopped`, 'success')
-    } catch (e) {
-      toast('Failed to stop: ' + e.message, 'error')
-    } finally {
-      actionInProgress = null
-    }
+    const su = await stepUpConfirm({ title: 'Stop container', message: `Stop ${name}?`,
+      description: 'It stays offline until you start it again. Stopping the panel, Traefik or the VPN containers can cut off your own access.',
+      confirmText: 'Stop', variant: 'destructive' })
+    if (su?.confirmed && su.password) containerAction(name, 'stop', { currentPassword: su.password, totpCode: su.totp || '' })
   }
 
-  async function startContainer(name) {
-    actionInProgress = name + '-start'
-    try {
-      await apiPost(`/api/docker/containers/${name}/start`)
-      toast(`Container ${name} started`, 'success')
-    } catch (e) {
-      toast('Failed to start: ' + e.message, 'error')
-    } finally {
-      actionInProgress = null
-    }
-  }
+  const startContainer = (name) => containerAction(name, 'start')
 
   function viewLogs(container) {
     logsContainer = container
@@ -210,40 +203,32 @@
   {#if loading}
     <LoadingSpinner centered size="lg" />
   {:else}
-    <!-- Stats -->
-    <div class="grid grid-cols-3 gap-3">
-      <div class="bg-card border border-border rounded-lg p-4 flex items-center gap-3">
-        <div class="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center flex-shrink-0">
-          <Icon name="box" size={20} class="text-info" />
-        </div>
-        <div>
-          <div class="text-2xl font-bold text-foreground">{containers.length}</div>
-          <div class="text-[11px] text-muted-foreground">Total</div>
-        </div>
-      </div>
-      <div class="bg-card border border-border rounded-lg p-4 flex items-center gap-3">
-        <div class="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center flex-shrink-0">
-          <Icon name="check" size={20} class="text-success" />
-        </div>
-        <div>
-          <div class="text-2xl font-bold text-success">{runningCount}</div>
-          <div class="text-[11px] text-muted-foreground">Running</div>
-        </div>
-      </div>
-      <div class="bg-card border border-border rounded-lg p-4 flex items-center gap-3">
-        <div class="w-10 h-10 rounded-lg bg-danger/10 flex items-center justify-center flex-shrink-0">
-          <Icon name="x" size={20} class="text-danger" />
-        </div>
-        <div>
-          <div class="text-2xl font-bold text-danger">{stoppedCount}</div>
-          <div class="text-[11px] text-muted-foreground">Stopped</div>
-        </div>
-      </div>
-    </div>
+    <StatStrip label="Containers" items={[
+      { icon: 'box', value: containers.length, label: 'containers', tone: 'info' },
+      { icon: 'player-play', value: runningCount, of: containers.length, label: 'running', tone: 'success' },
+      { icon: 'player-stop', value: stoppedCount, label: 'stopped', tone: stoppedCount ? 'destructive' : undefined },
+    ]} />
 
     <!-- Containers List -->
     {#if containers.length > 0}
       <div class="space-y-2">
+        <!-- a container's actions: one copy for the phone layout and the desktop row -->
+        {#snippet containerActions(container)}
+          {@const busy = (what) => actionInProgress === container.name + '-' + what}
+          <div class="kt-btn-group shrink-0">
+            <Button variant="outline" size="xs" icon="file-text" tooltip="Logs" aria-label={`Logs of ${container.name}`} onclick={() => viewLogs(container)} />
+            <Button variant="outline" size="xs" icon="chart-pie" tooltip="Analyze size" aria-label={`Analyze the size of ${container.name}`} onclick={() => analyzeImage(container)} />
+            {#if container.state === 'running'}
+              <Button variant="outline" size="xs" icon="refresh" class="text-primary hover:bg-primary/10" loading={busy('restart')} disabled={busy('restart')}
+                tooltip="Restart" aria-label={`Restart ${container.name}`} onclick={() => restartContainer(container.name)} />
+              <Button variant="outline" size="xs" icon="player-stop" class="text-destructive hover:bg-destructive/10" loading={busy('stop')} disabled={busy('stop')}
+                tooltip="Stop" aria-label={`Stop ${container.name}`} onclick={() => stopContainer(container.name)} />
+            {:else}
+              <Button variant="outline" size="xs" icon="player-play" class="text-success hover:bg-success/10" loading={busy('start')} disabled={busy('start')}
+                tooltip="Start" aria-label={`Start ${container.name}`} onclick={() => startContainer(container.name)} />
+            {/if}
+          </div>
+        {/snippet}
         {#each containers as container}
           <div class="bg-card border border-border rounded-lg px-4 py-3 hover:border-primary/30 transition-colors">
             <div class="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4">
@@ -263,43 +248,7 @@
                 <Badge variant={getStateVariant(container.state)} size="sm">
                   {container.state}
                 </Badge>
-                <div class="btn-group">
-                  <button onclick={() => viewLogs(container)} class="custom_btns" data-kt-tooltip>
-                    <Icon name="file-text" size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">Logs</span>
-                  </button>
-                  <button onclick={() => analyzeImage(container)} class="custom_btns" data-kt-tooltip>
-                    <Icon name="chart-pie" size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">Analyze Size</span>
-                  </button>
-                  {#if container.state === 'running'}
-                    <button onclick={() => restartContainer(container.name)} disabled={actionInProgress === container.name + '-restart'} class="custom_btns" data-kt-tooltip>
-                      {#if actionInProgress === container.name + '-restart'}
-                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                      {:else}
-                        <Icon name="refresh" size={14} />
-                      {/if}
-                      <span data-kt-tooltip-content class="kt-tooltip hidden">Restart</span>
-                    </button>
-                    <button onclick={() => stopContainer(container.name)} disabled={actionInProgress === container.name + '-stop'} class="custom_btns" data-kt-tooltip>
-                      {#if actionInProgress === container.name + '-stop'}
-                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                      {:else}
-                        <Icon name="player-stop" size={14} />
-                      {/if}
-                      <span data-kt-tooltip-content class="kt-tooltip hidden">Stop</span>
-                    </button>
-                  {:else}
-                    <button onclick={() => startContainer(container.name)} disabled={actionInProgress === container.name + '-start'} class="custom_btns" data-kt-tooltip>
-                      {#if actionInProgress === container.name + '-start'}
-                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                      {:else}
-                        <Icon name="player-play" size={14} />
-                      {/if}
-                      <span data-kt-tooltip-content class="kt-tooltip hidden">Start</span>
-                    </button>
-                  {/if}
-                </div>
+                {@render containerActions(container)}
               </div>
 
               <!-- Desktop: Inline layout -->
@@ -348,43 +297,7 @@
                 <div class="flex-1"></div>
 
                 <!-- Actions -->
-                <div class="btn-group">
-                  <button onclick={() => viewLogs(container)} class="custom_btns" data-kt-tooltip>
-                    <Icon name="file-text" size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">Logs</span>
-                  </button>
-                  <button onclick={() => analyzeImage(container)} class="custom_btns" data-kt-tooltip>
-                    <Icon name="chart-pie" size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">Analyze Size</span>
-                  </button>
-                  {#if container.state === 'running'}
-                    <button onclick={() => restartContainer(container.name)} disabled={actionInProgress === container.name + '-restart'} class="custom_btns" data-kt-tooltip>
-                      {#if actionInProgress === container.name + '-restart'}
-                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                      {:else}
-                        <Icon name="refresh" size={14} />
-                      {/if}
-                      <span data-kt-tooltip-content class="kt-tooltip hidden">Restart</span>
-                    </button>
-                    <button onclick={() => stopContainer(container.name)} disabled={actionInProgress === container.name + '-stop'} class="custom_btns" data-kt-tooltip>
-                      {#if actionInProgress === container.name + '-stop'}
-                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                      {:else}
-                        <Icon name="player-stop" size={14} />
-                      {/if}
-                      <span data-kt-tooltip-content class="kt-tooltip hidden">Stop</span>
-                    </button>
-                  {:else}
-                    <button onclick={() => startContainer(container.name)} disabled={actionInProgress === container.name + '-start'} class="custom_btns" data-kt-tooltip>
-                      {#if actionInProgress === container.name + '-start'}
-                        <div class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                      {:else}
-                        <Icon name="player-play" size={14} />
-                      {/if}
-                      <span data-kt-tooltip-content class="kt-tooltip hidden">Start</span>
-                    </button>
-                  {/if}
-                </div>
+                {@render containerActions(container)}
               </div>
             </div>
           </div>
