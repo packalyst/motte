@@ -442,6 +442,18 @@ input:-webkit-autofill:active {
   .bottom-nav-badge {
     @apply absolute -top-1.5 -right-2.5 grid h-4 min-w-4 place-items-center rounded-full border-2 border-card bg-destructive px-1 text-[9px] font-semibold leading-none text-white;
   }
+  /* More than five sections: each keeps a fixed width and the dock scrolls sideways (the open one
+     is scrolled into view by MobileNav); the indicator steps by that width and scrolls along. */
+  .bottom-nav-scroll {
+    @apply overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden;
+  }
+  .bottom-nav-scroll .bottom-nav-item {
+    @apply w-[4.5rem] flex-none;
+  }
+  .bottom-nav-scroll .bottom-nav-indicator {
+    width: 4.5rem;
+    transform: translateX(calc(4.5rem * var(--a)));
+  }
 
   /* Inline text action beside a section heading ("+ Add …", "+ New session") */
   .link-action {
