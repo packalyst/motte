@@ -134,10 +134,6 @@ type sftpBackend struct {
 }
 
 func newSFTPBackend(d Destination) (backend, error) {
-	port := d.Port
-	if port == 0 {
-		port = 22
-	}
 	var auth []ssh.AuthMethod
 	if d.PrivateKey != "" {
 		signer, err := ssh.ParsePrivateKey([]byte(d.PrivateKey))
@@ -174,7 +170,7 @@ func newSFTPBackend(d Destination) (backend, error) {
 		},
 	}
 
-	conn, err := ssh.Dial("tcp", net.JoinHostPort(d.Host, fmt.Sprintf("%d", port)), cfg)
+	conn, err := ssh.Dial("tcp", net.JoinHostPort(d.Host, fmt.Sprintf("%d", sshPort(d))), cfg)
 	if err != nil {
 		return nil, err
 	}

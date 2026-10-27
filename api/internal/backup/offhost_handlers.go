@@ -87,10 +87,11 @@ func (s *Service) handleOffhostTest(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not reach destination: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	// Pin a newly-seen SFTP host key into the stored config so future runs verify strictly.
+	// Pin a newly-seen SFTP host key into the stored config so future runs verify strictly — only
+	// when the tested server is the saved one (a test of an edited, unsaved host must not pin its key).
 	if hk := be.learnedHostKey(); hk != "" && d.ID != "" {
 		for i := range stored.Destinations {
-			if stored.Destinations[i].ID == d.ID && stored.Destinations[i].HostKey == "" {
+			if stored.Destinations[i].ID == d.ID && stored.Destinations[i].HostKey == "" && sameSSHServer(stored.Destinations[i], d) {
 				stored.Destinations[i].HostKey = hk
 				_ = s.saveOffhostConfig(stored)
 			}

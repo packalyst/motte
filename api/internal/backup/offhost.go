@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"sync"
 	"time"
 
@@ -145,7 +146,8 @@ func (s *Service) runOffhost(ctx context.Context, actor string) error {
 // restoreFromOffhost downloads a chosen archive, decrypts + applies it with the existing
 // Open/Import, then reconciles live state. It overwrites panel state, so callers must step-up.
 func (s *Service) restoreFromOffhost(ctx context.Context, destID, name, passphrase string) ([]string, error) {
-	if !isArchiveName(name) {
+	// A plain file name only: "../" would reach outside the destination's folder.
+	if !isArchiveName(name) || path.Base(name) != name {
 		return nil, fmt.Errorf("invalid archive name")
 	}
 	cfg, err := s.loadOffhostConfig()
