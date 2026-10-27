@@ -1090,7 +1090,7 @@
     <LoadingSpinner centered size="lg" />
   {:else}
     <div class="flex flex-col gap-4 lg:min-h-[calc(100dvh-8rem)] lg:flex-row">
-      <SectionNav items={SECTIONS} active={section} onselect={go} label="Settings sections" />
+      <SectionNav items={SECTIONS} active={section} onselect={go} label="Settings sections" mobile="bottom" />
       <div class="min-w-0 flex-1 space-y-4">
       <InfoCard icon={current.icon} title={current.label} description={current.description} />
       {#if section === 'team'}
