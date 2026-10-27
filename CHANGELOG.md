@@ -48,6 +48,12 @@ releases will be tagged as they are cut.
   `.editorconfig`, and architecture decision records under `docs/adr/`.
 
 ### Changed
+- **Off-host backup destinations** are compact cards (type, name, where backups go) whose form
+  opens under them; removing one asks first, and "Unsaved changes" shows next to Save.
+- **Docker settings**: a summary strip of containers, running and stopped; Restart asks first and
+  Stop asks for your password (the server always required it, but the page never asked).
+- **Settings on phones** uses the bottom bar like the machine page; a bar with more than five
+  sections scrolls sideways and keeps the open one in view.
 - **Client window**: Traffic is part of the Overview now (top destinations under the client's
   details, one request instead of two); "QR & Config" is called **Config**; the name and type icon
   are one rename badge (the LAN device window too); virtual IP cards fit a phone (name and
@@ -64,6 +70,14 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- Error messages show the server's message instead of its raw JSON reply.
+- A hover tooltip no longer stays up over a window opened by a tap, on tablets and phones that
+  also report a mouse.
+- Emptying a stored password field in an off-host backup destination no longer erases the
+  stored password on save.
+- An SFTP destination's pinned host key no longer follows it to a different host or port (it broke
+  every backup with a host-key mismatch); a test of an edited, unsaved host no longer pins its key
+  into the saved destination; restore accepts a plain archive name only.
 - A QR code that failed to load was requested again without pause (hundreds of requests and error
   toasts); it is now tried once per tab or tunnel-mode change.
 - Adding a virtual IP with a mistyped port (`abc`, `0`) no longer forwards every port: the form
