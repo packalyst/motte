@@ -11,6 +11,7 @@
   import Button from './Button.svelte'
   import Input from './Input.svelte'
   import Checkbox from './Checkbox.svelte'
+  import Skeleton from './Skeleton.svelte'
 
   let { clientKey } = $props()
 
@@ -69,7 +70,23 @@
     <Icon name="alert-triangle" size={16} class="mt-0.5 shrink-0 text-warning" />{error}
   </div>
 {:else if !data}
-  <div class="py-6 text-center text-sm text-muted-foreground">Loading…</div>
+  <!-- the panel's shape while it loads, so it doesn't jump when the data lands -->
+  <div class="space-y-4" aria-busy="true" aria-label="Loading ad blocking">
+    <div class="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
+      <div class="flex-1 space-y-2"><Skeleton class="h-4 w-48" /><Skeleton class="h-3 w-full" /><Skeleton class="h-3 w-24" /></div>
+      <Skeleton class="h-5 w-9 rounded-full" />
+    </div>
+    <div class="space-y-2"><Skeleton class="h-2.5 w-40" /><Skeleton class="h-3 w-12" /><Skeleton class="h-control w-full" /></div>
+    <div class="space-y-2">
+      <Skeleton class="h-2.5 w-28" />
+      <div class="divide-y divide-border rounded-lg border border-border">
+        {#each [0, 1, 2, 3] as _}
+          <div class="space-y-1.5 px-3 py-2.5"><Skeleton class="h-3 w-1/2" /><Skeleton class="h-2.5 w-1/4" /></div>
+        {/each}
+      </div>
+      <Skeleton class="h-3 w-64" />
+    </div>
+  </div>
 {:else}
   <div class="space-y-4">
     <div class="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
