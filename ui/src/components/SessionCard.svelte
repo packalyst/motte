@@ -5,7 +5,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { requestSnapshot, openConsoleEvents, sessionColor } from '../lib/consoleEvents.js'
   import Icon from './Icon.svelte'
-  import GroupButton from './GroupButton.svelte'
+  import Button from './Button.svelte'
 
   let { session, machine, onresume, onkill } = $props()
 
@@ -78,9 +78,9 @@
         {#if session.attached}<span class="inline-flex items-center gap-1 text-success"><Icon name="eye" size={11} />{session.viewers} watching</span>{:else}detached{/if}
       </div>
     </div>
-    <div class="btn-group shrink-0">
-      <GroupButton icon="terminal-2" tone="primary" tooltip="Resume session" onclick={() => onresume?.(session)} />
-      <GroupButton icon="x" tone="destructive" tooltip="Close session" onclick={() => onkill?.(session)} />
+    <div class="kt-btn-group shrink-0">
+      <Button variant="outline" size="xs" icon="terminal-2" class="text-primary hover:bg-primary/10" tooltip="Resume session" aria-label={`Resume session ${session.label || ''} on ${machine.name || machine.id}`} onclick={() => onresume?.(session)} />
+      <Button variant="outline" size="xs" icon="x" class="text-destructive hover:bg-destructive/10" tooltip="Close session" aria-label={`Close session ${session.label || ''} on ${machine.name || machine.id}`} onclick={() => onkill?.(session)} />
     </div>
   </div>
 </div>
