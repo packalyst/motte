@@ -54,7 +54,7 @@
 
 <!-- Horizontally scrollable so tab bars with many items can be swiped on mobile
      instead of being clipped. Scrollbar hidden for a clean look. -->
-<div class="flex overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden border-b border-border {background ? 'bg-muted/30' : ''} {className}">
+<div class="flex overflow-x-auto overflow-y-hidden overscroll-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden border-b border-border {background ? 'bg-muted/30' : ''} {className}">
   {#each tabs as tab}
     <button
       onclick={() => selectTab(tab.id)}

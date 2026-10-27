@@ -1,7 +1,6 @@
 <script>
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
-  import GroupButton from './GroupButton.svelte'
 
   let {
     label = '',
@@ -11,9 +10,6 @@
     disabled = false,
     items = [],
     ariaLabel = '', // names the button when there's no label (icon-only, e.g. a row's ⋯ menu)
-    // grouped: the trigger is a GroupButton inside a `.btn-group`. That group clips its overflow,
-    // so the menu is placed against the caller's positioned ancestor (give it `relative`) instead.
-    grouped = false,
     class: className = ''
   } = $props()
 
@@ -27,8 +23,22 @@
   }
 </script>
 
-<div class="{grouped ? '' : 'relative'} {className}">
-  <!-- menu first: a grouped trigger must stay its wrapper's last child (the group's dividers) -->
+<div class="relative {className}">
+  <Button
+    onclick={() => open = !open}
+    {variant}
+    {size}
+    icon={label ? icon : icon || 'dots'}
+    iconOnly={!label}
+    {disabled}
+    aria-label={label ? undefined : ariaLabel}
+    aria-haspopup="menu"
+    aria-expanded={open}
+  >
+    {label}
+    <Icon name="chevron-down" size={12} class="ml-1 {open ? 'rotate-180' : ''}" />
+  </Button>
+
   {#if open}
     <div class="kt-dropdown" role="menu">
       {#each items as item}
@@ -53,23 +63,4 @@
     </div>
     <button class="kt-dropdown-backdrop" onclick={() => open = false} aria-label="Close menu"></button>
   {/if}
-  {#if grouped}
-    <GroupButton icon={icon || 'dots'} tooltip={label || ariaLabel} {disabled} onclick={() => open = !open} />
-  {:else}
-  <Button
-    onclick={() => open = !open}
-    {variant}
-    {size}
-    icon={label ? icon : icon || 'dots'}
-    iconOnly={!label}
-    {disabled}
-    aria-label={label ? undefined : ariaLabel}
-    aria-haspopup="menu"
-    aria-expanded={open}
-  >
-    {label}
-    <Icon name="chevron-down" size={12} class="ml-1 {open ? 'rotate-180' : ''}" />
-  </Button>
-  {/if}
-
 </div>

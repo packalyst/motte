@@ -7,6 +7,7 @@
     variant = 'primary',
     size = 'default',
     icon = undefined,
+    iconClass = '', // classes for the icon alone (e.g. a chevron's rotation), never the tooltip
     iconOnly = false,
     disabled = false,
     loading = false,
@@ -26,6 +27,7 @@
     destructive: 'kt-btn-destructive',
     success: 'kt-btn-success',
     outline: 'kt-btn-outline',
+    surface: 'kt-btn-surface', // card-coloured: stands off the page
     ghost: 'kt-btn-ghost',
     'ghost-danger': 'kt-btn-ghost text-muted-foreground hover:text-destructive hover:bg-destructive/10', // row delete/remove icons
     mono: 'kt-btn-mono'
@@ -47,7 +49,8 @@
     'kt-btn',
     variantClasses[variant],
     sizeClasses[size],
-    iconOnly && 'kt-btn-icon',
+    // xs: an icon with no label or text is icon-only even when not marked so, so it stays square
+    (iconOnly || (size === 'xs' && icon && !label && !children)) && 'kt-btn-icon',
     className
   ].filter(Boolean).join(' '));
 
@@ -80,7 +83,7 @@
   {:else if copied}
     <Icon name="check" size={size === 'xs' ? 12 : 14} />
   {:else if icon}
-    <Icon name={icon} size={size === 'xs' ? 12 : 14} />
+    <Icon name={icon} size={size === 'xs' ? 12 : 14} class={iconClass} />
   {/if}
   {#if !iconOnly}
     {#if label}

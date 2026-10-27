@@ -10,6 +10,7 @@
     size = 'md', // sm, md, lg
     iconBox = false, // Show icon in a colored box (action card style)
     disabled = false,
+    hideDescOnPhone = false, // the description shows from sm up only (cards in a tight row)
     class: className = '',
     onclick
   } = $props()
@@ -53,7 +54,7 @@
   <div class="text-left min-w-0">
     <div class="{s.title} font-medium text-foreground">{title}</div>
     {#if description}
-      <div class="{s.desc} text-muted-foreground">{description}</div>
+      <div class="{s.desc} text-muted-foreground {hideDescOnPhone ? 'hidden sm:block' : ''}">{description}</div>
     {/if}
   </div>
 </button>
