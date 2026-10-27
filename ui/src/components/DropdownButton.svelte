@@ -9,6 +9,7 @@
     size = 'sm',
     disabled = false,
     items = [],
+    ariaLabel = '', // names the button when there's no label (icon-only, e.g. a row's ⋯ menu)
     class: className = ''
   } = $props()
 
@@ -27,8 +28,12 @@
     onclick={() => open = !open}
     {variant}
     {size}
-    {icon}
+    icon={label ? icon : icon || 'dots'}
+    iconOnly={!label}
     {disabled}
+    aria-label={label ? undefined : ariaLabel}
+    aria-haspopup="menu"
+    aria-expanded={open}
   >
     {label}
     <Icon name="chevron-down" size={12} class="ml-1 {open ? 'rotate-180' : ''}" />
