@@ -11,7 +11,6 @@
   import { fmtUptime } from '$lib/fleet.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
-  import GroupButton from './GroupButton.svelte'
   import Select from './Select.svelte'
   import RecordingPlayer from './RecordingPlayer.svelte'
   import EmptyState from './EmptyState.svelte'
@@ -147,11 +146,11 @@
                       {machineId ? '' : rec.title + ' · '}{rec.user} · {time(rec.started)}
                     </div>
                   </div>
-                  <div class="btn-group shrink-0">
-                    <GroupButton icon="download" tooltip="Download .cast" onclick={() => download(rec)} />
+                  <div class="kt-btn-group shrink-0">
+                    <Button variant="outline" size="xs" icon="download" tooltip="Download .cast" aria-label={`Download ${rec.title} on ${rec.machine_name}`} onclick={() => download(rec)} />
                     {#if isAdmin}
-                      <GroupButton icon="trash" tone="destructive" disabled={rec.live} onclick={() => remove(rec)}
-                        tooltip={rec.live ? 'Still recording — stop the session first' : 'Delete recording'} />
+                      <Button variant="outline" size="xs" icon="trash" class="text-destructive hover:bg-destructive/10" disabled={rec.live} onclick={() => remove(rec)}
+                        tooltip={rec.live ? 'Still recording — stop the session first' : 'Delete recording'} aria-label={`Delete ${rec.title} on ${rec.machine_name}`} />
                     {/if}
                   </div>
                 </div>

@@ -13,7 +13,6 @@
   import Checkbox from './Checkbox.svelte'
   import EmptyState from './EmptyState.svelte'
   import Badge from './Badge.svelte'
-  import GroupButton from './GroupButton.svelte'
   import { clientsList, openClients } from '$lib/clients.js'
 
   let networks = $state([])
@@ -246,9 +245,9 @@
               </div>
               <div class="font-mono text-xs text-muted-foreground">{net.cidr}</div>
             </div>
-            <div class="btn-group shrink-0">
-              <GroupButton icon="pencil" tooltip="Edit network" onclick={() => openEdit(net)} />
-              <GroupButton icon="trash" tone="destructive" tooltip="Delete network" onclick={() => removeNetwork(net)} />
+            <div class="kt-btn-group shrink-0">
+              <Button variant="outline" size="xs" icon="pencil" tooltip="Edit network" aria-label={`Edit ${net.iface}`} onclick={() => openEdit(net)} />
+              <Button variant="outline" size="xs" icon="trash" class="text-destructive hover:bg-destructive/10" tooltip="Delete network" aria-label={`Delete ${net.iface}`} onclick={() => removeNetwork(net)} />
             </div>
           </div>
 

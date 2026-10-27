@@ -521,6 +521,16 @@
   {#if routes.length > 0}
     {#if filteredRoutes.length > 0}
       <div class="space-y-2">
+        <!-- a route's actions: one copy for the phone layout and the desktop row -->
+        {#snippet routeActions(route)}
+          <div class="kt-btn-group shrink-0">
+            <Button variant="outline" size="xs" icon={route.enabled ? 'player-pause' : 'player-play'}
+              class={route.enabled ? 'text-warning hover:bg-warning/10' : 'text-success hover:bg-success/10'}
+              tooltip={route.enabled ? 'Disable' : 'Enable'} aria-label={`${route.enabled ? 'Disable' : 'Enable'} ${route.domain}`} onclick={() => toggleRoute(route)} />
+            <Button variant="outline" size="xs" icon="pencil" tooltip="Edit" aria-label={`Edit ${route.domain}`} onclick={() => openEditModal(route)} />
+            <Button variant="outline" size="xs" icon="trash" class="text-destructive hover:bg-destructive/10" tooltip="Delete" aria-label={`Delete ${route.domain}`} onclick={() => confirmDelete(route)} />
+          </div>
+        {/snippet}
         {#each filteredRoutes as route}
           <div class="bg-card border border-border rounded-lg px-4 py-3 hover:border-primary/30 transition-colors">
             <div class="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4">
@@ -552,20 +562,7 @@
                     <Badge variant="muted" size="sm">SSL?</Badge>
                   {/if}
                 </div>
-                <div class="btn-group">
-                  <button onclick={() => toggleRoute(route)} class="custom_btns" data-kt-tooltip>
-                    <Icon name={route.enabled ? 'player-pause' : 'player-play'} size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">{route.enabled ? 'Disable' : 'Enable'}</span>
-                  </button>
-                  <button onclick={() => openEditModal(route)} class="custom_btns" data-kt-tooltip>
-                    <Icon name="pencil" size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">Edit</span>
-                  </button>
-                  <button onclick={() => confirmDelete(route)} class="custom_btns text-destructive" data-kt-tooltip>
-                    <Icon name="trash" size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">Delete</span>
-                  </button>
-                </div>
+                {@render routeActions(route)}
               </div>
 
               <!-- Desktop: Inline layout -->
@@ -636,20 +633,7 @@
                 <div class="flex-1"></div>
 
                 <!-- Actions -->
-                <div class="btn-group">
-                  <button onclick={() => toggleRoute(route)} class="custom_btns" data-kt-tooltip>
-                    <Icon name={route.enabled ? 'player-pause' : 'player-play'} size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">{route.enabled ? 'Disable' : 'Enable'}</span>
-                  </button>
-                  <button onclick={() => openEditModal(route)} class="custom_btns" data-kt-tooltip>
-                    <Icon name="pencil" size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">Edit</span>
-                  </button>
-                  <button onclick={() => confirmDelete(route)} class="custom_btns text-destructive" data-kt-tooltip>
-                    <Icon name="trash" size={14} />
-                    <span data-kt-tooltip-content class="kt-tooltip hidden">Delete</span>
-                  </button>
-                </div>
+                {@render routeActions(route)}
               </div>
             </div>
           </div>
@@ -882,11 +866,13 @@
                 label="Allow Range"
                 placeholder="09:00-18:00"
                 bind:value={formData.sentinelConfig.timeAccess.allowRange}
+                prefixIcon="clock"
               />
               <Input
                 label="Deny Range"
                 placeholder="12:00-13:00"
                 bind:value={formData.sentinelConfig.timeAccess.denyRange}
+                prefixIcon="clock"
               />
             </div>
             <div>
@@ -920,7 +906,8 @@
             </div>
             <p class="text-xs text-muted-foreground">Require specific headers to be present</p>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
+            <!-- one header per row: side by side they're too narrow to read in this window -->
+            <div class="space-y-2 mt-3">
             {#each formData.sentinelConfig.headers as header, i}
               <div class="border border-border rounded-lg p-3 space-y-2">
                 <div class="grid grid-cols-2 gap-2">
@@ -941,6 +928,7 @@
                 </div>
                 <Input
                   placeholder="Regex pattern (optional)"
+                  prefixIcon="code"
                   value={header.regex}
                   oninput={(e) => formData.sentinelConfig.headers[i].regex = e.target.value}
                   suffixAddonBtn={{ icon: 'trash', onclick: () => removeFromSentinel('headers', i) }}
