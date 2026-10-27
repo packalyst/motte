@@ -48,6 +48,11 @@ releases will be tagged as they are cut.
   `.editorconfig`, and architecture decision records under `docs/adr/`.
 
 ### Changed
+- **Client window**: Traffic is part of the Overview now (top destinations under the client's
+  details, one request instead of two); "QR & Config" is called **Config**; the name and type icon
+  are one rename badge (the LAN device window too); virtual IP cards fit a phone (name and
+  addresses beside the actions, switches one per line, Port and Add on one line); Ad blocking shows
+  the panel's outline while it loads instead of jumping.
 - **Renamed to Motte** (breaking — reinstall, then import a backup). Install path `/opt/motte`,
   service and command `motte`, compose project `motte`; firewall tables `motte_*`; session cookie
   `motte_session`; AdGuard clients the panel manages are named `motte-managed …`; DHCP and netplan
@@ -59,6 +64,11 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- A QR code that failed to load was requested again without pause (hundreds of requests and error
+  toasts); it is now tried once per tab or tunnel-mode change.
+- Adding a virtual IP with a mistyped port (`abc`, `0`) no longer forwards every port: the form
+  refuses it until the port is 1–65535 or blank.
+- The tab bar no longer drags up and down on iOS.
 - **Backups** now carry DHCP networks, off-host backup settings, alert rules, notification channels
   and the **WireGuard server key**, so a restore on a new server keeps WireGuard clients working.
   The file format is now `motte-backup` (older `wg-panel-backup` files are no longer read). An
