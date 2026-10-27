@@ -14,6 +14,7 @@
   import ContentBlock from '../components/ContentBlock.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import GroupButton from '../components/GroupButton.svelte'
+  import DropdownButton from '../components/DropdownButton.svelte'
   import StatStrip from '../components/StatStrip.svelte'
 
   let { loading = $bindable(true) } = $props()
@@ -625,30 +626,43 @@
         {@const chained = !!(t.upstream && t.upstream.host)}
         {@const isOpen = !!expanded[t.id]}
         {@const use = stats?.perUser?.[t.user]}
-        <div class="overflow-hidden rounded-xl border border-border bg-card">
+        {@const tags = [
+          (t.listeners || []).length && { label: chained ? 'Chained' : 'Direct', variant: chained ? 'warning' : 'muted' },
+          t.rotateUrl && { label: 'Rotating', variant: 'secondary' },
+          (t.webhooks || []).length && { label: 'Webhook', variant: 'primary' },
+        ].filter(Boolean)}
+        <div class="rounded-xl border border-border bg-card">
           <!-- Summary row (tap toggles the connection details): what it is, where it listens, its
                last 24h. Secrets (credentials, keys, URLs) only appear expanded. -->
           <div
-            class="flex cursor-pointer select-none flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3 transition hover:bg-muted/30"
+            class="flex cursor-pointer select-none flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3 transition hover:bg-muted/30 {isOpen ? 'rounded-t-xl' : 'rounded-xl'}"
             role="button" tabindex="0" aria-expanded={isOpen}
             onclick={() => toggleExpand(t.id)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(t.id) } }}
           >
             <div class="flex min-w-0 flex-1 items-center gap-3 sm:basis-64">
-              <span class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
+              <!-- the tile is desktop only; a phone shows the status dot by the name -->
+              <span class="relative hidden h-9 w-9 shrink-0 place-items-center rounded-lg sm:grid {running ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}">
                 <Icon name="arrows-right-left" size={16} />
                 <span class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card {running ? 'bg-success' : 'bg-muted-foreground/50'}" title={running ? 'Serving' : 'Proxy not running'}></span>
               </span>
-              <div class="min-w-0">
-                <div class="truncate text-sm font-semibold text-foreground">{t.name}</div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="h-2 w-2 shrink-0 rounded-full sm:hidden {running ? 'bg-success' : 'bg-muted-foreground/50'}" title={running ? 'Serving' : 'Proxy not running'}></span>
+                  <span class="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t.name}</span>
+                  <!-- phone: edit/delete behind one ⋯ menu -->
+                  <div class="-my-1 sm:hidden" onclick={(e) => e.stopPropagation()} role="presentation">
+                    <DropdownButton variant="ghost" size="xs" ariaLabel="Tunnel actions" items={[
+                      { label: 'Edit', icon: 'pencil', onclick: () => openEdit(i) },
+                      { label: 'Delete', icon: 'trash', variant: 'destructive', onclick: () => deleteTunnel(i) },
+                    ]} />
+                  </div>
+                </div>
+                <!-- phone: a quiet line; desktop: badges -->
+                {#if tags.length}<div class="mt-0.5 text-xs text-muted-foreground sm:hidden">{tags.map((g) => g.label).join(' · ')}</div>{/if}
                 <div class="mt-0.5 flex flex-wrap items-center gap-1">
-                  {#if (t.listeners || []).length}
-                    <Badge variant={chained ? 'warning' : 'muted'} size="sm">{chained ? 'Chained' : 'Direct'}</Badge>
-                  {/if}
-                  {#if t.rotateUrl}<Badge variant="secondary" size="sm">Rotating</Badge>{/if}
-                  {#if (t.webhooks || []).length}<Badge variant="primary" size="sm">Webhook</Badge>{/if}
-                  <!-- own line on a phone, so the badges keep the row -->
-                  {#if chained}<span class="basis-full truncate font-mono text-[11px] text-muted-foreground sm:basis-auto">via {t.upstream.host}</span>{/if}
+                  {#each tags as g}<span class="hidden sm:inline-flex"><Badge variant={g.variant} size="sm">{g.label}</Badge></span>{/each}
+                  {#if chained}<span class="truncate font-mono text-[11px] text-muted-foreground">via {t.upstream.host}</span>{/if}
                 </div>
               </div>
             </div>
@@ -670,19 +684,23 @@
               {/if}
             </div>
             </div>
-            <!-- beside the name on a phone (plain icons), at the end of the row from sm up -->
-            <div class="order-2 flex shrink-0 items-center gap-2 self-start sm:order-none sm:self-center" onclick={(e) => e.stopPropagation()} role="presentation">
-              <div class="btn-group btn-group-loose">
+            <div class="hidden shrink-0 items-center gap-2 sm:flex" onclick={(e) => e.stopPropagation()} role="presentation">
+              <div class="btn-group">
                 <GroupButton icon="pencil" tooltip="Edit tunnel" onclick={() => openEdit(i)} />
                 <GroupButton icon="trash" tone="destructive" tooltip="Delete tunnel" onclick={() => deleteTunnel(i)} />
               </div>
-              <Icon name="chevron-down" size={18} class="hidden text-muted-foreground transition-transform sm:block {isOpen ? 'rotate-180' : ''}" />
+              <Icon name="chevron-down" size={18} class="text-muted-foreground transition-transform {isOpen ? 'rotate-180' : ''}" />
             </div>
+            <!-- phone: says what a tap does (the whole row toggles; from sm up the chevron says it) -->
+            <span class="order-4 flex w-full items-center justify-end gap-1 text-xs font-medium text-muted-foreground sm:hidden">
+              {isOpen ? 'Hide details' : 'Show details'}
+              <Icon name="chevron-down" size={14} class="transition-transform {isOpen ? 'rotate-180' : ''}" />
+            </span>
           </div>
 
           <!-- Expanded body: endpoints, credentials, rotation and webhook URLs -->
           {#if isOpen}
-            <div class="space-y-3 border-t border-dashed border-border bg-muted/10 px-4 py-4">
+            <div class="space-y-3 rounded-b-xl border-t border-dashed border-border bg-muted/10 px-4 py-4">
               <!-- Endpoints (one per protocol) -->
               <div class="space-y-2">
                 {#each (t.listeners || []) as l}
@@ -738,12 +756,6 @@
               {/each}
             </div>
           {/if}
-          <!-- Phone: a plain "Show/Hide details" bar at the card's foot (from sm up the chevron says it) -->
-          <button type="button" aria-expanded={isOpen} onclick={() => toggleExpand(t.id)}
-            class="flex w-full cursor-pointer items-center justify-center gap-1.5 border-t border-border py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted/30 hover:text-foreground sm:hidden">
-            {isOpen ? 'Hide details' : 'Show details'}
-            <Icon name="chevron-down" size={14} class="transition-transform {isOpen ? 'rotate-180' : ''}" />
-          </button>
         </div>
       {/each}
     </div>
