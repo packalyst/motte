@@ -70,6 +70,8 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- Logging in with a password on an account with 2FA showed "2FA code required" with no field to
+  type the code, so only a passkey could get in; the code step now opens.
 - Error messages show the server's message instead of its raw JSON reply.
 - A hover tooltip no longer stays up over a window opened by a tap, on tablets and phones that
   also report a mouse.
