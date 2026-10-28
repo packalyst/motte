@@ -108,6 +108,9 @@ releases will be tagged as they are cut.
   blocks everyone instead of letting everyone in. The traffic logs recognise VPN clients by the real
   `WG_IP_RANGE` / `HEADSCALE_IP_RANGE`, so a client outside `10.8.0.x` (or a Headscale node outside
   `100.64.x`) is no longer missed.
+- **managed LAN**: approved devices are recognised by IP and MAC together, so a device that copies
+  an approved device's IP gets none of its access. A device still waiting for approval can only get
+  an address and use DNS on the server; SSH, the panel API and everything else are closed to it.
 - **firewall**: a block can no longer lock you out. Adding one IP or range, bulk add, list import,
   auto-ban and /24 escalation all refuse a block that covers private or VPN addresses, this server
   or your own IP, checking the whole range rather than its first address. Ranges wider than /8 are

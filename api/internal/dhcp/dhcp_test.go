@@ -184,20 +184,20 @@ func TestReachabilityPerDevice(t *testing.T) {
 	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Mode: "approve", Enabled: true}}
 	pol := map[int64]netPolicy{1: {
 		Devices: []devicePolicy{
-			{IP: "10.20.20.55", Allowed: []string{"10.8.0.2"}, Internet: true}, // camera: one client, internet
-			{IP: "10.20.20.66"}, // printer: nobody, no internet
+			{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []string{"10.8.0.2"}, Internet: true}, // camera: one client, internet
+			{IP: "10.20.20.66", MAC: "02:00:00:00:00:66"},                                                // printer: nobody, no internet
 		},
 		Blocked: []string{"02:00:00:00:00:09"},
 	}}
 	got := renderReachability(nets, pol, "eth0", testPrivateRanges)
 	for _, want := range []string{
-		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`,                                  // granted client → that device
-		`ip saddr 10.20.20.55 ip daddr 10.8.0.2 accept`,                                  // and back
-		`ip saddr 10.20.20.55 oifname "eth0" accept`,                                     // its internet
-		`ip saddr 10.20.20.0/24 ip daddr @private_ranges ip daddr != 10.20.20.0/24 drop`, // leak guard
-		`ip saddr 10.20.20.0/24 oifname "eth0" masquerade`,                               // NAT for the segment
-		`iifname "ens19" ether saddr 02:00:00:00:00:09 drop`,                             // blocked by MAC
-		`ip daddr 10.20.20.0/24 drop`,                                                    // default-deny
+		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`,                                               // granted client → that device
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 ip daddr 10.8.0.2 accept`, // and back, from its MAC only
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 oifname "eth0" accept`,    // its internet, from its MAC only
+		`ip saddr 10.20.20.0/24 ip daddr @private_ranges ip daddr != 10.20.20.0/24 drop`,              // leak guard
+		`ip saddr 10.20.20.0/24 oifname "eth0" masquerade`,                                            // NAT for the segment
+		`iifname "ens19" ether saddr 02:00:00:00:00:09 drop`,                                          // blocked by MAC
+		`ip daddr 10.20.20.0/24 drop`,                                                                 // default-deny
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q:\n%s", want, got)
@@ -216,17 +216,38 @@ func TestReachabilityPerDevice(t *testing.T) {
 	if at(`ether saddr 02:00:00:00:00:09 drop`) > at(`ct state established,related accept`) {
 		t.Fatalf("blocked drop must come before the established accept:\n%s", got)
 	}
-	if at(`@private_ranges`+" ip daddr != 10.20.20.0/24 drop") > at(`oifname "eth0" accept`) {
+	if at(`@private_ranges`+" ip daddr != 10.20.20.0/24 drop") > at(`ip saddr 10.20.20.55 oifname "eth0" accept`) {
 		t.Fatalf("leak guard must come before the internet accept:\n%s", got)
 	}
-	// The blocked MAC is also dropped on the way into the box itself.
+	// The box itself: the blocked MAC is dropped first; then any device gets DHCP and DNS, approved
+	// devices (IP + MAC) get the rest, and everything else from the LAN is dropped — a device still
+	// waiting for approval can't reach SSH or the panel API.
 	inChain := got[at("chain input"):at("chain postrouting")]
-	if !strings.Contains(inChain, `ether saddr 02:00:00:00:00:09 drop`) {
-		t.Fatalf("blocked device must be dropped in the input chain too:\n%s", got)
+	inOrder := []string{
+		`iifname "ens19" ether saddr 02:00:00:00:00:09 drop`,
+		`iifname "ens19" udp dport 67 accept`,
+		`iifname "ens19" meta l4proto { tcp, udp } th dport 53 accept`,
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 accept`,
+		`iifname "ens19" ether saddr 02:00:00:00:00:66 ip saddr 10.20.20.66 accept`,
+		`iifname "ens19" drop`,
+	}
+	last := -1
+	for _, rule := range inOrder {
+		i := strings.Index(inChain, rule)
+		if i < 0 || i < last {
+			t.Fatalf("input chain must have, in order, %q:\n%s", rule, inChain)
+		}
+		last = i
+	}
+	// No rule lets the device's IP through without its MAC (a copied IP gets nothing).
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "saddr 10.20.20.55") && strings.Contains(line, "accept") && !strings.Contains(line, "ether saddr 02:00:00:00:00:55") {
+			t.Fatalf("a rule accepts the device's IP without its MAC: %q", line)
+		}
 	}
 
 	// No device with internet → no WAN path or NAT at all.
-	pol[1] = netPolicy{Devices: []devicePolicy{{IP: "10.20.20.55", Allowed: []string{"10.8.0.2"}}}}
+	pol[1] = netPolicy{Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []string{"10.8.0.2"}}}}
 	none := renderReachability(nets, pol, "eth0", testPrivateRanges)
 	if strings.Contains(none, "oifname") {
 		t.Fatalf("no device has internet, so nothing may route out:\n%s", none)
@@ -234,13 +255,16 @@ func TestReachabilityPerDevice(t *testing.T) {
 
 	// No approved devices → nothing forwardable.
 	empty := renderReachability(nets, map[int64]netPolicy{}, "eth0", testPrivateRanges)
-	if strings.Contains(empty, " accept\n") && strings.Count(empty, " accept\n") > 1 { // only the ct accept
-		t.Fatalf("with no devices, only the established accept may exist:\n%s", empty)
+	if fwd := empty[strings.Index(empty, "chain forward"):strings.Index(empty, "chain input")]; strings.Count(fwd, " accept\n") != 1 { // only the ct accept
+		t.Fatalf("with no devices, only the established accept may exist in forward:\n%s", empty)
 	}
 
 	// Invalid values are never emitted.
-	bad := map[int64]netPolicy{1: {Devices: []devicePolicy{{IP: "not-an-ip", Allowed: []string{"1.2.3.4; flush ruleset"}, Internet: true}}, Blocked: []string{"zz:zz"}}}
-	if out := renderReachability(nets, bad, "eth0", testPrivateRanges); strings.Contains(out, "flush") || strings.Contains(out, "zz:zz") || strings.Contains(out, "not-an-ip") {
+	bad := map[int64]netPolicy{1: {Devices: []devicePolicy{
+		{IP: "not-an-ip", MAC: "02:00:00:00:00:01", Allowed: []string{"1.2.3.4; flush ruleset"}, Internet: true},
+		{IP: "10.20.20.77", MAC: "02:00:00:00:00:77; flush ruleset", Internet: true},
+	}, Blocked: []string{"zz:zz"}}}
+	if out := renderReachability(nets, bad, "eth0", testPrivateRanges); strings.Contains(out, "flush") || strings.Contains(out, "zz:zz") || strings.Contains(out, "not-an-ip") || strings.Contains(out, "10.20.20.77") {
 		t.Fatalf("invalid values leaked into the ruleset:\n%s", out)
 	}
 }
@@ -300,9 +324,9 @@ func TestReachabilityNftSyntax(t *testing.T) {
 		{ID: 3, Iface: "ens21", CIDR: "172.16.0.0/24", GatewayIP: "172.16.0.1", Enabled: false}, // disabled → skipped
 	}
 	pol := map[int64]netPolicy{
-		1: {Devices: []devicePolicy{{IP: "10.20.20.55", Allowed: []string{"10.8.0.2", "10.8.0.3"}, Internet: true}},
+		1: {Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []string{"10.8.0.2", "10.8.0.3"}, Internet: true}},
 			Blocked: []string{"02:00:00:00:00:09"}},
-		2: {Devices: []devicePolicy{{IP: "192.168.50.20"}}},
+		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20"}}},
 	}
 	script := renderReachability(nets, pol, "eth0", testPrivateRanges)
 

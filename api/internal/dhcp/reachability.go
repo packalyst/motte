@@ -48,7 +48,8 @@ func (t *ReachabilityTable) Priority() int { return 15 }
 
 // devicePolicy is one approved, unblocked LAN device's forwarding policy.
 type devicePolicy struct {
-	IP       string   // its IPv4 address inside the network (the firewall gate keys on it)
+	IP       string   // its IPv4 address inside the network
+	MAC      string   // its MAC: the gate keys on IP + MAC, so copying an approved device's IP isn't enough
 	Allowed  []string // VPN client IPs that may reach it, and it them
 	Internet bool     // may route out the WAN
 }
@@ -101,10 +102,11 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 			continue
 		}
 		ip := net.ParseIP(strings.TrimSpace(c.IP))
-		if !c.Approved || ip == nil || ip.To4() == nil || !cnet.Contains(ip) {
+		mac := strings.ToLower(c.MAC)
+		if !c.Approved || ip == nil || ip.To4() == nil || !cnet.Contains(ip) || !validMAC(mac) {
 			continue
 		}
-		p.Devices = append(p.Devices, devicePolicy{IP: ip.String(), Allowed: acl[c.ID], Internet: c.Internet})
+		p.Devices = append(p.Devices, devicePolicy{IP: ip.String(), MAC: mac, Allowed: acl[c.ID], Internet: c.Internet})
 	}
 	return p, nil
 }
@@ -147,22 +149,41 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 			fmt.Fprintf(&in, "        %s\n", rule)
 		}
 
+		// Approved devices are matched by IP + MAC on everything they send, so a device that sets an
+		// approved one's IP by hand gets none of its access. (A MAC can be cloned too, but only by
+		// someone who has seen the real device on this LAN.)
+		var devices []devicePolicy
+		for _, d := range p.Devices {
+			if net.ParseIP(d.IP) != nil && validMAC(d.MAC) {
+				devices = append(devices, d)
+			}
+		}
+		from := func(d devicePolicy) string {
+			return fmt.Sprintf("iifname %q ether saddr %s ip saddr %s", n.Iface, d.MAC, d.IP)
+		}
+
 		// Per-device access: each granted VPN client and that one device reach each OTHER — the grant
 		// is symmetric, like the VPN ACL. Emitted ABOVE the private-range drop below so a granted
 		// client inside a VPN range stays reachable.
-		for _, d := range p.Devices {
-			if net.ParseIP(d.IP) == nil {
-				continue
-			}
+		for _, d := range devices {
 			for _, ip := range d.Allowed {
 				if net.ParseIP(ip) == nil {
 					continue
 				}
-				for _, rule := range nftables.BidirectionalAccept(ip, d.IP) {
-					fmt.Fprintf(&fwd, "        %s\n", rule)
-				}
+				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr %s accept\n", ip, d.IP)
+				fmt.Fprintf(&fwd, "        %s ip daddr %s accept\n", from(d), ip)
 			}
 		}
+
+		// The box itself: every device may get an address (DHCP) and resolve names (DNS); only
+		// approved ones reach anything else on it (SSH, the panel API, ...). Without this a device
+		// still waiting for approval could reach every service open on non-WAN interfaces.
+		fmt.Fprintf(&in, "        iifname %q udp dport 67 accept\n", n.Iface)
+		fmt.Fprintf(&in, "        iifname %q meta l4proto { tcp, udp } th dport 53 accept\n", n.Iface)
+		for _, d := range devices {
+			fmt.Fprintf(&in, "        %s accept\n", from(d))
+		}
+		fmt.Fprintf(&in, "        iifname %q drop\n", n.Iface)
 
 		// Internet-out, per device: only devices with it on reach the PUBLIC internet; the segment is
 		// masqueraded once any of them is.
@@ -174,9 +195,9 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 			if len(privateRanges) > 0 {
 				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr @private_ranges ip daddr != %s drop\n", n.CIDR, n.CIDR)
 			}
-			for _, d := range p.Devices {
-				if d.Internet && net.ParseIP(d.IP) != nil {
-					fmt.Fprintf(&fwd, "        ip saddr %s oifname %q accept\n", d.IP, wan)
+			for _, d := range devices {
+				if d.Internet {
+					fmt.Fprintf(&fwd, "        %s oifname %q accept\n", from(d), wan)
 				}
 			}
 			fmt.Fprintf(&nat, "        ip saddr %s oifname %q masquerade\n", n.CIDR, wan)
@@ -199,8 +220,8 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 	sb.WriteString("        ct state established,related accept\n")
 	sb.WriteString(fwd.String())
 	sb.WriteString("    }\n")
-	// Blocked devices must not reach the box itself either. A drop is final across base chains, so
-	// this holds whatever the host firewall's input chain accepts.
+	// The box itself: blocked devices dropped, then per network only DHCP, DNS and approved devices.
+	// A drop is final across base chains, so this holds whatever the host firewall's input accepts.
 	sb.WriteString("    chain input {\n")
 	sb.WriteString("        type filter hook input priority 10; policy accept;\n")
 	sb.WriteString(in.String())
