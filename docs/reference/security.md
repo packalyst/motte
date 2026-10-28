@@ -435,16 +435,14 @@ Key constraints and *why* (from the template's own comments):
 
 ## 6. Access controls: L3 vs L7
 
-Two operator toggles decide *who can reach the panel at all*, at two layers. Both live
-in the settings API (`api/internal/settings/settings.go:131-132`); the **nftables /
-Traefik enforcement detail is in [networking-firewall.md](networking-firewall.md)** —
+Who can reach the panel at all is decided at two layers; the **nftables / Traefik
+enforcement detail is in [networking-firewall.md](networking-firewall.md)** —
 summarised here only for the security picture.
 
-- **`api_direct_access`** (UI: *panel-access*, L3). `false` **closes the API port to
-  the public internet** at the packet layer — the panel is then reachable only via the
-  trusted paths (WireGuard, loopback/Traefik). Flipping it calls
-  `settings.RequestFirewallApply()` so the `panel-access` nftables table takes effect
-  live (`settings.go:28-31,131`).
+- **The panel API port** (`API_PORT`, L3) is **always private**: never reachable from
+  the internet, only from the server, Traefik (Docker network), the VPN and the LAN
+  (`helper.AlwaysPrivatePort`). Browsers reach the panel through Traefik on 80/443,
+  where VPN-only, rate limits and the block list apply. There is no switch for it.
 - **`web_cloudflare_only`** (UI: *cf_only*, L3). `true` allows **only Cloudflare edge
   IPs** to reach ports 80/443, so the public web front door can't be hit by bypassing
   Cloudflare (`settings.go:132`). The trusted-CF-IP list is kept current by
@@ -454,7 +452,7 @@ summarised here only for the security picture.
 There is also an **L7** block toggle: `GetTraefikFWBlock` (default **on**) makes the
 firewall block-list enforce at the Traefik/sentinel layer too, so blocks apply to
 Cloudflare-proxied traffic that already passed L3 (`settings.go:571+`). Detail and the
-nftables tables (`panel-access`, the CF range set, block-list) all live in
+nftables tables (`cf_only`, the CF range set, block-list) all live in
 [networking-firewall.md](networking-firewall.md) — *"the firewall is the gate."*
 
 ---

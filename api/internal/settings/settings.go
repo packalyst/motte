@@ -30,7 +30,7 @@ var (
 
 	// RequestFirewallApply asks the nftables service to re-apply all tables. Set by
 	// main.go (function pointer avoids a settings→nftables import cycle). Used when the
-	// api_direct_access toggle changes so the panel-access table takes effect live.
+	// web_cloudflare_only toggle changes so the cf_only table takes effect live.
 	RequestFirewallApply func()
 
 	// OnRetentionChange runs a prune sweep immediately after the retention setting is
@@ -133,7 +133,6 @@ type UpdateSettingsRequest struct {
 	AdGuardQuerylogSize     *int    `json:"adguard_querylog_size,omitempty"` // querylog.size_memory in MB
 	SessionTimeout          *string `json:"session_timeout,omitempty"`
 	IdleLockMinutes         *int    `json:"idle_lock_minutes,omitempty"`      // 0 = disable the idle lock
-	APIDirectAccess         *bool   `json:"api_direct_access,omitempty"`      // false = close the API port to the public internet (L3)
 	WebCloudflareOnly       *bool   `json:"web_cloudflare_only,omitempty"`    // true = allow only Cloudflare edge IPs to reach 80/443 (L3)
 	MetricsRetentionDays    *int    `json:"metrics_retention_days,omitempty"` // window (days) for all aggregate tables
 	DisplayTimezone         *string `json:"display_timezone,omitempty"`       // "browser" or an IANA zone; UI display only
@@ -228,11 +227,6 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 		}
 	}
 
-	// Panel direct-IP access (L3). `_domain_set` tells the UI whether the toggle may be
-	// turned off — closing the API port is only safe once a domain gives another way in.
-	result["api_direct_access"] = GetAPIDirectAccess()
-	result["api_direct_access_domain_set"] = panelDomainConfigured()
-
 	// Cloudflare-only web access (L3). `_available` tells the UI whether the toggle may be
 	// turned on — restricting 80/443 to Cloudflare only makes sense (and is only safe) when
 	// the domain is actually proxied through Cloudflare (set at setup).
@@ -322,31 +316,6 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 					log.Printf("Expired %d nodes due to URL change", count)
 				}
 			}
-		}
-	}
-
-	// Panel direct-IP access (L3). Turning it OFF closes the API port to the public
-	// internet via the panel-access nftables table. Guarded: it may only be turned off
-	// once a domain is configured, otherwise the operator would lose their only way in.
-	if req.APIDirectAccess != nil {
-		if !*req.APIDirectAccess && !panelDomainConfigured() {
-			router.JSONError(w, "Set up a domain (SSL_DOMAIN or ADMIN_DOMAIN) before closing direct IP access — otherwise you'd lock yourself out of the panel.", http.StatusBadRequest)
-			return
-		}
-		if err := SetAPIDirectAccess(*req.APIDirectAccess); err != nil {
-			router.JSONError(w, "Failed to save api_direct_access: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if *req.APIDirectAccess {
-			log.Printf("Panel direct IP access ENABLED (API port open)")
-			events.Log("settings", "api_direct_access", events.SeverityInfo, "Panel direct IP access enabled (API port open to the network)")
-		} else {
-			log.Printf("Panel direct IP access DISABLED (API port closed to the public internet)")
-			events.Log("settings", "api_direct_access", events.SeverityWarning, "Panel direct IP access disabled — API port now reachable only via the domain, localhost and WireGuard")
-		}
-		// Re-apply the firewall so the panel-access table reflects the new state immediately.
-		if RequestFirewallApply != nil {
-			RequestFirewallApply()
 		}
 	}
 
@@ -606,27 +575,6 @@ func SetTraefikFWBlock(on bool) error {
 	return SetSetting("traefik_fw_block", v)
 }
 
-// GetAPIDirectAccess reports whether the panel API is reachable by direct IP (L3). Default
-// ON — the API is IP-reachable until an operator explicitly turns it off (which the
-// panel-access nftables table then enforces by dropping the API port from the public
-// internet). A missing setting means ON, so a fresh/domain-less install is never locked out.
-func GetAPIDirectAccess() bool {
-	v, err := GetSetting("api_direct_access")
-	if err != nil {
-		return true
-	}
-	return !strings.EqualFold(strings.TrimSpace(v), "off")
-}
-
-// SetAPIDirectAccess persists the direct-IP-access toggle ("on"/"off").
-func SetAPIDirectAccess(on bool) error {
-	v := "off"
-	if on {
-		v = "on"
-	}
-	return SetSetting("api_direct_access", v)
-}
-
 // GetWebCloudflareOnly reports whether ports 80/443 are restricted to Cloudflare edge
 // ranges (L3). Default OFF — the web ports are open until an operator explicitly turns
 // it on (which the cf_only nftables table then enforces).
@@ -653,19 +601,6 @@ func SetWebCloudflareOnly(on bool) error {
 // would cut off all visitors.
 func domainBehindCloudflare() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("BEHIND_CLOUDFLARE")), "true")
-}
-
-// panelDomainConfigured reports whether a domain is set for the panel (SSL_DOMAIN or
-// ADMIN_DOMAIN). Direct IP access may only be turned OFF when one exists — otherwise
-// closing the API port would remove the operator's only way in.
-func panelDomainConfigured() bool {
-	if d := strings.TrimSpace(os.Getenv("SSL_DOMAIN")); d != "" {
-		return true
-	}
-	if d := strings.TrimSpace(os.Getenv("ADMIN_DOMAIN")); d != "" {
-		return true
-	}
-	return false
 }
 
 // GetSetting exports the getter for other packages

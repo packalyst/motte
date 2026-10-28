@@ -143,7 +143,7 @@ Safety mechanisms are designed so a failure can't strand the operator:
 - Direct-IP access to the panel stays open until a domain is configured; only then can it be closed down to domain/localhost/VPN.
 
 ### VPN-only admin surface
-`ADMIN_DOMAIN` (default `manage.me`) is intended to be resolvable/reachable only over the VPN. Headscale's admin API and several sensitive routes are gated by `sentinel_vpn` to the trusted networks: the VPN ranges (always included) plus any extras set in Settings → Traefik (first seeded from `IGNORE_NETWORKS`). The panel can optionally drop public direct-IP access entirely once a domain exists, leaving it reachable only via the domain, localhost, and WireGuard (`nftables/panel_access.go`, `NewPanelAccessTable`).
+`ADMIN_DOMAIN` (default `manage.me`) is intended to be resolvable/reachable only over the VPN. Headscale's admin API and several sensitive routes are gated by `sentinel_vpn` to the trusted networks: the VPN ranges (always included) plus any extras set in Settings → Traefik (first seeded from `IGNORE_NETWORKS`). The panel API port itself (`API_PORT`) is never reachable from the internet: browsers open the panel through Traefik on 80/443 (by domain or by IP), and the port answers only the server, Traefik, the VPN and the LAN (`helper.AlwaysPrivatePort`).
 
 ### Secrets encrypted at rest
 Sensitive settings (API keys, tokens, Tailscale authkeys, AdGuard password) are AES-encrypted in SQLite; WireGuard private keys are stripped before storage. Encryption is initialized from `ENCRYPTION_SECRET` early in boot (`main.go:82`), and a weak/non-32-byte key raises a visible warning into the Activity feed. Backups are passphrase-encrypted (AES-256-GCM, PBKDF2). See [security](./security.md).

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -130,9 +131,10 @@ func segmentInputRules(ifaces []string) []string {
 
 // privatePortRules emits the input accepts for ports scoped "private": the same allow-list sets as
 // the public ports, but reachable OFF the WAN only. With a known WAN NIC that's "every interface
-// except the WAN". When the WAN can't be detected we fail SAFE to loopback + the VPN interfaces
-// (never a physical NIC): a private port is then never exposed on the internet, yet the admin can
-// still reach it over WireGuard — so flipping a port private can't hard-lock the panel out.
+// except the WAN". When the WAN can't be detected we fail SAFE to loopback, the VPN interfaces and
+// the Docker network (never a physical NIC): a private port is then never exposed on the internet,
+// yet the admin can still reach it over WireGuard and Traefik still reaches the panel API — so a
+// private port can't hard-lock the panel out.
 func privatePortRules(wanIface string) []string {
 	if w := SanitizeElement(wanIface); w != "" {
 		return []string{
@@ -141,11 +143,15 @@ func privatePortRules(wanIface string) []string {
 			"iifname != \"" + w + "\" udp dport @allowed_udp_ports_private accept",
 		}
 	}
-	return []string{
-		"# Private ports: WAN undetected — fail safe to VPN/loopback only",
+	rules := []string{
+		"# Private ports: WAN undetected — fail safe to loopback, VPN and the Docker network only",
 		`iifname { "lo", "wg0", "tailscale0" } tcp dport @allowed_tcp_ports_private accept`,
 		`iifname { "lo", "wg0", "tailscale0" } udp dport @allowed_udp_ports_private accept`,
 	}
+	if p, isRange, err := helper.ParseIPv4(validCIDROr(os.Getenv("DOCKER_SUBNET"), "172.18.0.0/24")); err == nil && isRange {
+		rules = append(rules, "ip saddr "+p.String()+" tcp dport @allowed_tcp_ports_private accept") // Traefik → panel API
+	}
+	return rules
 }
 
 // Build generates the nftables script
@@ -212,8 +218,11 @@ func (t *FirewallTable) Build() (string, error) {
 			if e.Action == ActionAllow {
 				// 'private' ports accept on VPN/LAN only (never the WAN); 'public' (default) on all
 				// NICs. Route each port to the matching set — enforcement differs in buildScript.
+				// The panel API is private whatever its stored scope (a restored backup can't
+				// re-expose it).
 				tcpDst, udpDst := &allowedTCPPorts, &allowedUDPPorts
-				if e.Scope == "private" {
+				port, _ := strconv.Atoi(e.Value)
+				if e.Scope == "private" || helper.AlwaysPrivatePort(port, e.Protocol) {
 					tcpDst, udpDst = &allowedTCPPortsPrivate, &allowedUDPPortsPrivate
 				}
 				switch e.Protocol {

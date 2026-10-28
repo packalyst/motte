@@ -165,7 +165,7 @@ Read/write helpers distinguish the two: `setSetting` writes `encrypted=0`,
 `setSettingEncrypted` encrypts then writes `encrypted=1`
 (`settings.go:519-567`). Notable non-encrypted keys seen across the codebase:
 `headscale_url`, `headscale_api_url`, `adguard_username`, `adguard_pass_changed`,
-`session_timeout`, `display_timezone`, `api_direct_access`, `traefik_fw_block`,
+`session_timeout`, `display_timezone`, `traefik_fw_block`,
 `web_cloudflare_only`, `fleet_enabled`, `fleet_port`, `vapid_public_key`,
 `vapid_subject`, and the `geo_*` family (`geo_blocking_enabled`,
 `geo_lookup_provider`, `geo_auto_update`, `geo_update_hour`, …).

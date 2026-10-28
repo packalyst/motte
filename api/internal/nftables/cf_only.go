@@ -2,6 +2,8 @@ package nftables
 
 import (
 	"database/sql"
+	"net"
+	"os"
 	"strings"
 	"sync/atomic"
 
@@ -11,8 +13,8 @@ import (
 
 // CloudflareOnlyTable optionally restricts inbound access to the web ports (80/443)
 // to Cloudflare's edge ranges only — so nobody can bypass Cloudflare by hitting the
-// server's raw IP. It is a SEPARATE, clearly-named table (inet motte_cf_only),
-// mirroring motte_panel_access.
+// server's raw IP. It is a SEPARATE, clearly-named table (inet motte_cf_only), so it is
+// obvious in `nft list ruleset` what it does.
 //
 // Driven by the `web_cloudflare_only` setting:
 //   - OFF (default): an EMPTY shell — 80/443 stay open to everyone.
@@ -21,7 +23,7 @@ import (
 //     and Headscale so an admin is never locked out — and drops it from every other
 //     source.
 //
-// Fail-open like panel-access: if disabled, or the Cloudflare list is somehow empty,
+// Fail-open: if disabled, or the Cloudflare list is somehow empty,
 // it emits an empty table so it can NEVER drop all web traffic.
 type CloudflareOnlyTable struct {
 	db *database.DB
@@ -35,7 +37,7 @@ func NewCloudflareOnlyTable(db *database.DB) *CloudflareOnlyTable {
 func (t *CloudflareOnlyTable) Name() string   { return "motte_cf_only" }
 func (t *CloudflareOnlyTable) Family() string { return "inet" }
 
-// Priority orders this table's emission after panel-access (5); the chain hook
+// Priority orders this table's emission before the main firewall (10); the chain hook
 // priority (-10) is what actually orders kernel evaluation (before the main
 // firewall at 0).
 func (t *CloudflareOnlyTable) Priority() int { return 6 }
@@ -54,7 +56,7 @@ func (t *CloudflareOnlyTable) Build() (string, error) {
 		return sb.String(), nil
 	}
 
-	trusted := trustedPanelSources() // loopback, Docker bridge, WireGuard, Headscale (v4)
+	trusted := trustedAdminSources() // loopback, Docker bridge, WireGuard, Headscale (v4)
 
 	sb.WriteString("table inet motte_cf_only {\n")
 	if len(v4) > 0 {
@@ -136,4 +138,40 @@ func splitCIDRs(cidrs []string) (v4, v6 []string) {
 		}
 	}
 	return v4, v6
+}
+
+// trustedAdminSources returns the CIDRs that keep reaching the web ports with Cloudflare-only on,
+// so an admin can never be locked out of their own panel:
+//   - loopback
+//   - the Docker bridge (DOCKER_SUBNET) so Traefik keeps reaching the API
+//   - the WireGuard range (WG_IP_RANGE) — admins on the WG VPN
+//   - the Headscale/Tailscale overlay (HEADSCALE_IP_RANGE) — admins on the Tailnet
+//
+// The ranges come from the same env vars the rest of the stack uses; each has a sane
+// fallback matching .env.example so a missing/garbled var can never drop a trusted source.
+func trustedAdminSources() []string {
+	out := []string{"127.0.0.0/8"}
+	if c := validCIDROr(os.Getenv("DOCKER_SUBNET"), "172.18.0.0/24"); c != "" {
+		out = append(out, c)
+	}
+	if c := validCIDROr(os.Getenv("WG_IP_RANGE"), "10.8.0.0/16"); c != "" {
+		out = append(out, c)
+	}
+	if c := validCIDROr(os.Getenv("HEADSCALE_IP_RANGE"), "100.64.0.0/16"); c != "" {
+		out = append(out, c)
+	}
+	return out
+}
+
+func validCIDROr(v, fallback string) string {
+	v = strings.TrimSpace(v)
+	if v != "" {
+		if _, _, err := net.ParseCIDR(v); err == nil {
+			return v
+		}
+	}
+	if _, _, err := net.ParseCIDR(fallback); err == nil {
+		return fallback
+	}
+	return ""
 }
