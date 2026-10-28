@@ -190,3 +190,33 @@ func TestPasskeyLoginCap(t *testing.T) {
 		t.Fatalf("one over the total cap: got %v", err)
 	}
 }
+
+// TestFailedLoginAuditName (D11): a failed login is logged under the typed name only when that
+// user exists, so a password typed into the username field never reaches the audit log.
+func TestFailedLoginAuditName(t *testing.T) {
+	svc := newTestService(t)
+	if _, err := svc.CreateUser("audit_user", "StrongP@ss1", RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	db, err := database.GetDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for typed, want := range map[string]string{
+		"Synthetic-Pasted-Passw0rd!": "(unknown user)",
+		" Audit_User ":               "audit_user",
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+			strings.NewReader(fmt.Sprintf(`{"username":%q,"password":"wrong"}`, typed)))
+		req.RemoteAddr = "192.0.2.30:40000"
+		svc.handleLogin(httptest.NewRecorder(), req)
+		var actor string
+		if err := db.QueryRow(`SELECT actor FROM events WHERE type = 'login_failed' ORDER BY id DESC LIMIT 1`).Scan(&actor); err != nil {
+			t.Fatal(err)
+		}
+		if actor != want {
+			t.Errorf("typed %q: logged as %q, want %q", typed, actor, want)
+		}
+	}
+	loginLimiter.clear("192.0.2.30")
+}

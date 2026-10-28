@@ -107,6 +107,15 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **email alerts**: with STARTTLS chosen, a mail server that doesn't offer it now gets nothing
+  instead of the alert in plain text.
+- **audit log**: a failed or blocked login is logged under the typed username only when that user
+  exists ("(unknown user)" otherwise), so a password typed into the username field isn't stored.
+- **AdGuard password**: re-running setup over an existing install left the new password in a
+  plain-text file on disk while the panel kept the old one; the panel now always takes the file's
+  password, encrypts it and deletes the file.
+- **`motte rotate-key`**: after a verified rotation, deleting the backup that holds the old key is
+  now the default. **setup** creates `.env` readable by root only.
 - **panel API port** (8081): no longer reachable from the internet. It answered in plain HTTP and
   skipped what Traefik adds (VPN-only, rate limits, the block list); browsers never needed it, since
   the panel opens through Traefik on 80/443 by domain or by IP. It still answers from the server,
