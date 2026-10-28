@@ -101,6 +101,13 @@ releases will be tagged as they are cut.
 - **isolated clients**: a VPN client set to Block All now reaches nothing on the server itself
   either: SSH, the panel API on its own port, DNS and ping were still answering it. Its tunnel stays
   up; un-isolating restores access at once.
+- **trusted networks**: one list decides who may open the panel in VPN-only mode and who the
+  firewall jails never ban. It always holds the WireGuard and Headscale ranges (locked in Settings →
+  Traefik); extra ranges added there are saved and survive `motte update`, which used to reset them.
+  `IGNORE_NETWORKS` only fills the extras on first start. A VPN-only list with no valid entry now
+  blocks everyone instead of letting everyone in. The traffic logs recognise VPN clients by the real
+  `WG_IP_RANGE` / `HEADSCALE_IP_RANGE`, so a client outside `10.8.0.x` (or a Headscale node outside
+  `100.64.x`) is no longer missed.
 - **firewall**: a block can no longer lock you out. Adding one IP or range, bulk add, list import,
   auto-ban and /24 escalation all refuse a block that covers private or VPN addresses, this server
   or your own IP, checking the whole range rather than its first address. Ranges wider than /8 are

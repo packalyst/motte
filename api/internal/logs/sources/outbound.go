@@ -103,7 +103,7 @@ func (w *OutboundWatcher) processLine(line string) {
 	}
 
 	// Only VPN client traffic
-	if !strings.HasPrefix(srcIP, w.config.WgIPPrefix) && !strings.HasPrefix(srcIP, w.config.HeadscaleIPPrefix) {
+	if !helper.IsVPNIP(net.ParseIP(srcIP)) {
 		return
 	}
 

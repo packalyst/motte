@@ -3,7 +3,8 @@ package firewall
 import (
 	"fmt"
 	"net"
-	"strings"
+
+	"api/internal/helper"
 )
 
 // getSubnet24 returns the /24 subnet for an IP
@@ -18,34 +19,10 @@ func getSubnet24(ip string) string {
 	return ""
 }
 
-// isIgnoredIP checks if an IP should be ignored
+// isIgnoredIP reports whether a jail must never count or ban ip: a trusted network (the VPN
+// ranges and the admin's extras, see helper.TrustedNetworks) or any other non-public address
+// (LANs, loopback — the same set blockLockoutError refuses to ban).
 func (s *Service) isIgnoredIP(ip string) bool {
-	parsedIP := net.ParseIP(ip)
-	if parsedIP == nil {
-		return false
-	}
-
-	// Check if IP is in ignored networks from config
-	for _, network := range s.config.IgnoreNetworks {
-		if strings.Contains(network, "/") {
-			_, ipNet, err := net.ParseCIDR(network)
-			if err == nil && ipNet.Contains(parsedIP) {
-				return true
-			}
-		} else {
-			if network == ip {
-				return true
-			}
-		}
-	}
-
-	// Check for VPN client IPs
-	if s.config.WgIPPrefix != "" && strings.HasPrefix(ip, s.config.WgIPPrefix) {
-		return true
-	}
-	if s.config.HeadscaleIPPrefix != "" && strings.HasPrefix(ip, s.config.HeadscaleIPPrefix) {
-		return true
-	}
-
-	return false
+	p := net.ParseIP(ip)
+	return p != nil && (helper.IsTrustedIP(p) || helper.IsNonPublicIP(p))
 }

@@ -1,9 +1,7 @@
 package firewall
 
 import (
-	"net"
 	"net/http"
-	"strings"
 
 	"api/internal/helper"
 	"api/internal/router"
@@ -54,7 +52,7 @@ func (s *Service) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	// Decode into a COPY, never the live config: a bad request must not half-update it,
 	// and the copy preserves the json:"-" internal fields (WgPort, ServerIP, …). Only
-	// IgnoreNetworks and MaxAttempts are client-settable.
+	// MaxAttempts is client-settable (trusted networks are edited in Settings → Traefik).
 	s.configMu.RLock()
 	updated := s.config
 	s.configMu.RUnlock()
@@ -63,20 +61,6 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the client-settable fields before they can affect the firewall/jails.
-	for _, n := range updated.IgnoreNetworks {
-		_, ipnet, err := net.ParseCIDR(strings.TrimSpace(n))
-		if err != nil {
-			router.JSONError(w, "invalid ignore network "+n+": "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		// Reject 0.0.0.0/0 (and ::/0): an all-addresses ignore net makes isIgnoredNetwork
-		// match every IP, silently disabling all blocking/auto-ban.
-		if ones, _ := ipnet.Mask.Size(); ones == 0 {
-			router.JSONError(w, "ignore network "+n+" is too broad — /0 would make the firewall ignore all traffic", http.StatusBadRequest)
-			return
-		}
-	}
 	if updated.MaxAttempts < 0 {
 		router.JSONError(w, "maxAttempts cannot be negative", http.StatusBadRequest)
 		return

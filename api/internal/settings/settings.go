@@ -1,6 +1,9 @@
 package settings
 
 import (
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -708,4 +711,47 @@ func DeleteSetting(key string) error {
 
 	_, err = db.Exec("DELETE FROM settings WHERE key = ?", key)
 	return err
+}
+
+// trustedNetworksKey holds the admin's extra trusted networks (JSON list); see helper.TrustedNetworks.
+const trustedNetworksKey = "trusted_networks"
+
+// LoadTrustedNetworks loads the extra trusted networks into memory. The first time (nothing stored
+// yet) they are seeded from IGNORE_NETWORKS and saved, so later edits in Settings are what count.
+func LoadTrustedNetworks() {
+	var extras []string
+	stored, err := getSetting(trustedNetworksKey)
+	switch {
+	case err == nil:
+		if json.Unmarshal([]byte(stored), &extras) != nil {
+			log.Printf("settings: ignoring unreadable %s", trustedNetworksKey)
+			extras = nil
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		// DB trouble: run with the VPN ranges only, and never overwrite the saved list.
+		log.Printf("settings: could not read trusted networks: %v", err)
+	default:
+		seed, serr := helper.TrustedExtrasFrom(helper.ParseStringList(helper.GetEnvOptional("IGNORE_NETWORKS", "")))
+		if serr != nil {
+			log.Printf("settings: IGNORE_NETWORKS not used as trusted networks: %v", serr)
+		}
+		extras = seed
+		if err := SetTrustedNetworks(extras); err != nil {
+			log.Printf("settings: could not save trusted networks: %v", err)
+		}
+	}
+	helper.SetTrustedExtras(extras)
+}
+
+// SetTrustedNetworks persists the extra trusted networks (already validated by
+// helper.TrustedExtrasFrom).
+func SetTrustedNetworks(extras []string) error {
+	if extras == nil {
+		extras = []string{}
+	}
+	b, err := json.Marshal(extras)
+	if err != nil {
+		return err
+	}
+	return setSetting(trustedNetworksKey, string(b))
 }

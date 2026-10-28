@@ -32,6 +32,10 @@ var (
 	LoadVPNOnlyMode    func() (string, error)
 )
 
+// PersistTrustedNetworks saves the admin's extra trusted networks (settings.SetTrustedNetworks),
+// wired by main.go for the same import-cycle reason. Nil-safe: the edit then lasts until restart.
+var PersistTrustedNetworks func(extras []string) error
+
 // Firewall-block (L7) toggle hooks, wired by main.go for the same import-cycle reason.
 // PersistFWBlock/LoadFWBlock persist the on/off flag; RegenerateDomains re-renders the
 // domain routes so the toggle takes effect on them too.
@@ -233,6 +237,7 @@ type TraefikConfig struct {
 	StrictRateBurst   int      `json:"strictRateBurst"`
 	SecurityHeaders   bool     `json:"securityHeaders"`
 	IPAllowlist       []string `json:"ipAllowlist"`
+	LockedRanges      []string `json:"lockedRanges"` // the VPN ranges: always in IPAllowlist, can't be removed
 	IPAllowEnabled    bool     `json:"ipAllowEnabled"`
 	DashboardEnabled  bool     `json:"dashboardEnabled"`
 }
@@ -260,6 +265,7 @@ func (s *Service) GetConfig() *TraefikConfig {
 		StrictRateBurst:   getNestedInt(mwMap, []string{"rate-limit-strict", "rateLimit", "burst"}, 20),
 		SecurityHeaders:   mwMap["security-headers"] != nil,
 		IPAllowlist:       extractIPList(content),
+		LockedRanges:      helper.VPNRanges(),
 		IPAllowEnabled:    mwMap[MiddlewareSentinelVPN] != nil,
 		DashboardEnabled:  true,
 	}
@@ -302,11 +308,20 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate IP allowlist entries
-	if err := helper.ValidateIPList(config.IPAllowlist); err != nil {
+	// The allow-list is the trusted networks: the locked VPN ranges plus the admin's extras. Keep
+	// only the extras (a locked range can't be removed) and save them, so a rebuild can't lose them.
+	extras, err := helper.TrustedExtrasFrom(config.IPAllowlist)
+	if err != nil {
 		router.JSONError(w, "Invalid IP allowlist: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if PersistTrustedNetworks != nil {
+		if err := PersistTrustedNetworks(extras); err != nil {
+			router.JSONError(w, "Failed to save IP allowlist: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	helper.SetTrustedExtras(extras)
 
 	data, err := os.ReadFile(s.configPath)
 	if err != nil {
@@ -317,14 +332,12 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	content := string(data)
 
 	// Update all values using proper YAML parsing
-	content, err = helper.UpdateYAMLPaths(content, []helper.YAMLUpdate{
+	content, err = helper.UpdateYAMLPaths(content, append([]helper.YAMLUpdate{
 		{Path: "http.middlewares.rate-limit.rateLimit.average", Value: config.RateLimitAverage},
 		{Path: "http.middlewares.rate-limit.rateLimit.burst", Value: config.RateLimitBurst},
 		{Path: "http.middlewares.rate-limit-strict.rateLimit.average", Value: config.StrictRateAvg},
 		{Path: "http.middlewares.rate-limit-strict.rateLimit.burst", Value: config.StrictRateBurst},
-		{Path: "http.middlewares.sentinel_vpn.plugin.sentinel.ipFilter.sourceRange", ListValue: config.IPAllowlist},
-		{Path: "http.middlewares.sentinel_vpn_silent.plugin.sentinel.ipFilter.sourceRange", ListValue: config.IPAllowlist},
-	})
+	}, trustedNetworkUpdates()...))
 	if err != nil {
 		log.Printf("Warning: some YAML updates failed: %v", err)
 	}
@@ -430,6 +443,37 @@ func extractIPList(content string) []string {
 		}
 	}
 	return ips
+}
+
+// trustedNetworkUpdates sets both VPN-only middlewares' allow-list to the trusted networks.
+func trustedNetworkUpdates() []helper.YAMLUpdate {
+	list := helper.TrustedNetworks()
+	return []helper.YAMLUpdate{
+		{Path: "http.middlewares." + MiddlewareSentinelVPN + ".plugin.sentinel.ipFilter.sourceRange", ListValue: list},
+		{Path: "http.middlewares." + MiddlewareSentinelVPNSilent + ".plugin.sentinel.ipFilter.sourceRange", ListValue: list},
+	}
+}
+
+// RestoreTrustedNetworks writes the trusted networks into the VPN-only allow-list. Called once at
+// api startup: manage.sh regenerates core.yml with the VPN ranges only, and this adds back the
+// extras saved from Settings.
+func (s *Service) RestoreTrustedNetworks() {
+	data, err := os.ReadFile(s.configPath)
+	if err != nil {
+		log.Printf("trusted networks: could not read %s: %v", s.configPath, err)
+		return
+	}
+	content, err := helper.UpdateYAMLPaths(string(data), trustedNetworkUpdates())
+	if err != nil {
+		log.Printf("trusted networks: %v", err)
+		return
+	}
+	if content == string(data) {
+		return
+	}
+	if err := os.WriteFile(s.configPath, []byte(content), 0644); err != nil {
+		log.Printf("trusted networks: could not write %s: %v", s.configPath, err)
+	}
 }
 
 // middlewareExists checks if a middleware is defined in the config
