@@ -11,16 +11,13 @@ import (
 	"api/internal/nftables"
 )
 
-// rfc1918Ranges are the private IPv4 blocks a managed segment must never reach via internet-out.
-// Combined at build time with the live WireGuard/Headscale ranges to form the private_ranges set,
-// so the segment's NAT path reaches the PUBLIC internet only — never other internal/VPN networks.
-var rfc1918Ranges = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
-
 // privateReachRanges returns the destinations the segment must not reach when internet-out is on:
 // RFC1918 plus the live VPN/overlay ranges (same env the VPN ACL reads, so it tracks the real
-// deployment instead of hardcoding). Invalid/empty env values are skipped.
+// deployment instead of hardcoding). They form the private_ranges set, so the segment's NAT path
+// reaches the PUBLIC internet only — never other internal/VPN networks. Invalid/empty env values
+// are skipped.
 func privateReachRanges() []string {
-	ranges := append([]string{}, rfc1918Ranges...)
+	ranges := helper.RFC1918Ranges()
 	for _, r := range []string{
 		helper.GetEnvOptional("WG_IP_RANGE", ""),
 		helper.GetEnvOptional("HEADSCALE_IP_RANGE", ""),

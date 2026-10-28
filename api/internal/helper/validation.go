@@ -154,33 +154,6 @@ func ValidateCIDR(cidr string) error {
 	return nil
 }
 
-// IsPrivateIPOrCIDR checks if an IP or CIDR is in a private range
-// Handles both single IPs (192.168.1.1) and CIDR notation (192.168.1.0/24)
-func IsPrivateIPOrCIDR(input string) bool {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return false
-	}
-
-	var ip net.IP
-	if strings.Contains(input, "/") {
-		// Parse as CIDR - check the network address
-		parsedIP, _, err := net.ParseCIDR(input)
-		if err != nil {
-			return false
-		}
-		ip = parsedIP
-	} else {
-		// Parse as single IP
-		ip = net.ParseIP(input)
-		if ip == nil {
-			return false
-		}
-	}
-
-	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
-}
-
 // ValidateIPOrCIDR validates a single IP address or CIDR notation
 func ValidateIPOrCIDR(input string) error {
 	input = strings.TrimSpace(input)

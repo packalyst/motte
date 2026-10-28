@@ -286,21 +286,6 @@
   }
 
   async function blockIP() {
-    // Validate IP or CIDR (e.g., 192.168.1.100 or 192.168.1.0/24)
-    const ipRegex = /^\d+\.\d+\.\d+\.\d+$/
-    const cidrRegex = /^\d+\.\d+\.\d+\.\d+\/\d+$/
-    if (!ipRegex.test(blockForm.ip) && !cidrRegex.test(blockForm.ip)) {
-      toast('Invalid IP address or CIDR (e.g., 192.168.1.100 or 192.168.1.0/24)', 'error')
-      return
-    }
-    // Validate CIDR prefix
-    if (cidrRegex.test(blockForm.ip)) {
-      const prefix = parseInt(blockForm.ip.split('/')[1])
-      if (prefix < 8 || prefix > 32) {
-        toast('CIDR prefix must be between /8 and /32', 'error')
-        return
-      }
-    }
     let banTime = 0
     if (blockForm.duration !== 'permanent') {
       const match = blockForm.duration.match(/^(\d+)([hdm])$/)
@@ -313,9 +298,9 @@
       }
     }
     try {
-      const isRange = cidrRegex.test(blockForm.ip)
+      // The server checks the value and says whether it was an IP or a range.
       const res = await apiPost('/api/fw/entries', {
-        type: isRange ? 'range' : 'ip',
+        type: 'ip',
         value: blockForm.ip,
         action: viewAction,
         direction: 'inbound',
@@ -323,8 +308,7 @@
         banTime
       })
       const verb = viewAction === 'allow' ? 'allowed' : 'blocked'
-      const msg = isRange ? `Range ${blockForm.ip} ${verb}` : `IP ${blockForm.ip} ${verb}`
-      toast(msg, 'success')
+      toast(`${res.type === 'range' ? 'Range' : 'IP'} ${res.value} ${verb}`, 'success')
       showBlockModal = false
       blockForm = { ip: '', reason: '', duration: '30d' }
       await reloadBlocked()
@@ -934,8 +918,8 @@
     <Input
       label="IP Address or CIDR Range"
       bind:value={blockForm.ip}
-      placeholder="e.g. 192.168.1.100 or 192.168.1.0/24"
-      helperText="Use CIDR notation (e.g., /24) for an entire range"
+      placeholder="e.g. 203.0.113.7 or 203.0.113.0/24"
+      helperText="Use CIDR notation (e.g. /24) for a range, up to /8"
     />
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <Input
@@ -961,9 +945,9 @@
   {#snippet footer()}
     <Button onclick={() => showBlockModal = false} variant="secondary">Cancel</Button>
     {#if viewAction === 'allow'}
-      <Button onclick={blockIP} variant="success" icon="check">Allow</Button>
+      <Button onclick={blockIP} disabled={!blockForm.ip.trim()} variant="success" icon="check">Allow</Button>
     {:else}
-      <Button onclick={blockIP} variant="destructive" icon="ban">Block</Button>
+      <Button onclick={blockIP} disabled={!blockForm.ip.trim()} variant="destructive" icon="ban">Block</Button>
     {/if}
   {/snippet}
 </Modal>

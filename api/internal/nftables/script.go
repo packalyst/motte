@@ -2,9 +2,10 @@ package nftables
 
 import (
 	"fmt"
-	"net"
 	"regexp"
 	"strings"
+
+	"api/internal/helper"
 )
 
 // Valid patterns for nftables identifiers and values
@@ -30,23 +31,8 @@ func ValidateIdentifier(s string) bool {
 // rules (for vpn_acl that flips peer isolation from default-deny to default-allow). Every
 // address that flows into a rule must pass this, so a stray IPv6 value is skipped, never emitted.
 func ValidateIPv4OrCIDR(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	// Reject IPv6 forms — including IPv4-mapped IPv6 like ::ffff:1.2.3.4, which passes To4()
-	// but serializes with the ::ffff: prefix and would be emitted verbatim, which nft rejects
-	// and wedges the atomic reload. No legitimate IPv4 value contains a colon.
-	if strings.Contains(s, ":") {
-		return false
-	}
-	if ip, _, err := net.ParseCIDR(s); err == nil {
-		return ip.To4() != nil
-	}
-	if ip := net.ParseIP(s); ip != nil {
-		return ip.To4() != nil
-	}
-	return false
+	_, _, err := helper.ParseIPv4(s)
+	return err == nil
 }
 
 // SanitizeElement sanitizes a set element (IP, port, etc.)

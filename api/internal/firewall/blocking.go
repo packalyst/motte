@@ -36,30 +36,21 @@ func (s *Service) blockIP(ip, jailName, reason string, banTime int) {
 
 // blockIPWithOptions blocks an IP with additional options
 func (s *Service) blockIPWithOptions(ip, jailName, reason string, banTime int, isRange bool, source string) {
-	// This panel is IPv4-only; the nftables blocked sets are ipv4_addr. An IPv6 value
-	// here would be rejected by the kernel and break the atomic ruleset reload, so skip
-	// it. External IPv6 is already dropped wholesale at the firewall, so nothing is lost.
-	if !isIPv4Value(ip) {
-		log.Printf("firewall: skipping auto-block of non-IPv4 address %q (jail: %s) — panel is IPv4-only", ip, jailName)
-		return
+	entryType := nftables.EntryTypeIP
+	if isRange || strings.Contains(ip, "/") {
+		entryType = nftables.EntryTypeRange
 	}
-
-	// Self-protection on the automated path (the manual path has validateIPNotProtected):
-	// never auto-ban the server's own IP or loopback — a spoofed/misparsed log line must not
-	// lock the panel out of its own services.
-	if (s.config.ServerIP != "" && ip == s.config.ServerIP) || strings.HasPrefix(ip, "127.") {
-		log.Printf("firewall: refusing to auto-block protected IP %s (jail: %s)", ip, jailName)
+	// Same guards as a manual block: IPv4 only (an IPv6 element wedges the atomic nftables
+	// reload), and never the VPN/LANs, loopback or this server — a spoofed or misparsed log
+	// line must not lock the panel out of its own services.
+	if err := s.blockLockoutError(entryType, ip, ""); err != nil {
+		log.Printf("firewall: not auto-blocking %q (jail: %s): %v", ip, jailName, err)
 		return
 	}
 
 	var expiresAt interface{}
 	if banTime > 0 {
 		expiresAt = time.Now().Add(time.Duration(banTime) * time.Second)
-	}
-
-	entryType := nftables.EntryTypeIP
-	if isRange || strings.Contains(ip, "/") {
-		entryType = nftables.EntryTypeRange
 	}
 
 	// Use jailName as the "name" field for filtering
@@ -231,6 +222,10 @@ func (s *Service) checkEscalation(ip, jailName string, banTime int) {
 	log.Printf("Escalation check for %s: %d IPs from %s (threshold: %d)", jailName, count, subnet, escalateThreshold)
 
 	if count >= escalateThreshold {
+		if err := s.blockLockoutError(nftables.EntryTypeRange, subnet, ""); err != nil {
+			log.Printf("firewall: not escalating to %s (jail: %s): %v", subnet, jailName, err)
+			return
+		}
 		// Block the entire /24 range
 		log.Printf("Auto-escalating: blocking %s (jail: %s, IPs: %d)", subnet, jailName, count)
 

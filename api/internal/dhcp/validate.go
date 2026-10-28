@@ -57,7 +57,7 @@ func validateAddressing(n *Network, others []Network) error {
 	if ones, _ := ipnet.Mask.Size(); ones > 30 {
 		return fmt.Errorf("subnet is too small for a DHCP pool (use /30 or larger)")
 	}
-	if !isPrivateNet(ipnet) {
+	if p, _, err := helper.ParseIPv4(n.CIDR); err != nil || !helper.WithinRFC1918(p) {
 		return fmt.Errorf("managed network must use a private range (RFC1918: 10/8, 172.16/12, 192.168/16)")
 	}
 
@@ -193,16 +193,6 @@ func requireNonWANInterface(iface string) error {
 // defaultRouteInterface returns the interface of the IPv4 default route via `ip route`.
 func defaultRouteInterface() (string, error) {
 	return helper.DefaultRouteInterface()
-}
-
-func isPrivateNet(n *net.IPNet) bool {
-	ip := n.IP.To4()
-	if ip == nil {
-		return false
-	}
-	return ip[0] == 10 ||
-		(ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) ||
-		(ip[0] == 192 && ip[1] == 168)
 }
 
 func netsOverlap(a, b *net.IPNet) bool {

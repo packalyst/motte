@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"regexp"
@@ -187,7 +188,7 @@ func (w *ConntrackWatcher) processLine(line string, onClose bool) {
 	}
 	// Skip generic LAN/private destinations, but keep VPN-internal ones (other
 	// peers / internal services) so split-tunnel traffic is still recorded.
-	if isPrivateIP(destIP) &&
+	if helper.IsNonPublicIP(net.ParseIP(destIP)) &&
 		!hasPrefix(destIP, w.config.WgIPPrefix) &&
 		!hasPrefix(destIP, w.config.HeadscaleIPPrefix) {
 		return

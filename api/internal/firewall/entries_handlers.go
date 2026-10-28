@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -119,21 +120,20 @@ func (s *Service) handleGetEntries(w http.ResponseWriter, r *http.Request) {
 // firewall until the bad row is removed by hand.
 func validateAndNormalizeEntry(entryType, value string) (string, string, error) {
 	switch entryType {
-	case nftables.EntryTypeIP:
-		normalized, isRange, err := validateIPOrCIDR(value)
+	case nftables.EntryTypeIP, nftables.EntryTypeRange:
+		p, isRange, err := helper.ParseIPv4(value)
 		if err != nil {
 			return "", "", err
 		}
-		if isRange {
-			return nftables.EntryTypeRange, normalized, nil
+		if !isRange {
+			return entryType, p.Addr().String(), nil // a range given as one address stays a range
 		}
-		return nftables.EntryTypeIP, normalized, nil
-	case nftables.EntryTypeRange:
-		normalized, _, err := validateIPOrCIDR(value)
-		if err != nil {
-			return "", "", err
+		// Block or allow, nothing wider than /8: 0.0.0.0/1 + 128.0.0.0/1 would drop (or open)
+		// the whole internet, and real blocklists never need more.
+		if p.Bits() < minPrefix {
+			return "", "", fmt.Errorf("ranges wider than /%d are not allowed", minPrefix)
 		}
-		return nftables.EntryTypeRange, normalized, nil
+		return nftables.EntryTypeRange, p.String(), nil
 	case nftables.EntryTypeCountry:
 		code := strings.ToUpper(strings.TrimSpace(value))
 		// 2 ALPHA chars only — also keeps a crafted value out of the ipdeny fetch URL.
@@ -269,17 +269,10 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "only admins can create allow-rules or open ports", http.StatusForbidden)
 		return
 	}
-	// A blanket allow defeats the default-drop firewall entirely — refuse it for everyone.
-	if req.Action == nftables.ActionAllow && req.Type == nftables.EntryTypeRange && normalizedValue == "0.0.0.0/0" {
-		router.JSONError(w, "refusing to allow 0.0.0.0/0 (would disable the firewall)", http.StatusBadRequest)
-		return
-	}
-
-	// Self-protection: never let an admin block their own single IP. Only applies
-	// to block — allowing your own IP is harmless.
-	if req.Type == nftables.EntryTypeIP && req.Action == nftables.ActionBlock {
-		if err := s.validateIPNotProtected(normalizedValue, r); err != nil {
-			router.JSONError(w, err.Error(), http.StatusForbidden)
+	// Self-protection: a block must never cut off the panel itself. Allowing is harmless.
+	if req.Action == nftables.ActionBlock {
+		if err := s.blockLockoutError(req.Type, normalizedValue, helper.GetClientIP(r)); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -450,6 +443,7 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 
 		created := 0
 		skipped := 0
+		callerIP := helper.GetClientIP(r)
 		var countryEntries []string
 		var asnEntries []string
 
@@ -473,6 +467,10 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 			// Skip rows with an invalid action/direction (protocol is fixed 'both' here),
 			// same as the single-entry path rejects them — don't store a dead rule.
 			if err := validateEntryEnums(action, direction, nftables.ProtocolBoth); err != nil {
+				skipped++
+				continue
+			}
+			if action == nftables.ActionBlock && s.blockLockoutError(normType, normValue, callerIP) != nil {
 				skipped++
 				continue
 			}
@@ -635,22 +633,14 @@ func (s *Service) handleImportEntries(w http.ResponseWriter, r *http.Request) {
 
 	added := 0
 	skipped := 0
+	callerIP := helper.GetClientIP(r)
 	for _, entry := range entries {
-		entry = strings.TrimSpace(entry)
-		if entry == "" || isPrivateRange(entry) {
+		// Same checks as a manual block: a list row that is malformed or would cut off the panel
+		// itself (private/VPN space, this server, the caller, wider than /8) is skipped.
+		entryType, normalizedIP, err := validateAndNormalizeEntry(nftables.EntryTypeIP, entry)
+		if err != nil || s.blockLockoutError(entryType, normalizedIP, callerIP) != nil {
 			skipped++
 			continue
-		}
-
-		normalizedIP, isRange, err := validateIPOrCIDR(entry)
-		if err != nil {
-			skipped++
-			continue
-		}
-
-		entryType := nftables.EntryTypeIP
-		if isRange {
-			entryType = nftables.EntryTypeRange
 		}
 
 		result, err := s.db.Exec(`INSERT OR IGNORE INTO firewall_entries
@@ -812,25 +802,37 @@ func (s *Service) handleToggleEntry(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, response)
 }
 
-// validateIPNotProtected checks if an IP is protected (server IP, requester IP, private)
-func (s *Service) validateIPNotProtected(ip string, r *http.Request) error {
-	// Don't block private/loopback addresses
-	if isPrivateRange(ip) {
-		return fmt.Errorf("cannot block private/loopback addresses")
-	}
+// minPrefix is the widest range an entry may cover (see validateAndNormalizeEntry).
+const minPrefix = 8
 
-	// Don't block requester's IP
-	clientIP := helper.GetClientIP(r)
-	if ip == clientIP {
-		return fmt.Errorf("cannot block your own IP address")
+// blockLockoutError reports why blocking value (an IP or range entry) would cut off the panel
+// itself: it covers non-public space (the VPN, LANs, loopback), this server's IP or callerIP
+// (the admin making the change; "" on the automated path). Every path that adds a block runs
+// it — create, bulk, list import, auto-ban and /24 escalation. Country, ASN and port entries
+// aren't addresses and pass.
+func (s *Service) blockLockoutError(entryType, value, callerIP string) error {
+	if entryType != nftables.EntryTypeIP && entryType != nftables.EntryTypeRange {
+		return nil
 	}
-
-	// Don't block server's IP
-	if s.config.ServerIP != "" && ip == s.config.ServerIP {
-		return fmt.Errorf("cannot block the server's IP address")
+	p, _, err := helper.ParseIPv4(value)
+	if err != nil {
+		return err
 	}
-
+	switch {
+	case helper.OverlapsNonPublic(p):
+		return fmt.Errorf("refusing to block %s: it covers private, VPN or loopback addresses", value)
+	case prefixHolds(p, s.config.ServerIP):
+		return fmt.Errorf("refusing to block %s: it covers this server's IP", value)
+	case prefixHolds(p, callerIP):
+		return fmt.Errorf("refusing to block %s: it covers your own IP address", value)
+	}
 	return nil
+}
+
+// prefixHolds reports whether ip (an address string; "" or junk is false) is inside p.
+func prefixHolds(p netip.Prefix, ip string) bool {
+	a, err := netip.ParseAddr(ip)
+	return err == nil && p.Contains(a.Unmap())
 }
 
 // handleGetBlocklists returns available blocklist sources

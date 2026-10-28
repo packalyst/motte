@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"api/internal/database"
+	"api/internal/helper"
 )
 
 // maxZoneFetchBytes caps a single country-zone download. Real zone files are well
@@ -179,22 +179,12 @@ func parseZonesToCIDRs(zones string) []string {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if !isIPv4CIDROrIP(line) {
+		if _, _, err := helper.ParseIPv4(line); err != nil {
 			continue
 		}
 		cidrs = append(cidrs, line)
 	}
 	return cidrs
-}
-
-// isIPv4CIDROrIP reports whether s is a valid IPv4 address or IPv4 CIDR.
-func isIPv4CIDROrIP(s string) bool {
-	if strings.Contains(s, "/") {
-		_, ipNet, err := net.ParseCIDR(s)
-		return err == nil && ipNet.IP.To4() != nil
-	}
-	ip := net.ParseIP(s)
-	return ip != nil && ip.To4() != nil
 }
 
 // GetCountryCIDRs returns CIDR ranges for a specific country

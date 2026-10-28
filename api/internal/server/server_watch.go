@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/helper"
 	"api/internal/router"
 	"api/internal/routines"
 )
@@ -403,11 +404,13 @@ func parsePhoneHome(ssOut []byte, listening map[int]bool, ownIPs map[string]bool
 		// established rows: f[3]=local addr:port, f[4]=peer addr:port.
 		_, lps := splitHostPort(f[3])
 		peerHost, pps := splitHostPort(f[4])
-		if p := net.ParseIP(strings.Trim(peerHost, "[]")); p != nil {
-			peerHost = p.String() // canonicalize (e.g. ::ffff:1.2.3.4 -> 1.2.3.4)
+		peer := net.ParseIP(strings.Trim(peerHost, "[]"))
+		if peer == nil || helper.IsNonPublicIP(peer) {
+			continue // unparsable, or loopback/private/VPN overlay — not an external host
 		}
-		if peerHost == "" || isPrivateOrLocal(peerHost) || ownIPs[peerHost] {
-			continue // loopback/private, or the box talking to itself
+		peerHost = peer.String() // canonicalize (e.g. ::ffff:1.2.3.4 -> 1.2.3.4)
+		if ownIPs[peerHost] {
+			continue // the box talking to itself
 		}
 		localPort, _ := strconv.Atoi(lps)
 		peerPort, _ := strconv.Atoi(pps)
@@ -506,12 +509,4 @@ func group1(re *regexp.Regexp, s string) string {
 		return strings.TrimSpace(m[1])
 	}
 	return ""
-}
-
-func isPrivateOrLocal(ip string) bool {
-	p := net.ParseIP(strings.Trim(ip, "[]"))
-	if p == nil {
-		return true
-	}
-	return p.IsPrivate() || p.IsLoopback() || p.IsLinkLocalUnicast() || p.IsUnspecified()
 }

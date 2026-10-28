@@ -98,6 +98,15 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **firewall**: a block can no longer lock you out. Adding one IP or range, bulk add, list import,
+  auto-ban and /24 escalation all refuse a block that covers private or VPN addresses, this server
+  or your own IP, checking the whole range rather than its first address. Ranges wider than /8 are
+  refused for block and allow, by the server rather than only the page. Blocking `10.0.0.0/8` or
+  `0.0.0.0/1` + `128.0.0.0/1` used to cut off everyone, VPN included.
+- **IP checks**: one shared helper decides what counts as an IPv4 value and which addresses are not
+  public. As a result, the outbound traffic log and the Phone-home card treat the whole VPN overlay
+  (100.64.0.0/10) as internal, and a DHCP network that spills into public space (`10.0.0.0/7`) is
+  refused.
 - **firewall**: the Cloudflare-only and API-port gates keep their last-known state on a transient
   DB read error instead of failing open; global IPv6 is dropped on any interface, not just WAN.
 - **setup**: the first-run Headscale connection test blocks SSRF to link-local/metadata even when
