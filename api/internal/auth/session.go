@@ -137,7 +137,7 @@ func (s *Service) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.stepUp(w, user.ID, req.CurrentPassword, req.TotpCode) {
+	if !s.StepUp(w, user.ID, req.CurrentPassword, req.TotpCode) {
 		return
 	}
 	// Clear the server-side lock so subsequent requests are allowed again.
@@ -147,6 +147,9 @@ func (s *Service) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]bool{"ok": true})
 }
 
+// errPasswordIncorrect: the current password given for a re-check is wrong.
+var errPasswordIncorrect = errors.New("current password is incorrect")
+
 // VerifyPassword checks a plaintext password against the stored hash for a user.
 // Returns nil on match. Used for step-up re-authentication on sensitive actions
 // (change password, create user) so a stolen session token alone is not enough.
@@ -155,10 +158,15 @@ func (s *Service) VerifyPassword(userID int64, password string) error {
 	if err := s.db.QueryRow("SELECT password_hash FROM users WHERE id = ?", userID).Scan(&passwordHash); err != nil {
 		return errors.New("user not found")
 	}
+	// Reserved before the (64 MiB) Argon2id check, so a locked-out guess costs nothing.
+	if err := passwordLimiter.reserve(userID); err != nil {
+		return err
+	}
 	ok, needsRehash, _ := verifyPassword(password, passwordHash)
 	if !ok {
-		return errors.New("current password is incorrect")
+		return errPasswordIncorrect
 	}
+	passwordLimiter.clear(userID)
 	if needsRehash {
 		s.upgradeHash(userID, password)
 	}
@@ -301,6 +309,9 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.ChangePassword(user.ID, req.CurrentPassword, req.NewPassword); err != nil {
+		if tooManyAttempts(w, err) {
+			return
+		}
 		// Check if it's a validation error
 		if strings.Contains(err.Error(), "password") && !strings.Contains(err.Error(), "incorrect") {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/png"
 	"log"
@@ -21,6 +22,9 @@ import (
 type Enable2FARequest struct {
 	Code string `json:"code"`
 }
+
+// errTOTPMisconfigured: 2FA is on but its secret is missing or unreadable. Never skip the code.
+var errTOTPMisconfigured = errors.New("2FA is misconfigured for this account; contact an administrator")
 
 // Disable2FARequest for disabling 2FA
 type Disable2FARequest struct {
@@ -61,7 +65,7 @@ func (s *Service) handleSetup2FA(w http.ResponseWriter, r *http.Request) {
 		TotpCode        string `json:"totpCode"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&creds)
-	if !s.stepUp(w, user.ID, creds.CurrentPassword, creds.TotpCode) {
+	if !s.StepUp(w, user.ID, creds.CurrentPassword, creds.TotpCode) {
 		return
 	}
 
@@ -155,27 +159,12 @@ func (s *Service) handleEnable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrypt the secret
-	secret, err := helper.Decrypt(totpSecretEnc.String)
-	if err != nil {
-		router.JSONError(w, "Failed to decrypt secret", http.StatusInternalServerError)
+	if err := verifyTOTP(user.ID, totpSecretEnc, req.Code); err != nil {
+		if !tooManyAttempts(w, err) {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+		}
 		return
 	}
-
-	// Rate limit: atomically check + reserve a TOTP attempt slot before verifying.
-	if limited, remaining := registerTOTPAttempt(user.ID); limited {
-		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds", int(remaining.Seconds())), http.StatusTooManyRequests)
-		return
-	}
-
-	// Verify the code
-	if !totp.Validate(req.Code, secret) {
-		router.JSONError(w, "Invalid verification code", http.StatusBadRequest)
-		return
-	}
-
-	// Clear TOTP attempts on success
-	clearTOTPAttempts(user.ID)
 
 	// Enable 2FA
 	_, err = s.db.Exec("UPDATE users SET totp_enabled = 1 WHERE id = ?", user.ID)
@@ -219,53 +208,15 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get password hash and 2FA secret
-	var passwordHash string
-	var totpSecretEnc sql.NullString
-	var totpEnabled int
-	err = s.db.QueryRow("SELECT password_hash, totp_secret_enc, COALESCE(totp_enabled, 0) FROM users WHERE id = ?", user.ID).Scan(&passwordHash, &totpSecretEnc, &totpEnabled)
-	if err != nil {
-		router.JSONError(w, "User not found", http.StatusInternalServerError)
-		return
-	}
-
-	if totpEnabled != 1 {
+	if !s.TOTPEnabled(user.ID) {
 		router.JSONError(w, "2FA is not enabled", http.StatusBadRequest)
 		return
 	}
-
-	// Verify password first
-	passwordOK, needsRehash, _ := verifyPassword(req.Password, passwordHash)
-	if !passwordOK {
-		router.JSONError(w, "Invalid password", http.StatusUnauthorized)
+	// Password and code go through step-up: both rate-limited, the code single-use, and a
+	// missing secret fails closed.
+	if !s.StepUp(w, user.ID, req.Password, req.Code) {
 		return
 	}
-	if needsRehash {
-		s.upgradeHash(user.ID, req.Password)
-	}
-
-	// Rate limit: atomically check + reserve a TOTP attempt slot before verifying.
-	if limited, remaining := registerTOTPAttempt(user.ID); limited {
-		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds", int(remaining.Seconds())), http.StatusTooManyRequests)
-		return
-	}
-
-	// Decrypt and verify TOTP code
-	if totpSecretEnc.Valid && totpSecretEnc.String != "" {
-		secret, err := helper.Decrypt(totpSecretEnc.String)
-		if err != nil {
-			router.JSONError(w, "Failed to decrypt secret", http.StatusInternalServerError)
-			return
-		}
-
-		if !totp.Validate(req.Code, secret) {
-			router.JSONError(w, "Invalid 2FA code", http.StatusBadRequest)
-			return
-		}
-	}
-
-	// Clear TOTP attempts on success
-	clearTOTPAttempts(user.ID)
 
 	// Disable 2FA and clear secret
 	_, err = s.db.Exec("UPDATE users SET totp_enabled = 0, totp_secret_enc = NULL WHERE id = ?", user.ID)
@@ -278,4 +229,29 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 	events.Audit("auth", "2fa_disabled", events.SeverityWarning, user.Username, helper.GetClientIP(r),
 		fmt.Sprintf("2FA disabled for %q", user.Username))
 	router.JSON(w, map[string]string{"message": "2FA disabled successfully"})
+}
+
+// verifyTOTP checks a 2FA code against the user's stored secret: rate-limited per user, single-use
+// within its window, and fail-closed when the secret is missing. Shared by login, step-up (so
+// unlock and turning 2FA off too) and turning 2FA on.
+func verifyTOTP(userID int64, secretEnc sql.NullString, code string) error {
+	if !secretEnc.Valid || secretEnc.String == "" {
+		return errTOTPMisconfigured
+	}
+	secret, err := helper.Decrypt(secretEnc.String)
+	if err != nil {
+		return errTOTPMisconfigured
+	}
+	if err := totpLimiter.reserve(userID); err != nil {
+		return err
+	}
+	if !totp.Validate(code, secret) {
+		return errors.New("invalid 2FA code")
+	}
+	if totpReplayed(userID, code) {
+		return errors.New("2FA code already used, wait for the next code")
+	}
+	markTOTPUsed(userID, code)
+	totpLimiter.clear(userID)
+	return nil
 }

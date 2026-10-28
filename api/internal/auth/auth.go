@@ -20,8 +20,6 @@ import (
 	"api/internal/helper"
 	"api/internal/router"
 	"api/internal/settings"
-
-	"github.com/pquerna/otp/totp"
 )
 
 // LoginNotifyFunc is called after successful login (for push notifications)
@@ -251,36 +249,8 @@ func (s *Service) Login(username, password, totpCode, ipAddress, userAgent strin
 		if totpCode == "" {
 			return nil, ErrTOTPRequired
 		}
-
-		// Decrypt and verify TOTP code
-		if totpSecretEnc.Valid && totpSecretEnc.String != "" {
-			secret, err := helper.Decrypt(totpSecretEnc.String)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt 2FA secret: %v", err)
-			}
-
-			// Rate limit: atomically check + reserve a TOTP attempt slot just before
-			// verifying, closing the check-then-record race.
-			if limited, remaining := registerTOTPAttempt(user.ID); limited {
-				return nil, fmt.Errorf("too many failed 2FA attempts, try again in %d seconds", int(remaining.Seconds()))
-			}
-
-			if !totp.Validate(totpCode, secret) {
-				return nil, errors.New("invalid 2FA code")
-			}
-
-			// Reject replay of a code already consumed within its window.
-			if totpReplayed(user.ID, totpCode) {
-				return nil, errors.New("2FA code already used, wait for the next code")
-			}
-			markTOTPUsed(user.ID, totpCode)
-
-			// Clear TOTP attempts on success (refunds the reserved slot).
-			clearTOTPAttempts(user.ID)
-		} else {
-			// 2FA is marked enabled but the secret is missing/empty — fail CLOSED rather than
-			// silently skipping the second factor (matches VerifyStepUp's behaviour).
-			return nil, errors.New("2FA is misconfigured for this account; contact an administrator")
+		if err := verifyTOTP(user.ID, totpSecretEnc, totpCode); err != nil {
+			return nil, err
 		}
 	}
 
@@ -432,12 +402,11 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Rate limit: atomically check the lockout AND reserve this attempt's slot, so a burst
 	// of concurrent attempts can't slip past a stale "under the limit" read.
-	if locked, remaining := registerLoginAttempt(clientIP); locked {
+	if err := loginLimiter.reserve(clientIP); err != nil {
 		events.Audit("auth", "login_blocked", events.SeverityWarning,
 			strings.ToLower(strings.TrimSpace(req.Username)), clientIP,
 			"Login temporarily blocked: too many failed attempts")
-		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
-		router.JSONError(w, fmt.Sprintf("Too many failed attempts. Try again in %d seconds.", int(remaining.Seconds())), http.StatusTooManyRequests)
+		tooManyAttempts(w, err)
 		return
 	}
 
@@ -445,14 +414,17 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err == ErrTOTPRequired {
 			// Correct password, 2FA still pending — not a failed attempt, so give the slot back.
-			refundLoginAttempt(clientIP)
+			loginLimiter.refund(clientIP)
 			router.JSONError(w, "2FA code required", http.StatusPreconditionRequired)
 			return
 		}
-		// Genuine failure — the slot was already counted by registerLoginAttempt above.
+		// Genuine failure — the slot was already counted by loginLimiter.reserve above.
 		events.Audit("auth", "login_failed", events.SeverityWarning,
 			strings.ToLower(strings.TrimSpace(req.Username)), clientIP,
 			fmt.Sprintf("Login failed: %s", err.Error()))
+		if tooManyAttempts(w, err) {
+			return
+		}
 		if err == ErrInvalidCredentials {
 			router.JSONError(w, "Invalid username or password", http.StatusUnauthorized)
 			return
@@ -462,7 +434,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear failed attempts on successful login (refunds the reserved slot).
-	clearLoginAttempts(clientIP)
+	loginLimiter.clear(clientIP)
 
 	events.Audit("auth", "login", events.SeverityInfo, resp.User.Username, clientIP,
 		fmt.Sprintf("Login succeeded for %q", resp.User.Username))
@@ -549,7 +521,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.stepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
+	if !s.StepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
 		return
 	}
 

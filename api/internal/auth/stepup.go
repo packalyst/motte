@@ -6,10 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	"api/internal/helper"
 	"api/internal/router"
-
-	"github.com/pquerna/otp/totp"
 )
 
 // ErrStepUpTOTPRequired is returned by VerifyStepUp when the user has 2FA enabled but supplied
@@ -43,39 +40,22 @@ func (s *Service) VerifyStepUp(userID int64, password, totpCode string) error {
 	if totpCode == "" {
 		return ErrStepUpTOTPRequired
 	}
-	if !totpSecretEnc.Valid || totpSecretEnc.String == "" {
-		return errors.New("2fa is misconfigured")
-	}
-	secret, err := helper.Decrypt(totpSecretEnc.String)
-	if err != nil {
-		return errors.New("2fa is misconfigured")
-	}
-
-	// Rate-limit + validate + reject replay, mirroring the login path so a step-up code is
-	// single-use within its window.
-	if limited, _ := registerTOTPAttempt(userID); limited {
-		return errors.New("too many 2FA attempts, try again shortly")
-	}
-	if !totp.Validate(totpCode, secret) {
-		return errors.New("invalid 2FA code")
-	}
-	if totpReplayed(userID, totpCode) {
-		return errors.New("2FA code already used")
-	}
-	markTOTPUsed(userID, totpCode)
-	clearTOTPAttempts(userID)
-	return nil
+	return verifyTOTP(userID, totpSecretEnc, totpCode)
 }
 
-// stepUp re-authenticates the caller for a sensitive action from the request-supplied password
-// and TOTP code. On success it returns true. On ANY failure it writes a 428 (Precondition
-// Required) response — never 401 — carrying {error, stepup:true, totp:<bool>}, so a wrong
-// credential re-prompts in place instead of tripping the client's 401 auto-logout. The `totp`
-// flag tells the UI whether to render an authenticator-code field.
-func (s *Service) stepUp(w http.ResponseWriter, callerID int64, password, totpCode string) bool {
+// StepUp re-authenticates the caller for a sensitive action from the request-supplied password
+// and TOTP code. On success it returns true. On failure it writes a 428 (Precondition Required)
+// response — never 401 — carrying {error, stepup:true, totp:<bool>}, so a wrong credential
+// re-prompts in place instead of tripping the client's 401 auto-logout; the `totp` flag tells
+// the UI whether to render an authenticator-code field. While the password or 2FA code is locked
+// out after too many failures it writes a 429 instead (re-prompting can't help until it expires).
+func (s *Service) StepUp(w http.ResponseWriter, callerID int64, password, totpCode string) bool {
 	err := s.VerifyStepUp(callerID, password, totpCode)
 	if err == nil {
 		return true
+	}
+	if tooManyAttempts(w, err) { // locked out: re-prompting can't help until it expires
+		return false
 	}
 	msg := err.Error()
 	if errors.Is(err, ErrStepUpTOTPRequired) {
@@ -117,7 +97,7 @@ func (s *Service) StepUpRequest(w http.ResponseWriter, r *http.Request) bool {
 		// prompt rather than an error.
 		_ = json.NewDecoder(r.Body).Decode(&creds)
 	}
-	return s.stepUp(w, p.UserID, creds.CurrentPassword, creds.TotpCode)
+	return s.StepUp(w, p.UserID, creds.CurrentPassword, creds.TotpCode)
 }
 
 // TOTPEnabled reports whether the user has 2FA enabled. Used by handlers that surface to the UI

@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -38,6 +39,7 @@ const passkeyUV = protocol.VerificationRequired
 
 type waChallenge struct {
 	data    webauthn.SessionData
+	loginIP string // passkey sign-in: who started it, for the per-IP cap
 	expires time.Time
 }
 
@@ -46,16 +48,58 @@ var (
 	waChallenges = map[string]*waChallenge{}
 )
 
-func waStoreChallenge(key string, data webauthn.SessionData) {
-	waMu.Lock()
-	defer waMu.Unlock()
-	now := time.Now()
-	for k, c := range waChallenges { // opportunistic sweep
+const (
+	waChallengeTTL = 3 * time.Minute
+	waLoginPrefix  = "login:" // key prefix of passkey sign-in challenges (registration: "reg:")
+)
+
+var errTooManyPasskeyLogins = errors.New("too many passkey sign-ins in progress, try again shortly")
+
+// waSweepLocked drops expired challenges. Caller holds waMu.
+func waSweepLocked(now time.Time) {
+	for k, c := range waChallenges {
 		if now.After(c.expires) {
 			delete(waChallenges, k)
 		}
 	}
-	waChallenges[key] = &waChallenge{data: data, expires: now.Add(3 * time.Minute)}
+}
+
+// waStoreChallenge keeps a registration challenge until its finish step. It is keyed by the
+// signed-in user, so it can't pile up.
+func waStoreChallenge(key string, data webauthn.SessionData) {
+	waMu.Lock()
+	defer waMu.Unlock()
+	now := time.Now()
+	waSweepLocked(now)
+	waChallenges[key] = &waChallenge{data: data, expires: now.Add(waChallengeTTL)}
+}
+
+// waStoreLoginChallenge keeps a passkey sign-in challenge under a fresh random id. Anyone can start
+// a sign-in, so how many may wait is capped, from one IP and in total; past either cap it returns
+// errTooManyPasskeyLogins until one finishes or expires.
+func waStoreLoginChallenge(ip string, data webauthn.SessionData) (string, error) {
+	handle := make([]byte, 16)
+	rand.Read(handle) // never fails (crypto/rand)
+	id := hex.EncodeToString(handle)
+
+	waMu.Lock()
+	defer waMu.Unlock()
+	now := time.Now()
+	waSweepLocked(now)
+	total, fromIP := 0, 0
+	for k, c := range waChallenges {
+		if strings.HasPrefix(k, waLoginPrefix) {
+			total++
+			if c.loginIP == ip {
+				fromIP++
+			}
+		}
+	}
+	if total >= maxPendingPasskeyLogins || fromIP >= maxPendingPasskeyLoginsPerIP {
+		return "", errTooManyPasskeyLogins
+	}
+	waChallenges[waLoginPrefix+id] = &waChallenge{data: data, loginIP: ip, expires: now.Add(waChallengeTTL)}
+	return id, nil
 }
 
 func waTakeChallenge(key string) (webauthn.SessionData, bool) {
@@ -245,7 +289,7 @@ func (s *Service) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Requ
 		TotpCode        string `json:"totpCode"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&creds)
-	if !s.stepUp(w, u.ID, creds.CurrentPassword, creds.TotpCode) {
+	if !s.StepUp(w, u.ID, creds.CurrentPassword, creds.TotpCode) {
 		return
 	}
 	wa, _, err := s.newWebAuthn(r)
@@ -324,10 +368,11 @@ func (s *Service) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	handle := make([]byte, 16)
-	rand.Read(handle)
-	id := hex.EncodeToString(handle)
-	waStoreChallenge("login:"+id, *sessionData)
+	id, err := waStoreLoginChallenge(helper.GetClientIP(r), *sessionData)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusTooManyRequests)
+		return
+	}
 	router.JSON(w, map[string]any{"publicKey": options.Response, "challengeId": id})
 }
 
@@ -337,7 +382,7 @@ func (s *Service) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 	s.ensureWebAuthnTables()
 	clientIP := helper.GetClientIP(r)
 	id := r.URL.Query().Get("challengeId")
-	sessionData, ok := waTakeChallenge("login:" + id)
+	sessionData, ok := waTakeChallenge(waLoginPrefix + id)
 	if !ok {
 		router.JSONError(w, "login expired, start again", http.StatusBadRequest)
 		return
