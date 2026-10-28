@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 
+	"api/internal/helper"
+
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -58,7 +60,7 @@ func hashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("auth: salt generation failed: %w", err)
 	}
-	key := argonKey(password, salt, argonTimeCost, argonMemoryKiB, argonThreads, argonKeyLen)
+	key := helper.Argon2IDKey([]byte(password), salt, argonTimeCost, argonMemoryKiB, argonThreads, argonKeyLen)
 	return encodeArgon2(salt, key, argonMemoryKiB, argonTimeCost, argonThreads), nil
 }
 
@@ -71,18 +73,6 @@ func encodeArgon2(salt, key []byte, memory, time uint32, threads uint8) string {
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key),
 	)
-}
-
-// argonSlots holds one token per Argon2id computation allowed to run at once (see
-// maxConcurrentArgon2); the rest wait their turn.
-var argonSlots = make(chan struct{}, maxConcurrentArgon2)
-
-// argonKey is the only way this package runs Argon2id: every hash, check and timing-equalizer
-// takes a slot, so a flood of logins or password checks can't exhaust memory.
-func argonKey(password string, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
-	argonSlots <- struct{}{}
-	defer func() { <-argonSlots }()
-	return argon2.IDKey([]byte(password), salt, time, memory, threads, keyLen)
 }
 
 // verifyPassword checks password against a stored hash (Argon2id or legacy bcrypt).
@@ -134,7 +124,7 @@ func verifyArgon2(password, encoded string) (ok bool, needsRehash bool, err erro
 	if err != nil {
 		return false, false, errInvalidHash
 	}
-	got := argonKey(password, salt, time, memory, threads, uint32(len(want)))
+	got := helper.Argon2IDKey([]byte(password), salt, time, memory, threads, uint32(len(want)))
 	if subtle.ConstantTimeCompare(got, want) != 1 {
 		return false, false, nil
 	}
@@ -152,7 +142,7 @@ var dummySalt = []byte("motte-timing-equalizer")
 // dummyVerify performs one Argon2id computation and discards it. Call it when no user row
 // was found so an attacker cannot distinguish "no such user" from "wrong password" by timing.
 func dummyVerify(password string) {
-	_ = argonKey(password, dummySalt, argonTimeCost, argonMemoryKiB, argonThreads, argonKeyLen)
+	_ = helper.Argon2IDKey([]byte(password), dummySalt, argonTimeCost, argonMemoryKiB, argonThreads, argonKeyLen)
 }
 
 // upgradeHash re-hashes an already-verified password with the current Argon2id parameters

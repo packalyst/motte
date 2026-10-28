@@ -143,29 +143,6 @@ func TestDisable2FAUsesStepUp(t *testing.T) {
 	}
 }
 
-// TestArgonConcurrencyCap: with every slot taken, a password check waits instead of running.
-func TestArgonConcurrencyCap(t *testing.T) {
-	for i := 0; i < maxConcurrentArgon2; i++ {
-		argonSlots <- struct{}{}
-	}
-	done := make(chan struct{})
-	go func() { dummyVerify("x"); close(done) }()
-	select {
-	case <-done:
-		t.Fatal("Argon2id ran with no free slot")
-	case <-time.After(200 * time.Millisecond):
-	}
-	<-argonSlots // free one
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("Argon2id did not run once a slot was free")
-	}
-	for i := 1; i < maxConcurrentArgon2; i++ {
-		<-argonSlots
-	}
-}
-
 // TestPasskeyLoginCap (B8): waiting passkey sign-ins are capped per IP and in total, and a slot is
 // freed once a sign-in finishes.
 func TestPasskeyLoginCap(t *testing.T) {

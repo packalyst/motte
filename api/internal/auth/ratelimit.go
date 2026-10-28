@@ -16,8 +16,8 @@ import (
 )
 
 // Every auth limit lives here: failed-attempt lockouts (login per IP, 2FA codes and password
-// re-checks per user), how many passkey sign-ins may wait for an answer, and how many Argon2id
-// computations run at once.
+// re-checks per user) and how many passkey sign-ins may wait for an answer. How many Argon2id
+// computations run at once is capped panel-wide by helper.Argon2IDKey.
 const (
 	maxLoginAttempts    = 5 // failed logins per IP before lockout
 	maxTOTPAttempts     = 5 // failed 2FA codes per user before lockout
@@ -25,10 +25,6 @@ const (
 
 	maxPendingPasskeyLogins      = 1000 // passkey sign-ins waiting for an answer, in total
 	maxPendingPasskeyLoginsPerIP = 5    // ... and from one IP
-
-	// maxConcurrentArgon2 caps simultaneous Argon2id computations: each takes argonMemoryKiB
-	// (64 MiB), so a burst of logins or password checks queues instead of exhausting memory.
-	maxConcurrentArgon2 = 4
 )
 
 // Use helper constants for lockout timing
