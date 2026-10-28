@@ -137,13 +137,20 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 	return svc, nil
 }
 
-// ensureEssentialPorts adds essential ports to firewall_entries if not present, and keeps an
-// always-private port (the panel API) stored as private so the Ports list shows it truthfully.
+// ensureEssentialPorts adds the essential ports to firewall_entries (or marks an existing row
+// essential again), and keeps an always-private port (the panel API) stored as private so the
+// Ports list shows it truthfully. A port the panel added that is no longer essential — an old SSH
+// port from a migrated database, a port dropped from the list — becomes a normal port: still
+// open, but the admin can remove it. It is never deleted here: if SSH detection failed for a
+// moment, deleting could close the real SSH port.
 func (s *Service) ensureEssentialPorts() error {
+	current := map[string]bool{}
 	for _, ep := range s.config.EssentialPorts {
-		_, err := s.db.Exec(`INSERT OR IGNORE INTO firewall_entries
+		current[strconv.Itoa(ep.Port)+"/"+ep.Protocol] = true
+		_, err := s.db.Exec(`INSERT INTO firewall_entries
 			(entry_type, value, action, direction, protocol, source, name, essential, enabled)
-			VALUES ('port', ?, 'allow', 'inbound', ?, 'system', ?, 1, 1)`,
+			VALUES ('port', ?, 'allow', 'inbound', ?, 'system', ?, 1, 1)
+			ON CONFLICT(entry_type, value, protocol) DO UPDATE SET essential = 1`,
 			strconv.Itoa(ep.Port), ep.Protocol, ep.Service)
 		if err != nil {
 			return fmt.Errorf("failed to add essential port %d: %v", ep.Port, err)
@@ -154,6 +161,35 @@ func (s *Service) ensureEssentialPorts() error {
 				return fmt.Errorf("failed to keep port %d private: %v", ep.Port, err)
 			}
 		}
+	}
+	return s.demoteStaleEssentialPorts(current)
+}
+
+// demoteStaleEssentialPorts makes the panel's own essential port rows that are not in current
+// ("port/protocol") normal ports. Docker-discovered rows are left alone: they are re-synced from
+// the running containers.
+func (s *Service) demoteStaleEssentialPorts(current map[string]bool) error {
+	rows, err := s.db.Query(`SELECT id, value, protocol FROM firewall_entries
+		WHERE entry_type = 'port' AND source = 'system' AND essential = 1`)
+	if err != nil {
+		return fmt.Errorf("failed to list essential ports: %v", err)
+	}
+	var stale []int64
+	for rows.Next() {
+		var id int64
+		var value, protocol string
+		if rows.Scan(&id, &value, &protocol) == nil && !current[value+"/"+protocol] {
+			stale = append(stale, id)
+		}
+	}
+	rows.Close()
+	for _, id := range stale {
+		if _, err := s.db.Exec(`UPDATE firewall_entries SET essential = 0 WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("failed to update port %d: %v", id, err)
+		}
+	}
+	if len(stale) > 0 {
+		log.Printf("firewall: %d port(s) no longer essential (still open, now removable)", len(stale))
 	}
 	return nil
 }

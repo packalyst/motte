@@ -70,6 +70,11 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- Changing the SSH port, creating a Headscale auth key or API key, and removing the VPN router
+  failed with "current password is incorrect": the page never asked for your password, and the
+  server lost the rest of the request after checking it. They now ask for your password and work.
+- A port that is no longer essential (such as the old server's SSH port after restoring a backup
+  on a new server) stays open but can now be removed from Allowed Ports.
 - **Change password**: a mistyped current password no longer logs you out; the page shows
   "current password is incorrect".
 - Logging in with a password on an account with 2FA showed "2FA code required" with no field to

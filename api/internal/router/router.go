@@ -1,10 +1,12 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -337,13 +339,25 @@ func SetStepUpFunc(fn StepUpFunc) {
 // StepUp runs the registered step-up check. When none is registered it fails CLOSED (428) rather
 // than letting a destructive action through un-reauthenticated — the auth resolver and step-up func
 // are wired together, so a build missing step-up is already 503-ing protected paths, not serving
-// them unguarded.
+// them unguarded. The check reads the password from the JSON body; the body is put back
+// afterwards so the handler can decode its own fields from it.
 func StepUp(w http.ResponseWriter, r *http.Request) bool {
 	if stepUpFn == nil {
 		JSONWithStatus(w, map[string]any{"error": "step-up re-authentication unavailable"}, http.StatusPreconditionRequired)
 		return false
 	}
-	return stepUpFn(w, r)
+	if r.Body == nil {
+		return stepUpFn(w, r)
+	}
+	body, err := io.ReadAll(r.Body) // bounded by bodySizeLimitMiddleware
+	if err != nil {
+		JSONError(w, "could not read the request", http.StatusBadRequest)
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	ok := stepUpFn(w, r)
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return ok
 }
 
 // applyMiddleware wraps the handler with configured middleware

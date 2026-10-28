@@ -5,7 +5,7 @@
    * opened) so the Auth Keys page and All clients → Add client both use it. oncreated() lets the
    * parent refresh its list.
    */
-  import { toast, apiGet, apiPost } from '../stores/app.js'
+  import { toast, apiGet, apiPost, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import { formatExpiryDate } from '$lib/utils/format.js'
   import { tailscaleUpCommand } from '$lib/nodes.js'
   import Icon from './Icon.svelte'
@@ -42,12 +42,14 @@
     try {
       const expiration = new Date()
       expiration.setDate(expiration.getDate() + parseInt(createForm.expiration))
-      const res = await apiPost('/api/hs/preauthkeys', {
+      const res = await withStepUp((extra) => apiPost('/api/hs/preauthkeys', {
         user: createForm.user,
         reusable: createForm.reusable,
         ephemeral: createForm.ephemeral,
-        expiration: expiration.toISOString()
-      })
+        expiration: expiration.toISOString(),
+        ...extra
+      }), { title: 'Create auth key', message: 'Anyone with this key can add a device to the VPN.', confirmText: 'Create' })
+      if (res === STEPUP_CANCELLED) return
       createdKey = res.preAuthKey
       toast('Auth key created', 'success')
       oncreated?.()
