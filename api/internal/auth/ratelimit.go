@@ -2,18 +2,33 @@ package auth
 
 import (
 	"crypto/subtle"
+	"errors"
+	"fmt"
 	"log"
+	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"api/internal/helper"
+	"api/internal/router"
 )
 
-// Rate limiting for login attempts
+// Every auth limit lives here: failed-attempt lockouts (login per IP, 2FA codes and password
+// re-checks per user), how many passkey sign-ins may wait for an answer, and how many Argon2id
+// computations run at once.
 const (
-	maxLoginAttempts = 5 // Max failed attempts before lockout
-	maxTOTPAttempts  = 5 // Max failed TOTP attempts before lockout
+	maxLoginAttempts    = 5 // failed logins per IP before lockout
+	maxTOTPAttempts     = 5 // failed 2FA codes per user before lockout
+	maxPasswordAttempts = 5 // wrong passwords per user at step-up, unlock and password change
+
+	maxPendingPasskeyLogins      = 1000 // passkey sign-ins waiting for an answer, in total
+	maxPendingPasskeyLoginsPerIP = 5    // ... and from one IP
+
+	// maxConcurrentArgon2 caps simultaneous Argon2id computations: each takes argonMemoryKiB
+	// (64 MiB), so a burst of logins or password checks queues instead of exhausting memory.
+	maxConcurrentArgon2 = 4
 )
 
 // Use helper constants for lockout timing
@@ -22,20 +37,132 @@ var (
 	loginLockoutTime   = helper.LoginLockoutDuration // How long to lock out after max attempts
 )
 
-type loginAttempt struct {
+var (
+	loginLimiter    = newAttemptLimiter[string]("Login", maxLoginAttempts)
+	totpLimiter     = newAttemptLimiter[int64]("2FA", maxTOTPAttempts)
+	passwordLimiter = newAttemptLimiter[int64]("Password", maxPasswordAttempts)
+)
+
+// tooManyAttemptsError is returned while a key is locked out; handlers answer 429.
+type tooManyAttemptsError struct {
+	what  string
+	retry time.Duration
+}
+
+func (e *tooManyAttemptsError) Error() string {
+	return fmt.Sprintf("too many failed %s attempts, try again in %d seconds", e.what, int(e.retry.Seconds()))
+}
+
+// tooManyAttempts answers 429 with Retry-After when err is a *tooManyAttemptsError, and reports
+// whether it was, so callers fall through to their own handling otherwise.
+func tooManyAttempts(w http.ResponseWriter, err error) bool {
+	var e *tooManyAttemptsError
+	if !errors.As(err, &e) {
+		return false
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(int(e.retry.Seconds())))
+	router.JSONError(w, e.Error(), http.StatusTooManyRequests)
+	return true
+}
+
+type attempt struct {
 	count    int
 	firstTry time.Time
 	lockedAt time.Time
 }
 
+// attemptLimiter locks a key (an IP or a user) out for loginLockoutTime after max failed
+// attempts within loginLockoutWindow.
+type attemptLimiter[K comparable] struct {
+	what string // "Login", "2FA", "Password": in logs and errors
+	max  int
+	mu   sync.Mutex
+	m    map[K]*attempt
+}
+
+func newAttemptLimiter[K comparable](what string, max int) *attemptLimiter[K] {
+	return &attemptLimiter[K]{what: what, max: max, m: make(map[K]*attempt)}
+}
+
+// reserve ATOMICALLY checks the lockout and reserves an attempt slot in a single critical
+// section, closing the check-then-increment race where a burst of concurrent requests could all
+// pass a stale "under the limit" read. Call it BEFORE the expensive check; every attempt
+// consumes a slot up front, and a success (clear) or a not-a-failure result (refund) gives it
+// back. Returns a *tooManyAttemptsError while the key is locked out.
+func (l *attemptLimiter[K]) reserve(key K) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	a, ok := l.m[key]
+	if !ok {
+		l.m[key] = &attempt{count: 1, firstTry: now}
+		return nil
+	}
+
+	// Currently locked out?
+	if !a.lockedAt.IsZero() {
+		if remaining := loginLockoutTime - now.Sub(a.lockedAt); remaining > 0 {
+			return &tooManyAttemptsError{what: strings.ToLower(l.what), retry: remaining}
+		}
+		// Lockout expired — reset and count this as the first attempt of a new window.
+		*a = attempt{count: 1, firstTry: now}
+		return nil
+	}
+
+	// Counting window expired — reset.
+	if now.Sub(a.firstTry) > loginLockoutWindow {
+		*a = attempt{count: 1, firstTry: now}
+		return nil
+	}
+
+	// Reserve this attempt; lock once we exceed the allowance.
+	a.count++
+	if a.count > l.max {
+		a.lockedAt = now
+		log.Printf("%s rate limit: %v locked out after %d attempts", l.what, key, a.count)
+		return &tooManyAttemptsError{what: strings.ToLower(l.what), retry: loginLockoutTime}
+	}
+	return nil
+}
+
+// refund returns a slot reserved by reserve when the attempt was not actually a failure
+// (correct password, but 2FA still pending). No-op once locked.
+func (l *attemptLimiter[K]) refund(key K) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if a, ok := l.m[key]; ok && a.lockedAt.IsZero() && a.count > 0 {
+		a.count--
+		if a.count == 0 {
+			delete(l.m, key)
+		}
+	}
+}
+
+// clear forgets a key's failed attempts after a success.
+func (l *attemptLimiter[K]) clear(key K) {
+	l.mu.Lock()
+	delete(l.m, key)
+	l.mu.Unlock()
+}
+
+// sweep drops entries whose lockout or counting window has passed, so the map can't grow
+// unbounded.
+func (l *attemptLimiter[K]) sweep(now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for k, a := range l.m {
+		if a.lockedAt.IsZero() {
+			if now.Sub(a.firstTry) > loginLockoutWindow {
+				delete(l.m, k)
+			}
+		} else if now.Sub(a.lockedAt) > loginLockoutTime {
+			delete(l.m, k)
+		}
+	}
+}
+
 var (
-	loginAttempts      = make(map[string]*loginAttempt)
-	loginAttemptsMutex sync.RWMutex
-
-	// TOTP rate limiting (keyed by user ID)
-	totpAttempts      = make(map[int64]*loginAttempt)
-	totpAttemptsMutex sync.RWMutex
-
 	// Last successfully-used TOTP code per user, to block replay of a captured code
 	// within its validity window. Keyed by user ID, so bounded by the user count.
 	usedTOTP      = make(map[int64]usedTOTPCode)
@@ -81,35 +208,14 @@ func init() {
 	helper.InitTrustedProxies(tp)
 }
 
-// cleanupRateLimitMaps removes stale login/TOTP attempt entries and expired TOTP
-// replay guards so those maps can't grow unbounded. Registered as a routine (see
-// Service.Start); the supervisor calls it on its interval.
+// cleanupRateLimitMaps removes stale attempt entries and expired TOTP replay guards so
+// those maps can't grow unbounded. Registered as a routine (see Service.Start); the
+// supervisor calls it on its interval.
 func cleanupRateLimitMaps() error {
 	now := time.Now()
-
-	loginAttemptsMutex.Lock()
-	for ip, attempt := range loginAttempts {
-		if !attempt.lockedAt.IsZero() && now.Sub(attempt.lockedAt) > loginLockoutTime {
-			delete(loginAttempts, ip)
-			continue
-		}
-		if attempt.lockedAt.IsZero() && now.Sub(attempt.firstTry) > loginLockoutWindow {
-			delete(loginAttempts, ip)
-		}
-	}
-	loginAttemptsMutex.Unlock()
-
-	totpAttemptsMutex.Lock()
-	for userID, attempt := range totpAttempts {
-		if !attempt.lockedAt.IsZero() && now.Sub(attempt.lockedAt) > loginLockoutTime {
-			delete(totpAttempts, userID)
-			continue
-		}
-		if attempt.lockedAt.IsZero() && now.Sub(attempt.firstTry) > loginLockoutWindow {
-			delete(totpAttempts, userID)
-		}
-	}
-	totpAttemptsMutex.Unlock()
+	loginLimiter.sweep(now)
+	totpLimiter.sweep(now)
+	passwordLimiter.sweep(now)
 
 	usedTOTPMutex.Lock()
 	for userID, u := range usedTOTP {
@@ -119,116 +225,4 @@ func cleanupRateLimitMaps() error {
 	}
 	usedTOTPMutex.Unlock()
 	return nil
-}
-
-// registerLoginAttempt ATOMICALLY checks the lockout and reserves an attempt slot in a
-// single critical section, closing the check-then-increment race where a burst of
-// concurrent requests could all pass a stale "under the limit" read before any of them
-// incremented. Every attempt consumes a slot up front; a success (clearLoginAttempts) or a
-// correct-password-but-2FA-pending result (refundLoginAttempt) gives it back. Returns
-// whether the caller is locked out and, if so, the remaining lockout time.
-func registerLoginAttempt(ip string) (bool, time.Duration) {
-	loginAttemptsMutex.Lock()
-	defer loginAttemptsMutex.Unlock()
-
-	now := time.Now()
-	attempt, exists := loginAttempts[ip]
-	if !exists {
-		loginAttempts[ip] = &loginAttempt{count: 1, firstTry: now}
-		return false, 0
-	}
-
-	// Currently locked out?
-	if !attempt.lockedAt.IsZero() {
-		if remaining := loginLockoutTime - now.Sub(attempt.lockedAt); remaining > 0 {
-			return true, remaining
-		}
-		// Lockout expired — reset and count this as the first attempt of a new window.
-		attempt.count = 1
-		attempt.firstTry = now
-		attempt.lockedAt = time.Time{}
-		return false, 0
-	}
-
-	// Counting window expired — reset.
-	if now.Sub(attempt.firstTry) > loginLockoutWindow {
-		attempt.count = 1
-		attempt.firstTry = now
-		return false, 0
-	}
-
-	// Reserve this attempt; lock once we exceed the allowance.
-	attempt.count++
-	if attempt.count > maxLoginAttempts {
-		attempt.lockedAt = now
-		log.Printf("Login rate limit: IP %s locked out after %d attempts", ip, attempt.count)
-		return true, loginLockoutTime
-	}
-	return false, 0
-}
-
-// refundLoginAttempt returns a slot reserved by registerLoginAttempt when the attempt was
-// not actually a failure (correct password, but 2FA still pending). No-op once locked.
-func refundLoginAttempt(ip string) {
-	loginAttemptsMutex.Lock()
-	defer loginAttemptsMutex.Unlock()
-	if a, ok := loginAttempts[ip]; ok && a.lockedAt.IsZero() && a.count > 0 {
-		a.count--
-		if a.count == 0 {
-			delete(loginAttempts, ip)
-		}
-	}
-}
-
-// clearLoginAttempts clears failed attempts for an IP after successful login
-func clearLoginAttempts(ip string) {
-	loginAttemptsMutex.Lock()
-	delete(loginAttempts, ip)
-	loginAttemptsMutex.Unlock()
-}
-
-// registerTOTPAttempt atomically checks the lockout and reserves a TOTP attempt slot in one
-// critical section (same race-free pattern as registerLoginAttempt, keyed by user ID). It
-// is called just before verifying a code; a successful verify refunds via clearTOTPAttempts.
-func registerTOTPAttempt(userID int64) (bool, time.Duration) {
-	totpAttemptsMutex.Lock()
-	defer totpAttemptsMutex.Unlock()
-
-	now := time.Now()
-	attempt, exists := totpAttempts[userID]
-	if !exists {
-		totpAttempts[userID] = &loginAttempt{count: 1, firstTry: now}
-		return false, 0
-	}
-
-	if !attempt.lockedAt.IsZero() {
-		if remaining := loginLockoutTime - now.Sub(attempt.lockedAt); remaining > 0 {
-			return true, remaining
-		}
-		attempt.count = 1
-		attempt.firstTry = now
-		attempt.lockedAt = time.Time{}
-		return false, 0
-	}
-
-	if now.Sub(attempt.firstTry) > loginLockoutWindow {
-		attempt.count = 1
-		attempt.firstTry = now
-		return false, 0
-	}
-
-	attempt.count++
-	if attempt.count > maxTOTPAttempts {
-		attempt.lockedAt = now
-		log.Printf("TOTP rate limit: user ID %d locked out after %d attempts", userID, attempt.count)
-		return true, loginLockoutTime
-	}
-	return false, 0
-}
-
-// clearTOTPAttempts clears failed TOTP attempts for a user after success
-func clearTOTPAttempts(userID int64) {
-	totpAttemptsMutex.Lock()
-	delete(totpAttempts, userID)
-	totpAttemptsMutex.Unlock()
 }

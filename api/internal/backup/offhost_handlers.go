@@ -3,11 +3,9 @@ package backup
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
-	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -164,23 +162,8 @@ func (s *Service) handleOffhostRestore(w http.ResponseWriter, r *http.Request) {
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	p := router.CurrentUser(r)
-	if p == nil {
-		router.JSONError(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	a := auth.GetService()
-	if a == nil {
-		router.JSONError(w, "auth unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	// Step-up: password (+ fresh 2FA when enabled). 428 re-prompts; never 401 (would force logout).
-	if err := a.VerifyStepUp(p.UserID, req.CurrentPassword, req.TotpCode); err != nil {
-		msg := err.Error()
-		if errors.Is(err, auth.ErrStepUpTOTPRequired) {
-			msg = "two-factor authentication code required"
-		}
-		router.JSONWithStatus(w, map[string]interface{}{"error": msg, "stepup": true, "totp": a.TOTPEnabled(p.UserID)}, http.StatusPreconditionRequired)
+	p, ok := requireStepUp(w, r, req.CurrentPassword, req.TotpCode)
+	if !ok {
 		return
 	}
 

@@ -27,12 +27,7 @@ func requireStepUp(w http.ResponseWriter, r *http.Request, currentPassword, totp
 		router.JSONError(w, "auth unavailable", http.StatusServiceUnavailable)
 		return nil, false
 	}
-	if err := a.VerifyStepUp(p.UserID, currentPassword, totpCode); err != nil {
-		msg := err.Error()
-		if errors.Is(err, auth.ErrStepUpTOTPRequired) {
-			msg = "two-factor authentication code required"
-		}
-		router.JSONWithStatus(w, map[string]interface{}{"error": msg, "stepup": true, "totp": a.TOTPEnabled(p.UserID)}, http.StatusPreconditionRequired)
+	if !a.StepUp(w, p.UserID, currentPassword, totpCode) {
 		return nil, false
 	}
 	return p, true
