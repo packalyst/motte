@@ -58,8 +58,8 @@
 
       const data = await res.json().catch(() => ({}))
 
-      // Check if 2FA is required
-      if (res.status === 401 && data.requires2FA) {
+      // Correct password, 2FA on: the server answers 428 and the code step opens
+      if (res.status === 428) {
         requires2FA = true
         error = ''
         loading = false
