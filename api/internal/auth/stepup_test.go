@@ -10,13 +10,7 @@ import (
 // TestVerifyStepUp covers the fail-closed re-auth contract: password-only when the user has no
 // 2FA, and a required (never bypassable) TOTP code once 2FA is enabled.
 func TestVerifyStepUp(t *testing.T) {
-	if _, err := database.Init(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	svc, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc := newTestService(t)
 	const pw = "StrongP@ss1"
 	u, err := svc.CreateUser("stepup_owner", pw, RoleOwner)
 	if err != nil {

@@ -98,6 +98,9 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **passkeys**: adding a passkey and logging in with one now always need the device's PIN,
+  fingerprint or face. A passkey login skips the TOTP code, so a security key without a PIN let
+  anyone holding it in with a touch; such a key is now asked to set a PIN first.
 - **isolated clients**: a VPN client set to Block All now reaches nothing on the server itself
   either: SSH, the panel API on its own port, DNS and ping were still answering it. Its tunnel stays
   up; un-isolating restores access at once.

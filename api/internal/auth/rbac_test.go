@@ -1,10 +1,6 @@
 package auth
 
-import (
-	"testing"
-
-	"api/internal/database"
-)
+import "testing"
 
 func TestRoleLadder(t *testing.T) {
 	if !RoleAtLeast(RoleOwner, RoleAdmin) || !RoleAtLeast(RoleAdmin, RoleOperator) || !RoleAtLeast(RoleOperator, RoleViewer) {
@@ -58,29 +54,27 @@ func TestCanAssignAndModify(t *testing.T) {
 // TestOwnerCount backs the break-glass guard: it must count owners accurately so the handlers
 // can refuse to drop the last one.
 func TestOwnerCount(t *testing.T) {
-	if _, err := database.Init(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	svc, err := New()
+	svc := newTestService(t)
+	base, err := svc.ownerCount() // the database is shared: other tests' owners count too
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.CreateUser("owner1", "StrongP@ss1", RoleOwner); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := svc.ownerCount(); n != 1 {
-		t.Fatalf("ownerCount = %d, want 1", n)
+	if n, _ := svc.ownerCount(); n != base+1 {
+		t.Fatalf("ownerCount = %d, want %d", n, base+1)
 	}
 	if _, err := svc.CreateUser("viewer1", "StrongP@ss1", RoleViewer); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := svc.ownerCount(); n != 1 {
-		t.Fatalf("ownerCount after adding a viewer = %d, want 1", n)
+	if n, _ := svc.ownerCount(); n != base+1 {
+		t.Fatalf("ownerCount after adding a viewer = %d, want %d", n, base+1)
 	}
 	if _, err := svc.CreateUser("owner2", "StrongP@ss2", RoleOwner); err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := svc.ownerCount(); n != 2 {
-		t.Fatalf("ownerCount = %d, want 2", n)
+	if n, _ := svc.ownerCount(); n != base+2 {
+		t.Fatalf("ownerCount = %d, want %d", n, base+2)
 	}
 }

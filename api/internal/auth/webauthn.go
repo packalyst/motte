@@ -28,6 +28,12 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
+// passkeyUV: the device must verify the user (PIN, fingerprint or face), on registration and on
+// every login. A passkey login skips TOTP, so the passkey alone has to be two factors; with
+// "preferred", a security key without a PIN logged in on a touch. The library rejects a response
+// without the UV flag when the challenge says required.
+const passkeyUV = protocol.VerificationRequired
+
 // --- in-progress challenge store (short-lived; begin→finish) --------------------------------------
 
 type waChallenge struct {
@@ -254,7 +260,7 @@ func (s *Service) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Requ
 	}
 	sel := protocol.AuthenticatorSelection{
 		ResidentKey:      protocol.ResidentKeyRequirementRequired, // discoverable → passwordless
-		UserVerification: protocol.VerificationPreferred,
+		UserVerification: passkeyUV,
 	}
 	options, sessionData, err := wa.BeginRegistration(waUser, webauthn.WithAuthenticatorSelection(sel))
 	if err != nil {
@@ -313,7 +319,7 @@ func (s *Service) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	options, sessionData, err := wa.BeginDiscoverableLogin()
+	options, sessionData, err := wa.BeginDiscoverableLogin(webauthn.WithUserVerification(passkeyUV))
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
