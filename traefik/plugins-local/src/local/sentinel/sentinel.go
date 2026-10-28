@@ -554,8 +554,9 @@ func (s *Sentinel) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// 3. IP filter check (allow-list)
-	if s.config.IPFilter != nil && len(s.networks) > 0 {
+	// 3. IP filter check (allow-list). A list that was given but has no valid entry blocks
+	// everyone: an unreadable VPN-only list must fail closed, never open the panel to all.
+	if s.config.IPFilter != nil && len(s.config.IPFilter.SourceRange) > 0 {
 		clientIP := s.getClientIP(req)
 		if clientIP == nil || !s.isIPAllowed(clientIP) {
 			s.log("IP blocked: %v", clientIP)

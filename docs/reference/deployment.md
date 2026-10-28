@@ -140,7 +140,7 @@ Notable groups in `.env.example` (see the file for the full annotated list):
 - **Headscale**: `HEADSCALE_IP_RANGE=100.64.0.0/16`, `HEADSCALE_BASE_DOMAIN=vpn.local`, metrics/grpc ports, DERP region settings.
 - **AdGuard**: `ADGUARD_USER`, `ADGUARD_PASS_HASH` (bcrypt; auto-generated on first install — see §6), query/stats retention.
 - **SSL**: `SSL_ENABLED`, `SSL_DOMAIN`, `LETSENCRYPT_EMAIL`, `CF_WILDCARD_ENABLED`, `CF_API_EMAIL`, `CF_DNS_API_TOKEN`.
-- **Networks**: `IGNORE_NETWORKS` (private ranges the firewall ignores + the VPN-only middleware allows), `DOCKER_SUBNET`/`DOCKER_GATEWAY`, static container IPs, `TRAEFIK_API`.
+- **Networks**: `IGNORE_NETWORKS` (extra trusted networks: they can open the panel in VPN-only mode and are never auto-banned. Only seeds the list on first start; afterwards it's edited in Settings → Traefik, saved in the DB, and always includes the locked VPN ranges `WG_IP_RANGE` + `HEADSCALE_IP_RANGE`), `DOCKER_SUBNET`/`DOCKER_GATEWAY`, static container IPs, `TRAEFIK_API`.
 - **Security**: `ENCRYPTION_SECRET` (REQUIRED), `TRUSTED_PROXIES`.
 - **Rate limiting**: `RATE_LIMIT_*` (normal + strict).
 - **Logs**: `TRAEFIK_LOGS`/`TRAEFIK_MAIN_LOG`/`ADGUARD_LOGS`/`KERN_LOG` paths, storage limits, GeoIP enrichment, log rotation.
@@ -298,7 +298,7 @@ substituting `.env` vars into `*.template` files with `envsubst`. Templates foun
 | Template | Output | Regenerated vs preserved |
 |---|---|---|
 | `traefik/traefik.yml.template` | `traefik/traefik.yml` | **Regenerated** every run — but the `api.dashboard` toggle value is read from the existing file first and preserved (`:2598-2603`). When `SSL_ENABLED=true`, the static config is written by a heredoc instead (with live-fetched Cloudflare trusted-IP ranges, a `letsencrypt` HTTP-challenge resolver, and an optional `letsencrypt-dnschallenge` Cloudflare DNS resolver) (`:2605-2706`). |
-| `traefik/dynamic.yml.template` | `traefik/dynamic/core.yml` | **Regenerated.** `IGNORE_NETWORKS` is expanded into the `VPN_SOURCE_RANGE` YAML list used by the `sentinel_vpn*` middlewares. When SSL is on, `traefik/dynamic-ssl-routers.yml.template` is rendered and inserted before `services:` (via awk); a `PROXY_DOMAIN` block for rotation/webhook triggers is appended if set (`:2708-2803`). |
+| `traefik/dynamic.yml.template` | `traefik/dynamic/core.yml` | **Regenerated.** `WG_IP_RANGE` + `HEADSCALE_IP_RANGE` become the `VPN_SOURCE_RANGE` YAML list used by the `sentinel_vpn*` middlewares; the api adds the saved extra trusted networks to it on start (`RestoreTrustedNetworks`). When SSL is on, `traefik/dynamic-ssl-routers.yml.template` is rendered and inserted before `services:` (via awk); a `PROXY_DOMAIN` block for rotation/webhook triggers is appended if set (`:2708-2803`). |
 | `traefik/dynamic-ssl-routers.yml.template` | (merged into `core.yml`) | Rendered only when `SSL_ENABLED=true`. |
 | `headscale/config/config.yaml.template` | `headscale/config/config.yaml` | **Regenerated.** `HEADSCALE_PUBLIC_URL`/`HEADSCALE_HOSTNAME` set to `https://SSL_DOMAIN` or `http://SERVER_IP` depending on SSL (`:2579-2590`). |
 | `adguard/conf/AdGuardHome.yaml.template` | `adguard/conf/AdGuardHome.yaml` | **PRESERVED after first install** — only generated when the output file does not exist (`:2808-2815`). It holds DNS rewrites, filter states, the password hash, query-log settings — all of which must survive re-runs. Log line: `· preserved`. |

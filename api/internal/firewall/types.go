@@ -57,12 +57,9 @@ type Service struct {
 // Config holds firewall configuration
 type Config struct {
 	EssentialPorts    []helper.EssentialPort `json:"-"`
-	IgnoreNetworks    []string               `json:"ignoreNetworks"`
 	MaxAttempts       int                    `json:"maxAttempts"`
 	DataDir           string                 `json:"-"`
 	WgPort            int                    `json:"-"`
-	WgIPPrefix        string                 `json:"-"`
-	HeadscaleIPPrefix string                 `json:"-"`
 	JailCheckInterval int                    `json:"-"`
 	CleanupInterval   int                    `json:"-"`
 	DNSLookupTimeout  int                    `json:"-"`

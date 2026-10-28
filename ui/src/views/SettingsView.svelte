@@ -85,6 +85,8 @@
     dashboardEnabled: true
   })
   let originalTraefik = $state(null)
+  // The VPN ranges: always in the allow-list, shown locked (the server refuses to drop them anyway)
+  let lockedRanges = $state([])
 
   // VPN-only mode: "off", "403", or "silent"
   let vpnOnlyMode = $state('off')
@@ -246,6 +248,7 @@
           newIP: '',
           dashboardEnabled: traefikConfig.dashboardEnabled !== false
         }
+        lockedRanges = traefikConfig.lockedRanges || []
         originalTraefik = {
           rateLimitAverage: traefikForm.rateLimitAverage,
           rateLimitBurst: traefikForm.rateLimitBurst,
@@ -1708,7 +1711,8 @@
 
           <!-- IP Allowlist - Full width -->
           <div class="border-t border-border pt-3">
-            <h4 class="text-xs font-medium text-foreground mb-2">Sentinel VPN Middleware</h4>
+            <h4 class="text-xs font-medium text-foreground mb-0.5">Sentinel VPN Middleware</h4>
+            <p class="text-[10px] text-muted-foreground mb-2">Who can open the panel in VPN-only mode. Also never auto-banned. The VPN ranges are always included.</p>
             <Input
               type="text"
               bind:value={traefikForm.newIP}
@@ -1723,7 +1727,11 @@
                 {#each traefikForm.ipAllowlist as ip}
                   <div class="flex items-center gap-1 px-2 py-0.5 bg-muted rounded text-xs">
                     <code>{ip}</code>
-                    <button type="button" onclick={() => removeTraefikIP(ip)} class="p-0.5 hover:text-destructive cursor-pointer" title="Remove" aria-label="Remove {ip}"><Icon name="x" size={12} /></button>
+                    {#if lockedRanges.includes(ip)}
+                      <span class="p-0.5 text-muted-foreground" title="VPN range, always included" aria-label="{ip} is a VPN range, always included"><Icon name="lock" size={12} /></span>
+                    {:else}
+                      <button type="button" onclick={() => removeTraefikIP(ip)} class="p-0.5 hover:text-destructive cursor-pointer" title="Remove" aria-label="Remove {ip}"><Icon name="x" size={12} /></button>
+                    {/if}
                   </div>
                 {/each}
               </div>

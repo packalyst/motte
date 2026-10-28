@@ -3097,12 +3097,16 @@ if [ -f "traefik/dynamic.yml.template" ]; then
     # Create dynamic config directory for Traefik
     mkdir -p traefik/dynamic
 
-    # Convert IGNORE_NETWORKS from comma-separated to YAML list format
-    IFS=',' read -ra NETS <<< "$IGNORE_NETWORKS"
+    # VPN-only allow-list: the VPN ranges (always trusted, locked in Settings). The api adds the
+    # extra trusted networks saved from Settings (first seeded from IGNORE_NETWORKS) when it starts.
     VPN_SOURCE_RANGE=""
-    for net in "${NETS[@]}"; do
-        VPN_SOURCE_RANGE+="            - \"$net\""$'\n'
+    for net in "$WG_IP_RANGE" "$HEADSCALE_IP_RANGE"; do
+        [ -n "$net" ] && VPN_SOURCE_RANGE+="            - \"$net\""$'\n'
     done
+    if [ -z "$VPN_SOURCE_RANGE" ]; then
+        echo -e "${RED}ERROR: WG_IP_RANGE and HEADSCALE_IP_RANGE are both empty — the VPN-only list would be empty${NC}"
+        exit 1
+    fi
     export VPN_SOURCE_RANGE="${VPN_SOURCE_RANGE%$'\n'}"  # Remove trailing newline
 
     # Generate base dynamic config (core.yml)

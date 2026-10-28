@@ -88,6 +88,9 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
+	// Trusted networks (VPN ranges + the admin's extras) before the firewall jails start reading them.
+	settings.LoadTrustedNetworks()
+
 	// Initialize encryption (must be before services that use encryption)
 	helper.InitEncryption()
 	if helper.WeakEncryptionKey {
@@ -307,6 +310,8 @@ func main() {
 			return settings.GetSetting("vpn_only_mode")
 		}
 
+		traefik.PersistTrustedNetworks = settings.SetTrustedNetworks
+
 		// L7 firewall-block toggle persistence (same dependency-inversion pattern).
 		traefik.PersistFWBlock = settings.SetTraefikFWBlock
 		traefik.LoadFWBlock = func() (bool, error) { return settings.GetTraefikFWBlock(), nil }
@@ -315,6 +320,7 @@ func main() {
 		// core.yml from template (which wipes any middleware the user previously
 		// attached via the UI toggle).
 		traefikSvc.RestoreVPNOnlyMode()
+		traefikSvc.RestoreTrustedNetworks()
 
 		log.Println("Traefik service registered")
 	}
@@ -580,9 +586,12 @@ func main() {
 				flSvc.ReloadFromSettings()
 				done = append(done, "fleet")
 			}
+			// The restored trusted networks: into memory for the jails, then into Traefik below.
+			settings.LoadTrustedNetworks()
 			// Domain routes and the L7 block setting come from the database: write them to Traefik.
 			if traefikSvc != nil {
 				traefikSvc.RestoreFWBlock(settings.GetTraefikFWBlock())
+				traefikSvc.RestoreTrustedNetworks()
 				done = append(done, "domains")
 			}
 			return done

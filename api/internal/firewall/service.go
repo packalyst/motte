@@ -60,12 +60,9 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 		nft:          nftSvc,
 		config: Config{
 			EssentialPorts:    helper.BuildEssentialPorts(),
-			IgnoreNetworks:    helper.ParseStringList(helper.GetEnv("IGNORE_NETWORKS")),
 			MaxAttempts:       fwCfg.MaxAttempts,
 			DataDir:           dataDir,
 			WgPort:            helper.GetEnvInt("WG_PORT"),
-			WgIPPrefix:        helper.ExtractIPPrefix(helper.GetEnv("WG_IP_RANGE")),
-			HeadscaleIPPrefix: helper.ExtractIPPrefix(helper.GetEnv("HEADSCALE_IP_RANGE")),
 			JailCheckInterval: fwCfg.JailCheckIntervalSec,
 			CleanupInterval:   fwCfg.CleanupIntervalMin,
 			DNSLookupTimeout:  fwCfg.DNSLookupTimeoutSec,

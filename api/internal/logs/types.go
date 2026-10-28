@@ -83,16 +83,14 @@ type LogEntry struct {
 
 // Config holds logs service configuration
 type Config struct {
-	TraefikLogPath    string
-	AdGuardLogPath    string
-	AdGuardConfPath   string // AdGuardHome.yaml: names the blocklists a DNS rule came from
-	KernLogPath       string
-	WgIPPrefix        string
-	HeadscaleIPPrefix string
-	MaxEntries        int
-	CleanupInterval   int // minutes
-	CountryInterval   int // minutes
-	CountryBatchSize  int
+	TraefikLogPath   string
+	AdGuardLogPath   string
+	AdGuardConfPath  string // AdGuardHome.yaml: names the blocklists a DNS rule came from
+	KernLogPath      string
+	MaxEntries       int
+	CleanupInterval  int // minutes
+	CountryInterval  int // minutes
+	CountryBatchSize int
 }
 
 // WatcherStatus represents the status of a watcher

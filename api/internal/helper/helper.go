@@ -75,20 +75,6 @@ func ParseStringList(s string) []string {
 	return items
 }
 
-// ExtractIPPrefix extracts the first two octets from a CIDR (e.g., "100.65.0.0/16" -> "100.65.")
-func ExtractIPPrefix(cidr string) string {
-	parts := strings.Split(cidr, "/")
-	if len(parts) < 1 {
-		return ""
-	}
-	ip := parts[0]
-	octets := strings.Split(ip, ".")
-	if len(octets) >= 2 {
-		return octets[0] + "." + octets[1] + "."
-	}
-	return ""
-}
-
 // SessionToken returns the caller's session token: from the HttpOnly session cookie (set
 // after login) when present, otherwise from an Authorization: Bearer header (for non-browser
 // API clients). The cookie path is CSRF-guarded by the router's same-origin check together

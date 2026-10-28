@@ -183,14 +183,12 @@ func (w *ConntrackWatcher) processLine(line string, onClose bool) {
 
 	peerIP := srcs[0][1] // orig src = the VPN client
 	destIP := dsts[0][1] // orig dst = the destination
-	if !hasPrefix(peerIP, w.config.WgIPPrefix) && !hasPrefix(peerIP, w.config.HeadscaleIPPrefix) {
+	if !helper.IsVPNIP(net.ParseIP(peerIP)) {
 		return
 	}
 	// Skip generic LAN/private destinations, but keep VPN-internal ones (other
 	// peers / internal services) so split-tunnel traffic is still recorded.
-	if helper.IsNonPublicIP(net.ParseIP(destIP)) &&
-		!hasPrefix(destIP, w.config.WgIPPrefix) &&
-		!hasPrefix(destIP, w.config.HeadscaleIPPrefix) {
+	if dest := net.ParseIP(destIP); helper.IsNonPublicIP(dest) && !helper.IsVPNIP(dest) {
 		return
 	}
 
@@ -260,9 +258,4 @@ func (w *ConntrackWatcher) processLine(line string, onClose bool) {
 		w.processed.Add(1)
 		w.lastError.Store("")
 	}
-}
-
-// hasPrefix is a tiny helper to avoid importing strings just for one call.
-func hasPrefix(s, prefix string) bool {
-	return prefix != "" && len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }

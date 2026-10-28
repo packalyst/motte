@@ -43,16 +43,14 @@ func New() (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	config := Config{
-		TraefikLogPath:    helper.GetEnv("TRAEFIK_LOGS"),
-		AdGuardLogPath:    helper.GetEnv("ADGUARD_LOGS"),
-		AdGuardConfPath:   helper.GetEnvOptional("ADGUARD_CONFIG", ""),
-		KernLogPath:       helper.GetEnv("KERN_LOG"),
-		WgIPPrefix:        helper.GetEnvOptional("WG_IP_PREFIX", "10.8.0."),
-		HeadscaleIPPrefix: helper.GetEnvOptional("HEADSCALE_IP_PREFIX", "100.64."),
-		MaxEntries:        helper.GetEnvInt("LOGS_MAX_ENTRIES"),
-		CleanupInterval:   helper.GetEnvInt("LOGS_CLEANUP_INTERVAL"),
-		CountryInterval:   helper.GetEnvInt("LOGS_COUNTRY_INTERVAL"),
-		CountryBatchSize:  helper.GetEnvInt("LOGS_COUNTRY_BATCH"),
+		TraefikLogPath:   helper.GetEnv("TRAEFIK_LOGS"),
+		AdGuardLogPath:   helper.GetEnv("ADGUARD_LOGS"),
+		AdGuardConfPath:  helper.GetEnvOptional("ADGUARD_CONFIG", ""),
+		KernLogPath:      helper.GetEnv("KERN_LOG"),
+		MaxEntries:       helper.GetEnvInt("LOGS_MAX_ENTRIES"),
+		CleanupInterval:  helper.GetEnvInt("LOGS_CLEANUP_INTERVAL"),
+		CountryInterval:  helper.GetEnvInt("LOGS_COUNTRY_INTERVAL"),
+		CountryBatchSize: helper.GetEnvInt("LOGS_COUNTRY_BATCH"),
 	}
 
 	// Guard against bad/zero env values: a zero interval panics time.NewTicker,

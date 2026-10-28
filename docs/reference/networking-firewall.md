@@ -241,7 +241,7 @@ See [data-model.md](data-model.md) for the `vpn_clients` / `vpn_acl_rules` / `vp
 | Middleware | Config | Used by |
 |---|---|---|
 | `sentinel_fw_block` | `denyListURL: …/internal/blocklist`, `denyCacheTTL: 300`, `blockReportURL: …/internal/l7block`, `errorMode: silent` | `ui`, `unified-api` routers — enforces the panel's block list at L7 |
-| `sentinel_vpn` / `sentinel_vpn_silent` | `ipFilter.sourceRange: <VPN ranges>` | `headscale-api-blocked` — VPN-only access |
+| `sentinel_vpn` / `sentinel_vpn_silent` | `ipFilter.sourceRange: <trusted networks>` (VPN ranges + Settings extras; a list with no valid entry blocks everyone) | `headscale-api-blocked` — VPN-only access |
 | `sentinel_drop` | `sourceRange: ["0.0.0.0/32"]`, silent | `catchall-drop`, `block-pwa-catchall` — silently close unknown domains |
 | `sentinel_robots` / `sentinel_deny_agents` | remote AI-bot / crawler lists | optional bot blocking |
 
