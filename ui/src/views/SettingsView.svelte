@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, apiPostBlob, generateAdguardCredentials, confirm, stepUpConfirm, hashParam, setHashParam, currentUser, hasRole } from '../stores/app.js'
+  import { theme, toast, apiGet, apiPost, apiPut, apiDelete, apiPostBlob, generateAdguardCredentials, confirm, stepUpConfirm, withStepUp, STEPUP_CANCELLED, hashParam, setHashParam, currentUser, hasRole } from '../stores/app.js'
   import { withTz, setDisplayTimezone } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
@@ -612,7 +612,9 @@
   async function removeRouter() {
     routerLoading = true
     try {
-      await apiDelete('/api/vpn/router')
+      const res = await withStepUp((extra) => apiDelete('/api/vpn/router', extra),
+        { title: 'Remove VPN router', message: 'Headscale clients lose the routes it advertises.', confirmText: 'Remove', variant: 'destructive' })
+      if (res === STEPUP_CANCELLED) return
       toast('VPN Router removed', 'success')
       await loadRouterStatus()
     } catch (e) {
@@ -847,7 +849,9 @@
 
     changingSSH = true
     try {
-      const res = await apiPost('/api/fw/ssh', { port })
+      const res = await withStepUp((extra) => apiPost('/api/fw/ssh', { port, ...extra }),
+        { title: 'Change SSH port', message: `SSH moves to port ${port}; the old port closes once SSH answers on the new one.`, confirmText: 'Change port' })
+      if (res === STEPUP_CANCELLED) return
       if (res.newPort) {
         toast(`SSH port changed from ${res.oldPort} to ${res.newPort}`, 'success')
         sshPort = res.newPort

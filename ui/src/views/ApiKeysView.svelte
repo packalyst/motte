@@ -1,5 +1,5 @@
 <script>
-  import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import { parseDate, formatDateShort, formatExpiryDate, isExpired, getDaysUntilExpiry, withTz } from '$lib/utils/format.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import Icon from '../components/Icon.svelte'
@@ -50,7 +50,9 @@
       const expiration = new Date()
       expiration.setDate(expiration.getDate() + parseInt(newExpiration))
 
-      const res = await apiPost('/api/hs/apikeys', { expiration: expiration.toISOString() })
+      const res = await withStepUp((extra) => apiPost('/api/hs/apikeys', { expiration: expiration.toISOString(), ...extra }),
+        { title: 'Create API key', message: 'An API key gives full control of Headscale.', confirmText: 'Create' })
+      if (res === STEPUP_CANCELLED) return
       newKey = res.apiKey
       toast('API key created', 'success')
       loader.reload()
