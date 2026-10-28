@@ -95,10 +95,13 @@ func sendEmail(to, subject, body string) error {
 	defer client.Close()
 
 	if c.TLS == "starttls" {
-		if ok, _ := client.Extension("STARTTLS"); ok {
-			if err := client.StartTLS(&tls.Config{ServerName: c.Host}); err != nil {
-				return err
-			}
+		// Never fall back to plaintext: STARTTLS was asked for, so a server that doesn't offer it
+		// (or a man-in-the-middle stripping it) gets nothing.
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("the mail server doesn't offer STARTTLS: use TLS (port 465), or choose no encryption")
+		}
+		if err := client.StartTLS(&tls.Config{ServerName: c.Host}); err != nil {
+			return err
 		}
 	}
 	if c.User != "" {

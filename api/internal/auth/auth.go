@@ -389,6 +389,17 @@ func parseTime(s string) time.Time {
 	return time.Time{}
 }
 
+// auditName is the name a failed or blocked login is logged under: the typed username only when
+// such a user exists, so a password pasted into the username field never lands in the audit log.
+func (s *Service) auditName(typed string) string {
+	name := strings.ToLower(strings.TrimSpace(typed))
+	var one int
+	if name != "" && s.db.QueryRow("SELECT 1 FROM users WHERE username = ?", name).Scan(&one) == nil {
+		return name
+	}
+	return "(unknown user)"
+}
+
 // HTTP Handlers
 
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -404,7 +415,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// of concurrent attempts can't slip past a stale "under the limit" read.
 	if err := loginLimiter.reserve(clientIP); err != nil {
 		events.Audit("auth", "login_blocked", events.SeverityWarning,
-			strings.ToLower(strings.TrimSpace(req.Username)), clientIP,
+			s.auditName(req.Username), clientIP,
 			"Login temporarily blocked: too many failed attempts")
 		tooManyAttempts(w, err)
 		return
@@ -420,7 +431,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		// Genuine failure — the slot was already counted by loginLimiter.reserve above.
 		events.Audit("auth", "login_failed", events.SeverityWarning,
-			strings.ToLower(strings.TrimSpace(req.Username)), clientIP,
+			s.auditName(req.Username), clientIP,
 			fmt.Sprintf("Login failed: %s", err.Error()))
 		if tooManyAttempts(w, err) {
 			return

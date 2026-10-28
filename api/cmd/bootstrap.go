@@ -8,37 +8,29 @@ import (
 	"api/internal/settings"
 )
 
-// bootstrapAdGuardPasswordFromFile is a one-shot migration for first-install:
-// manage.sh writes the generated plaintext AdGuard admin password to a
-// bootstrap file inside the shared bind mount. On first boot, we consume it —
-// encrypt it into the panel's settings database — then delete the file so the plaintext
-// no longer sits on disk.
+// bootstrapAdGuardPasswordFromFile hands the AdGuard admin password from setup to the panel:
+// manage.sh writes the generated plaintext to a bootstrap file in the shared bind mount, together
+// with its hash in AdGuard's own config. The panel encrypts it into its settings database, then
+// deletes the file so the plaintext no longer sits on disk.
 //
-// Idempotent: if the settings DB already has an adguard_password, or the
-// bootstrap file is absent, this is a no-op.
+// The file is always the newest password (setup writes it alongside AdGuard's config), so it
+// replaces a stored one: after a re-install over an existing database the panel would otherwise
+// keep the old password while AdGuard has the new one, and the file would stay on disk. If saving
+// fails, the file is kept so the next start retries. No file: nothing to do.
 func bootstrapAdGuardPasswordFromFile(path string) {
-	if _, err := settings.GetSettingEncrypted("adguard_password"); err == nil {
-		return
-	}
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
 
-	pw := strings.TrimSpace(string(data))
-	if pw == "" {
-		_ = os.Remove(path)
-		return
-	}
-
-	if err := settings.SetSettingEncrypted("adguard_password", pw); err != nil {
-		log.Printf("Warning: failed to bootstrap adguard_password from %s: %v", path, err)
-		return
-	}
-
-	if u, _ := settings.GetSetting("adguard_username"); u == "" {
-		_ = settings.SetSetting("adguard_username", "admin")
+	if pw := strings.TrimSpace(string(data)); pw != "" {
+		if err := settings.SetSettingEncrypted("adguard_password", pw); err != nil {
+			log.Printf("Warning: failed to bootstrap adguard_password from %s: %v", path, err)
+			return
+		}
+		if u, _ := settings.GetSetting("adguard_username"); u == "" {
+			_ = settings.SetSetting("adguard_username", "admin")
+		}
 	}
 
 	if err := os.Remove(path); err != nil {

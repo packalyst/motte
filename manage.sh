@@ -900,15 +900,16 @@ rotate_key() {
     echo -e "${GREEN}✓ Rotation complete and verified.${NC} Every secret re-encrypted under the new key."
     echo ""
     echo -e "The backup at ${CYAN}$backup_dir${NC} holds the pre-rotation database and the OLD key."
-    read -r -p "Delete this backup now? [y/N] " del
+    # Verified under the new key, so the old key is no longer needed: deleting is the default.
+    read -r -p "Delete this backup now? [Y/n] " del
     case "$del" in
-        y|Y)
-            rm -rf "$backup_dir"
-            echo -e "  ${GREEN}✓${NC} Backup deleted — no leftovers."
-            ;;
-        *)
+        n|N)
             echo -e "  ${YELLOW}Kept${NC} (it contains the old key). Delete it once you're confident:"
             echo -e "    rm -rf $backup_dir"
+            ;;
+        *)
+            rm -rf "$backup_dir"
+            echo -e "  ${GREEN}✓${NC} Backup deleted — no leftovers."
             ;;
     esac
 }
@@ -2164,6 +2165,7 @@ if [ ! -f ".env" ]; then
     echo -e "${YELLOW}No .env file found. Creating from template...${NC}"
     if [ -f ".env.example" ]; then
         cp .env.example .env
+        chmod 600 .env # holds every secret: root only
         echo -e "${GREEN}✓ Created .env from .env.example${NC}"
     else
         echo -e "${RED}ERROR: .env.example not found${NC}"
