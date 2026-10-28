@@ -31,7 +31,7 @@ releases will be tagged as they are cut.
   it over to Motte, keeping a backup.
 - **`motte cleanup`** and an offer after each interactive build to free the Docker build cache.
 - **Factory reset** (menu option 8, confirmed by typing `RESET`) now removes everything the install
-  created: all five firewall tables, the panel-created containers, the WireGuard interface and the
+  created: all four firewall tables, the panel-created containers, the WireGuard interface and the
   host files, which the old "Clean" option left behind.
 
 - **DHCP / managed private networks** — the panel can gateway an isolated LAN segment: a
@@ -102,6 +102,11 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **panel API port** (8081): no longer reachable from the internet. It answered in plain HTTP and
+  skipped what Traefik adds (VPN-only, rate limits, the block list); browsers never needed it, since
+  the panel opens through Traefik on 80/443 by domain or by IP. It still answers from the server,
+  Traefik, the VPN and the LAN, and can't be made public in Ports. The "Direct IP Access" switch is
+  gone, along with its `motte_panel_access` table.
 - **Headscale join keys**: a viewer could read the join key each Headscale device registered with
   from the client, device and route lists (Headscale sends it with every device), and a reusable
   one lets anyone add a device to the VPN. The panel now removes it before passing device data on
@@ -141,7 +146,7 @@ releases will be tagged as they are cut.
   public. As a result, the outbound traffic log and the Phone-home card treat the whole VPN overlay
   (100.64.0.0/10) as internal, and a DHCP network that spills into public space (`10.0.0.0/7`) is
   refused.
-- **firewall**: the Cloudflare-only and API-port gates keep their last-known state on a transient
+- **firewall**: the Cloudflare-only gate keeps its last-known state on a transient
   DB read error instead of failing open; global IPv6 is dropped on any interface, not just WAN.
 - **setup**: the first-run Headscale connection test blocks SSRF to link-local/metadata even when
   reached via a hostname that resolves there.

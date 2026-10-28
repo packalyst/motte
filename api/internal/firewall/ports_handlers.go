@@ -26,6 +26,7 @@ type PortEntry struct {
 	Source    string `json:"source,omitempty"`
 	Scope     string `json:"scope"`    // "public" (reachable on the WAN) or "private" (VPN/LAN only)
 	Lockable  bool   `json:"lockable"` // false for Docker-published ports — reachability is Docker's, not our set's
+	Pinned    bool   `json:"pinned"`   // always private (the panel API): the scope can't be changed
 }
 
 // handleGetPorts returns allowed ports (from firewall_entries + Docker)
@@ -51,6 +52,7 @@ func (s *Service) handleGetPorts(w http.ResponseWriter, r *http.Request) {
 		}
 		p.Port, _ = strconv.Atoi(portStr)
 		p.Lockable = true // a firewall_entries port rides our allow-sets, so the scope toggle is effective
+		p.Pinned = helper.AlwaysPrivatePort(p.Port, p.Protocol)
 		ports = append(ports, p)
 		portMap[fmt.Sprintf("%d-%s", p.Port, p.Protocol)] = true
 	}
@@ -125,7 +127,7 @@ func (s *Service) handleAddPort(w http.ResponseWriter, r *http.Request) {
 
 // handleSetPortScope flips an allowed port between 'public' (reachable on the WAN) and 'private'
 // (VPN/LAN only). Essential ports are intentionally scopable — hiding admin UIs/DNS from the
-// internet is the whole point. Only affects firewall_entries ports; a Docker-published port isn't
+// internet is the whole point — except the panel API, which is always private. Only affects firewall_entries ports; a Docker-published port isn't
 // in that table, so it matches 0 rows (its reachability is Docker's, not ours).
 func (s *Service) handleSetPortScope(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -146,6 +148,10 @@ func (s *Service) handleSetPortScope(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Protocol == "" {
 		req.Protocol = nftables.ProtocolTCP
+	}
+	if req.Scope == "public" && helper.AlwaysPrivatePort(req.Port, req.Protocol) {
+		router.JSONError(w, "the panel API port is always private: reach the panel through your domain or the server's IP on 80/443", http.StatusBadRequest)
+		return
 	}
 	res, err := s.db.Exec(`UPDATE firewall_entries SET scope = ?
 		WHERE entry_type = 'port' AND action = 'allow' AND value = ? AND protocol = ?`,

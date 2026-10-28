@@ -137,7 +137,8 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 	return svc, nil
 }
 
-// ensureEssentialPorts adds essential ports to firewall_entries if not present
+// ensureEssentialPorts adds essential ports to firewall_entries if not present, and keeps an
+// always-private port (the panel API) stored as private so the Ports list shows it truthfully.
 func (s *Service) ensureEssentialPorts() error {
 	for _, ep := range s.config.EssentialPorts {
 		_, err := s.db.Exec(`INSERT OR IGNORE INTO firewall_entries
@@ -146,6 +147,12 @@ func (s *Service) ensureEssentialPorts() error {
 			strconv.Itoa(ep.Port), ep.Protocol, ep.Service)
 		if err != nil {
 			return fmt.Errorf("failed to add essential port %d: %v", ep.Port, err)
+		}
+		if helper.AlwaysPrivatePort(ep.Port, ep.Protocol) {
+			if _, err := s.db.Exec(`UPDATE firewall_entries SET scope = 'private'
+				WHERE entry_type = 'port' AND value = ? AND protocol = ?`, strconv.Itoa(ep.Port), ep.Protocol); err != nil {
+				return fmt.Errorf("failed to keep port %d private: %v", ep.Port, err)
+			}
 		}
 	}
 	return nil

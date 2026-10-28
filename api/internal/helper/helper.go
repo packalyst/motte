@@ -91,6 +91,24 @@ func SessionToken(r *http.Request) string {
 	return ""
 }
 
+// APIPort returns the panel API's port (API_PORT), if valid.
+func APIPort() (int, bool) {
+	p, err := strconv.Atoi(strings.TrimSpace(os.Getenv("API_PORT")))
+	if err != nil || p < 1 || p > 65535 {
+		return 0, false
+	}
+	return p, true
+}
+
+// AlwaysPrivatePort reports whether a port must never be reachable from the internet, whatever
+// its stored scope: the panel API (API_PORT, plain HTTP). Browsers reach it through Traefik on
+// 80/443, which is where VPN-only, rate limits and the block list apply; Traefik, the server
+// itself, the VPN and the LAN still reach it directly.
+func AlwaysPrivatePort(port int, protocol string) bool {
+	api, ok := APIPort()
+	return ok && port == api && (protocol == "tcp" || protocol == "both")
+}
+
 // EssentialPort represents a port with its service name
 type EssentialPort struct {
 	Port     int
@@ -109,16 +127,20 @@ type essentialPortJSON struct {
 //
 // Sources, in order:
 //  1. Every port the host's SSH server listens on (SSHPorts — always).
-//  2. Ports listed in a JSON file — either at ESSENTIAL_PORTS_FILE (env
+//  2. The panel API port (API_PORT), always private (see AlwaysPrivatePort).
+//  3. Ports listed in a JSON file — either at ESSENTIAL_PORTS_FILE (env
 //     override) or at DefaultEssentialPortsFile. Missing/unreadable/invalid
 //     JSON is a warning, not fatal — Docker discovery still runs later.
 //
-// Duplicates (same port+protocol) are collapsed; SSH always wins for that slot.
+// Duplicates (same port+protocol) are collapsed; earlier sources win for that slot.
 func BuildEssentialPorts() []EssentialPort {
 	ports := []EssentialPort{}
 
 	for _, sshPort := range SSHPorts() {
 		ports = append(ports, EssentialPort{Port: sshPort, Protocol: "tcp", Service: "SSH"})
+	}
+	if api, ok := APIPort(); ok {
+		ports = append(ports, EssentialPort{Port: api, Protocol: "tcp", Service: "Panel API"})
 	}
 
 	path := GetEnvOptional("ESSENTIAL_PORTS_FILE", DefaultEssentialPortsFile)

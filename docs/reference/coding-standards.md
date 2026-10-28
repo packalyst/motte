@@ -91,7 +91,7 @@ Rules:
 ### 1.4 Naming
 
 - Exported constructors are `New…` returning the concrete type: `NewFirewallTable`
-  (`firewall.go:87`), `NewPanelAccessTable` (`panel_access.go:39`). A package with a single
+  (`firewall.go:87`), `NewCloudflareOnlyTable` (`cf_only.go`). A package with a single
   service uses plain `New()` (`nftables/service.go:25`).
 - Validators are `Validate…` (bool or error) and sanitizers are `Sanitize…`:
   `ValidateIdentifier`, `ValidateIPv4OrCIDR`, `SanitizeElement`, `SanitizeComment`
@@ -110,8 +110,7 @@ Rules:
   emulate:
   - `firewall.go:121-123` — why an IPv6 value is skipped (it would "wedge the whole atomic
     table").
-  - `panel_access.go:60-63` — the `FAIL OPEN` block spells out "we must NEVER risk locking
-    the panel out of its own management plane."
+  - `cf_only.go` — the `FAIL OPEN` block spells out "never risk dropping all web access."
   - `script.go:88-90` — why `auto-merge` must be pulled out of the flags slice.
   - `helper/safehttp.go:44-46` — why CGNAT/`0.0.0.0/8` are blocked beyond `IsPrivate()`.
 - **Leave `NOTE:` / warnings for the next editor** when an ordering or a scope is subtle:
@@ -136,7 +135,7 @@ Rules:
   `time.AfterFunc` timer (`service.go:16`, `:79-113`) so N rapid edits produce one atomic
   `nft` apply.
 - Prefer small pure helpers that are independently testable: `keepIPv4CIDRs`
-  (`firewall.go:34`), `validCIDROr` (`panel_access.go:143`), `splitCIDRs` (`cf_only.go:104`).
+  (`firewall.go:34`), `validCIDROr` and `splitCIDRs` (`cf_only.go`).
 
 ### 1.7 Startup wiring (`api/cmd/main.go`)
 
@@ -181,9 +180,9 @@ element deletes-and-fails the whole table, so this code has extra rules
 - **Emit shared rule blocks from one function** so two chains can't drift:
   `allowAndSaddrDropRules()` (`firewall.go:376-389`) is used by both the input and forward
   chains.
-- A dedicated concern = a dedicated, clearly-named table. `motte_panel_access` and
-  `motte_cf_only` are separate tables, not rules bolted onto `motte_firewall`, so
-  `nft list ruleset` is self-documenting (`panel_access.go:13-31`).
+- A dedicated concern = a dedicated, clearly-named table. `motte_cf_only` and
+  `motte_vpn_acl` are separate tables, not rules bolted onto `motte_firewall`, so
+  `nft list ruleset` is self-documenting (`cf_only.go`, top-of-file comment).
 
 ---
 
@@ -196,16 +195,17 @@ These are invariants, not preferences. Breaking one is a security bug even if te
 The management plane must never be dropped by rules we can't fully trust. When a restricting
 table can't safely determine its inputs, it emits an **empty table** (no filtering):
 
-- `panel_access.go:60-66`: if direct access is allowed, or the port / trusted sources can't
-  be determined, emit an empty shell. Comment: "we must NEVER risk locking the panel out of
-  its own management plane."
-- `cf_only.go:49-53`: same stance for the Cloudflare-only web toggle.
-- Any read error on the enabling setting returns "don't restrict" (`panel_access.go:97-101`,
-  `cf_only.go:92-100`).
-- **`trustedPanelSources()` always includes loopback** and the Docker/WG/Headscale ranges
+- `cf_only.go`: if the Cloudflare-only toggle is off, or the Cloudflare list is empty, emit
+  an empty shell. Comment: "never risk dropping all web access."
+- A missing enabling setting means "don't restrict"; a transient read error keeps the
+  last-known state (`cf_only.go`, `restrictEnabled`).
+- **`trustedAdminSources()` always includes loopback** and the Docker/WG/Headscale ranges
   with hardcoded fallbacks matching `.env.example`, so a garbled env var can't drop a trusted
-  source (`panel_access.go:113-141`). This is pinned by a test
-  (`panel_access_test.go:38-53`).
+  source (`cf_only.go`). This is pinned by a test
+  (`TestTrustedAdminSourcesAlwaysHasLoopback`).
+- Private ports fall back to loopback, the VPN interfaces and the Docker network when the
+  WAN can't be detected, so Traefik keeps reaching the always-private panel API
+  (`privatePortRules`, `firewall.go`).
 - The Traefik L7 block-list is fail-open too: "if the list can't be fetched, it blocks no
   one, so it can't lock you out" (`traefik/dynamic.yml.template:176`).
 
@@ -294,8 +294,8 @@ unspecified, **plus CGNAT `100.64.0.0/10` and `0.0.0.0/8`** at dial time
 
 **Extract a shared helper the moment logic would be copied.** Concrete precedents:
 
-- `trustedPanelSources()` is defined once (`panel_access.go:120`) and reused by both the
-  panel-access and cloudflare-only tables (`cf_only.go:55`) plus its test.
+- `helper.AlwaysPrivatePort()` is the one rule for "the panel API port is never public", used
+  by the firewall build, essential-port seeding, the Ports list and the scope endpoint.
 - `DockerLogConfig()` (`docker_client.go:119`) centralizes bounded json-file logging so every
   panel-created container (turbotunnels `turbotunnels.go:213`, vpn-router `vpn/router.go:256`)
   gets the same log bounds from the same env vars — added specifically because ad-hoc
@@ -386,9 +386,9 @@ conventions:
 Tests are **table-driven, behavior-pinning, and dependency-light** — they lock the *security
 invariants*, not implementation detail. Run with `go test ./...` in `api/` and `agent/`.
 
-- **Pin the safety-critical behavior explicitly.** `panel_access_test.go:10-24` asserts the
-  fail-OPEN shape ("empty table must contain no drop rule") and that loopback is always
-  trusted (`:38-53`). `TestValidCIDROr` (`:26-37`) is a classic table of
+- **Pin the safety-critical behavior explicitly.** `TestCloudflareOnlyBuild_FailsOpen` asserts
+  the fail-OPEN shape and `TestTrustedAdminSourcesAlwaysHasLoopback` that loopback is always
+  trusted. `TestValidCIDROr` is a classic table of
   input→expected-fallback cases.
 - **Firewall ordering/lint tests:** `firewall_asn_test.go` checks that ASN sets are emitted
   and that rules appear in the correct order within each chain

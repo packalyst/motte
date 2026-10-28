@@ -1171,7 +1171,7 @@ remove_motte_state() {
     [ -d "$router_data" ] && rm -rf "${router_data:?}"/*
 
     echo -e "${YELLOW}Removing firewall tables, forwarding rules and the WireGuard interface...${NC}"
-    for t in motte_firewall motte_vpn_acl motte_cf_only motte_panel_access motte_dhcp_net; do
+    for t in motte_firewall motte_vpn_acl motte_cf_only motte_dhcp_net; do
         sudo nft delete table inet "$t" 2>/dev/null && echo -e "  ${GREEN}✓${NC} inet $t"
     done
     # The forwarding and NAT rules WireGuard set up through iptables.
@@ -3399,7 +3399,7 @@ else
 fi
 echo -e "  ${GREEN}Traefik:${NC}     http://${SERVER_IP}:${TRAEFIK_PORT}"
 echo -e "  ${GREEN}AdGuard:${NC}     http://${SERVER_IP}:${ADGUARD_PORT}"
-echo -e "  ${GREEN}API:${NC}         http://${SERVER_IP}:${API_PORT}"
+echo -e "  ${GREEN}API:${NC}         http://${SERVER_IP}:${API_PORT} ${CYAN}(VPN and LAN only)${NC}"
 echo ""
 
 if [ "$SSL_ENABLED" = "true" ]; then

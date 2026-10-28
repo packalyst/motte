@@ -18,15 +18,16 @@ Rather than one monolithic table, the panel registers **four independent `inet` 
 
 | Table | File | Purpose | Hook priority (kernel eval order) | Base-chain policy | Composition |
 |---|---|---|---|---|---|
-| `motte_panel_access` | `api/internal/nftables/panel_access.go` | Close the API port (8081) to the public when `api_direct_access=off` | `input` **priority -10** | `accept` | drop-subset-terminal |
 | `motte_cf_only` | `api/internal/nftables/cf_only.go` | Restrict web ports 80/443 to Cloudflare edge (+ trusted) when `web_cloudflare_only=on` | `input` **and** `forward` **priority -10** | `accept` | drop-subset-terminal |
 | `motte_firewall` | `api/internal/nftables/firewall.go` | Main firewall: port allow-list, IP/range/country/ASN block+allow, per-peer WAN block, IPv6 drop, MSS clamp | `input` **priority 0**, `forward` **-1**, `output` **0** | `input`: **drop**; `forward`/`output`: **accept** | default-drop (input) / default-accept + explicit drops (forward, output) |
 | `motte_vpn_acl` | `api/internal/nftables/vpn_acl.go` | Peer-to-peer isolation, per-peer ACL rules, virtual-IP gating | `forward` **priority 0** | `accept` | default-deny backstop drops |
 | `motte_dhcp_net` | `api/internal/dhcp/reachability.go` | Managed private-network reachability: which DHCP segments may reach the VPN (and vice-versa), plus optional internet egress. Approved devices are matched by IP + MAC; to the box itself a LAN device gets only DHCP and DNS until approved | `forward` + `input` (filter) + `postrouting` (nat) | `accept` | default-deny reachability; internet-egress **masquerade off by default** |
 
-The **struct `Priority()`** value (panel_access=5, cf_only=6, firewall=10, vpn_acl=20; `service.go` sorts by it) only orders the *emission* of tables into the combined apply loop. What actually orders **kernel evaluation** is the **chain hook priority** in each `type … hook … priority N` line. Lower = earlier. So both toggle tables sit at `-10` (before the main firewall's `input` at `0`); the vpn_acl `forward` chain sits at `0` (after the main firewall's `forward` at `-1`).
+The **struct `Priority()`** value (cf_only=6, firewall=10, vpn_acl=20; `service.go` sorts by it) only orders the *emission* of tables into the combined apply loop. What actually orders **kernel evaluation** is the **chain hook priority** in each `type … hook … priority N` line. Lower = earlier. So the toggle table sits at `-10` (before the main firewall's `input` at `0`); the vpn_acl `forward` chain sits at `0` (after the main firewall's `forward` at `-1`).
 
-**How they compose — why drop-subset, not accept:** `accept` in a base chain is **not terminal across tables** — another table's chain at the same hook still runs and can drop. A `drop` **is** terminal. So the two toggle tables never try to "accept" the API/web ports (that couldn't override the main firewall anyway); they only **add a `drop` for the untrusted subset**, which wins, and leave trusted traffic to be accepted by the main firewall's normal port allow-list. See the composition note in `panel_access.go` (top-of-file comment).
+**How they compose — why drop-subset, not accept:** `accept` in a base chain is **not terminal across tables** — another table's chain at the same hook still runs and can drop. A `drop` **is** terminal. So the toggle table never tries to "accept" the web ports (that couldn't override the main firewall anyway); it only **adds a `drop` for the untrusted subset**, which wins, and leaves trusted traffic to be accepted by the main firewall's normal port allow-list.
+
+**The panel API port (`API_PORT`, 8081) is always private:** it sits in `@allowed_tcp_ports_private` whatever its stored scope (`helper.AlwaysPrivatePort`), so it answers off the WAN only — the server itself, Traefik over the Docker network, the VPN and the LAN. Browsers never need it directly: the panel opens through Traefik on 80/443, by domain or by IP, where VPN-only, rate limits and the block list apply. The Ports list shows it with a fixed lock, and the scope endpoint refuses to make it public.
 
 Registration (`api/cmd/main.go:188-195`): `firewall` table is registered from `firewall.New` (`service.go:94`); the other three are registered directly in `main.go`. All go through `nftables.Service.RegisterTable`.
 
@@ -48,10 +49,10 @@ Registration (`api/cmd/main.go:188-195`): `firewall` table is registered from `f
 `api/internal/nftables/service.go`:
 - **Apply loop** (`ApplyAll`, line 116): snapshot the registered tables, sort by `Priority()`, and `applyTable` each in order. Any table error aborts the whole apply.
 - **Atomic replacement** (`applyTable`, line 138): the built script is prefixed with `delete table <family> <name>\n`. `nft flush table` only clears *chains*, **not set elements**, so a `delete table` before the new definition guarantees clean state. If the delete fails (table doesn't exist yet) it retries without the prefix.
-- **Reload** (`ApplyScript`, line 167): write the script to a temp file via `os.CreateTemp`, then `nft -f <file>`. `nft` parses the entire file and applies it as one transaction — either the whole table swaps in, or nothing changes and an error is returned. (The individual tables themselves also emit an idempotent `table …\ndelete table …\n\n` preamble — see panel_access/cf_only/vpn_acl — so a re-apply is always clean.)
+- **Reload** (`ApplyScript`, line 167): write the script to a temp file via `os.CreateTemp`, then `nft -f <file>`. `nft` parses the entire file and applies it as one transaction — either the whole table swaps in, or nothing changes and an error is returned. (The individual tables themselves also emit an idempotent `table …\ndelete table …\n\n` preamble — see cf_only/vpn_acl — so a re-apply is always clean.)
 - **Debounce** (`RequestApply`, line 79): callers request an apply; a 500 ms `AfterFunc` timer coalesces bursts (e.g. many blocks landing at once) into one reload, broadcasting `firewall:pending` → `firewall:applying` → `firewall:applied`/`firewall:error` over the `general_info` WebSocket channel.
 
-> **Note on `nft -c`:** the codebase does not run a separate `nft -c` (check-only) pre-flight pass in `ApplyScript`; the safety model is instead **input validation at every set/rule boundary** (§1.2) plus the atomic single-transaction `nft -f` (a bad script fails as a whole and leaves the previous ruleset intact). The tests do dump-and-lint the generated scripts (`dump_for_lint_test.go`, `firewall_asn_test.go`, `cf_only_test.go`, `panel_access_test.go`). *(If you were told the runtime shells out to `nft -c` — it does not in this tree; the equivalent guarantee comes from boundary validation + atomic apply. Flagging as a divergence from the brief.)*
+> **Note on `nft -c`:** the codebase does not run a separate `nft -c` (check-only) pre-flight pass in `ApplyScript`; the safety model is instead **input validation at every set/rule boundary** (§1.2) plus the atomic single-transaction `nft -f` (a bad script fails as a whole and leaves the previous ruleset intact). The tests do dump-and-lint the generated scripts (`dump_for_lint_test.go`, `firewall_asn_test.go`, `cf_only_test.go`). *(If you were told the runtime shells out to `nft -c` — it does not in this tree; the equivalent guarantee comes from boundary validation + atomic apply. Flagging as a divergence from the brief.)*
 
 ---
 
@@ -148,18 +149,11 @@ Safety in `blockIP`/`blockIPWithOptions` (`blocking.go:33`): IPv6 values are ski
 
 ---
 
-## 5. The two L3 access toggles
+## 5. The L3 access toggle
 
-Both are **fail-open**: if disabled, or if the code can't safely classify traffic, they emit an **empty shell table** so they can never drop the management plane. Both toggle-driven re-applies are wired through `settings.RequestFirewallApply` (`main.go:200`) so flipping the setting takes effect live.
+It is **fail-open**: if disabled, or if the code can't safely classify traffic, it emits an **empty shell table** so it can never drop the management plane. The re-apply is wired through `settings.RequestFirewallApply` so flipping the setting takes effect live.
 
-### 5.1 `api_direct_access` — close the API port (`motte_panel_access`)
-
-- **ON (default):** empty table — the API (port `API_PORT`, e.g. 8081) stays reachable by direct IP. Required before a domain is configured (IP is the only way in).
-- **OFF:** an `input` chain at **priority -10** (before the main firewall) that drops the API port from the public internet but **accepts it from trusted sources** first, then `limit rate 5/minute log prefix "PANEL_ACCESS_DROP: "` and `tcp dport <port> drop`.
-
-`restrictEnabled` is true **only** when the setting is explicitly `"off"`; a missing setting or any read error → don't restrict (safe default for a fresh, domain-less install). Also fails open if the port can't be parsed or the trusted list is empty.
-
-### 5.2 `web_cloudflare_only` — restrict 80/443 to Cloudflare (`motte_cf_only`)
+### 5.1 `web_cloudflare_only` — restrict 80/443 to Cloudflare (`motte_cf_only`)
 
 - **OFF (default):** empty shell — 80/443 open to everyone.
 - **ON:** **two** chains at **priority -10**, both accepting 80/443 from the trusted local sources + `::1`, then from `@cf_v4` / `@cf_v6` (the live Cloudflare set, §6), then `limit rate 5/minute log prefix "CF_ONLY_DROP: "` and dropping 80/443 from everything else. The shared rule builder is `cfRules(v4, v6, trusted, prefix)`:
@@ -168,9 +162,9 @@ Both are **fail-open**: if disabled, or if the code can't safely classify traffi
 
 `restrictEnabled` is true **only** when the setting is explicitly `"on"`. Fails open if the Cloudflare list is somehow empty (never risk dropping all web traffic). Enabling is gated by the panel on the domain being proxied through Cloudflare — persisted at setup as `BEHIND_CLOUDFLARE` and surfaced as `web_cloudflare_only_available` (see [security.md](security.md)).
 
-### 5.3 Trusted sources that are never dropped
+### 5.2 Trusted sources that are never dropped
 
-`trustedPanelSources()` (`panel_access.go:120`, shared by both toggle tables) always returns:
+`trustedAdminSources()` (`cf_only.go`) always returns:
 
 | Source | Env var | Fallback |
 |---|---|---|
@@ -199,7 +193,7 @@ Two **distinct** mechanisms — do not conflate them:
 
 These solve different problems and must not be confused:
 
-- **`cf_only` table** = **access control**: who may *reach* ports 80/443 at L3 (§5.2). Restricting to Cloudflare here means nobody can bypass Cloudflare by hitting the raw server IP.
+- **`cf_only` table** = **access control**: who may *reach* ports 80/443 at L3 (§5.1). Restricting to Cloudflare here means nobody can bypass Cloudflare by hitting the raw server IP.
 - **Header-trust** = deciding whether to *believe* `CF-Connecting-IP` / `X-Forwarded-For` when computing the real client IP. In this codebase that trust is enforced in the **Go API** via `TRUSTED_PROXIES` → `helper.InitTrustedProxies` (wired in `auth/ratelimit.go:71`) and `GetClientIP` (`ip.go:110`): forwarding headers are honoured **only** when the immediate peer is a trusted proxy, and `CF-Connecting-IP` is trusted **only** when the last hop is a Cloudflare edge IP (so a bypasser can't forge a client IP). With no trusted proxies configured it **fails closed** (ignores headers), so a direct caller can't spoof its IP. When `TRUSTED_PROXIES` is unset the wiring **falls back to `TRAEFIK_CONTAINER_IP`** (2026-10-17), so the default deployment still trusts the real proxy hop and the per-IP login rate-limit doesn't collapse into one global bucket. See ADR-0007.
   - **Divergence from the brief:** the current `traefik/traefik.yml.template` does **not** set an `entryPoints.*.forwardedHeaders.trustedIPs` (Traefik reads the API over the Docker bridge via `host.docker.internal`). The `forwardedHeaders.trustedIPs` knob is referenced only in a code comment (`api/internal/logs/sources/traefik.go:46`) describing what happens when it isn't set: `ClientHost` already equals the proxy edge IP, so the header wins in `realClientIP`. Treat header-trust as an **API-side** concern here, not a Traefik static-config one. *(Flagged as unverified against the brief's wording.)*
 
@@ -261,7 +255,7 @@ See [data-model.md](data-model.md) for the `vpn_clients` / `vpn_acl_rules` / `vp
 To recreate this subsystem from scratch:
 1. **nftables engine** — `Table` interface + `Service` (register/priority-sort/debounced atomic `nft -f` apply) in `api/internal/nftables/{types,service,script}.go`. Get `BuildSet`/`BuildChain`/`TableHeader` + the `ValidateIPv4OrCIDR`/port/CIDR boundary guards right first — they are the anti-wedge invariants.
 2. **Main table** (`firewall.go`): the set inventory (§2.1), the input/forward/output chains (§2.2), WAN-interface auto-detect, IPv6 drops, MSS clamp, overlap cleanup.
-3. **Two toggle tables** (`panel_access.go`, `cf_only.go`) at hook priority -10, fail-open empty-shell semantics, `trustedPanelSources()`.
+3. **Toggle table** (`cf_only.go`) at hook priority -10, fail-open empty-shell semantics, `trustedAdminSources()`; the panel API port always private in the main table.
 4. **VPN ACL** (`vpn_acl.go`) with the default-deny backstop + interface fail-closed fallback + `@vips` gating.
 5. **Cloudflare list** (`helper/ip.go`): atomic store, 24h updater with sanity floor, update hook → firewall re-apply; `GetClientIP` + `TRUSTED_PROXIES` header-trust.
 6. **firewall service** (`firewall/service.go`): essential-ports seeding, Docker-port sync, jails, escalation, block cache, L3/L7 samplers, the `/internal/blocklist` + `/internal/l7block` endpoints.

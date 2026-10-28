@@ -98,9 +98,6 @@
 
   // Panel direct-IP access (L3 nftables). On = API port reachable by IP; off = closed to
   // the public internet (still open to localhost, the Docker bridge/Traefik and WireGuard).
-  let apiDirectAccess = $state(true)
-  let apiDirectAccessDomainSet = $state(false)
-  let apiAccessLoading = $state(false)
   let webCloudflareOnly = $state(false)
   let webCloudflareOnlyAvailable = $state(false)
   let cfOnlyLoading = $state(false)
@@ -231,8 +228,6 @@
       originalAdguard = { username: adguardUsername, password: adguardPassword, dashboardEnabled: adguardDashboardEnabled, querylogSize: adguardQuerylogSize }
 
       // Panel direct-IP access
-      apiDirectAccess = settings.api_direct_access !== false
-      apiDirectAccessDomainSet = settings.api_direct_access_domain_set === true
       webCloudflareOnly = settings.web_cloudflare_only === true
       webCloudflareOnlyAvailable = settings.web_cloudflare_only_available === true
 
@@ -659,29 +654,6 @@
       toast('Failed to update firewall enforcement: ' + e.message, 'error')
     } finally {
       fwBlockLoading = false
-    }
-  }
-
-  async function setApiDirectAccess(enabled) {
-    // Closing the port is security-sensitive — confirm, and make the fallbacks explicit.
-    if (!enabled) {
-      const ok = await confirm({
-        title: 'Close direct IP access?',
-        message: 'The panel API port will be dropped from the public internet at the firewall (L3). You will still reach the panel via your domain, from localhost, and over WireGuard — but NOT by raw server IP. Continue?',
-        confirmText: 'Close it', variant: 'danger',
-      })
-      if (!ok) { apiDirectAccess = true; return } // revert the switch
-    }
-    apiAccessLoading = true
-    try {
-      await apiPut('/api/settings', { api_direct_access: enabled })
-      apiDirectAccess = enabled
-      toast(enabled ? 'Direct IP access enabled — API port open' : 'Direct IP access closed — panel now reachable only via domain, localhost and WireGuard', 'success')
-    } catch (e) {
-      apiDirectAccess = !enabled // revert the switch on failure (e.g. no domain configured)
-      toast(e.message || 'Failed to update direct IP access', 'error')
-    } finally {
-      apiAccessLoading = false
     }
   }
 
@@ -1440,13 +1412,14 @@
                     ? `${svc}Public: reachable from the internet. Click to make private (VPN & LAN only).`
                     : `${svc}Private: VPN & LAN only. Click to make public (reachable from the internet).`
                 }}
-                {#if !p.lockable}
-                  <!-- Docker-published: reachability is Docker's (DNAT), not our allow-set — static lock. -->
+                {#if !p.lockable || p.pinned}
+                  <!-- Static lock: Docker-published (reachability is Docker's DNAT, not our allow-set),
+                       or pinned private (the panel API is never reachable from the internet). -->
                   <Input
                     value={p.port}
                     disabled
                     prefixAddon={p.protocol?.toUpperCase() || 'TCP'}
-                    suffixAddonIcon={{ icon: "lock", tooltip: `Managed by Docker${serviceName ? ': ' + serviceName : ''}` }}
+                    suffixAddonIcon={{ icon: "lock", tooltip: p.pinned ? `${svc}Always private: VPN & LAN only. Open the panel through your domain or the server's IP.` : `Managed by Docker${serviceName ? ': ' + serviceName : ''}` }}
                   />
                 {:else if p.essential}
                   <!-- Essential: can't be removed, but can be made public/private. Group colour shows the state. -->
@@ -1681,21 +1654,13 @@
                 </div>
               </ContentBlock>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-3 mt-3">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3 mt-3">
               <ContentBlock title="Enforce Firewall on Proxied Traffic" description="Apply the firewall block list at the proxy, so blocks work behind Cloudflare too">
                 <div class="flex items-center gap-2">
                   {#if fwBlockLoading}
                     <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
                   {/if}
                   <Checkbox variant="switch" bind:checked={fwBlockEnabled} disabled={fwBlockLoading} onchange={() => setFWBlock(fwBlockEnabled)} />
-                </div>
-              </ContentBlock>
-              <ContentBlock title="Direct IP Access" description={apiDirectAccessDomainSet ? "Reach the panel by the server's raw IP. Turn off once you use your domain — drops the panel API port from the public internet (localhost, Traefik and WireGuard still work)." : 'Set up a domain (SSL_DOMAIN or ADMIN_DOMAIN) first — without one, closing IP access would lock you out.'}>
-                <div class="flex items-center gap-2">
-                  {#if apiAccessLoading}
-                    <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-                  {/if}
-                  <Checkbox variant="switch" bind:checked={apiDirectAccess} disabled={apiAccessLoading || (!apiDirectAccessDomainSet && apiDirectAccess)} onchange={() => setApiDirectAccess(apiDirectAccess)} />
                 </div>
               </ContentBlock>
               <ContentBlock title="Cloudflare-Only Web Access" description={webCloudflareOnlyAvailable ? "Allow only Cloudflare to reach the web ports (80/443). Blocks anyone hitting the raw server IP to bypass Cloudflare (localhost, Traefik and WireGuard still work)." : 'Available only when your domain is proxied through Cloudflare (set at setup).'}>
