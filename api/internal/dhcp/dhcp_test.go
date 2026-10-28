@@ -84,6 +84,14 @@ func TestValidateAddressing(t *testing.T) {
 			n.PoolStart = "8.8.8.50"
 			n.PoolEnd = "8.8.8.200"
 		}, true},
+		// Starts in RFC1918 but spills into public space (11/8, 192.169/16).
+		{"subnet spilling out of 10/8 rejected", func(n *Network) { n.CIDR = "10.0.0.0/7" }, true},
+		{"subnet spilling out of 192.168/16 rejected", func(n *Network) {
+			n.CIDR = "192.168.0.0/15"
+			n.GatewayIP = "192.168.0.1"
+			n.PoolStart = "192.168.0.50"
+			n.PoolEnd = "192.168.0.200"
+		}, true},
 		{"gateway outside subnet", func(n *Network) { n.GatewayIP = "10.20.21.1" }, true},
 		{"pool includes gateway", func(n *Network) { n.PoolStart = "10.20.20.1" }, true},
 		{"pool end before start", func(n *Network) { n.PoolStart = "10.20.20.200"; n.PoolEnd = "10.20.20.50" }, true},

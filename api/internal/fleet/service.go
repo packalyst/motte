@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"api/internal/events"
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -584,17 +585,9 @@ func firstPublicIP() string {
 	return ""
 }
 
-// isPublicIPv4 reports whether ip is a routable public IPv4 (not loopback/link-local/
-// private/CGNAT).
+// isPublicIPv4 reports whether ip is a routable public IPv4 (see helper.IsNonPublicIP).
 func isPublicIPv4(ip net.IP) bool {
-	v4 := ip.To4()
-	if v4 == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate() {
-		return false
-	}
-	if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 { // CGNAT 100.64.0.0/10
-		return false
-	}
-	return true
+	return ip.To4() != nil && !helper.IsNonPublicIP(ip)
 }
 
 // detectHostSANs enumerates this host's non-loopback IPs (WG IP, LAN, public…)

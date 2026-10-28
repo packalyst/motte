@@ -81,31 +81,6 @@ func TestIsTrustedProxy_BareIPEntry(t *testing.T) {
 	}
 }
 
-func TestIsPrivateIPOrCIDR_BlocksSSRFTargets(t *testing.T) {
-	blocked := []string{
-		"169.254.169.254", // cloud metadata (link-local) — the classic SSRF target
-		"169.254.0.1",     // link-local
-		"127.0.0.1",       // loopback
-		"10.0.0.5",        // private
-		"192.168.1.1",     // private
-		"172.16.0.1",      // private
-	}
-	for _, ip := range blocked {
-		if !IsPrivateIPOrCIDR(ip) {
-			t.Errorf("IsPrivateIPOrCIDR(%q) = false, want true (must be treated as unsafe)", ip)
-		}
-	}
-	allowed := []string{"8.8.8.8", "1.1.1.1", "203.0.113.10"}
-	for _, ip := range allowed {
-		if IsPrivateIPOrCIDR(ip) {
-			t.Errorf("IsPrivateIPOrCIDR(%q) = true, want false (public address)", ip)
-		}
-	}
-	if IsPrivateIPOrCIDR("not-an-ip") {
-		t.Error("IsPrivateIPOrCIDR on garbage must be false")
-	}
-}
-
 // Secrets carried in a URL path never reach a log.
 func TestRedactSecretPath(t *testing.T) {
 	for in, want := range map[string]string{

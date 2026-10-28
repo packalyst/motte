@@ -8,34 +8,6 @@ import (
 	"time"
 )
 
-// ssrfExtraBlocked holds ranges that net.IP's built-in predicates don't classify but that
-// must still be blocked for outbound fetches (CGNAT/shared space + reserved 0.0.0.0/8).
-var ssrfExtraBlocked = func() []*net.IPNet {
-	var out []*net.IPNet
-	for _, c := range []string{"100.64.0.0/10", "0.0.0.0/8"} {
-		if _, n, err := net.ParseCIDR(c); err == nil {
-			out = append(out, n)
-		}
-	}
-	return out
-}()
-
-// IsNonPublicIP reports whether ip is anything but a public unicast address: private, loopback,
-// link-local, multicast, unspecified, CGNAT (100.64.0.0/10 — the Tailscale/Headscale overlay) or
-// 0.0.0.0/8. Shared by the dial-time guard below and URL checks made before a fetch.
-func IsNonPublicIP(ip net.IP) bool {
-	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
-		return true
-	}
-	for _, n := range ssrfExtraBlocked {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
 // SafeExternalHTTPClient returns an *http.Client for fetching operator-supplied URLs that
 // must only ever reach PUBLIC hosts (e.g. remote blocklists). Its dialer validates the
 // RESOLVED IP at connect time via Control, so a hostname that resolves to a public IP at
