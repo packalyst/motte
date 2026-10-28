@@ -102,6 +102,10 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **Headscale join keys**: a viewer could read the join key each Headscale device registered with
+  from the client, device and route lists (Headscale sends it with every device), and a reusable
+  one lets anyone add a device to the VPN. The panel now removes it before passing device data on
+  or saving it; the Auth Keys page (admin) still shows keys.
 - **passkeys**: adding a passkey and logging in with one now always need the device's PIN,
   fingerprint or face. A passkey login skips the TOTP code, so a security key without a PIN let
   anyone holding it in with a touch; such a key is now asked to set a PIN first.

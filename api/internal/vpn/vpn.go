@@ -15,6 +15,7 @@ import (
 
 	"api/internal/database"
 	"api/internal/domains"
+	"api/internal/headscale"
 	"api/internal/helper"
 	"api/internal/nftables"
 	"api/internal/router"
@@ -836,8 +837,12 @@ func (s *Service) getHeadscaleNodesWithRaw() ([]hsNode, []string, error) {
 		if ip == "" && len(n.IPAddrs) > 0 {
 			ip = n.IPAddrs[0]
 		}
+		clean, err := headscale.StripJoinKeys(rawNode) // stored and shown to viewers: no join key
+		if err != nil {
+			continue
+		}
 		nodes = append(nodes, hsNode{ID: n.ID, Name: name, IP: ip})
-		rawNodes = append(rawNodes, string(rawNode))
+		rawNodes = append(rawNodes, string(clean))
 	}
 	return nodes, rawNodes, nil
 }

@@ -1,6 +1,7 @@
 package headscale
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -275,11 +276,62 @@ func (s *Service) Handlers() router.ServiceHandlers {
 // --- HTTP helpers ---
 
 // proxyResponse writes the Headscale response to the client
-func (s *Service) proxyResponse(w http.ResponseWriter, resp *http.Response) {
+// maxHeadscaleReply bounds a reply read whole to strip its join keys.
+const maxHeadscaleReply = 8 << 20
+
+// proxyResponse relays a Headscale reply for path. Join keys are removed from every reply except
+// the pre-auth key endpoints' own (list, create, expire), which exist to show them: Headscale 0.25
+// reports each node, and each route's node, with the full key it joined with, and the node and
+// route lists are open to viewers.
+func (s *Service) proxyResponse(w http.ResponseWriter, resp *http.Response, path string) {
 	defer resp.Body.Close()
 	w.Header().Set("Content-Type", "application/json")
+	if strings.HasPrefix(path, "/preauthkey") {
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHeadscaleReply))
+	if err == nil {
+		body, err = StripJoinKeys(body)
+	}
+	if err != nil { // never relay a reply we couldn't clean
+		log.Printf("headscale: unreadable reply from %s: %v", path, err)
+		router.JSONError(w, "unexpected reply from Headscale", http.StatusBadGateway)
+		return
+	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.Write(body)
+}
+
+// StripJoinKeys removes every "preAuthKey" from a Headscale JSON reply, at any depth (a node list,
+// one node, a route's node). An empty body is returned as is.
+func StripJoinKeys(body []byte) ([]byte, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return body, nil
+	}
+	var v any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber() // keep numbers exactly as Headscale sent them
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	dropJoinKeys(v)
+	return json.Marshal(v)
+}
+
+func dropJoinKeys(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		delete(t, "preAuthKey")
+		for _, c := range t {
+			dropJoinKeys(c)
+		}
+	case []any:
+		for _, c := range t {
+			dropJoinKeys(c)
+		}
+	}
 }
 
 // proxyGet proxies a GET request to Headscale
@@ -308,7 +360,7 @@ func (s *Service) proxyGet(w http.ResponseWriter, path string) {
 		headscaleUnreachable(w, err)
 		return
 	}
-	s.proxyResponse(w, resp)
+	s.proxyResponse(w, resp, path)
 }
 
 // proxyPost proxies a POST request to Headscale with optional JSON body
@@ -318,7 +370,7 @@ func (s *Service) proxyPost(w http.ResponseWriter, path string, body string) {
 		headscaleUnreachable(w, err)
 		return
 	}
-	s.proxyResponse(w, resp)
+	s.proxyResponse(w, resp, path)
 }
 
 // proxyDelete proxies a DELETE request to Headscale
@@ -328,7 +380,7 @@ func (s *Service) proxyDelete(w http.ResponseWriter, path string) {
 		headscaleUnreachable(w, err)
 		return
 	}
-	s.proxyResponse(w, resp)
+	s.proxyResponse(w, resp, path)
 }
 
 // --- Users ---
@@ -482,7 +534,8 @@ func (s *Service) handleUpdateNodeTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body, _ := json.Marshal(map[string][]string{"tags": tags})
-	resp, err := helper.HeadscalePost("/node/"+id+"/tags", string(body))
+	path := "/node/" + id + "/tags"
+	resp, err := helper.HeadscalePost(path, string(body))
 	if err != nil {
 		headscaleUnreachable(w, err)
 		return
@@ -495,7 +548,7 @@ func (s *Service) handleUpdateNodeTags(w http.ResponseWriter, r *http.Request) {
 		events.Audit("headscale", "node_tags", events.SeverityInfo, actor, helper.GetClientIP(r),
 			fmt.Sprintf("Node %s tags set to [%s]", id, strings.Join(tags, ", ")))
 	}
-	s.proxyResponse(w, resp)
+	s.proxyResponse(w, resp, path)
 }
 
 // --- Routes ---
