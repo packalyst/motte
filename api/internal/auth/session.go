@@ -173,6 +173,9 @@ func (s *Service) VerifyPassword(userID int64, password string) error {
 	return nil
 }
 
+// newPasswordError is why a new password was refused (too weak, same as the old one).
+type newPasswordError struct{ error }
+
 // ChangePassword changes the user's password after verifying the current one
 func (s *Service) ChangePassword(userID int64, currentPassword, newPassword string) error {
 	// Verify current password FIRST (before any other validation)
@@ -182,12 +185,12 @@ func (s *Service) ChangePassword(userID int64, currentPassword, newPassword stri
 
 	// Only after verifying current password, check if new password is different
 	if currentPassword == newPassword {
-		return errors.New("new password must be different from current password")
+		return newPasswordError{errors.New("new password must be different from current password")}
 	}
 
 	// Validate new password strength
 	if err := validatePassword(newPassword); err != nil {
-		return err
+		return newPasswordError{err}
 	}
 
 	// Hash new password
@@ -312,16 +315,15 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		if tooManyAttempts(w, err) {
 			return
 		}
-		// Check if it's a validation error
-		if strings.Contains(err.Error(), "password") && !strings.Contains(err.Error(), "incorrect") {
+		// A wrong current password is a 400, never a 401: the caller is still signed in, and the
+		// UI treats a 401 as "session ended" and logs out.
+		var refused newPasswordError
+		if errors.Is(err, errPasswordIncorrect) || errors.As(err, &refused) {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if strings.Contains(err.Error(), "incorrect") {
-			router.JSONError(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("change-password: user %d: %v", user.ID, err)
+		router.JSONError(w, "failed to change password", http.StatusInternalServerError)
 		return
 	}
 

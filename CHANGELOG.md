@@ -70,6 +70,8 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- **Change password**: a mistyped current password no longer logs you out; the page shows
+  "current password is incorrect".
 - Logging in with a password on an account with 2FA showed "2FA code required" with no field to
   type the code, so only a passkey could get in; the code step now opens.
 - Error messages show the server's message instead of its raw JSON reply.
