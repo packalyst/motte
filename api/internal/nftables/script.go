@@ -112,18 +112,6 @@ func BuildSet(name, setType string, flags []string, elements []string) string {
 	return sb.String()
 }
 
-// BidirectionalAccept returns the pair of forward rules (unindented) that let hosts a and b reach
-// each other. Access grants in this panel are symmetric — both the VPN ACL and the DHCP
-// reachability table mean "a and b can talk" when a pair is allowed — so the two directions come
-// from one place instead of being hand-written at each call site. a and b are caller-validated
-// IPs/CIDRs; this only assembles the rule text.
-func BidirectionalAccept(a, b string) []string {
-	return []string{
-		fmt.Sprintf("ip saddr %s ip daddr %s accept", a, b),
-		fmt.Sprintf("ip saddr %s ip daddr %s accept", b, a),
-	}
-}
-
 // BuildChain generates an nftables chain definition
 func BuildChain(name, chainType, hook string, priority int, policy string, rules []string) string {
 	// Validate inputs
