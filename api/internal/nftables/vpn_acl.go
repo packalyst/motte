@@ -3,6 +3,7 @@ package nftables
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"api/internal/database"
@@ -207,13 +208,28 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 			vipIPs = append(vipIPs, v.IP)
 		}
 	}
+	// Isolated (block_all) peers reach nothing: not other peers or the internet (forward chain)
+	// and not the server itself — SSH, the host-networked API, DNS, ping (input chain).
+	var isolatedIPs []string
+	for _, c := range clients {
+		if c.Policy == helper.ACLPolicyBlockAll && ValidateIPv4OrCIDR(c.IP) {
+			isolatedIPs = append(isolatedIPs, c.IP)
+		}
+	}
+	sort.Strings(isolatedIPs) // clients is a map; keep the script stable between applies
 
 	// Delete existing table
 	sb.WriteString("table inet motte_vpn_acl\ndelete table inet motte_vpn_acl\n\n")
 
 	sb.WriteString("table inet motte_vpn_acl {\n")
 	sb.WriteString(BuildSet("vips", "ipv4_addr", nil, vipIPs))
+	// Interval + auto-merge: a stored CIDR or a duplicate must never wedge the atomic reload.
+	sb.WriteString(BuildSet("isolated", "ipv4_addr", []string{"interval", "auto-merge"}, isolatedIPs))
 	sb.WriteString("\n")
+	sb.WriteString("    chain input {\n")
+	sb.WriteString("        type filter hook input priority 0; policy accept;\n")
+	sb.WriteString("        ip saddr @isolated drop\n")
+	sb.WriteString("    }\n\n")
 	sb.WriteString("    chain forward {\n")
 	sb.WriteString("        type filter hook forward priority 0; policy accept;\n\n")
 	sb.WriteString("        # Allow established/related (lets replies to inbound-initiated\n")
@@ -227,18 +243,9 @@ func (t *VPNACLTable) buildScript(clients map[int64]vpnClient, rules []aclRule, 
 	// caught by the drops. Isolated peers therefore cannot be pinged and cannot ping out.
 	sb.WriteString("        # === VPN ACL Rules ===\n\n")
 
-	// Handle block_all clients first - explicit drop before any accept
-	for _, c := range clients {
-		if !ValidateIPv4OrCIDR(c.IP) {
-			continue
-		}
-		if c.Policy == helper.ACLPolicyBlockAll {
-			safeName := SanitizeComment(c.Name)
-			sb.WriteString(fmt.Sprintf("        # %s [block_all]\n", safeName))
-			sb.WriteString(fmt.Sprintf("        ip saddr %s drop\n", c.IP))
-			sb.WriteString(fmt.Sprintf("        ip daddr %s drop\n\n", c.IP))
-		}
-	}
+	// Isolated (block_all) clients first - explicit drop before any accept
+	sb.WriteString("        ip saddr @isolated drop\n")
+	sb.WriteString("        ip daddr @isolated drop\n\n")
 
 	allowedPairs := make(map[string]bool)
 

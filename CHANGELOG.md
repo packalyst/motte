@@ -98,6 +98,9 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **isolated clients**: a VPN client set to Block All now reaches nothing on the server itself
+  either: SSH, the panel API on its own port, DNS and ping were still answering it. Its tunnel stays
+  up; un-isolating restores access at once.
 - **firewall**: a block can no longer lock you out. Adding one IP or range, bulk add, list import,
   auto-ban and /24 escalation all refuse a block that covers private or VPN addresses, this server
   or your own IP, checking the whole range rather than its first address. Ranges wider than /8 are

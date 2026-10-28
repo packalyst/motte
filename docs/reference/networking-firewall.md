@@ -211,11 +211,11 @@ The sentinel plugin (§8) has its **own** copy of the Cloudflare CIDR list (`sen
 
 ## 7. The VPN ACL (`motte_vpn_acl`) and virtual IPs
 
-`api/internal/nftables/vpn_acl.go` — a single `forward` chain (priority 0, policy accept) whose **default-deny backstop** at the bottom isolates peers unless an explicit rule allows them. Data comes from `vpn_clients` (with `acl_policy`), `vpn_acl_rules`, and `vpn_virtual_ips` (+ `vpn_virtual_ip_acl`).
+`api/internal/nftables/vpn_acl.go` — a `forward` chain (priority 0, policy accept) whose **default-deny backstop** at the bottom isolates peers unless an explicit rule allows them, plus an `input` chain that drops everything from `block_all` peers to the server itself (SSH, the host-networked API, DNS, ping), so an isolated peer reaches nothing. Data comes from `vpn_clients` (with `acl_policy`), `vpn_acl_rules`, and `vpn_virtual_ips` (+ `vpn_virtual_ip_acl`).
 
 Rule emission order (top = evaluated first):
 1. `ct state established,related accept` — replies to inbound-initiated flows (incl. ICMP errors). **No blanket `ip protocol icmp accept`** — ICMP obeys the same ACL as every other protocol, so isolated peers can't be pinged and can't ping out.
-2. **`block_all` peers** — explicit `ip saddr <ip> drop` + `ip daddr <ip> drop` before any accept.
+2. **`block_all` peers** — `ip saddr @isolated drop` + `ip daddr @isolated drop` before any accept (`@isolated`: an interval set of their IPv4 addresses, shared with the `input` chain).
 3. **`allow_all` peers** — blanket accept to/from the whole `WG_IP_RANGE` and `HEADSCALE_IP_RANGE`, but carved out with `ip daddr != @vips` / `ip saddr != @vips` so a vip obeys **only** its own rules, never an allow_all peer's range-wide accept.
 4. **Explicit `vpn_acl_rules`** — `ip saddr <src> ip daddr <dst> accept` (+ reverse if bidirectional), de-duplicated, skipping pairs already covered by allow_all/block_all.
 5. **Virtual IPs** (`@vips` set of IPv4 vip addresses):
