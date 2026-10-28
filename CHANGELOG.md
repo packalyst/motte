@@ -105,8 +105,9 @@ releases will be tagged as they are cut.
   anyone holding it in with a touch; such a key is now asked to set a PIN first.
 - **password re-checks**: re-entering your password (before sensitive actions, to unlock an idle
   session, to change it or to turn 2FA off) locks out for 15 minutes after 5 wrong tries, like the
-  login page; a stolen session could guess it without limit. At most 4 password checks run at once
-  (each takes 64 MB), so a flood of logins can't exhaust the server's memory.
+  login page; a stolen session could guess it without limit. At most 4 password or backup
+  passphrase checks run at once (each takes 64 MB), so a flood of logins or backup previews can't
+  exhaust the server's memory.
 - **passkey sign-in**: at most 5 sign-ins may wait for a passkey from one IP, 1,000 in total;
   anyone could start them without limit and fill the server's memory.
 - **turning 2FA off** now checks the code like every other step-up: a used code can't be replayed,

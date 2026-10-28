@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"io"
 
-	"golang.org/x/crypto/argon2"
+	"api/internal/helper"
 )
 
 // Passphrase sealing for backup files. The config document is sealed with
@@ -43,7 +43,7 @@ func (e passErr) Error() string { return string(e) }
 // deriveKey stretches the passphrase into a 256-bit key with the given salt using Argon2id.
 // (Returns an error for signature symmetry with the callers; Argon2id itself can't fail.)
 func deriveKey(passphrase string, salt []byte) ([]byte, error) {
-	return argon2.IDKey([]byte(passphrase), salt, kdfIter, argonMemKiB, argonThreads, keyLen), nil
+	return helper.Argon2IDKey([]byte(passphrase), salt, kdfIter, argonMemKiB, argonThreads, keyLen), nil
 }
 
 // seal encrypts plaintext under the passphrase. aad (the cleartext envelope header)
