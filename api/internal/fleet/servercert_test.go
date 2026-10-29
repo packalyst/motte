@@ -91,3 +91,56 @@ func TestListenerServesManagedCert(t *testing.T) {
 		t.Fatal("listener didn't serve the managed certificate")
 	}
 }
+
+// "Renew now" replaces the certificate even when it isn't due.
+func TestRenewListenerCertForces(t *testing.T) {
+	svc := newTestService(t)
+	old, err := svc.serverCertificate(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RenewListenerCert(); err != nil {
+		t.Fatal(err)
+	}
+	if cur, _ := svc.currentListenerCert(); cur == old || cur.Leaf.SerialNumber.Cmp(old.Leaf.SerialNumber) == 0 {
+		t.Fatal("Renew now kept the old certificate")
+	}
+}
+
+// The certificate status lists the CA, the listener only while it runs, and the client certificates
+// of enrolled (not revoked) machines, soonest first.
+func TestCertStatus(t *testing.T) {
+	svc := newTestService(t)
+	if _, err := svc.serverCertificate(nil); err != nil {
+		t.Fatal(err)
+	}
+	addMachine(t, svc, "late", false)
+	addMachine(t, svc, "soon", false)
+	addMachine(t, svc, "gone", false)
+	addMachine(t, svc, "new", false) // no certificate recorded yet
+	now := time.Now().UTC()
+	for id, left := range map[string]time.Duration{"late": 60 * 24 * time.Hour, "soon": 5 * 24 * time.Hour, "gone": time.Hour} {
+		_, _ = svc.db.Exec(`UPDATE fleet_machines SET cert_expires = ? WHERE id = ?`, now.Add(left).Format(time.RFC3339), id)
+	}
+	_, _ = svc.db.Exec(`UPDATE fleet_machines SET revoked = 1 WHERE id = 'gone'`)
+
+	st, err := svc.CertStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.CA.Fingerprint != svc.ca.Fingerprint() || st.AgentLifetimeDays != 90 {
+		t.Errorf("CA/lifetime: %+v", st)
+	}
+	if st.Listener != nil {
+		t.Error("listener shown while it's off")
+	}
+	if len(st.Agents) != 2 || st.Agents[0].MachineID != "soon" || st.Agents[1].MachineID != "late" {
+		t.Fatalf("agents: %+v", st.Agents)
+	}
+	svc.mu.Lock()
+	svc.enabled = true
+	svc.mu.Unlock()
+	if st, _ = svc.CertStatus(); st.Listener == nil || st.Listener.Fingerprint != fingerprintFromCert(svc.srvCert.cert.Leaf) {
+		t.Fatalf("listener while on: %+v", st.Listener)
+	}
+}

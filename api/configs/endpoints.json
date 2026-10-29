@@ -2378,6 +2378,30 @@
           "min_role": "viewer"
         }
       ]
+    },
+    "certs": {
+      "prefix": "/api/certs",
+      "enabled": true,
+      "endpoints": [
+        {
+          "path": "",
+          "methods": [
+            "GET"
+          ],
+          "handler": "Overview",
+          "description": "Every certificate the panel depends on, with expiry and problems",
+          "min_role": "admin"
+        },
+        {
+          "path": "/listener/renew",
+          "methods": [
+            "POST"
+          ],
+          "handler": "RenewListener",
+          "description": "Replace the agent listener certificate now",
+          "min_role": "admin"
+        }
+      ]
     }
   },
   "middleware": {

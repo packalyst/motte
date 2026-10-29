@@ -9,7 +9,7 @@
   import ContentBlock from './ContentBlock.svelte'
   import Badge from './Badge.svelte'
   import AlertRules from './AlertRules.svelte'
-  import { toast } from '../stores/app.js'
+  import { toast, currentUser, hasRole } from '../stores/app.js'
   import { notificationPreferences, refreshPreferences } from '../stores/pwa.js'
   import { updatePreferences } from '../lib/pwa/push'
 
@@ -23,7 +23,8 @@
     firewall_alert: true,
     login_new_device: true,
     system_alert: true,
-    resource_alert: true
+    resource_alert: true,
+    cert_expiry: true
   })
 
   // Track if preferences have changed
@@ -33,7 +34,8 @@
            prefs.firewall_alert !== $notificationPreferences.firewall_alert ||
            prefs.login_new_device !== $notificationPreferences.login_new_device ||
            prefs.system_alert !== $notificationPreferences.system_alert ||
-           prefs.resource_alert !== $notificationPreferences.resource_alert
+           prefs.resource_alert !== $notificationPreferences.resource_alert ||
+           prefs.cert_expiry !== $notificationPreferences.cert_expiry
   })
 
   // Sync local prefs with store
@@ -89,6 +91,11 @@
       <ContentBlock title="Resource Alerts" description="CPU/memory/disk threshold rules (below)">
         <Checkbox variant="switch" bind:checked={prefs.resource_alert} />
       </ContentBlock>
+      {#if hasRole($currentUser, 'admin')}
+        <ContentBlock title="Certificate Expiring" description="A certificate close to expiry or failing to renew">
+          <Checkbox variant="switch" bind:checked={prefs.cert_expiry} />
+        </ContentBlock>
+      {/if}
     </div>
     <div>
       <Button onclick={savePreferences} loading={savingPrefs} disabled={!prefsChanged} size="sm" icon="device-floppy">Save Preferences</Button>

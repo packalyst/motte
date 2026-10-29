@@ -1160,7 +1160,8 @@ type CertificateInfo struct {
 	Issuer    string    `json:"issuer,omitempty"`
 	Status    string    `json:"status"` // "valid", "warning", "critical", "expired", "pending", "error"
 	DaysLeft  int       `json:"daysLeft,omitempty"`
-	Error     string    `json:"error,omitempty"` // error message if status is "error"
+	Error     string    `json:"error,omitempty"`    // error message if status is "error"
+	Resolver  string    `json:"resolver,omitempty"` // the certResolver that issued it (acme.json key)
 }
 
 // acmeStorage represents the structure of acme.json.
@@ -1208,7 +1209,7 @@ func GetCertificates() ([]CertificateInfo, error) {
 	certs := []CertificateInfo{}
 	now := time.Now()
 
-	for _, resolver := range storage {
+	for resolverName, resolver := range storage {
 		for _, cert := range resolver.Certificates {
 			// Decode certificate to get expiration
 			certPEM, err := base64.StdEncoding.DecodeString(cert.Certificate)
@@ -1246,6 +1247,7 @@ func GetCertificates() ([]CertificateInfo, error) {
 				Issuer:    x509Cert.Issuer.CommonName,
 				Status:    status,
 				DaysLeft:  daysLeft,
+				Resolver:  resolverName,
 			})
 		}
 	}
