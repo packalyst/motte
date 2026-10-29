@@ -60,6 +60,10 @@ tab, sticky ctrl/alt, ^C, arrows…); its end button slides the keyboard down an
 - **Session recording** — optional per host; output is tee'd to an asciinema `.cast` + an audit
   entry. Those panel actions are marked in the recording too, since their effect isn't in the
   terminal output.
+- **Session limits** — each session is a real shell on the host, so a user may have at most 10
+  open on one machine and all users together 30, and at most 10 browsers attach to one session
+  (the owner's tabs and read-only shares). Reattaching your own session is never refused; past a
+  limit, opening a new one says so. Numbers in `api/internal/helper/limits.go`.
 - **Access re-checked while open** — the console and the console-events socket re-check the
   session, role and scope every 30 s: ending, locking or demoting the session closes them, and a
   scope change applies.

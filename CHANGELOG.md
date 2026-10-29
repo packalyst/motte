@@ -137,6 +137,9 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **Console session limits**: each console session is a real shell on the machine, so a user can
+  have at most 10 open on one machine, all users together 30, and at most 10 browsers can attach
+  to one session. Reattaching your own session always works; past a limit the console says so.
 - **Limits can't be turned against everyone**: the login lockout and the tunnel link guard
   forget their oldest entry when full instead of refusing newcomers, so a flood of (IPv6)
   addresses can no longer stop everyone from logging in or using tunnel links. Starting a

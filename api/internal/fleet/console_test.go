@@ -176,7 +176,7 @@ func TestShowScreenPaintsLaterViewer(t *testing.T) {
 	browserSide, browser := wsPair(t)
 	a.addBridge("7_s1", &consoleBridge{browser: browserSide, session: "7_s1"})
 	b := &consoleBridge{browser: browserSide, session: "7_s1"}
-	if a.addBridge("7_s1", b) || !b.held {
+	if first, _ := a.addBridge("7_s1", b); first || !b.held {
 		t.Fatal("a later viewer must wait for its screen")
 	}
 	go func() { // the agent answers the snapshot request, after some live output
@@ -267,5 +267,57 @@ func TestGrantsPerUser(t *testing.T) {
 	}
 	if n := len(grantAllTargets(many)); n != helper.MaxConsoleGrantsPerUser {
 		t.Fatalf("%d targets from a long list, want %d", n, helper.MaxConsoleGrantsPerUser)
+	}
+}
+
+// Each shell is real on the host: a user may own at most MaxConsoleSessionsPerUser on a machine,
+// all users together MaxConsoleSessionsPerMachine, and a shell takes at most MaxConsoleViewers
+// browsers. Reattaching a session you own is never refused, and a closed one frees its place.
+func TestConsoleSessionLimits(t *testing.T) {
+	a := newAgentConn()
+	for i := 0; i < helper.MaxConsoleSessionsPerUser; i++ {
+		if reason := a.claimOwner(fmt.Sprintf("7_s%d", i), 7); reason != "" {
+			t.Fatalf("session %d refused: %s", i+1, reason)
+		}
+	}
+	if reason := a.claimOwner("7_more", 7); !strings.Contains(reason, "you have") {
+		t.Fatalf("a user opened more sessions than the per-user limit: %q", reason)
+	}
+	if reason := a.claimOwner("7_s0", 7); reason != "" {
+		t.Fatalf("reattaching an owned session was refused: %s", reason)
+	}
+	if reason := a.claimOwner("7_s0", 8); !strings.Contains(reason, "another operator") {
+		t.Fatalf("another user took over a session: %q", reason)
+	}
+
+	// Fill the machine with other users' sessions.
+	for u := int64(100); len(a.owners) < helper.MaxConsoleSessionsPerMachine; u++ {
+		if reason := a.claimOwner(fmt.Sprint(u, "_x"), u); reason != "" {
+			t.Fatalf("filling the machine: %s", reason)
+		}
+	}
+	if reason := a.claimOwner("9_new", 9); !strings.Contains(reason, "this machine has") {
+		t.Fatalf("a session opened past the per-machine limit: %q", reason)
+	}
+	a.mu.Lock()
+	delete(a.owners, "100_x") // that shell ended
+	a.mu.Unlock()
+	if reason := a.claimOwner("9_new", 9); reason != "" {
+		t.Fatalf("no place after a shell ended: %s", reason)
+	}
+
+	// Browsers per shell.
+	for i := 0; i < helper.MaxConsoleViewers; i++ {
+		if _, ok := a.addBridge("7_s1", &consoleBridge{session: "7_s1"}); !ok {
+			t.Fatalf("viewer %d refused", i+1)
+		}
+	}
+	extra := &consoleBridge{session: "7_s1"}
+	if _, ok := a.addBridge("7_s1", extra); ok {
+		t.Fatal("more browsers attached than the viewer limit")
+	}
+	a.removeBridge("7_s1", a.bridges["7_s1"][0])
+	if _, ok := a.addBridge("7_s1", extra); !ok {
+		t.Fatal("no place after a browser left")
 	}
 }
