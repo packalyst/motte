@@ -34,6 +34,7 @@ func (s *Service) HandleAgentUpdateBinary(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "unsupported architecture")
 		return
 	}
+	allowLargeTransfer(w) // fetching (once) and sending the binary can take a while on a slow link
 	bin, err := s.agentCache.Binary(r.Context(), arch)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "panel could not fetch the agent binary")

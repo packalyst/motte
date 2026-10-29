@@ -270,3 +270,65 @@ func TestListRecordingsScopeAndOwner(t *testing.T) {
 		t.Fatalf("admin: want both m1 recordings and none from m2, got %+v", all)
 	}
 }
+
+// File and container actions from the console's panels don't show in the terminal output, so each
+// is audited and marked in the session's recording; keystrokes, listings and read-only tools are
+// not. Every allowed frame still reaches the agent, for the browser's own session only.
+func TestConsoleActionsAuditedAndRecorded(t *testing.T) {
+	useRecordStore(t)
+	m := &Machine{ID: "m1", Name: "web-01", ConsoleRecord: true}
+	a := newRecAgent()
+	a.opened, a.seen = map[string]time.Time{}, map[string]time.Time{}
+	server, agentSide := wsPair(t)
+	a.conn = server
+	sess := "7_abc"
+	a.attachRecorder(m, sess, 80, 24, &router.Principal{UserID: 7, Username: "alice"})
+
+	var audited []string
+	audit := func(label string) { audited = append(audited, label) }
+	frames := []consoleFrame{
+		{T: "file-put", Path: "/root/.ssh/authorized_keys", Start: true, Data: "a2V5"},
+		{T: "file-put", Path: "/root/.ssh/authorized_keys", Data: "bW9yZQ==", EOF: true}, // later chunk
+		{T: "file-get", Path: "/etc/shadow"},
+		{T: "file-delete", Path: "/var/log/auth.log"},
+		{T: "file-mkdir", Path: "/tmp/x"},
+		{T: "file-list", Path: "/etc"},
+		{T: "docker", Action: "ps"},
+		{T: "docker", Action: "restart", Path: "web"},
+		{T: "git"},
+		{T: "data", Data: "bHMK"},
+		{T: "open", Session: "9_other"}, // panel-only: dropped
+	}
+	for _, f := range frames {
+		f.Session = "9_someone-else" // the browser can't pick the session
+		a.relayBrowserFrame(f, sess, audit)
+	}
+	a.closeRecorder(sess)
+
+	want := []string{"upload /root/.ssh/authorized_keys", "download /etc/shadow", "delete /var/log/auth.log",
+		"create folder /tmp/x", "docker restart web"}
+	if strings.Join(audited, "|") != strings.Join(want, "|") {
+		t.Fatalf("audited %q, want %q", audited, want)
+	}
+	cast := strings.Join(castLines(t, filepath.Join(recordDir(), recordFileName(m.ID, sess))), "\n")
+	for _, w := range want {
+		if !strings.Contains(cast, `"m","`+w+`"`) {
+			t.Errorf("recording has no marker for %q", w)
+		}
+	}
+	for i := 0; i < len(frames)-1; i++ { // everything but the dropped "open"
+		var got consoleFrame
+		agentSide.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err := agentSide.ReadJSON(&got); err != nil {
+			t.Fatalf("frame %d not relayed: %v", i, err)
+		}
+		if got.Session != sess || got.T != frames[i].T {
+			t.Fatalf("frame %d relayed as %+v", i, got)
+		}
+	}
+	agentSide.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	var extra consoleFrame
+	if err := agentSide.ReadJSON(&extra); err == nil {
+		t.Fatalf("a panel-only frame was relayed: %+v", extra)
+	}
+}

@@ -255,18 +255,16 @@ The API router wraps all handlers. It is a **default-deny / fail-closed** gate:
   failed to init at boot) the middleware returns `503` for protected paths rather than
   serving them unauthenticated — it fails closed. Public paths are matched first so a
   broken auth service can't lock you out of setup/login.
-- Token is read **only** from the `Authorization: Bearer …` header, never a cookie
-  (`helper.ExtractBearerToken`, `helper/helper.go:105-118`). Deliberate CSRF
-  mitigation: browsers auto-attach cookies on cross-site requests, but not a Bearer
-  header. The SPA sends the token from `localStorage` as a Bearer header; the WebSocket
-  authenticates via its first message (`stores/websocket.js`), so there is no cookie
-  auth path at all.
-
-> Trade-off / known follow-up: the SPA keeps the token in `localStorage`
-> (`ui/src/App.svelte`, `stores/app.js` — key `session_token`), which is readable by
-> any script that achieves XSS. The CSP (§5) is the primary XSS backstop. Moving the
-> token to an `HttpOnly` cookie is a tracked follow-up that would require adding CSRF
-> protection — it is not done yet.
+- The token comes from the **HttpOnly, SameSite=Strict session cookie** (or an
+  `Authorization: Bearer` header for non-browser clients; `helper.SessionToken`). Over
+  HTTPS only the `__Host-` cookie counts: the plain name can be set by a sibling
+  subdomain, so accepting it would let one plant its own session on a logged-out
+  browser. Cookie-authenticated writes also pass the router's same-origin CSRF check.
+- **One session check** (`router.Authenticate`): the middleware and every handler mounted
+  outside it — the setup endpoints once an admin exists, the console WebSockets — resolve
+  the session the same way: missing or invalid → 401, idle-locked → 423 (except
+  unlock/logout/me/lock), auth unavailable → 503. A handler outside the router can't
+  forget the idle lock.
 
 ### Step-up re-authentication (a stolen token isn't enough for the dangerous ops)
 
@@ -277,10 +275,12 @@ again, on top of a valid session:
   `currentPassword` (verified via `VerifyPassword`), and is audit-logged
   (`events.Log` `auth/user_created`, `SeverityWarning`). *(No UI wired yet; the
   endpoint stays hardened for future multi-admin.)*
-- **`ChangePassword`** (`session.go:93-122`, handler `209-252`): verifies the current
-  password first; on success **revokes every *other* session** for that user (a
-  password change is often a compromise response — a stolen token elsewhere must not
-  survive it) and audit-logs `auth/password_changed`.
+- **`ChangePassword`** (`session.go`, `handleChangePassword`): a **step-up** action like
+  every other credential change — the current password, plus a current 2FA code when 2FA
+  is on (`StepUp`), so a stolen session that knows the password can't change it. On
+  success it **revokes every *other* session** for that user (a password change is often
+  a compromise response — a stolen token elsewhere must not survive it) and audit-logs
+  `auth/password_changed`.
 - **`VerifyPassword`** (`session.go:81-90`) is the shared step-up primitive.
 
 ### 2FA / TOTP (`auth/totp.go`, verification in `auth.go`)
@@ -297,10 +297,11 @@ again, on top of a valid session:
   TOTP code, then clears `totp_secret_enc` and `totp_enabled`.
 - **At login** (`verifyTOTP`, `totp.go`): decrypt secret → **rate-limit** (atomic
   reserve, 5 attempts / lockout, `totpLimiter`) → `totp.Validate` →
-  **replay-reject** a code already consumed in its window (`totpReplayed` /
-  `markTOTPUsed`, `ratelimit.go`) → clear attempts on success. The replay check closes
-  the "same 6 digits reused within the 30-s window" gap that plain TOTP validation
-  leaves open.
+  **replay-reject** a code already consumed in its window (`claimTOTPCode`,
+  `ratelimit.go`: every code a user got in with is remembered for 90 s, not only the
+  latest, and the check and the record are one step under the map lock, so two requests
+  with the same code can't both pass) → clear attempts on success. This closes the
+  "same 6 digits reused within the 30-s window" gap that plain TOTP validation leaves open.
 
 ---
 
@@ -415,6 +416,12 @@ If its cert isn't from the issuer and it trusts the issuer, it renews at once.
   (`serverCertificate`, `servercert.go`): it lasts 90 days, is replaced once 30 days
   are left, and is reissued when the host's IPs or domain change (re-read at most every
   10 minutes, on a handshake). If a reissue fails, the current cert is kept while valid.
+- **Connection limits** (`connlimit.go`): the listener is public and shares the API
+  process, so a client can't hold connections open — headers within 10 s, the whole body
+  within 60 s, the answer within 60 s, idle keep-alive closed after 60 s (the CVE report
+  upload and the agent binary download extend their own deadlines to 10 minutes; the
+  console and link WebSockets clear them when they upgrade), and at most 256 open
+  connections per client address (an IPv6 client per /64).
 - **`requireClientCert`** (`mtls.go:18-37`) gates every non-enroll endpoint with a
   two-part check that **both** must hold: (a) a client cert was presented, and (b) its
   fingerprint maps to an **enrolled, non-revoked** machine (`machineByCertFP`). A cert

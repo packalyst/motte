@@ -291,6 +291,16 @@ func (a *agentConn) recordFrame(f consoleFrame) {
 	}
 }
 
+// recordMarker adds a marker to a session's recording (when it is being recorded).
+func (a *agentConn) recordMarker(session, label string) {
+	a.mu.Lock()
+	r := a.recs[session]
+	a.mu.Unlock()
+	if r != nil {
+		r.event("m", label)
+	}
+}
+
 // closeRecorder ends a session's recording outright (shell exited / channel dropped).
 func (a *agentConn) closeRecorder(session string) {
 	a.mu.Lock()

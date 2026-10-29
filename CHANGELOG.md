@@ -137,6 +137,24 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **Pentest fixes (2026-10-29)**:
+  - A 2FA code can't be reused within its window even after a newer one was used (every used
+    code is remembered for 90 s, not only the latest).
+  - The idle lock now also covers the setup endpoints: every place that checks a session, in
+    the router or outside it, uses one shared check.
+  - Over HTTPS only the secure (`__Host-`) session cookie is accepted, so a sibling subdomain
+    can't plant a session. (Anyone still signed in through plain `http://` signs in once more.)
+  - One Cloudflare list for the whole stack: the Traefik plugin reads the panel's live list
+    instead of a copy frozen in its code, `traefik.yml` no longer carries one, and the Logs page
+    only believes a visitor address Cloudflare itself sent.
+  - Fleet: a machine's CVE reports are stored one at a time (a compromised machine sending many
+    at once could exhaust the panel's memory); the agent port cuts connections that send data
+    too slowly and caps open connections per address; the console-events connection closes when
+    the operator's access ends; console uploads, downloads, deletes and container actions are
+    audited and marked in the session recording.
+- **Changing your password asks for your 2FA code** when 2FA is on, like every other credential
+  change: a stolen session plus the password is no longer enough to change it and sign you out
+  everywhere. The Change Password form shows the code field only for 2FA users.
 - **Plain HTTP only redirects to HTTPS**: the panel (by IP, admin domain or panel domain) and
   every site with HTTPS on answer port 80 with a redirect to the same address on HTTPS (POSTs
   stay POSTs), so passwords and session cookies never travel unencrypted. The panel by IP is

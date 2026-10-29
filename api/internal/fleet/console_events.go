@@ -21,9 +21,23 @@ import (
 // consoleEventSub is one subscribed browser. The captured Principal carries the role + scope used to
 // filter every push and request, so a subscriber can never be shown another user's sessions.
 type consoleEventSub struct {
-	p       *router.Principal
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+
+	mu sync.Mutex
+	p  *router.Principal // refreshed every consoleRecheck, so a scope change applies
+}
+
+func (e *consoleEventSub) principal() *router.Principal {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.p
+}
+
+func (e *consoleEventSub) setPrincipal(p *router.Principal) {
+	e.mu.Lock()
+	e.p = p
+	e.mu.Unlock()
 }
 
 func (e *consoleEventSub) send(v any) {
@@ -64,22 +78,34 @@ func notifySessionsChanged(machineID string) {
 	evMu.Unlock()
 	for _, sub := range subs {
 		go func(sub *consoleEventSub) {
-			sub.send(map[string]any{"t": "sessions", "sessions": s.globalSessions(sub.p, false)})
+			sub.send(map[string]any{"t": "sessions", "sessions": s.globalSessions(sub.principal(), false)})
 		}(sub)
 	}
 }
 
-// HandleConsoleEvents is the browser-facing console-events WS. Mounted directly on the mux (bypassing
-// REST RBAC), so it self-authenticates (session cookie/Bearer) and enforces the operator+ floor.
-func (s *Service) HandleConsoleEvents(w http.ResponseWriter, r *http.Request) {
-	token := helper.SessionToken(r)
-	p, ok := router.ResolvePrincipal(token)
-	if !ok || p == nil || p.Locked {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+// consoleEventsAccess checks what the console-events socket needs, at open and again every
+// consoleRecheck while it stays open: a live, unlocked session with the operator role. It returns
+// the principal, or the status and reason to refuse with.
+func consoleEventsAccess(token string) (*router.Principal, int, string) {
+	p, _, _ := router.Authenticate(token, false)
+	if p == nil {
+		return nil, http.StatusUnauthorized, "unauthorized"
 	}
 	if !auth.RoleAtLeast(p.Role, auth.RoleOperator) {
-		http.Error(w, "insufficient role", http.StatusForbidden)
+		return nil, http.StatusForbidden, "insufficient role"
+	}
+	return p, 0, ""
+}
+
+// HandleConsoleEvents is the browser-facing console-events WS. Mounted directly on the mux (bypassing
+// REST RBAC), so it self-authenticates (session cookie/Bearer) and enforces the operator+ floor. Like
+// an open console, it re-checks that every consoleRecheck: ending, locking or demoting the session
+// closes it, and a scope change applies to what it lists and can act on.
+func (s *Service) HandleConsoleEvents(w http.ResponseWriter, r *http.Request) {
+	token := helper.SessionToken(r)
+	p, code, reason := consoleEventsAccess(token)
+	if p == nil {
+		http.Error(w, reason, code)
 		return
 	}
 	conn, err := browserUpgrader.Upgrade(w, r, nil)
@@ -91,6 +117,26 @@ func (s *Service) HandleConsoleEvents(w http.ResponseWriter, r *http.Request) {
 	evAdd(sub)
 	defer evRemove(sub)
 	defer conn.Close()
+
+	stopRecheck := make(chan struct{})
+	defer close(stopRecheck)
+	go recheckUntil(consoleRecheck, stopRecheck, func() string {
+		p2, _, reason := consoleEventsAccess(token)
+		if p2 == nil {
+			return reason
+		}
+		if p2.UserID != p.UserID {
+			return "session changed"
+		}
+		sub.setPrincipal(p2)
+		return ""
+	}, func(reason string) {
+		sub.writeMu.Lock()
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "access ended: "+reason), time.Now().Add(time.Second))
+		sub.writeMu.Unlock()
+		conn.Close()
+	})
 
 	// Initial push: a fresh, live-queried list so the page paints real state immediately.
 	sub.send(map[string]any{"t": "sessions", "sessions": s.globalSessions(p, true)})
@@ -110,7 +156,7 @@ func (s *Service) HandleConsoleEvents(w http.ResponseWriter, r *http.Request) {
 		case "kill":
 			go s.wsKill(sub, f.MachineID, f.Session)
 		case "refresh":
-			go func() { sub.send(map[string]any{"t": "sessions", "sessions": s.globalSessions(p, true)}) }()
+			go func() { sub.send(map[string]any{"t": "sessions", "sessions": s.globalSessions(sub.principal(), true)}) }()
 		}
 	}
 }
@@ -138,7 +184,7 @@ func (s *Service) scopedAgent(p *router.Principal, machineID, clientSession stri
 
 // wsSnapshot captures a session's current screen and pushes it back for a preview card.
 func (s *Service) wsSnapshot(sub *consoleEventSub, machineID, clientSession string) {
-	a, eff, ok := s.scopedAgent(sub.p, machineID, clientSession)
+	a, eff, ok := s.scopedAgent(sub.principal(), machineID, clientSession)
 	if !ok {
 		return
 	}
@@ -148,12 +194,12 @@ func (s *Service) wsSnapshot(sub *consoleEventSub, machineID, clientSession stri
 
 // wsKill destroys one of the caller's own sessions (the tab/card close button).
 func (s *Service) wsKill(sub *consoleEventSub, machineID, clientSession string) {
-	a, eff, ok := s.scopedAgent(sub.p, machineID, clientSession)
+	a, eff, ok := s.scopedAgent(sub.principal(), machineID, clientSession)
 	if !ok {
 		return
 	}
 	a.writeToAgent(consoleFrame{T: "kill", Session: eff})
-	events.Audit("fleet", "console_kill", events.SeverityInfo, sub.p.Username, "",
+	events.Audit("fleet", "console_kill", events.SeverityInfo, sub.principal().Username, "",
 		"Console session killed (session "+eff+")")
 	// session-exit from the agent will push the updated list; nudge now in case the agent is slow.
 	notifySessionsChanged(machineID)

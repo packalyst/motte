@@ -56,6 +56,12 @@ type Config struct {
 
 	// Gate admits only the sources the panel lists (plus ACME challenges); see GateConfig.
 	Gate *GateConfig `json:"gate,omitempty"`
+
+	// CloudflareListURL is where the panel serves Cloudflare's current edge ranges (one CIDR per
+	// line), the same live list the panel's firewall uses. A request from one of them names the
+	// visitor in CF-Connecting-IP. Without it, or until it has been fetched, no peer is trusted
+	// that way: the peer itself is the client.
+	CloudflareListURL string `json:"cloudflareListUrl,omitempty"`
 }
 
 // IPFilterConfig configures IP-based filtering.
@@ -98,6 +104,16 @@ func (d *ipDenySet) contains(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// parseIPList is parseDenyList for a list that can't be empty (Cloudflare's ranges): an answer
+// with no valid entry is not a list (nil), so the last good one stays in use.
+func parseIPList(body []byte) interface{} {
+	d := parseDenyList(body).(*ipDenySet)
+	if len(d.exact)+len(d.nets) == 0 {
+		return nil
+	}
+	return d
 }
 
 // parseDenyList turns the plain-text block list (one IP/CIDR per line) into an ipDenySet.
@@ -375,6 +391,7 @@ type Sentinel struct {
 	robotsCache  *remoteCache
 	agentsCache  *remoteCache
 	denyCache    *remoteCache
+	cfCache      *remoteCache
 	gate         *gate
 	blockRegex   []*regexp.Regexp
 	allowRegex   []*regexp.Regexp
@@ -449,6 +466,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		config: config,
 		debug:  debug,
 		gate:   newGate(config.Gate),
+	}
+	if config.CloudflareListURL != "" {
+		s.cfCache = newCache(config.CloudflareListURL, cloudflareListTTL)
 	}
 
 	// Parse IP networks
@@ -747,7 +767,7 @@ func (s *Sentinel) getClientIP(req *http.Request) net.IP {
 	}
 	peer := net.ParseIP(host)
 
-	if peer != nil && isCloudflareIP(peer) {
+	if peer != nil && s.fromCloudflare(peer) {
 		if cf := net.ParseIP(strings.TrimSpace(req.Header.Get("CF-Connecting-IP"))); cf != nil {
 			return cf
 		}
@@ -755,36 +775,17 @@ func (s *Sentinel) getClientIP(req *http.Request) net.IP {
 	return peer
 }
 
-// cloudflareCIDRs is Cloudflare's published edge range list (https://www.cloudflare.com/ips/).
-var cloudflareCIDRs = []string{
-	"173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
-	"141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
-	"197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
-	"104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
-	"2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
-	"2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
-}
+// cloudflareListTTL is how long the fetched Cloudflare list is used before it is fetched again
+// (the panel refreshes it from Cloudflare daily).
+const cloudflareListTTL = 3600
 
-var (
-	cfOnce sync.Once
-	cfNets []*net.IPNet
-)
-
-// isCloudflareIP reports whether ip is within a Cloudflare edge range.
-func isCloudflareIP(ip net.IP) bool {
-	cfOnce.Do(func() {
-		for _, c := range cloudflareCIDRs {
-			if _, n, err := net.ParseCIDR(c); err == nil {
-				cfNets = append(cfNets, n)
-			}
-		}
-	})
-	for _, n := range cfNets {
-		if n.Contains(ip) {
-			return true
-		}
+// fromCloudflare reports whether peer is one of Cloudflare's edge servers, by the panel's list.
+func (s *Sentinel) fromCloudflare(peer net.IP) bool {
+	if s.cfCache == nil {
+		return false
 	}
-	return false
+	set, ok := s.cfCache.fetch(parseIPList).(*ipDenySet)
+	return ok && set.contains(peer)
 }
 
 func (s *Sentinel) isIPAllowed(ip net.IP) bool {

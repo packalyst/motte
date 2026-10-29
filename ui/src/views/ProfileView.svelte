@@ -29,11 +29,9 @@
 
   // Password change
   let showPasswordModal = $state(false)
-  let passwordForm = $state({
-    current: '',
-    new: '',
-    confirm: ''
-  })
+  // With 2FA on, changing the password also needs a current authenticator code (step-up).
+  const emptyPasswordForm = () => ({ current: '', code: '', new: '', confirm: '' })
+  let passwordForm = $state(emptyPasswordForm())
   let changingPassword = $state(false)
 
   // 2FA state: totpEnabled on the app-wide user, which step-up prompts also read, so turning
@@ -82,16 +80,21 @@
       toast('Password must be at least 8 characters', 'error')
       return
     }
+    if (twoFactorEnabled && !passwordForm.code) {
+      toast('Enter your 2FA code', 'error')
+      return
+    }
 
     changingPassword = true
     try {
       await apiPost('/api/auth/change-password', {
         currentPassword: passwordForm.current,
+        totpCode: passwordForm.code,
         newPassword: passwordForm.new
       })
       toast('Password changed successfully', 'success')
       showPasswordModal = false
-      passwordForm = { current: '', new: '', confirm: '' }
+      passwordForm = emptyPasswordForm()
     } catch (e) {
       toast('Failed to change password: ' + e.message, 'error')
     } finally {
@@ -389,6 +392,12 @@
       prefixIcon="lock"
       required
     />
+    {#if twoFactorEnabled}
+      <div>
+        <span class="block text-sm font-medium text-foreground mb-2">2FA Code</span>
+        <OtpInput bind:value={passwordForm.code} />
+      </div>
+    {/if}
     <Input
       label="New Password"
       type="password"

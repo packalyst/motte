@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"strings"
 	"time"
 
@@ -34,30 +35,18 @@ type TraefikLogEntry struct {
 	ServiceName           string `json:"ServiceName"`
 	RequestProtocol       string `json:"RequestProtocol"`
 
-	// Trusted-proxy headers Traefik forwards when their names are kept.
-	// Priority when computing the real client IP: CF > XFF > X-Real-IP > ClientHost.
+	// The visitor Cloudflare names, kept in the access log (see realClientIP).
 	RequestCFConnectingIP string `json:"request_Cf-Connecting-Ip"`
-	RequestXForwardedFor  string `json:"request_X-Forwarded-For"`
-	RequestXRealIP        string `json:"request_X-Real-Ip"`
 }
 
-// realClientIP resolves the true visitor IP behind a trusted proxy.
-// Prefers CF-Connecting-IP → first X-Forwarded-For entry → X-Real-IP → raw ClientHost.
-// If Traefik's forwardedHeaders.trustedIPs isn't configured for the proxy source,
-// ClientHost already equals the proxy edge IP, so the header wins here.
+// realClientIP is the visitor's IP: the CF-Connecting-IP Cloudflare sets when the request came
+// from one of its edges (by the panel's live list), else the address that connected (ClientHost).
+// Forwarding headers from anyone else are ignored: a direct visitor can write any address there.
 func realClientIP(e *TraefikLogEntry) string {
-	if ip := strings.TrimSpace(e.RequestCFConnectingIP); ip != "" {
-		return ip
-	}
-	if xff := strings.TrimSpace(e.RequestXForwardedFor); xff != "" {
-		// XFF is a comma-separated chain, left is closest to the client.
-		if comma := strings.Index(xff, ","); comma >= 0 {
-			return strings.TrimSpace(xff[:comma])
+	if helper.IsCloudflareIP(e.ClientHost) {
+		if ip := net.ParseIP(strings.TrimSpace(e.RequestCFConnectingIP)); ip != nil {
+			return ip.String()
 		}
-		return xff
-	}
-	if ip := strings.TrimSpace(e.RequestXRealIP); ip != "" {
-		return ip
 	}
 	return e.ClientHost
 }

@@ -3,6 +3,8 @@ package firewall
 import (
 	"net/http"
 	"strings"
+
+	"api/internal/helper"
 )
 
 // AllBlockedCIDRs assembles every actively-blocked SOURCE: enabled, unexpired ip/range
@@ -87,4 +89,17 @@ func (s *Service) HandleInternalBlocklist(w http.ResponseWriter, r *http.Request
 	if len(list) > 0 {
 		w.Write([]byte("\n"))
 	}
+}
+
+// HandleInternalCloudflare serves Cloudflare's current edge ranges (one CIDR per line), the
+// panel's live list (helper.CloudflareCIDRs, refreshed daily), for the Traefik sentinel plugin: it
+// is the one list every part of the stack decides "came through Cloudflare" by. Internal-only.
+func (s *Service) HandleInternalCloudflare(w http.ResponseWriter, r *http.Request) {
+	if !internalCallerAllowed(r) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte(strings.Join(helper.CloudflareCIDRs(), "\n") + "\n"))
 }

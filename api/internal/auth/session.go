@@ -16,6 +16,7 @@ import (
 // ChangePasswordRequest for password change
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword"`
+	TotpCode        string `json:"totpCode"` // required when the user has 2FA on (step-up)
 	NewPassword     string `json:"newPassword"`
 }
 
@@ -176,14 +177,11 @@ func (s *Service) VerifyPassword(userID int64, password string) error {
 // newPasswordError is why a new password was refused (too weak, same as the old one).
 type newPasswordError struct{ error }
 
-// ChangePassword changes the user's password after verifying the current one
+// ChangePassword sets a new password for a caller who has just re-authenticated with step-up
+// (current password, plus the 2FA code when 2FA is on): the new one must differ from the current
+// one and be strong enough. Callers run step-up first, so nothing about the policy is revealed to
+// someone who doesn't know the password.
 func (s *Service) ChangePassword(userID int64, currentPassword, newPassword string) error {
-	// Verify current password FIRST (before any other validation)
-	if err := s.VerifyPassword(userID, currentPassword); err != nil {
-		return err
-	}
-
-	// Only after verifying current password, check if new password is different
 	if currentPassword == newPassword {
 		return newPasswordError{errors.New("new password must be different from current password")}
 	}
@@ -311,14 +309,16 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Step-up like every other credential change: the current password, plus the 2FA code when
+	// 2FA is on, so a stolen session that knows the password still can't take the account over.
+	// A wrong credential is a 428 (429 when locked out), never a 401: the caller is still signed
+	// in, and the UI treats a 401 as "session ended" and logs out.
+	if !s.StepUp(w, user.ID, req.CurrentPassword, req.TotpCode) {
+		return
+	}
 	if err := s.ChangePassword(user.ID, req.CurrentPassword, req.NewPassword); err != nil {
-		if tooManyAttempts(w, err) {
-			return
-		}
-		// A wrong current password is a 400, never a 401: the caller is still signed in, and the
-		// UI treats a 401 as "session ended" and logs out.
 		var refused newPasswordError
-		if errors.Is(err, errPasswordIncorrect) || errors.As(err, &refused) {
+		if errors.As(err, &refused) {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
