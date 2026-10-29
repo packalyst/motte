@@ -279,18 +279,13 @@ func (s *Service) Handlers() router.ServiceHandlers {
 // maxHeadscaleReply bounds a reply read whole to strip its join keys.
 const maxHeadscaleReply = 8 << 20
 
-// proxyResponse relays a Headscale reply for path. Join keys are removed from every reply except
-// the pre-auth key endpoints' own (list, create, expire), which exist to show them: Headscale 0.25
-// reports each node, and each route's node, with the full key it joined with, and the node and
-// route lists are open to viewers.
+// proxyResponse relays a Headscale reply for path with its join keys removed (StripJoinKeys):
+// Headscale 0.25 reports each node, and each route's node, with the full key it joined with, and the
+// node and route lists are open to viewers. The one reply that keeps its key is a newly created
+// key's (handleCreatePreAuthKey): it's shown once, then only its prefix.
 func (s *Service) proxyResponse(w http.ResponseWriter, resp *http.Response, path string) {
 	defer resp.Body.Close()
 	w.Header().Set("Content-Type", "application/json")
-	if strings.HasPrefix(path, "/preauthkey") {
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
-		return
-	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHeadscaleReply))
 	if err == nil {
 		body, err = StripJoinKeys(body)
@@ -304,8 +299,12 @@ func (s *Service) proxyResponse(w http.ResponseWriter, resp *http.Response, path
 	w.Write(body)
 }
 
-// StripJoinKeys removes every "preAuthKey" from a Headscale JSON reply, at any depth (a node list,
-// one node, a route's node). An empty body is returned as is.
+// keyPrefixLen is how much of a pre-auth key the key list shows, enough to tell keys apart.
+const keyPrefixLen = 12
+
+// StripJoinKeys removes the join keys from a Headscale JSON reply, at any depth: every "preAuthKey"
+// (a node's, a route's node's) is dropped, and in a "preAuthKeys" list each key is replaced by its
+// first keyPrefixLen characters ("keyPrefix"). An empty body is returned as is.
 func StripJoinKeys(body []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(body)) == 0 {
 		return body, nil
@@ -320,10 +319,30 @@ func StripJoinKeys(body []byte) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+// maskKey replaces a key entry's "key" with its prefix.
+func maskKey(entry map[string]any) {
+	k, ok := entry["key"].(string)
+	if !ok {
+		return
+	}
+	delete(entry, "key")
+	if len(k) > keyPrefixLen {
+		k = k[:keyPrefixLen]
+	}
+	entry["keyPrefix"] = k
+}
+
 func dropJoinKeys(v any) {
 	switch t := v.(type) {
 	case map[string]any:
 		delete(t, "preAuthKey")
+		if list, ok := t["preAuthKeys"].([]any); ok {
+			for _, e := range list {
+				if k, ok := e.(map[string]any); ok {
+					maskKey(k)
+				}
+			}
+		}
 		for _, c := range t {
 			dropJoinKeys(c)
 		}
@@ -617,19 +636,72 @@ func (s *Service) handleCreatePreAuthKey(w http.ResponseWriter, r *http.Request)
 	}
 
 	body, _ := json.Marshal(req)
-	s.proxyPost(w, "/preauthkey", string(body))
+	resp, err := helper.HeadscalePost("/preauthkey", string(body))
+	if err != nil {
+		headscaleUnreachable(w, err)
+		return
+	}
+	// The only reply that carries a whole key: the admin copies it now; the list shows its prefix.
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, io.LimitReader(resp.Body, maxHeadscaleReply))
 }
 
+var validKeyID = regexp.MustCompile(`^[0-9]{1,20}$`)
+
+// handleExpirePreAuthKey expires a key by its id (the browser never holds the whole key): the full
+// key, which Headscale 0.25 expires by, is looked up here.
 func (s *Service) handleExpirePreAuthKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		User string `json:"user"`
-		Key  string `json:"key"`
+		ID   string `json:"id"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	body, _ := json.Marshal(req)
+	if !validName.MatchString(req.User) || !validKeyID.MatchString(req.ID) {
+		router.JSONError(w, "invalid user or key id", http.StatusBadRequest)
+		return
+	}
+	key, err := preAuthKeyByID(req.User, req.ID)
+	if err != nil {
+		headscaleUnreachable(w, err)
+		return
+	}
+	if key == "" {
+		router.JSONError(w, "key not found", http.StatusNotFound)
+		return
+	}
+	body, _ := json.Marshal(map[string]string{"user": req.User, "key": key})
 	s.proxyPost(w, "/preauthkey/expire", string(body))
+}
+
+// preAuthKeyByID returns a user's pre-auth key with id ("" if there's none).
+func preAuthKeyByID(user, id string) (string, error) {
+	resp, err := helper.HeadscaleGet("/preauthkey?user=" + user)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("headscale answered %s", resp.Status)
+	}
+	var list struct {
+		PreAuthKeys []struct {
+			ID  string `json:"id"`
+			Key string `json:"key"`
+		} `json:"preAuthKeys"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxHeadscaleReply)).Decode(&list); err != nil {
+		return "", err
+	}
+	for _, k := range list.PreAuthKeys {
+		if k.ID == id {
+			return k.Key, nil
+		}
+	}
+	return "", nil
 }
 
 // --- API Keys ---
