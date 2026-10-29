@@ -780,6 +780,10 @@ func main() {
 		mux.Handle("/internal/blocklist", http.HandlerFunc(fwSvc.HandleInternalBlocklist))
 		// Sentinel posts its periodic L7 block count here (internal-only, refuses proxied).
 		mux.Handle("/internal/l7block", http.HandlerFunc(fwSvc.HandleInternalL7Block))
+		// Who may use port 80 while Cloudflare-only is on (the sentinel port-80 gate).
+		mux.Handle("/internal/webgate", http.HandlerFunc(fwSvc.HandleInternalWebGate))
+		// The gate's dropped addresses (Traefik only), for the 'webgate' jail.
+		mux.Handle("/internal/webgate/drops", http.HandlerFunc(fwSvc.HandleInternalWebGateDrops))
 	}
 
 	// Self-extracting agent installer. Registered on the mux directly (bypasses auth —

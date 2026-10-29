@@ -83,8 +83,7 @@
   }
   function websiteState(w) {
     if (w.status === 'missing') return { label: 'No certificate', variant: 'warning' }
-    const s = dueState('web:' + w.domain)
-    return w.problem && s.variant === 'success' ? { label: "Can't renew", variant: 'destructive' } : s
+    return dueState('web:' + w.domain)
   }
   const expiry = (t) => `${formatExpiryDate(t)} · ${formatDate(t)}`
   const shortFp = (fp) => (fp || '').replace('sha256:', '').slice(0, 16)

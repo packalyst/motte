@@ -11,15 +11,20 @@ import (
 	"api/internal/helper"
 )
 
-// CloudflareOnlyTable optionally restricts inbound access to the web ports (80/443)
-// to Cloudflare's edge ranges only — so nobody can bypass Cloudflare by hitting the
-// server's raw IP. It is a SEPARATE, clearly-named table (inet motte_cf_only), so it is
-// obvious in `nft list ruleset` what it does.
+// CloudflareOnlyTable optionally restricts inbound access to HTTPS (443) to Cloudflare's
+// edge ranges only — so nobody can bypass Cloudflare by hitting the server's raw IP. It is
+// a SEPARATE, clearly-named table (inet motte_cf_only), so it is obvious in `nft list
+// ruleset` what it does.
+//
+// Port 80 stays open here: Let's Encrypt validates from addresses it doesn't publish, so
+// the kernel can't tell it apart. Traefik gates port 80 instead (the sentinel "gate", fed
+// by WebGateSources): the certificate check passes, any other request from outside these
+// sources is dropped silently.
 //
 // Driven by the `web_cloudflare_only` setting:
 //   - OFF (default): an EMPTY shell — 80/443 stay open to everyone.
 //   - ON: an input-hook chain (priority -10, BEFORE the main firewall at 0) that
-//     accepts 80/443 from Cloudflare — plus loopback, the Docker bridge, WireGuard
+//     accepts 443 from Cloudflare — plus loopback, the Docker bridge, WireGuard
 //     and Headscale so an admin is never locked out — and drops it from every other
 //     source.
 //
@@ -56,7 +61,7 @@ func (t *CloudflareOnlyTable) Build() (string, error) {
 		return sb.String(), nil
 	}
 
-	trusted := trustedAdminSources() // loopback, Docker bridge, WireGuard, Headscale (v4)
+	trusted := TrustedAdminSources() // loopback, Docker bridge, WireGuard, Headscale (v4)
 
 	sb.WriteString("table inet motte_cf_only {\n")
 	if len(v4) > 0 {
@@ -66,8 +71,8 @@ func (t *CloudflareOnlyTable) Build() (string, error) {
 		sb.WriteString(BuildSet("cf_v6", "ipv6_addr", []string{"interval", "auto-merge"}, v6))
 	}
 	// Two chains, both priority -10 (before the main firewall):
-	//   - input: host-destined web ports (a host-networked service, if any).
-	//   - forward: Traefik's 80/443 are Docker-PUBLISHED, so that traffic is DNAT'd and
+	//   - input: host-destined HTTPS (a host-networked service, if any).
+	//   - forward: Traefik's 443 is Docker-PUBLISHED, so that traffic is DNAT'd and
 	//     FORWARDED to the container — it never reaches the input hook. Scope the forward
 	//     rules to `ct status dnat` so only externally-published traffic is filtered and
 	//     WireGuard / container-to-container forwarding is untouched.
@@ -77,26 +82,26 @@ func (t *CloudflareOnlyTable) Build() (string, error) {
 	return sb.String(), nil
 }
 
-// cfRules builds the accept-Cloudflare-and-trusted / drop-everyone-else rules for the web
-// ports. prefix is prepended to each rule — "" for the input chain, "ct status dnat " for
+// cfRules builds the accept-Cloudflare-and-trusted / drop-everyone-else rules for HTTPS.
+// prefix is prepended to each rule — "" for the input chain, "ct status dnat " for
 // the forward chain (so it only matches externally-published, DNAT'd traffic).
 func cfRules(v4, v6, trusted []string, prefix string) []string {
 	rules := []string{
-		"# Always-allowed local/VPN sources reach the web ports (never lock the admin out).",
-		prefix + "ip saddr { " + strings.Join(trusted, ", ") + " } tcp dport { 80, 443 } accept",
-		prefix + "ip6 saddr ::1/128 tcp dport { 80, 443 } accept",
-		"# Cloudflare edge ranges — the only public source allowed to reach 80/443.",
+		"# Always-allowed local/VPN sources reach HTTPS (never lock the admin out).",
+		prefix + "ip saddr { " + strings.Join(trusted, ", ") + " } tcp dport 443 accept",
+		prefix + "ip6 saddr ::1/128 tcp dport 443 accept",
+		"# Cloudflare edge ranges — the only public source allowed to reach 443.",
 	}
 	if len(v4) > 0 {
-		rules = append(rules, prefix+"ip saddr @cf_v4 tcp dport { 80, 443 } accept")
+		rules = append(rules, prefix+"ip saddr @cf_v4 tcp dport 443 accept")
 	}
 	if len(v6) > 0 {
-		rules = append(rules, prefix+"ip6 saddr @cf_v6 tcp dport { 80, 443 } accept")
+		rules = append(rules, prefix+"ip6 saddr @cf_v6 tcp dport 443 accept")
 	}
 	rules = append(rules,
-		"# Log (rate-limited) then drop 80/443 from every other source.",
-		prefix+`tcp dport { 80, 443 } limit rate 5/minute log prefix "CF_ONLY_DROP: "`,
-		prefix+"tcp dport { 80, 443 } drop",
+		"# Log (rate-limited) then drop 443 from every other source. Port 80 is gated in Traefik.",
+		prefix+`tcp dport 443 limit rate 5/minute log prefix "CF_ONLY_DROP: "`,
+		prefix+"tcp dport 443 drop",
 	)
 	return rules
 }
@@ -128,6 +133,18 @@ func (t *CloudflareOnlyTable) restrictEnabled() bool {
 	return on
 }
 
+// WebGateSources is who may use port 80 while Cloudflare-only is on: Cloudflare's ranges and
+// the trusted admin sources, the same sources the 443 rule accepts. It returns nil when
+// Cloudflare-only is off (or the Cloudflare list is empty, where the 443 rule fails open too):
+// everyone may.
+func (t *CloudflareOnlyTable) WebGateSources() []string {
+	cf := helper.CloudflareCIDRs()
+	if !t.restrictEnabled() || len(cf) == 0 {
+		return nil
+	}
+	return append(append(TrustedAdminSources(), "::1/128"), cf...)
+}
+
 // splitCIDRs partitions CIDR strings into IPv4 and IPv6 (v6 = contains ':').
 func splitCIDRs(cidrs []string) (v4, v6 []string) {
 	for _, c := range cidrs {
@@ -140,7 +157,7 @@ func splitCIDRs(cidrs []string) (v4, v6 []string) {
 	return v4, v6
 }
 
-// trustedAdminSources returns the CIDRs that keep reaching the web ports with Cloudflare-only on,
+// TrustedAdminSources returns the CIDRs that keep reaching the web ports with Cloudflare-only on,
 // so an admin can never be locked out of their own panel:
 //   - loopback
 //   - the Docker bridge (DOCKER_SUBNET) so Traefik keeps reaching the API
@@ -149,7 +166,7 @@ func splitCIDRs(cidrs []string) (v4, v6 []string) {
 //
 // The ranges come from the same env vars the rest of the stack uses; each has a sane
 // fallback matching .env.example so a missing/garbled var can never drop a trusted source.
-func trustedAdminSources() []string {
+func TrustedAdminSources() []string {
 	out := []string{"127.0.0.0/8"}
 	if c := validCIDROr(os.Getenv("DOCKER_SUBNET"), "172.18.0.0/24"); c != "" {
 		out = append(out, c)

@@ -53,6 +53,9 @@ type Config struct {
 
 	// ErrorMode determines response for blocked requests: silent, 401, 403, 404, 503
 	ErrorMode string `json:"errorMode,omitempty"`
+
+	// Gate admits only the sources the panel lists (plus ACME challenges); see GateConfig.
+	Gate *GateConfig `json:"gate,omitempty"`
 }
 
 // IPFilterConfig configures IP-based filtering.
@@ -372,6 +375,7 @@ type Sentinel struct {
 	robotsCache  *remoteCache
 	agentsCache  *remoteCache
 	denyCache    *remoteCache
+	gate         *gate
 	blockRegex   []*regexp.Regexp
 	allowRegex   []*regexp.Regexp
 	timeLocation *time.Location
@@ -444,6 +448,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		name:   name,
 		config: config,
 		debug:  debug,
+		gate:   newGate(config.Gate),
 	}
 
 	// Parse IP networks
@@ -541,6 +546,15 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 // ServeHTTP implements the http.Handler interface.
 func (s *Sentinel) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	s.log("request: %s %s from %s", req.Method, req.URL.Path, req.RemoteAddr)
+
+	// 0. Gate (before anything answers): an unlisted source is dropped silently, whatever the
+	// error mode, and reported for the jail.
+	if s.gate != nil && !s.gate.admits(req) {
+		s.log("gate: dropped %s", req.RemoteAddr)
+		s.gate.recordDrop(peerIP(req))
+		s.dropConnection(rw, req)
+		return
+	}
 
 	// 1. Maintenance check (highest priority)
 	if s.checkMaintenance() {

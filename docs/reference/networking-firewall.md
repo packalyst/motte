@@ -18,7 +18,7 @@ Rather than one monolithic table, the panel registers **four independent `inet` 
 
 | Table | File | Purpose | Hook priority (kernel eval order) | Base-chain policy | Composition |
 |---|---|---|---|---|---|
-| `motte_cf_only` | `api/internal/nftables/cf_only.go` | Restrict web ports 80/443 to Cloudflare edge (+ trusted) when `web_cloudflare_only=on` | `input` **and** `forward` **priority -10** | `accept` | drop-subset-terminal |
+| `motte_cf_only` | `api/internal/nftables/cf_only.go` | Restrict HTTPS (443) to Cloudflare edge (+ trusted) when `web_cloudflare_only=on`; port 80 is gated in Traefik (§5.3) | `input` **and** `forward` **priority -10** | `accept` | drop-subset-terminal |
 | `motte_firewall` | `api/internal/nftables/firewall.go` | Main firewall: port allow-list, IP/range/country/ASN block+allow, per-peer WAN block, IPv6 drop, MSS clamp | `input` **priority 0**, `forward` **-1**, `output` **0** | `input`: **drop**; `forward`/`output`: **accept** | default-drop (input) / default-accept + explicit drops (forward, output) |
 | `motte_vpn_acl` | `api/internal/nftables/vpn_acl.go` | Peer-to-peer isolation, per-peer ACL rules, virtual-IP gating | `forward` **priority 0** | `accept` | default-deny backstop drops |
 | `motte_dhcp_net` | `api/internal/dhcp/reachability.go` | Managed private-network reachability: which DHCP segments may reach the VPN (and vice-versa), plus optional internet egress. Approved devices are matched by IP + MAC; to the box itself a LAN device gets only DHCP and DNS until approved | `forward` + `input` (filter) + `postrouting` (nat) | `accept` | default-deny reachability; internet-egress **masquerade off by default** |
@@ -153,18 +153,18 @@ Safety in `blockIP`/`blockIPWithOptions` (`blocking.go:33`): IPv6 values are ski
 
 It is **fail-open**: if disabled, or if the code can't safely classify traffic, it emits an **empty shell table** so it can never drop the management plane. The re-apply is wired through `settings.RequestFirewallApply` so flipping the setting takes effect live.
 
-### 5.1 `web_cloudflare_only` — restrict 80/443 to Cloudflare (`motte_cf_only`)
+### 5.1 `web_cloudflare_only` — restrict the web ports to Cloudflare (`motte_cf_only` + the Traefik gate)
 
 - **OFF (default):** empty shell — 80/443 open to everyone.
-- **ON:** **two** chains at **priority -10**, both accepting 80/443 from the trusted local sources + `::1`, then from `@cf_v4` / `@cf_v6` (the live Cloudflare set, §6), then `limit rate 5/minute log prefix "CF_ONLY_DROP: "` and dropping 80/443 from everything else. The shared rule builder is `cfRules(v4, v6, trusted, prefix)`:
-  - **`input`** chain — for any host-networked service that binds 80/443 directly.
+- **ON:** **two** chains at **priority -10**, both accepting **443** from the trusted local sources + `::1`, then from `@cf_v4` / `@cf_v6` (the live Cloudflare set, §6), then `limit rate 5/minute log prefix "CF_ONLY_DROP: "` and dropping 443 from everything else. **Port 80 is not filtered here**: Let's Encrypt validates the HTTP challenge from addresses it doesn't publish, so the kernel can't let only it through. Traefik gates port 80 instead (§5.3). The shared rule builder is `cfRules(v4, v6, trusted, prefix)`:
+  - **`input`** chain — for any host-networked service that binds 443 directly.
   - **`forward`** chain — **essential**: Traefik runs in a container, so its 80/443 are Docker-*published* ports. That traffic is DNAT'd and traverses the `forward` hook, **never `input`** (see `firewall.go:457`). The forward rules are prefixed with **`ct status dnat`** so only externally-published traffic is filtered — WireGuard and container-to-container forwarding are untouched. (An input-only version silently did nothing for Traefik — the panel stayed reachable by raw IP.)
 
 `restrictEnabled` is true **only** when the setting is explicitly `"on"`. Fails open if the Cloudflare list is somehow empty (never risk dropping all web traffic). Enabling is gated by the panel on the domain being proxied through Cloudflare — persisted at setup as `BEHIND_CLOUDFLARE` and surfaced as `web_cloudflare_only_available` (see [security.md](security.md)).
 
 ### 5.2 Trusted sources that are never dropped
 
-`trustedAdminSources()` (`cf_only.go`) always returns:
+`TrustedAdminSources()` (`cf_only.go`) always returns:
 
 | Source | Env var | Fallback |
 |---|---|---|
@@ -174,6 +174,19 @@ It is **fail-open**: if disabled, or if the code can't safely classify traffic, 
 | Headscale/Tailnet admins | `HEADSCALE_IP_RANGE` | `100.64.0.0/16` |
 
 Each env value is validated (`validCIDROr`); a garbled var falls back to the `.env.example` default so a trusted source is never silently lost.
+
+### 5.3 The port-80 gate (Traefik, `sentinel_web_gate`)
+
+With a domain set, `manage.sh` attaches `sentinel_web_gate@file` to Traefik's whole `web` entry point (every router on port 80). The sentinel plugin's `gate` (`traefik/plugins-local/src/local/sentinel/gate.go`):
+
+- reads who may pass from the panel's `/internal/webgate` (internal-only): `off` while Cloudflare-only is off, else `on` plus `WebGateSources()` — `TrustedAdminSources()`, `::1` and the live Cloudflare list, the same sources the 443 rule accepts;
+- checks the **address that connected to Traefik**, never forwarded headers (those name the visitor behind Cloudflare; the point is to admit Cloudflare itself);
+- always lets an ACME challenge through: exactly `/.well-known/acme-challenge/<base64url token>`, nothing more, answered by Traefik's own ACME handler;
+- **drops anyone else silently** (connection closed, no response, whatever the router's error mode);
+- fails closed until the list has been fetched once, then keeps the last good list when a fetch fails;
+- reports dropped addresses in batches (bounded) to `/internal/webgate/drops`, accepted only from `TRAEFIK_CONTAINER_IP`. The panel writes public IPv4 ones as `WEBGATE_DROP SRC=<ip>` to `DATA_DIR/webgate.log` (size-capped, `helper.AppendJailLines`), which the default **`webgate` jail** watches: 3 drops in 10 minutes → banned for a day, on every port.
+
+Plain HTTP itself only redirects (see [security.md](security.md)): the panel on the server IP / admin domain, the panel domain and every site with HTTPS on answer `301`/`308` to the same URL on HTTPS. Tailscale's control paths and sites without HTTPS are still served on port 80.
 
 ---
 
@@ -193,7 +206,7 @@ Two **distinct** mechanisms — do not conflate them:
 
 These solve different problems and must not be confused:
 
-- **`cf_only` table** = **access control**: who may *reach* ports 80/443 at L3 (§5.1). Restricting to Cloudflare here means nobody can bypass Cloudflare by hitting the raw server IP.
+- **`cf_only` table** = **access control**: who may *reach* port 443 at L3 (§5.1); port 80 is gated in Traefik (§5.3). Restricting to Cloudflare here means nobody can bypass Cloudflare by hitting the raw server IP.
 - **Header-trust** = deciding whether to *believe* `CF-Connecting-IP` / `X-Forwarded-For` when computing the real client IP. In this codebase that trust is enforced in the **Go API** via `TRUSTED_PROXIES` → `helper.InitTrustedProxies` (wired in `auth/ratelimit.go:71`) and `GetClientIP` (`ip.go:110`): forwarding headers are honoured **only** when the immediate peer is a trusted proxy, and `CF-Connecting-IP` is trusted **only** when the last hop is a Cloudflare edge IP (so a bypasser can't forge a client IP). With no trusted proxies configured it **fails closed** (ignores headers), so a direct caller can't spoof its IP. When `TRUSTED_PROXIES` is unset the wiring **falls back to `TRAEFIK_CONTAINER_IP`** (2026-10-17), so the default deployment still trusts the real proxy hop and the per-IP login rate-limit doesn't collapse into one global bucket. See ADR-0007.
   - **Divergence from the brief:** the current `traefik/traefik.yml.template` does **not** set an `entryPoints.*.forwardedHeaders.trustedIPs` (Traefik reads the API over the Docker bridge via `host.docker.internal`). The `forwardedHeaders.trustedIPs` knob is referenced only in a code comment (`api/internal/logs/sources/traefik.go:46`) describing what happens when it isn't set: `ClientHost` already equals the proxy edge IP, so the header wins in `realClientIP`. Treat header-trust as an **API-side** concern here, not a Traefik static-config one. *(Flagged as unverified against the brief's wording.)*
 
@@ -255,7 +268,7 @@ See [data-model.md](data-model.md) for the `vpn_clients` / `vpn_acl_rules` / `vp
 To recreate this subsystem from scratch:
 1. **nftables engine** — `Table` interface + `Service` (register/priority-sort/debounced atomic `nft -f` apply) in `api/internal/nftables/{types,service,script}.go`. Get `BuildSet`/`BuildChain`/`TableHeader` + the `ValidateIPv4OrCIDR`/port/CIDR boundary guards right first — they are the anti-wedge invariants.
 2. **Main table** (`firewall.go`): the set inventory (§2.1), the input/forward/output chains (§2.2), WAN-interface auto-detect, IPv6 drops, MSS clamp, overlap cleanup.
-3. **Toggle table** (`cf_only.go`) at hook priority -10, fail-open empty-shell semantics, `trustedAdminSources()`; the panel API port always private in the main table.
+3. **Toggle table** (`cf_only.go`) at hook priority -10, fail-open empty-shell semantics, `TrustedAdminSources()`; the panel API port always private in the main table.
 4. **VPN ACL** (`vpn_acl.go`) with the default-deny backstop + interface fail-closed fallback + `@vips` gating.
 5. **Cloudflare list** (`helper/ip.go`): atomic store, 24h updater with sanity floor, update hook → firewall re-apply; `GetClientIP` + `TRUSTED_PROXIES` header-trust.
 6. **firewall service** (`firewall/service.go`): essential-ports seeding, Docker-port sync, jails, escalation, block cache, L3/L7 samplers, the `/internal/blocklist` + `/internal/l7block` endpoints.

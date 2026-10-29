@@ -40,6 +40,35 @@ func TurbotunnelsAuthLogPath() string {
 	return GetEnvOptional("DATA_DIR", "/data") + "/turbotunnels-auth.log"
 }
 
+// WebGateLogPath is the file the panel writes port-80 gate drops to ("WEBGATE_DROP SRC=<ip>"),
+// watched by the 'webgate' firewall jail.
+func WebGateLogPath() string {
+	return GetEnvOptional("DATA_DIR", "/data") + "/webgate.log"
+}
+
+// maxJailFileBytes caps a file the panel writes for a jail. Past it the file starts over; the
+// jail notices the shorter file and reads it from the start.
+const maxJailFileBytes = 5 << 20
+
+// AppendJailLines appends lines to a file the panel writes for a jail, starting it over first
+// when it has reached maxJailFileBytes, so it can't fill the disk.
+func AppendJailLines(path string, lines []string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	flags := os.O_CREATE | os.O_APPEND | os.O_WRONLY
+	if st, err := os.Stat(path); err == nil && st.Size() >= maxJailFileBytes {
+		flags |= os.O_TRUNC
+	}
+	f, err := os.OpenFile(path, flags, 0o640)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(strings.Join(lines, "\n") + "\n")
+	return err
+}
+
 // GetEnvInt returns the integer value of an environment variable or fatally exits if not set
 func GetEnvInt(key string) int {
 	v := os.Getenv(key)

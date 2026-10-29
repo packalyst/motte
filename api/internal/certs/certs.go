@@ -4,16 +4,11 @@
 package certs
 
 import (
-	"context"
 	"database/sql"
-	"net"
-	"strings"
-	"sync"
 	"time"
 
 	"api/internal/fleet"
 	"api/internal/helper"
-	"api/internal/settings"
 	"api/internal/traefik"
 )
 
@@ -23,7 +18,7 @@ const day = 24 * time.Hour
 type Website struct {
 	traefik.CertificateInfo
 	Role    string `json:"role,omitempty"`    // "panel" | "proxy" for the panel's own domains
-	Problem string `json:"problem,omitempty"` // why it can't be issued or renewed, when known
+	Problem string `json:"problem,omitempty"` // set when it has no certificate yet: what to check
 }
 
 // Overview is everything the Certificates page shows. Fleet is nil when the fleet is unavailable.
@@ -66,8 +61,8 @@ type tracked struct {
 }
 
 // Overview collects every certificate, with what needs attention.
-func (s *Service) Overview(ctx context.Context) Overview {
-	o := Overview{Websites: websites(ctx)}
+func (s *Service) Overview() Overview {
+	o := Overview{Websites: websites()}
 	if s.fleet != nil {
 		if st, err := s.fleet.CertStatus(); err == nil {
 			o.Fleet = &st
@@ -89,9 +84,8 @@ func (s *Service) Overview(ctx context.Context) Overview {
 	return o
 }
 
-// websites lists Traefik's certificates plus the panel's own domains that have none, flagging any
-// Let's Encrypt can't reach to renew.
-func websites(ctx context.Context) []Website {
+// websites lists Traefik's certificates plus the panel's own domains that have none yet.
+func websites() []Website {
 	certs, _ := traefik.GetCertificates()
 	out := make([]Website, 0, len(certs)+2)
 	have := map[string]bool{}
@@ -108,45 +102,11 @@ func websites(ctx context.Context) []Website {
 	}
 	for d, role := range roles {
 		if !have[d] {
-			out = append(out, Website{CertificateInfo: traefik.CertificateInfo{Domain: d, Status: "missing", Resolver: "letsencrypt"}, Role: role})
+			out = append(out, Website{CertificateInfo: traefik.CertificateInfo{Domain: d, Status: "missing", Resolver: "letsencrypt"}, Role: role,
+				Problem: "No certificate yet. Traefik requests one on the first visit; check that the domain points to this server."})
 		}
 	}
-	cfOnly := settings.GetWebCloudflareOnly()
-	var wg sync.WaitGroup
-	for i := range out { // each lookup waits up to 3s: run them side by side
-		wg.Add(1)
-		go func(w *Website) {
-			defer wg.Done()
-			w.Problem = renewProblem(ctx, w.Domain, w.Resolver, cfOnly)
-			if w.Problem == "" && w.Status == "missing" {
-				w.Problem = "No certificate yet. Traefik requests one on the first visit; check that the domain points to this server."
-			}
-		}(&out[i])
-	}
-	wg.Wait()
 	return out
-}
-
-// renewProblem explains why Let's Encrypt can't check a domain over HTTP: with Cloudflare-only on,
-// ports 80/443 only take Cloudflare's addresses, so a domain that points straight at this server
-// (not proxied by Cloudflare) can't be reached by Let's Encrypt's check. DNS-challenge certificates
-// don't need the ports. Unknown (lookup failed) is not reported as a problem.
-func renewProblem(ctx context.Context, domain, resolver string, cfOnly bool) string {
-	if !cfOnly || strings.Contains(resolver, "dns") || strings.HasPrefix(domain, "*.") {
-		return ""
-	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, domain)
-	if err != nil {
-		return ""
-	}
-	for _, a := range addrs {
-		if !helper.IsCloudflareIP(a.IP.String()) {
-			return "Can't renew: Cloudflare-only is on, and this domain isn't proxied by Cloudflare, so Let's Encrypt can't reach it. Switch it to the DNS check or turn Cloudflare-only off."
-		}
-	}
-	return ""
 }
 
 // autoLevels are the warning steps for a certificate that renews itself: it should have been

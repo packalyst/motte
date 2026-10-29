@@ -444,9 +444,8 @@ If its cert isn't from the issuer and it trusts the issuer, it renews at once.
   listener's certificate (only while the listener runs) and each enrolled machine's client
   certificate. The server decides each one's warning state (`due`), so the page repeats no
   thresholds.
-- **Can't-renew check:** with Cloudflare-only on, a domain on the HTTP check whose DNS points
-  outside Cloudflare is flagged: Let's Encrypt's check is dropped at 80/443. DNS-check
-  certificates and failed lookups are not flagged.
+- **Renewal with Cloudflare-only on** works on the HTTP check too, for domains proxied by
+  Cloudflare or not: port 80 lets Let's Encrypt's challenge through (the port-80 gate, below).
 - **Warning steps:** certificates that renew themselves (websites, listener, machines) warn only
   below half of their renewal window (the last third of their life), so a normal renewal never
   warns: 14/7/3/1 days and expired for a 90-day certificate. The fleet CA warns at 365/90/30/14/
@@ -526,11 +525,21 @@ summarised here only for the security picture.
   the internet, only from the server, Traefik (Docker network), the VPN and the LAN
   (`helper.AlwaysPrivatePort`). Browsers reach the panel through Traefik on 80/443,
   where VPN-only, rate limits and the block list apply. There is no switch for it.
-- **`web_cloudflare_only`** (UI: *cf_only*, L3). `true` allows **only Cloudflare edge
-  IPs** to reach ports 80/443, so the public web front door can't be hit by bypassing
-  Cloudflare (`settings.go:132`). The trusted-CF-IP list is kept current by
-  `helper.StartCloudflareIPUpdater` (`main.go:90-93`), which also governs when
-  `CF-Connecting-IP` is trusted for real client-IP resolution.
+- **`web_cloudflare_only`** (UI: *cf_only*). `true` allows **only Cloudflare edge IPs**
+  (plus the server, Docker and the VPNs) to reach HTTPS (443, L3), so the public web front
+  door can't be hit by bypassing Cloudflare. **Port 80** stays reachable at L3 so Let's
+  Encrypt can validate, but Traefik's **port-80 gate** (L7, `sentinel_web_gate`) answers only
+  the same sources plus an exact ACME challenge path: anyone else's connection is closed
+  without a response, and repeat offenders are banned by the `webgate` jail. The trusted-CF-IP
+  list is kept current by `helper.StartCloudflareIPUpdater`, which also governs when
+  `CF-Connecting-IP` is trusted for real client-IP resolution. Detail:
+  [networking-firewall.md](networking-firewall.md) §5.
+- **Plain HTTP only redirects.** On port 80 the panel (server IP, admin domain, panel
+  domain) and every site with HTTPS on answer a redirect to the same URL on HTTPS (`301`,
+  `308` for non-GET), so nothing is served unencrypted; gates (block list, VPN-only) run
+  before the redirect. The server IP and the VPN-only admin domain are served over HTTPS
+  with Traefik's self-signed certificate. Only Tailscale's control paths (their protocol is
+  encrypted itself) and sites without HTTPS answer on plain HTTP.
 
 There is also an **L7** block toggle: `GetTraefikFWBlock` (default **on**) makes the
 firewall block-list enforce at the Traefik/sentinel layer too, so blocks apply to

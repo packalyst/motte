@@ -666,11 +666,11 @@
   }
 
   async function setWebCloudflareOnly(enabled) {
-    // Restricting 80/443 to Cloudflare can cut off all web access — confirm, and be explicit.
+    // Restricting the web ports to Cloudflare can cut off all web access — confirm, and be explicit.
     if (enabled) {
       const ok = await confirm({
         title: 'Restrict web ports to Cloudflare?',
-        message: 'Ports 80/443 will be dropped at the firewall (L3) for any source that is not Cloudflare — localhost, Traefik and WireGuard still work. Your domain must be proxied through Cloudflare (orange cloud), or visitors will be blocked. Continue?',
+        message: 'HTTPS (443) will be dropped at the firewall for any source that is not Cloudflare, and on HTTP (80) they get no answer — localhost, Traefik and the VPNs still work, and Let\'s Encrypt can still renew certificates. Your domain must be proxied through Cloudflare (orange cloud), or visitors will be blocked. Continue?',
         confirmText: 'Restrict to Cloudflare', variant: 'danger',
       })
       if (!ok) { webCloudflareOnly = false; return } // revert the switch
@@ -679,7 +679,7 @@
     try {
       await apiPut('/api/settings', { web_cloudflare_only: enabled })
       webCloudflareOnly = enabled
-      toast(enabled ? 'Web ports now restricted to Cloudflare' : 'Cloudflare-only web access disabled — ports 80/443 open to all', 'success')
+      toast(enabled ? 'Web ports now restricted to Cloudflare' : 'Cloudflare-only web access disabled — web ports open to all', 'success')
     } catch (e) {
       webCloudflareOnly = !enabled // revert on failure (e.g. no SSL domain configured)
       toast(e.message || 'Failed to update Cloudflare-only web access', 'error')
@@ -1519,7 +1519,7 @@
                   <Checkbox variant="switch" bind:checked={fwBlockEnabled} disabled={fwBlockLoading} onchange={() => setFWBlock(fwBlockEnabled)} />
                 </div>
               </ContentBlock>
-              <ContentBlock title="Cloudflare-Only Web Access" description={webCloudflareOnlyAvailable ? "Allow only Cloudflare to reach the web ports (80/443). Blocks anyone hitting the raw server IP to bypass Cloudflare (localhost, Traefik and WireGuard still work)." : 'Available only when your domain is proxied through Cloudflare (set at setup).'}>
+              <ContentBlock title="Cloudflare-Only Web Access" description={webCloudflareOnlyAvailable ? "Allow only Cloudflare to reach the web ports. Blocks anyone hitting the raw server IP to bypass Cloudflare (localhost, Traefik and the VPNs still work); Let's Encrypt can still renew certificates." : 'Available only when your domain is proxied through Cloudflare (set at setup).'}>
                 <div class="flex items-center gap-2">
                   {#if cfOnlyLoading}
                     <span class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
