@@ -159,3 +159,38 @@ func TestAgentCacheRejectsBadSignature(t *testing.T) {
 		t.Fatalf("want signature rejection, got %v", err)
 	}
 }
+
+// The cache never steps back: when the forge's "latest" is older than the cached release, new
+// installs keep the cached one; a newer one is taken.
+func TestAgentCacheNeverDowngrades(t *testing.T) {
+	c := releaseCache(t, release, release) // the forge says latest is agent-v0.0.1
+	c.tag, c.checksums = "agent-v0.1.55", "cached"
+	if v, _, _, err := c.LatestSigned(context.Background()); err != nil || v != "0.1.55" {
+		t.Fatalf("older latest: serving %q (%v), want the cached 0.1.55", v, err)
+	}
+
+	c2 := releaseCache(t, release, release)
+	c2.tag, c2.checksums = "agent-v0.0.0", "cached"
+	if v, _, _, err := c2.LatestSigned(context.Background()); err != nil || v != "0.0.1" {
+		t.Fatalf("newer latest: serving %q (%v), want 0.0.1", v, err)
+	}
+}
+
+func TestReleaseAtLeast(t *testing.T) {
+	for _, c := range []struct {
+		tag, current string
+		want         bool
+	}{
+		{"agent-v0.1.56", "agent-v0.1.55", true},
+		{"agent-v0.1.55", "agent-v0.1.55", true},
+		{"agent-v0.1.9", "agent-v0.1.10", false},
+		{"v1.0", "agent-v0.9.9", true},
+		{"agent-v0.2.0-rc1", "agent-v0.1.99", true},
+		{"agent-vnext", "agent-v0.1.0", false},
+		{"agent-v0.0.1", "weird-tag", true},
+	} {
+		if got := releaseAtLeast(c.tag, c.current); got != c.want {
+			t.Errorf("releaseAtLeast(%q, %q) = %v, want %v", c.tag, c.current, got, c.want)
+		}
+	}
+}

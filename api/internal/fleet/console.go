@@ -16,6 +16,7 @@ package fleet
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -56,32 +57,76 @@ func (s *Service) consoleStepUp(r *http.Request, currentPassword, currentTOTP st
 
 // fleetStepUpGrace is how long a single successful fleet re-auth is honoured without prompting
 // again. One operator action that re-authenticates — opening a console OR running a confirm-tier
-// fleet command — opens the window; while it is open the SAME operator isn't re-prompted for either.
-// The window SLIDES on every pass, so continuous administration is never interrupted; it only lapses
-// after this much idle time. Short, and it only waives the password RE-ENTRY: the operator role,
-// machine scope and per-host enable flag are still checked on every request, and an idle-locked
-// session never reaches here (the request 423s in auth middleware first), so grace can't bypass the
-// lock. A console is already a root shell, so sharing the window with lesser fleet commands adds no
-// authority. Not used by the enable toggle, which is rarer/higher-impact and always re-authenticates.
-const fleetStepUpGrace = 10 * time.Minute
+// fleet command — opens the window; while it is open the same LOGIN SESSION isn't re-prompted for
+// either. The window belongs to that session, not the user: a password typed on one device doesn't
+// cover another, or a stolen session cookie. It slides on every pass, so continuous administration
+// isn't interrupted, but never past fleetStepUpGraceMax after the password was typed. It only waives
+// the password RE-ENTRY: the operator role, machine scope and per-host enable flag are still checked
+// on every request, and an idle-locked session never reaches here (the request 423s in auth
+// middleware first), so grace can't bypass the lock. A console is already a root shell, so sharing
+// the window with lesser fleet commands adds no authority. Not used by the enable toggle, which is
+// rarer/higher-impact and always re-authenticates.
+const (
+	fleetStepUpGrace    = 10 * time.Minute
+	fleetStepUpGraceMax = time.Hour
+)
+
+type fleetGrace struct{ until, started time.Time }
 
 var (
 	stepUpGraceMu sync.Mutex
-	stepUpGraceAt = map[int64]time.Time{} // userID → fleet step-up valid-until (sliding)
+	stepUpGraceAt = map[string]fleetGrace{} // login session (token hash) → its window
 )
 
-// recentFleetStepUp reports whether the user is still inside the grace window.
-func recentFleetStepUp(userID int64) bool {
-	stepUpGraceMu.Lock()
-	until, ok := stepUpGraceAt[userID]
-	stepUpGraceMu.Unlock()
-	return ok && time.Now().Before(until)
+// graceKey identifies the caller's login session without keeping its token.
+func graceKey(r *http.Request) string {
+	tok := helper.SessionToken(r)
+	if tok == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(tok))
+	return hex.EncodeToString(sum[:])
 }
 
-func touchStepUpGrace(userID int64) {
+// useFleetGrace reports whether the caller's session is inside its window, and slides it (never
+// past the cap).
+func useFleetGrace(r *http.Request) bool {
+	key := graceKey(r)
+	if key == "" {
+		return false
+	}
 	stepUpGraceMu.Lock()
-	stepUpGraceAt[userID] = time.Now().Add(fleetStepUpGrace)
-	stepUpGraceMu.Unlock()
+	defer stepUpGraceMu.Unlock()
+	now := time.Now()
+	g, ok := stepUpGraceAt[key]
+	if !ok || !now.Before(g.until) {
+		delete(stepUpGraceAt, key)
+		return false
+	}
+	g.until = now.Add(fleetStepUpGrace)
+	if limit := g.started.Add(fleetStepUpGraceMax); g.until.After(limit) {
+		g.until = limit
+	}
+	stepUpGraceAt[key] = g
+	return true
+}
+
+// openFleetGrace starts the caller's window after they typed their password, and drops expired
+// windows so the map stays small.
+func openFleetGrace(r *http.Request) {
+	key := graceKey(r)
+	if key == "" {
+		return
+	}
+	stepUpGraceMu.Lock()
+	defer stepUpGraceMu.Unlock()
+	now := time.Now()
+	for k, g := range stepUpGraceAt {
+		if !now.Before(g.until) {
+			delete(stepUpGraceAt, k)
+		}
+	}
+	stepUpGraceAt[key] = fleetGrace{until: now.Add(fleetStepUpGrace), started: now}
 }
 
 // consoleStepUpGraced is consoleStepUp with the shared fleet grace window: within the window it
@@ -92,14 +137,13 @@ func (s *Service) consoleStepUpGraced(r *http.Request, currentPassword, currentT
 	if userID == 0 {
 		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
 	}
-	if recentFleetStepUp(userID) {
-		touchStepUpGrace(userID)
+	if useFleetGrace(r) {
 		return 0, nil
 	}
 	if status, err := s.consoleStepUp(r, currentPassword, currentTOTP); err != nil {
 		return status, err
 	}
-	touchStepUpGrace(userID)
+	openFleetGrace(r)
 	return 0, nil
 }
 
@@ -635,28 +679,71 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 
 // ---- browser console handler (main API, mounted directly on the mux) ----------------------------
 
-// HandleBrowserConsole authenticates the operator (session cookie/Bearer), validates the short-lived
-// step-up grant + scope + per-host enable, then bridges the browser to the machine's agent channel.
-func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
-	token := helper.SessionToken(r)
+// consoleRecheck is how often an open console re-checks what opening it required, so revoking,
+// demoting or deleting the operator, ending or locking their session, taking the machine out of
+// their scope or switching its console off cuts the shell within this time (not at consoleMaxDuration).
+const consoleRecheck = 30 * time.Second
+
+// consoleAccess checks what every console needs, at open and again every consoleRecheck while it
+// stays open: a live, unlocked session with the operator role (the WS is mounted directly on the
+// mux, bypassing REST RBAC — a viewer must never reach an interactive shell, even with a shared
+// grant), a known machine in that user's scope, and console enabled on it. It returns the principal
+// and machine, or the HTTP status and reason to refuse with.
+func (s *Service) consoleAccess(token, machineID string) (*router.Principal, *Machine, int, string) {
 	p, ok := router.ResolvePrincipal(token)
 	if !ok || p == nil || p.Locked {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return nil, nil, http.StatusUnauthorized, "unauthorized"
 	}
-	// The WS is mounted directly on the mux (bypassing REST RBAC), so enforce the operator+ floor
-	// here — matching the grant endpoint. A viewer must never reach an interactive shell, even with
-	// a shared grant.
 	if !auth.RoleAtLeast(p.Role, auth.RoleOperator) {
-		http.Error(w, "insufficient role", http.StatusForbidden)
-		return
+		return nil, nil, http.StatusForbidden, "insufficient role"
 	}
+	m, err := s.machineByID(machineID)
+	if err != nil || m == nil {
+		return nil, nil, http.StatusNotFound, "unknown machine"
+	}
+	if !scopeAllows(p, *m) {
+		return nil, nil, http.StatusForbidden, "machine out of scope"
+	}
+	if !m.ConsoleEnabled {
+		return nil, nil, http.StatusForbidden, "console is not enabled for this machine"
+	}
+	return p, m, 0, ""
+}
+
+// recheckUntil calls check every interval until stop closes; the first failure (a non-empty
+// reason) is passed to cut and ends the watch.
+func recheckUntil(interval time.Duration, stop <-chan struct{}, check func() string, cut func(reason string)) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			if reason := check(); reason != "" {
+				cut(reason)
+				return
+			}
+		}
+	}
+}
+
+// HandleBrowserConsole authenticates the operator (session cookie/Bearer), validates the short-lived
+// step-up grant + scope + per-host enable, then bridges the browser to the machine's agent channel.
+// The same access is re-checked every consoleRecheck while the console stays open.
+func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
+	token := helper.SessionToken(r)
 	q := r.URL.Query()
 	machineID := q.Get("machine")
+	p, m, code, reason := s.consoleAccess(token, machineID)
+	if code != 0 {
+		http.Error(w, reason, code)
+		return
+	}
 	grantID := q.Get("grant")
 	session := q.Get("session")
-	if machineID == "" || grantID == "" || session == "" {
-		http.Error(w, "machine, grant and session are required", http.StatusBadRequest)
+	if grantID == "" || session == "" {
+		http.Error(w, "grant and session are required", http.StatusBadRequest)
 		return
 	}
 	if !consoleSessionRe.MatchString(session) {
@@ -666,19 +753,6 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	g, ok := takeGrant(grantID, machineID, session, p.UserID)
 	if !ok {
 		http.Error(w, "invalid or expired console grant", http.StatusForbidden)
-		return
-	}
-	m, err := s.machineByID(machineID)
-	if err != nil || m == nil {
-		http.Error(w, "unknown machine", http.StatusNotFound)
-		return
-	}
-	if !scopeAllows(p, *m) {
-		http.Error(w, "machine out of scope", http.StatusForbidden)
-		return
-	}
-	if !m.ConsoleEnabled {
-		http.Error(w, "console is not enabled for this machine", http.StatusForbidden)
 		return
 	}
 	a := regGet(machineID)
@@ -734,6 +808,24 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	// Any viewer joining changes what the session lists show (attached / viewers / recording) — push.
 	notifySessionsChanged(machineID)
+
+	// Keep checking access while open: the first failure closes this viewer's socket, which ends
+	// the read loop below and runs the normal close path.
+	stopRecheck := make(chan struct{})
+	defer close(stopRecheck)
+	go recheckUntil(consoleRecheck, stopRecheck, func() string {
+		p2, _, code, reason := s.consoleAccess(token, machineID)
+		if code == 0 && p2.UserID != p.UserID {
+			return "session changed"
+		}
+		return reason
+	}, func(reason string) {
+		events.Audit("fleet", "console_cut", events.SeverityWarning, p.Username, helper.GetClientIP(r),
+			fmt.Sprintf("Console on %q (session %s) closed: access ended (%s)", m.Name, effSession, reason))
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "access ended: "+reason), time.Now().Add(time.Second))
+		conn.Close()
+	})
 
 	defer func() {
 		last := a.removeBridge(effSession, b)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"time"
 )
 
 type ctxKey int
@@ -14,7 +15,7 @@ const machineCtxKey ctxKey = 0
 // verified any presented client cert against our CA (VerifyClientCertIfGiven), so
 // here we (a) require a cert was presented and (b) confirm its fingerprint maps to
 // an enrolled, non-revoked machine. Both must hold — a valid-but-unregistered cert,
-// or a revoked one, is rejected.
+// or a revoked one, is rejected. Each cert is rate-limited first (agentAllowed).
 func (s *Service) requireClientCert(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
@@ -23,6 +24,11 @@ func (s *Service) requireClientCert(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		fp := fingerprintFromCert(r.TLS.PeerCertificates[0])
+		if !agentAllowed(fp, time.Now()) {
+			w.Header().Set("Retry-After", "1")
+			writeErr(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
 		m, err := s.machineByCertFP(fp)
 		if err != nil || m == nil {
 			// A cert our CA signed but that no longer maps to a live machine — e.g. a

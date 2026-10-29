@@ -117,8 +117,8 @@ func purgeMachineData(tx *sql.Tx, id string) error {
 	return nil
 }
 
-// withMachineTx runs fn in a transaction, then closes the machine's live channels and deletes its
-// console recordings. Used by delete and uninstall, which both end the machine's data.
+// withMachineTx runs fn in a transaction, then closes the machine's live channels (console and
+// link). Used by delete and uninstall, which both end the machine's connection.
 func (s *Service) withMachineTx(id string, fn func(tx *sql.Tx) error) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -131,9 +131,8 @@ func (s *Service) withMachineTx(id string, fn func(tx *sql.Tx) error) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	consoleTeardown(id) // drop any live console channel/sessions (and close open recordings) first
+	consoleTeardown(id) // drop any live console channel/sessions (and close open recordings)
 	linkTeardown(id)
-	purgeRecordings(id)
 	return nil
 }
 
@@ -141,7 +140,7 @@ func (s *Service) withMachineTx(id string, fn func(tx *sql.Tx) error) error {
 // client cert (mTLS auth needs a live cert_fp lookup; the panel never stores the cert itself), so
 // the agent must re-enroll with a fresh token to return.
 func (s *Service) DeleteMachine(id string) error {
-	return s.withMachineTx(id, func(tx *sql.Tx) error {
+	err := s.withMachineTx(id, func(tx *sql.Tx) error {
 		if err := purgeMachineData(tx, id); err != nil {
 			return err
 		}
@@ -154,17 +153,19 @@ func (s *Service) DeleteMachine(id string) error {
 		}
 		return nil
 	})
+	if err == nil {
+		purgeRecordings(id)
+	}
+	return err
 }
 
 // MarkUninstalled handles an agent deregistering on its way out: its cert stops working at once
-// (revoked), and all its data is deleted. Only a marker stays — name, when it was added and when it
-// was uninstalled (last_seen) — so the operator sees it happened until they remove it. Reinstalling
-// enrolls a fresh machine.
+// (revoked) and its console is switched off. Its history — file changes, scans, vulnerabilities,
+// commands, usage and console recordings — is KEPT: the request comes from the machine itself, so
+// an intruder on it must not be able to erase the evidence. An admin deleting the machine removes
+// the data (DeleteMachine). Reinstalling enrolls a fresh machine.
 func (s *Service) MarkUninstalled(id string) error {
 	return s.withMachineTx(id, func(tx *sql.Tx) error {
-		if err := purgeMachineData(tx, id); err != nil {
-			return err
-		}
 		_, err := tx.Exec(`UPDATE fleet_machines SET status='uninstalled', revoked=1, last_seen=?,
 			last_report=NULL, tags='', last_ip='', wg_pubkey='', machine_hash='', console_enabled=0, console_record=0,
 			cert_expires=NULL, cert_fp_next=NULL, cert_expires_next=NULL WHERE id=?`,

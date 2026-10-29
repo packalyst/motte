@@ -107,6 +107,18 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **fleet**: an agent signing off (uninstall) no longer deletes its machine's history: file
+  changes, scans, vulnerabilities, commands and console recordings stay until an admin removes the
+  machine, so an intruder on that machine can't erase the evidence; the sign-off is logged.
+- **fleet console**: an open console re-checks access every 30 seconds and closes once the
+  operator's session is revoked or locked, their role or machine access is taken away, or the
+  machine's console is switched off (it used to stay open up to 12 hours).
+- **fleet password window**: the 10 minutes without re-typing the password belong to the login
+  session that typed it (not every session of the user) and end 1 hour after it was typed,
+  however busy.
+- **fleet agents**: each agent is limited to 30 requests at once, then one per second, so a
+  hacked agent can't keep the panel's database busy; new installs never get an agent release older
+  than the one already served.
 - **email alerts**: with STARTTLS chosen, a mail server that doesn't offer it now gets nothing
   instead of the alert in plain text.
 - **audit log**: a failed or blocked login is logged under the typed username only when that user
