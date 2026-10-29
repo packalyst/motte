@@ -1,9 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { toast, apiGet, apiPost, confirm, setConfirmLoading } from '../stores/app.js'
-  import { copyWithToast } from '../stores/helpers.js'
   import { parseDate, formatExpiryDate, isExpired, getDaysUntilExpiry } from '$lib/utils/format.js'
-  import { tailscaleUpCommand } from '$lib/nodes.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import LoadingSpinner from '../components/LoadingSpinner.svelte'
@@ -17,17 +15,9 @@
   let authKeys = $state([])
   let showCreateModal = $state(false)
 
-  // Get server URL for command display (from settings)
-  let serverUrl = $state('')
-
   async function loadData() {
     try {
-      const [usersRes, settings] = await Promise.all([
-        apiGet('/api/hs/users'),
-        apiPost('/api/settings', { keys: ['headscale_url'] })
-      ])
-      users = usersRes.users || []
-      serverUrl = settings.headscale_url || ''
+      users = (await apiGet('/api/hs/users')).users || []
 
       // Load keys for all users
       const allKeys = []
@@ -76,7 +66,7 @@
       description: 'This key will no longer work to register new devices. This action cannot be undone.',
       // Structured rows are auto-escaped by the modal — no manual escaping / {@html} needed.
       details: [
-        { label: 'Key:', value: (key.key?.substring(0, 16) || '') + '…' },
+        { label: 'Key:', value: (key.keyPrefix || '') + '…' },
         { label: 'User:', value: key.userName || key.user || '' },
       ],
       confirmText: 'Expire Key',
@@ -86,7 +76,7 @@
 
     setConfirmLoading(true)
     try {
-      await apiPost('/api/hs/preauthkeys/expire', { user: key.userName || key.user, key: key.key })
+      await apiPost('/api/hs/preauthkeys/expire', { user: key.userName || key.user, id: key.id })
       toast('Key expired', 'success')
       loadData()
     } catch (e) {
@@ -95,8 +85,6 @@
       setConfirmLoading(false)
     }
   }
-
-  const copyToClipboard = (text) => copyWithToast(text, toast)
 
   onMount(() => {
     loadData()
@@ -136,7 +124,7 @@
         </p>
       </div>
 
-      {#each sortedKeys as key (key.key)}
+      {#each sortedKeys as key (key.userName + ':' + key.id)}
         {@const daysLeft = getDaysUntilExpiry(key.expiration)}
         {@const isExpiringSoon = daysLeft !== null && daysLeft > 0 && daysLeft <= 7}
         {@const isUsed = key.used}
@@ -150,7 +138,7 @@
               <Icon name="key" size={18} />
             </div>
             <div class="flex-1 min-w-0">
-              <code class="text-xs font-mono text-foreground truncate block">{key.key?.substring(0, 12)}...</code>
+              <code class="text-xs font-mono text-foreground truncate block">{key.keyPrefix}…</code>
               <div class="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
                 <Icon name="user" size={11} />
                 {key.userName || key.user}
@@ -200,14 +188,6 @@
               {/if}
             </div>
             <div class="flex items-center gap-0.5">
-              {#if !key._expired && (!isUsed || key.reusable)}
-                <Button variant="ghost" size="xs" iconOnly icon="copy" tooltip="Copy command" onclick={() => copyToClipboard(tailscaleUpCommand(serverUrl, key.key))} />
-              {:else}
-                <span class="kt-btn kt-btn-ghost kt-btn-xs kt-btn-icon opacity-50 cursor-not-allowed" data-kt-tooltip>
-                  <Icon name="copy-off" size={14} />
-                  <span data-kt-tooltip-content class="kt-tooltip hidden">{key._expired ? 'Key expired' : 'Key already used'}</span>
-                </span>
-              {/if}
               {#if isActive}
                 <Button variant="ghost-danger" size="xs" iconOnly icon="ban" tooltip="Expire key" onclick={() => confirmExpireKey(key)} />
               {/if}

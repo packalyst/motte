@@ -70,7 +70,7 @@
         </div>
         <div>
           <p class="font-medium text-foreground">Auth Key Created</p>
-          <p class="text-xs text-muted-foreground">Copy the command below to connect a device</p>
+          <p class="text-xs text-muted-foreground">Copy the command below to connect a device. It's shown only now: the key list keeps just its start.</p>
         </div>
       </div>
 

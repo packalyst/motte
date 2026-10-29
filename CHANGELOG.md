@@ -131,6 +131,9 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **Headscale auth keys are shown once**: the whole key appears only when it's created (copy the
+  command then). The Auth Keys list shows just the start of each key, and Expire works by the
+  key's id, the panel looking up the key itself, so the browser never holds an existing key.
 - Notification preferences store only the known notification types; any other name sent by a
   browser is ignored.
 - **fleet**: an agent signing off (uninstall) no longer deletes its machine's history: file
@@ -162,7 +165,7 @@ releases will be tagged as they are cut.
 - **Headscale join keys**: a viewer could read the join key each Headscale device registered with
   from the client, device and route lists (Headscale sends it with every device), and a reusable
   one lets anyone add a device to the VPN. The panel now removes it before passing device data on
-  or saving it; the Auth Keys page (admin) still shows keys.
+  or saving it.
 - **passkeys**: adding a passkey and logging in with one now always need the device's PIN,
   fingerprint or face. A passkey login skips the TOTP code, so a security key without a PIN let
   anyone holding it in with a touch; such a key is now asked to set a PIN first.
