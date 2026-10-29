@@ -34,7 +34,8 @@ func (s *Service) GetPreferences(userID int64) (NotificationPreferences, error) 
 	return prefs, nil
 }
 
-// UpdatePreferences saves all preferences for a user (replaces existing)
+// UpdatePreferences saves all preferences for a user (replaces existing). Only the known
+// notification types (PreferenceDefaults) are stored; any other key is ignored.
 func (s *Service) UpdatePreferences(userID int64, prefs NotificationPreferences) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -59,6 +60,9 @@ func (s *Service) UpdatePreferences(userID int64, prefs NotificationPreferences)
 	defer stmt.Close()
 
 	for key, enabled := range prefs {
+		if _, known := PreferenceDefaults[NotificationType(key)]; !known {
+			continue
+		}
 		_, err = stmt.Exec(userID, key, enabled)
 		if err != nil {
 			return err

@@ -236,8 +236,12 @@ func (s *Service) handlePreferences(w http.ResponseWriter, r *http.Request) {
 			router.JSONError(w, "Failed to update preferences", http.StatusInternalServerError)
 			return
 		}
-
-		router.JSON(w, prefs)
+		saved, err := s.GetPreferences(userID) // what was stored, not what was sent
+		if err != nil {
+			router.JSONError(w, "Failed to read preferences", http.StatusInternalServerError)
+			return
+		}
+		router.JSON(w, saved)
 
 	default:
 		router.JSONError(w, "Method not allowed", http.StatusMethodNotAllowed)

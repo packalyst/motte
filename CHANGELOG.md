@@ -131,6 +131,8 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- Notification preferences store only the known notification types; any other name sent by a
+  browser is ignored.
 - **fleet**: an agent signing off (uninstall) no longer deletes its machine's history: file
   changes, scans, vulnerabilities, commands and console recordings stay until an admin removes the
   machine, so an intruder on that machine can't erase the evidence; the sign-off is logged.
