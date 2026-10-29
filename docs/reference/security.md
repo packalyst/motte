@@ -353,8 +353,10 @@ the pinned CA fingerprint. Flow (`HandleEnroll`, `enroll.go:35-101`):
   `/enroll` is reachable certless, but **any** cert presented must be CA-signed, so the
   report/command endpoints reject certless or foreign-cert connections at the TLS
   handshake, before any handler runs.
-- The server cert is minted fresh at startup and held **in memory** — it is not
-  persisted (`ServerCertificate`, `ca.go:175-214`).
+- The server cert is minted on demand and held **in memory**, never persisted
+  (`serverCertificate`, `servercert.go`): it lasts 90 days, is replaced once 30 days
+  are left, and is reissued when the host's IPs or domain change (re-read at most every
+  10 minutes, on a handshake). If a reissue fails, the current cert is kept while valid.
 - **`requireClientCert`** (`mtls.go:18-37`) gates every non-enroll endpoint with a
   two-part check that **both** must hold: (a) a client cert was presented, and (b) its
   fingerprint maps to an **enrolled, non-revoked** machine (`machineByCertFP`). A cert

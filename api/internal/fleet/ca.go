@@ -173,10 +173,10 @@ func (c *CA) SignClientCSR(csrDER []byte, commonName string, validity time.Durat
 }
 
 // ServerCertificate mints an ephemeral SERVER certificate (signed by the CA) for
-// the fleet mTLS listener, valid for the given hostnames/IPs. It's regenerated at
-// startup and held in memory; the served chain includes the CA so an agent that
+// the fleet mTLS listener, valid for the given hostnames/IPs for ttl. It's held in
+// memory (see serverCertificate); the served chain includes the CA so an agent that
 // pinned the CA can verify it.
-func (c *CA) ServerCertificate(hosts []string) (tls.Certificate, error) {
+func (c *CA) ServerCertificate(hosts []string, ttl time.Duration) (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, err
@@ -190,7 +190,7 @@ func (c *CA) ServerCertificate(hosts []string) (tls.Certificate, error) {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "motte-panel"},
 		NotBefore:    now.Add(-5 * time.Minute),
-		NotAfter:     now.AddDate(1, 0, 0),
+		NotAfter:     now.Add(ttl),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
