@@ -56,29 +56,24 @@ func (s *Service) consoleStepUp(r *http.Request, currentPassword, currentTOTP st
 	return 0, nil
 }
 
-// fleetStepUpGrace is how long a single successful fleet re-auth is honoured without prompting
+// helper.ConsoleStepUpGrace is how long a single successful fleet re-auth is honoured without prompting
 // again. One operator action that re-authenticates — opening a console OR running a confirm-tier
 // fleet command — opens the window; while it is open the same LOGIN SESSION isn't re-prompted for
 // either. The window belongs to that session, not the user: a password typed on one device doesn't
 // cover another, or a stolen session cookie. It slides on every pass, so continuous administration
-// isn't interrupted, but never past fleetStepUpGraceMax after the password was typed. It only waives
+// isn't interrupted, but never past helper.ConsoleStepUpGraceMax after the password was typed. It only waives
 // the password RE-ENTRY: the operator role, machine scope and per-host enable flag are still checked
 // on every request, and an idle-locked session never reaches here (the request 423s in auth
 // middleware first), so grace can't bypass the lock. A console is already a root shell, so sharing
 // the window with lesser fleet commands adds no authority. Not used by the enable toggle, which is
 // rarer/higher-impact and always re-authenticates.
-const (
-	fleetStepUpGrace    = 10 * time.Minute
-	fleetStepUpGraceMax = time.Hour
-)
 
 type fleetGrace struct{ until, started time.Time }
 
 // stepUpGraceAt holds each login session's window (token hash → window), one per session that
-// typed its password; past maxGraceWindows new windows aren't opened (the password is asked again).
-const maxGraceWindows = 10_000
-
-var stepUpGraceAt = bounded.New[string, fleetGrace](maxGraceWindows, bounded.Refuse)
+// typed its password; past helper.MaxConsoleGraceWindows new windows aren't opened (the password is
+// asked again).
+var stepUpGraceAt = bounded.New[string, fleetGrace](helper.MaxConsoleGraceWindows, bounded.Refuse)
 
 // graceKey identifies the caller's login session without keeping its token.
 func graceKey(r *http.Request) string {
@@ -104,8 +99,8 @@ func useFleetGrace(r *http.Request) bool {
 			return now // no window: nothing to keep
 		}
 		inside = true
-		g.until = now.Add(fleetStepUpGrace)
-		if limit := g.started.Add(fleetStepUpGraceMax); g.until.After(limit) {
+		g.until = now.Add(helper.ConsoleStepUpGrace)
+		if limit := g.started.Add(helper.ConsoleStepUpGraceMax); g.until.After(limit) {
 			g.until = limit
 		}
 		return g.until
@@ -121,7 +116,7 @@ func openFleetGrace(r *http.Request) {
 	}
 	now := time.Now()
 	stepUpGraceAt.Update(key, now, func(g *fleetGrace, _ bool) time.Time {
-		*g = fleetGrace{until: now.Add(fleetStepUpGrace), started: now}
+		*g = fleetGrace{until: now.Add(helper.ConsoleStepUpGrace), started: now}
 		return g.until
 	})
 }
@@ -245,10 +240,6 @@ func (a *agentConn) ensureLabel(session string) {
 
 // A resumable shell lives on until it exits — so cap how long one can stay open (max-duration) or
 // sit idle (idle timeout). The reaper tells the agent to KILL (not detach) past-limit sessions.
-const (
-	consoleIdleTimeout = 30 * time.Minute
-	consoleMaxDuration = 12 * time.Hour
-)
 
 // touch records activity on a session (first open sets `opened`; every call refreshes `seen`), so
 // the reaper can tell an active long-running command from an abandoned shell.
@@ -450,7 +441,7 @@ func (a *agentConn) reapExpired() {
 	var kill []string
 	for id := range a.owners {
 		op, sn := a.opened[id], a.seen[id]
-		if (!op.IsZero() && now.Sub(op) > consoleMaxDuration) || (!sn.IsZero() && now.Sub(sn) > consoleIdleTimeout) {
+		if (!op.IsZero() && now.Sub(op) > helper.ConsoleMaxDuration) || (!sn.IsZero() && now.Sub(sn) > helper.ConsoleIdleTimeout) {
 			kill = append(kill, id)
 		}
 	}
@@ -678,8 +669,8 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 
 // consoleRecheck is how often an open console re-checks what opening it required, so revoking,
 // demoting or deleting the operator, ending or locking their session, taking the machine out of
-// their scope or switching its console off cuts the shell within this time (not at consoleMaxDuration).
-var consoleRecheck = 30 * time.Second
+// their scope or switching its console off cuts the shell within this time (not at helper.ConsoleMaxDuration).
+var consoleRecheck = helper.ConsoleRecheck // a var so tests can shorten it
 
 // consoleAccess checks what every console needs, at open and again every consoleRecheck while it
 // stays open: a live, unlocked session with the operator role (the WS is mounted directly on the
@@ -944,18 +935,25 @@ type consoleGrant struct {
 	uses      int
 }
 
-// maxConsoleGrants caps the grants alive at once (each is minted after a password check and
-// lives minutes); past it, minting is refused rather than any grant dropped.
-const maxConsoleGrants = 10_000
+// Console grants alive at once: at most helper.MaxConsoleGrantsPerUser per user, so one operator
+// can't use up the room everyone shares, and helper.MaxConsoleGrants in all. Each is minted after a
+// password check and lives minutes; past a cap, minting is refused rather than any grant dropped.
+var (
+	consoleGrants = bounded.New[string, consoleGrant](helper.MaxConsoleGrants, bounded.Refuse)
+	grantMintMu   sync.Mutex // makes the per-user count and the mint one step
+)
 
-var consoleGrants = bounded.New[string, consoleGrant](maxConsoleGrants, bounded.Refuse)
-
-// mintGrant returns a new grant id, or "" when too many grants are alive.
+// mintGrant returns a new grant id, or "" when the user, or everyone together, has too many alive.
 func mintGrant(userID int64, machineID, session string, readonly bool, ttl time.Duration, uses int) string {
 	buf := make([]byte, 24)
 	rand.Read(buf)
 	id := hex.EncodeToString(buf)
 	now := time.Now()
+	grantMintMu.Lock()
+	defer grantMintMu.Unlock()
+	if consoleGrants.Count(now, func(g consoleGrant) bool { return g.userID == userID }) >= helper.MaxConsoleGrantsPerUser {
+		return ""
+	}
 	if !consoleGrants.Update(id, now, func(g *consoleGrant, _ bool) time.Time {
 		*g = consoleGrant{userID: userID, machineID: machineID, session: session, readonly: readonly, expires: now.Add(ttl), uses: uses}
 		return g.expires
@@ -1058,6 +1056,24 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]any{"grant": id, "readonly": readonly, "session": session, "expiresInSec": int(ttl.Seconds())})
 }
 
+// grantAllTargets is the machines a grant-all request gets grants for: each once, and no more than
+// a user may hold grants for (each is a lookup, so a long list of made-up ids is cut short too).
+func grantAllTargets(ids []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		if len(out) == helper.MaxConsoleGrantsPerUser {
+			break
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 // handleConsoleGrantAll mints console grants for several machines after a SINGLE step-up, so the
 // global console can attach every live session at once without prompting once per machine. Each
 // grant is the same short-lived, multi-use kind as a normal grant. Only in-scope, console-enabled
@@ -1085,7 +1101,7 @@ func (s *Service) handleConsoleGrantAll(w http.ResponseWriter, r *http.Request) 
 	}
 	ttl, uses := 5*time.Minute, 50
 	grants := map[string]string{}
-	for _, mid := range req.MachineIDs {
+	for _, mid := range grantAllTargets(req.MachineIDs) {
 		m, err := s.machineByID(mid)
 		if err != nil || m == nil || !scopeAllows(p, *m) || !m.ConsoleEnabled {
 			continue

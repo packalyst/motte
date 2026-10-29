@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"api/internal/database"
+	"api/internal/helper"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -199,17 +200,16 @@ func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "another CVE report is being stored, retry shortly")
 		return
 	}
-	allowLargeTransfer(w)                // a large report can take a while to upload and to store
-	body, ok := reportBody(w, r, 64<<20) // 64 MiB, compressed and decompressed
+	allowLargeTransfer(w)                                  // a large report can take a while to upload and to store
+	body, ok := reportBody(w, r, helper.MaxCVEReportBytes) // compressed and decompressed
 	if !ok {
 		return
 	}
 	defer body.Close()
 	// Stream-decode with the finding cap enforced DURING decode (see decodeCVEReport): the
 	// decompressed stream is bounded (bomb guard) and the retained slice can never exceed
-	// maxFindings, so a compressible flood of tiny elements can't amplify into a huge slice.
-	const maxFindings = 200000
-	meta, cves, err := decodeCVEReport(body, maxFindings)
+	// helper.MaxCVEFindings, so a compressible flood of tiny elements can't amplify into a huge slice.
+	meta, cves, err := decodeCVEReport(body, helper.MaxCVEFindings)
 	if err == nil && !meta.HasFindings {
 		err = errBadCVE // a report without its findings must never read as a clean scan
 	}

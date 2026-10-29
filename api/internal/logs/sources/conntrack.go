@@ -38,7 +38,7 @@ import (
 // (peer_ip, dest_ip, dest_port, hour-bucket).
 //
 // The map holds at most as many flows as the kernel tracks (nf_conntrack_max), and
-// forgets one not seen for flowForget (its close was missed). Should it still fill
+// forgets one not seen for helper.ConntrackFlowForget (its close was missed). Should it still fill
 // up, a new open flow isn't tracked rather than an old one forgotten: an untracked
 // flow is counted in full once, when it closes, while a forgotten one would have
 // its whole total counted again by the next poll.
@@ -65,18 +65,13 @@ type ConntrackWatcher struct {
 
 type flowBytes struct{ up, down int64 }
 
-const (
-	flowForget      = 30 * time.Minute
-	defaultMaxFlows = 262144 // the kernel's usual nf_conntrack_max, when it can't be read
-)
-
 // maxFlows is the kernel's conntrack table size, so a flow the kernel tracks always fits.
 func maxFlows() int {
 	b, err := os.ReadFile("/proc/sys/net/netfilter/nf_conntrack_max")
 	if n, perr := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && perr == nil && n > 0 {
 		return n
 	}
-	return defaultMaxFlows
+	return helper.ConntrackDefaultMaxFlows
 }
 
 // NewConntrackWatcher creates a new conntrack byte-accounting watcher.
@@ -243,7 +238,7 @@ func (w *ConntrackWatcher) processLine(line string, onClose bool) {
 			return now // settled: forget the flow
 		}
 		*prev = flowBytes{up: curUp, down: curDown}
-		return now.Add(flowForget)
+		return now.Add(helper.ConntrackFlowForget)
 	})
 	if !tracked {
 		return // the map is full: this open flow is counted when it closes

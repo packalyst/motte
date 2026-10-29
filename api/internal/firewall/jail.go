@@ -123,7 +123,7 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 		log.Printf("jail %s: invalid filter regex %q, monitor not started: %v", name, filterRegex, err)
 		return
 	}
-	ipAttempts := bounded.New[string, []time.Time](maxJailTracked, bounded.DropOldest)
+	ipAttempts := bounded.New[string, []time.Time](helper.MaxJailTracked, bounded.DropOldest)
 
 	if lastLogPos == 0 {
 		if stat, err := os.Stat(logFile); err == nil {
@@ -142,10 +142,6 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 		}
 	}
 }
-
-// maxJailTracked caps the addresses one jail counts at once. Past it the least recently seen one
-// is forgotten (a log line can't be refused, and the newest attackers matter most).
-const maxJailTracked = 100_000
 
 // processJailLogFile processes a jail log file and returns the new position. ipAttempts holds each
 // address's matches within findTime.
@@ -247,7 +243,7 @@ func (s *Service) ensureDefaultJails() error {
 		// reaching the server directly); the panel writes the gate's drops to this file.
 		{Name: "webgate", Enabled: true, LogFile: helper.WebGateLogPath(),
 			FilterRegex: `WEBGATE_DROP SRC=(\d+\.\d+\.\d+\.\d+)`,
-			MaxRetry:    webGateJailMaxRetry, FindTime: webGateJailFindTime, BanTime: webGateJailBanSeconds, Port: "all", Action: "drop"},
+			MaxRetry:    helper.WebGateJailMaxRetry, FindTime: helper.WebGateJailFindTime, BanTime: helper.WebGateJailBanSeconds, Port: "all", Action: "drop"},
 	}
 	ensureWebGateLog()
 

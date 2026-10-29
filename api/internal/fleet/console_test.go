@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"api/internal/bounded"
+	"api/internal/helper"
 
 	"github.com/gorilla/websocket"
 )
@@ -234,5 +236,36 @@ func TestGrantCap(t *testing.T) {
 	}
 	if _, ok := takeGrant(first, "m1", "s1", 7); !ok {
 		t.Fatal("the existing grant was lost")
+	}
+}
+
+// One user can't use up the grant room: past helper.MaxConsoleGrantsPerUser alive, their minting is refused while
+// others still get grants. A grant-all list asks for each machine once, and no more than that many.
+func TestGrantsPerUser(t *testing.T) {
+	saved := consoleGrants
+	t.Cleanup(func() { consoleGrants = saved })
+	consoleGrants = bounded.New[string, consoleGrant](helper.MaxConsoleGrants, bounded.Refuse)
+	for i := 0; i < helper.MaxConsoleGrantsPerUser; i++ {
+		if mintGrant(7, "m1", "", false, time.Minute, 1) == "" {
+			t.Fatalf("grant %d refused under the per-user cap", i+1)
+		}
+	}
+	if mintGrant(7, "m1", "", false, time.Minute, 1) != "" {
+		t.Fatal("a user got more grants than the per-user cap")
+	}
+	if mintGrant(8, "m1", "", false, time.Minute, 1) == "" {
+		t.Fatal("another user was refused because of the first one")
+	}
+
+	ids := []string{"a", "b", "a", "a", "c", "b"}
+	if got := grantAllTargets(ids); strings.Join(got, ",") != "a,b,c" {
+		t.Fatalf("targets %v, want each machine once", got)
+	}
+	many := make([]string, 0, 3*helper.MaxConsoleGrantsPerUser)
+	for i := 0; i < 3*helper.MaxConsoleGrantsPerUser; i++ {
+		many = append(many, fmt.Sprint("machine-", i))
+	}
+	if n := len(grantAllTargets(many)); n != helper.MaxConsoleGrantsPerUser {
+		t.Fatalf("%d targets from a long list, want %d", n, helper.MaxConsoleGrantsPerUser)
 	}
 }

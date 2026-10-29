@@ -107,7 +107,7 @@ func TestRecordingCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.size = recordMaxBytes - 10
+	r.size = helper.MaxRecordingBytes - 10
 	r.event("o", strings.Repeat("x", 100))
 	r.event("o", "more")
 	r.close()

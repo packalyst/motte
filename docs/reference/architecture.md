@@ -102,7 +102,7 @@ One Docker network is declared, plus the containers on host networking:
 2. **Traefik routing** (`traefik/dynamic/core.yml`, generated from `dynamic.yml.template`):
    - On port 80 (`web`) the admin host/domain only **redirects** to HTTPS (router `ui`; gates run before the redirect). With a domain set, the whole port-80 entry point also carries the **port-80 gate** (`sentinel_web_gate`, see [networking-firewall.md](networking-firewall.md) §5.3).
    - On HTTPS, `PathPrefix('/')` on the admin host/domain → the **ui** service (`http://ui:80`), priority 10 (`ui-ip-secure`; `ui-secure` on `SSL_DOMAIN`).
-   - `PathPrefix('/api/') && !PathPrefix('/api/v1')` → the **unified-api** service, priority 100, behind `rate-limit`, `security-headers`, and `sentinel_fw_block` middlewares (`unified-api-ip-secure`, `unified-api-secure`).
+   - `PathPrefix('/api/') && !PathPrefix('/api/v1')` → the **unified-api** service, priority 100, behind `security-headers` and `sentinel_fw_block` (`unified-api-ip-secure`, `unified-api-secure`); the API rate-limits each visitor itself (not Traefik's `rate-limit`, which behind Cloudflare would see one address for many visitors).
    - Headscale control-plane paths (`/ts2021`, `/machine`, `/key`, `/noise`, `/derp`, `/register`, `/apple`, `/windows`) → **headscale** directly (Tailscale clients need these; on port 80 too, not redirected).
    - `/api/v1` (Headscale's own admin API) is **blocked** to the outside and gated by `sentinel_vpn` (VPN source ranges only) + strict rate limit — all Headscale admin goes through the api's `/api/hs` instead.
    - Unknown hosts and PWA files on non-admin domains are silently dropped (`sentinel_drop`, `catchall-drop`).

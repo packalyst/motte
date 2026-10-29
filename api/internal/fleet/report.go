@@ -10,8 +10,6 @@ import (
 	"api/internal/helper"
 )
 
-const maxReportBody = 1 << 20 // 1 MiB
-
 // HandleReport ingests an agent's periodic report (mTLS-gated). The raw JSON is
 // stored as the machine's last_report and last_seen is bumped. The machine is
 // taken from the client cert, never the body — an agent can only update itself.
@@ -21,7 +19,7 @@ func (s *Service) HandleReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no machine")
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxReportBody))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, helper.MaxReportBytes))
 	if err != nil || !json.Valid(body) {
 		writeErr(w, http.StatusBadRequest, "invalid report")
 		return

@@ -212,15 +212,32 @@ an IPv4 address or an IPv6 **/64** (`helper.RateKey`), so changing address insid
 connection's IPv6 block buys no extra guesses.
 
 **In-memory guards are bounded** (`internal/bounded`). Every per-key map the panel keeps
-in memory (request rate, login / 2FA / password lockouts, passkey sign-ins, the tunnel
-key guard and throttles, console grants and step-up windows, the 2FA replay guard, jail
+in memory (request rate, login / 2FA / password lockouts, the tunnel key guard and
+throttles, console grants and step-up windows, the 2FA and passkey replay guards, jail
 counters, conntrack flows) is a `bounded.Map` with a hard size cap and per-entry expiry,
-so no amount of outside traffic grows memory without limit. When a map is full: the
-security guards **refuse** new keys (a flood can never push out an existing lockout;
-login from a new address waits until entries expire, and a 2FA code the replay guard
-can't record is refused); the jail counter **drops the least recently seen** address
-(a log line can't be refused); conntrack doesn't track a new open flow (it is counted
-once, when it closes, rather than twice).
+so no amount of outside traffic grows memory without limit. **All their numbers are in
+one file, `api/internal/helper/limits.go`.** When a map is full:
+- a map **anyone** can add to (login lockout, tunnel key guard, jail counters) **forgets
+  the least recently used** entry, so a flood of addresses can't lock newcomers out —
+  refusing would give anyone with many addresses (IPv6) that power while protecting
+  nothing: with that many addresses they can switch before any is locked out anyway;
+- a map only a signed-in user or a valid secret can add to **refuses** (the 2FA and
+  passkey replay guards fail closed: a code or sign-in that can't be recorded is
+  refused); console grants are also capped per user, so one operator can't use up
+  everyone's room;
+- conntrack doesn't track a new open flow (it is counted once, when it closes, rather
+  than twice).
+
+A **passkey sign-in keeps no server state until it succeeds**: begin seals the challenge
+(encrypted and authenticated with the panel's key, marked as a sign-in, with a 3-minute
+expiry) into the `challengeId` the browser returns at finish, so starting sign-ins costs
+the server nothing and there is nothing to fill. A verified sign-in's challenge is then
+remembered until it expires, so its answer can't be replayed.
+
+**The panel API is rate-limited once**, by the API itself, per real visitor (Cloudflare-
+and IPv6-aware). Traefik's `rate-limit` middleware is only for proxied sites that pick it
+(it sees just the TCP peer, so behind Cloudflare visitors would share one bucket);
+`rate-limit-strict` covers `/api/v1` and the agent installer route.
 
 ### Sessions & tokens (`auth.go`, `session.go`)
 

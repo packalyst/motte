@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -41,11 +42,10 @@ func (s *Service) HandleFIMReport(w http.ResponseWriter, r *http.Request) {
 		body = gz
 	}
 	// Stream-decode with a hard element cap enforced DURING decode (not after): we stop
-	// reading once we have maxEvents, so a highly-compressible flood of tiny array elements
+	// reading once we have helper.MaxFIMEvents, so a highly-compressible flood of tiny array elements
 	// — small enough to slip under the compressed cap — can't amplify into a giant in-memory
 	// slice. Honest agents send <=1001 events (tailFIM), so this only bites abuse.
-	const maxEvents = 5000
-	events, err := decodeFIMEvents(io.LimitReader(body, 8<<20), maxEvents)
+	events, err := decodeFIMEvents(io.LimitReader(body, helper.MaxFIMReportBytes), helper.MaxFIMEvents)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return

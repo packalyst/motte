@@ -1448,7 +1448,7 @@
         <div class="space-y-4">
           <!-- Rate Limiting -->
           <div>
-            <ContentBlock variant="header" title="Rate Limiting" />
+            <ContentBlock variant="header" title="Rate Limiting" description="Standard: for your sites that use the rate-limit middleware. Strict: the Headscale API and the agent installer. The panel itself limits each visitor on its own." />
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <Input
                   label="Standard (req/s)"

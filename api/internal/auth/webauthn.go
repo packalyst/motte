@@ -10,9 +10,7 @@ package auth
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -38,22 +36,8 @@ const passkeyUV = protocol.VerificationRequired
 
 // --- in-progress challenge store (short-lived; begin→finish) --------------------------------------
 
-// A registration challenge is keyed by the signed-in user, so there is one per user at most; a
-// sign-in challenge (anyone can start one) by a random id, capped in total and per IP.
-type waLogin struct {
-	data webauthn.SessionData
-	ip   string // who started it (helper.RateKey), for the per-IP cap
-}
-
-var (
-	waRegChallenges   = bounded.New[int64, webauthn.SessionData](maxTrackedKeys, bounded.Refuse)
-	waLoginChallenges = bounded.New[string, waLogin](maxPendingPasskeyLogins, bounded.Refuse)
-	waLoginMu         sync.Mutex // makes the per-IP count and the store one step
-)
-
-const waChallengeTTL = 3 * time.Minute
-
-var errTooManyPasskeyLogins = errors.New("too many passkey sign-ins in progress, try again shortly")
+// A registration challenge is keyed by the signed-in user, so there is one per user at most.
+var waRegChallenges = bounded.New[int64, webauthn.SessionData](helper.MaxTrackedSignInKeys, bounded.Refuse)
 
 // waStoreRegChallenge keeps a registration challenge until its finish step; false when it
 // couldn't be kept.
@@ -61,38 +45,53 @@ func waStoreRegChallenge(userID int64, data webauthn.SessionData) bool {
 	now := time.Now()
 	return waRegChallenges.Update(userID, now, func(v *webauthn.SessionData, _ bool) time.Time {
 		*v = data
-		return now.Add(waChallengeTTL)
+		return now.Add(helper.PasskeyChallengeTTL)
 	})
 }
 
-// waStoreLoginChallenge keeps a passkey sign-in challenge under a fresh random id. Past the cap
-// from one IP (an IPv6 client counts by its /64) or in total it returns errTooManyPasskeyLogins
-// until one finishes or expires.
-func waStoreLoginChallenge(ip string, data webauthn.SessionData) (string, error) {
-	handle := make([]byte, 16)
-	rand.Read(handle) // never fails (crypto/rand)
-	id := hex.EncodeToString(handle)
-	ip = helper.RateKey(ip)
+// A passkey sign-in keeps no state between begin and finish: begin seals its challenge (encrypted
+// and authenticated with the panel's key, with its expiry) into the challengeId the browser hands
+// back at finish. Anyone can start a sign-in, so this way starting them costs the server no memory
+// and there is nothing to fill up. Only a sign-in that succeeded is remembered, until its challenge
+// expires, so the same answer can't be replayed; that takes a valid passkey, so outsiders can't
+// fill it either.
+const waLoginSeal = "passkey-login:" // marks a sealed sign-in, so no other sealed value passes as one
 
-	waLoginMu.Lock()
-	defer waLoginMu.Unlock()
-	now := time.Now()
-	if waLoginChallenges.Count(now, func(c waLogin) bool { return c.ip == ip }) >= maxPendingPasskeyLoginsPerIP {
-		return "", errTooManyPasskeyLogins
+var waUsedLogins = bounded.New[string, struct{}](helper.MaxTrackedSignInKeys, bounded.Refuse) // challenge → used
+
+// waSealLogin returns the challengeId for a sign-in that expires helper.PasskeyChallengeTTL from now.
+func waSealLogin(data webauthn.SessionData) (string, error) {
+	data.Expires = time.Now().Add(helper.PasskeyChallengeTTL) // enforced by the library at finish, and by waOpenLogin
+	b, err := json.Marshal(data)
+	if err != nil {
+		return "", err
 	}
-	if !waLoginChallenges.Update(id, now, func(c *waLogin, _ bool) time.Time {
-		*c = waLogin{data: data, ip: ip}
-		return now.Add(waChallengeTTL)
-	}) {
-		return "", errTooManyPasskeyLogins
-	}
-	return id, nil
+	return helper.Encrypt(waLoginSeal + string(b))
 }
 
-// waTakeLoginChallenge returns and forgets a sign-in challenge.
-func waTakeLoginChallenge(id string) (webauthn.SessionData, bool) {
-	c, ok := waLoginChallenges.Take(id, time.Now())
-	return c.data, ok
+// waOpenLogin unseals a challengeId; false for anything forged, altered, of another kind or expired.
+func waOpenLogin(id string) (webauthn.SessionData, bool) {
+	var data webauthn.SessionData
+	plain, err := helper.Decrypt(id)
+	if err != nil || !strings.HasPrefix(plain, waLoginSeal) {
+		return data, false
+	}
+	if json.Unmarshal([]byte(strings.TrimPrefix(plain, waLoginSeal)), &data) != nil || !time.Now().Before(data.Expires) {
+		return webauthn.SessionData{}, false
+	}
+	return data, true
+}
+
+// waClaimLogin records a verified sign-in's challenge as used, in the same step that checks it
+// wasn't already (two requests replaying one answer can't both pass); false for a replay, or when
+// it can't be recorded (the map is full: a sign-in that couldn't be recorded could be replayed).
+func waClaimLogin(data webauthn.SessionData) bool {
+	fresh := false
+	recorded := waUsedLogins.Update(data.Challenge, time.Now(), func(_ *struct{}, found bool) time.Time {
+		fresh = !found
+		return data.Expires
+	})
+	return recorded && fresh
 }
 
 // --- webauthn.User adapter ------------------------------------------------------------------------
@@ -353,9 +352,9 @@ func (s *Service) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	id, err := waStoreLoginChallenge(helper.GetClientIP(r), *sessionData)
+	id, err := waSealLogin(*sessionData)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusTooManyRequests)
+		router.JSONError(w, "could not start the passkey sign-in", http.StatusInternalServerError)
 		return
 	}
 	router.JSON(w, map[string]any{"publicKey": options.Response, "challengeId": id})
@@ -367,7 +366,7 @@ func (s *Service) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 	s.ensureWebAuthnTables()
 	clientIP := helper.GetClientIP(r)
 	id := r.URL.Query().Get("challengeId")
-	sessionData, ok := waTakeLoginChallenge(id)
+	sessionData, ok := waOpenLogin(id)
 	if !ok {
 		router.JSONError(w, "login expired, start again", http.StatusBadRequest)
 		return
@@ -386,7 +385,7 @@ func (s *Service) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Reques
 		matchedID = waUser.id
 		return waUser, nil
 	}, sessionData, r)
-	if err != nil || matchedID == 0 {
+	if err != nil || matchedID == 0 || !waClaimLogin(sessionData) {
 		events.Audit("auth", "passkey_login_failed", events.SeverityWarning, "", clientIP, "Passkey login failed")
 		router.JSONError(w, "passkey login failed", http.StatusUnauthorized)
 		return

@@ -16,15 +16,15 @@ import (
 // answer within fleetWriteTimeout, and an idle keep-alive connection is closed after
 // fleetIdleTimeout. The two large transfers (a CVE report, the agent binary) extend their own
 // deadlines to fleetLargeTransfer (allowLargeTransfer). The console and link WebSockets clear the
-// deadlines when they upgrade. At most maxFleetConnsPerIP connections stay open per client
-// address (an IPv6 client per /64), enough for a whole site of machines behind one NAT.
+// deadlines when they upgrade. At most helper.MaxFleetConnsPerIP connections stay open per client
+// address (an IPv6 client per /64), enough for a whole site of machines behind one NAT. The numbers
+// are in helper/limits.go; these are vars so tests can shorten them.
 var (
-	fleetHeaderTimeout = 10 * time.Second
-	fleetReadTimeout   = time.Minute
-	fleetWriteTimeout  = time.Minute
-	fleetIdleTimeout   = time.Minute
-	fleetLargeTransfer = 10 * time.Minute
-	maxFleetConnsPerIP = 256
+	fleetHeaderTimeout = helper.FleetHeaderTimeout
+	fleetReadTimeout   = helper.FleetReadTimeout
+	fleetWriteTimeout  = helper.FleetWriteTimeout
+	fleetIdleTimeout   = helper.FleetIdleTimeout
+	fleetLargeTransfer = helper.FleetLargeTransfer
 )
 
 // allowLargeTransfer gives the current request fleetLargeTransfer to send its body and get its

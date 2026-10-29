@@ -44,8 +44,6 @@ const (
 	WebSocketReadTimeout      = 10 * time.Second
 	PortScanTimeout           = 5 * time.Minute
 	GeoDBDownloadTimeout      = 5 * time.Minute
-	LoginLockoutWindow        = 15 * time.Minute
-	LoginLockoutDuration      = 15 * time.Minute
 )
 
 // Path constants

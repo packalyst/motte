@@ -34,7 +34,6 @@
       service: unified-api
       priority: 100
       middlewares:
-        - rate-limit
         - security-headers
         - sentinel_fw_block
       entryPoints:

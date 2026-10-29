@@ -92,7 +92,7 @@ func TestInternalWebGateDrops(t *testing.T) {
 	for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		counts[strings.TrimPrefix(l, webGateDropMarker)]++
 	}
-	want := map[string]int{"192.0.2.80": 3, "192.0.2.81": 1, "192.0.2.82": maxWebGateDropsPerIP}
+	want := map[string]int{"192.0.2.80": 3, "192.0.2.81": 1, "192.0.2.82": helper.MaxWebGateDropsPerIP}
 	if len(counts) != len(want) {
 		t.Fatalf("written %v, want %v", counts, want)
 	}
@@ -103,9 +103,9 @@ func TestInternalWebGateDrops(t *testing.T) {
 	}
 
 	// The default jail, over that file: three drops ban, one doesn't.
-	attempts := bounded.New[string, []time.Time](maxJailTracked, bounded.DropOldest)
+	attempts := bounded.New[string, []time.Time](helper.MaxJailTracked, bounded.DropOldest)
 	re := regexp.MustCompile(`WEBGATE_DROP SRC=(\d+\.\d+\.\d+\.\d+)`)
-	s.processJailLogFile("webgate", logFile, re, attempts, 0, 1, webGateJailMaxRetry, webGateJailFindTime, webGateJailBanSeconds)
+	s.processJailLogFile("webgate", logFile, re, attempts, 0, 1, helper.WebGateJailMaxRetry, helper.WebGateJailFindTime, helper.WebGateJailBanSeconds)
 	got := storedValues(t, s)
 	if !got["192.0.2.80"] || !got["192.0.2.82"] || got["192.0.2.81"] || len(got) != 2 {
 		t.Fatalf("banned %v, want 192.0.2.80 and 192.0.2.82", got)

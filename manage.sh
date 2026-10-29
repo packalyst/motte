@@ -3118,7 +3118,6 @@ if [ -f "traefik/dynamic.yml.template" ]; then
       service: unified-api
       priority: 100
       middlewares:
-        - rate-limit
         - security-headers
       entryPoints:
         - websecure

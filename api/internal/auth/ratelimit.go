@@ -14,28 +14,12 @@ import (
 	"api/internal/router"
 )
 
-// Every auth limit lives here: failed-attempt lockouts (login per IP, 2FA codes and password
-// re-checks per user) and how many passkey sign-ins may wait for an answer. How many Argon2id
-// computations run at once is capped panel-wide by helper.Argon2IDKey.
-const (
-	maxLoginAttempts    = 5 // failed logins per IP (IPv6: per /64) before lockout
-	maxTOTPAttempts     = 5 // failed 2FA codes per user before lockout
-	maxPasswordAttempts = 5 // wrong passwords per user at step-up, unlock and password change
-
-	maxPendingPasskeyLogins      = 1000 // passkey sign-ins waiting for an answer, in total
-	maxPendingPasskeyLoginsPerIP = 5    // ... and from one IP
-)
-
-// Use helper constants for lockout timing
+// The failed-attempt lockouts: login per client, 2FA codes and password re-checks per user. Their
+// numbers are in helper/limits.go.
 var (
-	loginLockoutWindow = helper.LoginLockoutWindow   // Window for counting attempts
-	loginLockoutTime   = helper.LoginLockoutDuration // How long to lock out after max attempts
-)
-
-var (
-	loginLimiter    = newAttemptLimiter[string]("Login", maxLoginAttempts)
-	totpLimiter     = newAttemptLimiter[int64]("2FA", maxTOTPAttempts)
-	passwordLimiter = newAttemptLimiter[int64]("Password", maxPasswordAttempts)
+	loginLimiter    = newAttemptLimiter[string]("Login", helper.LoginMaxAttempts)
+	totpLimiter     = newAttemptLimiter[int64]("2FA", helper.TOTPMaxAttempts)
+	passwordLimiter = newAttemptLimiter[int64]("Password", helper.PasswordMaxAttempts)
 )
 
 // tooManyAttemptsError is returned while a key is locked out; handlers answer 429.
@@ -60,19 +44,17 @@ func tooManyAttempts(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-// maxTrackedKeys caps each limiter: IPs (login) or users (2FA, password). Past it, new keys are
-// refused until entries expire; keys already tracked, lockouts included, are never pushed out.
-const maxTrackedKeys = 100_000
-
-// attemptLimiter locks a key (an IP or a user) out for loginLockoutTime after max failed
-// attempts within loginLockoutWindow.
+// attemptLimiter locks a key (an IP or a user) out for helper.LoginLockoutDuration after max failed
+// attempts within helper.LoginLockoutWindow. It tracks at most helper.MaxTrackedSignInKeys keys,
+// forgetting the least recently used past that (bounded.Lockout), so a flood of addresses can't
+// lock newcomers out.
 type attemptLimiter[K comparable] struct {
 	what string // "Login", "2FA", "Password": in logs and errors
 	l    *bounded.Lockout[K]
 }
 
 func newAttemptLimiter[K comparable](what string, max int) *attemptLimiter[K] {
-	return &attemptLimiter[K]{what: what, l: bounded.NewLockout[K](maxTrackedKeys, max, loginLockoutWindow, loginLockoutTime)}
+	return &attemptLimiter[K]{what: what, l: bounded.NewLockout[K](helper.MaxTrackedSignInKeys, max, helper.LoginLockoutWindow, helper.LoginLockoutDuration)}
 }
 
 // reserve ATOMICALLY checks the lockout and reserves an attempt slot, closing the
@@ -102,7 +84,7 @@ func (l *attemptLimiter[K]) clear(key K) { l.l.Clear(key) }
 // period plus the library's ±1 step skew), so none of them can be replayed — not only the latest:
 // a code used before a newer one stays valid for a while and must stay refused too. Entries are
 // only added for codes that just validated, so the map grows with real logins, not with guesses.
-var usedTOTP = bounded.New[usedTOTPCode, struct{}](maxTrackedKeys, bounded.Refuse)
+var usedTOTP = bounded.New[usedTOTPCode, struct{}](helper.MaxTrackedSignInKeys, bounded.Refuse)
 
 type usedTOTPCode struct {
 	userID int64
