@@ -29,7 +29,8 @@ var errBadPort = errors.New("invalid port")
 type Service struct {
 	db        *sql.DB
 	ca        *CA
-	sslDomain string // panel's public domain, if any (added to cert SANs + host options)
+	sslDomain string          // panel's public domain, if any (added to cert SANs + host options)
+	srvCert   serverCertCache // the listener's own certificate (servercert.go)
 
 	// firewall port open/close callbacks (wired to the firewall service in main).
 	openPort  func(port int) error

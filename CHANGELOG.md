@@ -70,6 +70,10 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- **fleet**: the certificate agents check the panel with lasted one year from the API's start and
+  only listed the server's addresses at that moment, so a year without a restart, or a new IP,
+  disconnected every agent. It now lasts 90 days, is replaced automatically 30 days before it
+  expires, and is reissued within 10 minutes when the server's addresses or domain change.
 - Changing the SSH port, creating a Headscale auth key or API key, and removing the VPN router
   failed with "current password is incorrect": the page never asked for your password, and the
   server lost the rest of the request after checking it. They now ask for your password and work.
