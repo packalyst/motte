@@ -96,6 +96,9 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- **Settings → Web → Live routing loads again**: a site that had "redirect-to-https" ticked got
+  the HTTPS redirect twice (its own plus the automatic one), which broke the page. A site's route
+  now lists each middleware once, and the redirect is always the last step, after the checks.
 - **fleet**: the certificate agents check the panel with lasted one year from the API's start and
   only listed the server's addresses at that moment, so a year without a restart, or a new IP,
   disconnected every agent. It now lasts 90 days, is replaced automatically 30 days before it

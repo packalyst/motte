@@ -73,6 +73,11 @@ const (
 	MiddlewareSentinelFWBlockFile   = "sentinel_fw_block@file"
 )
 
+// managedMiddlewares are the middlewares the panel adds by itself where they belong: the HTTP→HTTPS
+// redirect (last, on the HTTP router of a site with HTTPS on) and the port-80 gate (on the whole
+// entry point). A route's own list never carries them, even when it has them stored from before.
+var managedMiddlewares = map[string]bool{MiddlewareRedirectHTTPS: true, "sentinel_web_gate": true}
+
 // cloudflareListURL is where the sentinel plugin fetches the panel's live Cloudflare list (the
 // same URL the core template gives its sentinel middlewares).
 func cloudflareListURL() string {
@@ -910,8 +915,16 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockE
 
 			// Build middlewares list. Filter invalid names (emission backstop): these
 			// are written into the YAML unquoted, so a bad value would corrupt the file.
+			// Each appears once, and the ones the panel adds itself where they belong
+			// (managedMiddlewares) are left out whatever the route has stored.
 			middlewares := make([]string, 0, len(route.Middlewares))
+			seen := map[string]bool{}
 			for _, mw := range route.Middlewares {
+				base, _, _ := strings.Cut(mw, "@")
+				if managedMiddlewares[base] || seen[base] {
+					continue
+				}
+				seen[base] = true
 				if IsValidMiddlewareName(mw) {
 					middlewares = append(middlewares, mw)
 				} else {
@@ -932,8 +945,8 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockE
 			// Global firewall-block enforcement: when the Settings toggle is on, every
 			// domain route also checks the panel's block list (matched against the real
 			// client IP, so it works behind Cloudflare). Feeds both the HTTP and HTTPS
-			// routers below via this one middlewares list.
-			if fwBlockEnabled {
+			// routers below via this one middlewares list (once, if it was also ticked).
+			if fwBlockEnabled && !seen[MiddlewareSentinelFWBlock] {
 				middlewares = append(middlewares, MiddlewareSentinelFWBlockFile)
 			}
 

@@ -259,3 +259,31 @@ func TestPanelAPILimitedOnce(t *testing.T) {
 		t.Fatalf("the API's own request limiter is off (%v)", err)
 	}
 }
+
+// A route's middlewares appear once, whatever it has stored: a ticked block list isn't added
+// again, a ticked HTTPS redirect or port-80 gate (the panel adds those itself) is left out, and the
+// HTTP router of an HTTPS site ends with the one redirect, after every check.
+func TestDomainRouteMiddlewaresOnce(t *testing.T) {
+	dir := t.TempDir()
+	stored := []string{"redirect-to-https@file", "sentinel_fw_block@file", "security-headers@file",
+		"security-headers@file", "sentinel_web_gate@file"}
+	if err := GenerateDomainRoutes(dir, []DomainRouteConfig{
+		{Domain: "site.example.test", TargetIP: "10.8.0.20", TargetPort: 8080, AccessMode: "public", FrontendSSL: true, Middlewares: stored},
+		{Domain: "plain.example.test", TargetIP: "10.8.0.21", TargetPort: 8080, AccessMode: "public", Middlewares: stored},
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "domains.yml"))
+	content := string(b)
+	name := "domain-" + helper.SanitizeDomainName("site.example.test")
+	want := map[string][]string{
+		name:             {"sentinel_fw_block@file", "security-headers@file", "redirect-to-https@file"},
+		name + "-secure": {"sentinel_fw_block@file", "security-headers@file"},
+		"domain-" + helper.SanitizeDomainName("plain.example.test"): {"sentinel_fw_block@file", "security-headers@file"},
+	}
+	for router, w := range want {
+		if got := routerMiddlewares(t, content, router); strings.Join(got, ",") != strings.Join(w, ",") {
+			t.Errorf("%s: %v, want %v", router, got, w)
+		}
+	}
+}
