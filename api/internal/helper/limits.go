@@ -63,6 +63,10 @@ const (
 	ConsoleMaxDuration      = 12 * time.Hour   // a shell open this long is ended
 	ConsoleStepUpGrace      = 10 * time.Minute // after a password, fleet actions need no new one for this long (sliding)
 	ConsoleStepUpGraceMax   = time.Hour        // but never longer than this after the password
+	ConsoleGrantTTL         = 5 * time.Minute  // a console grant (after a password) opens consoles for this long...
+	ConsoleGrantUses        = 50               // ...this many times (several tabs and reconnects)
+	ConsoleShareGrantTTL    = 30 * time.Minute // a read-only share link works this long...
+	ConsoleShareGrantUses   = 200              // ...this many times
 	MaxConsoleGrants        = 100_000          // console grants alive at once, in all
 	MaxConsoleGrantsPerUser = 1_000            // and per user
 	MaxConsoleGraceWindows  = 10_000           // sessions inside their grace window at once

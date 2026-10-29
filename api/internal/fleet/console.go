@@ -1029,10 +1029,10 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	// A normal grant is multi-use within a short window so one step-up covers opening several
 	// tabs + reconnects; a read-only (share) grant lives longer for handing to another operator.
-	ttl, uses := 5*time.Minute, 50
+	ttl, uses := helper.ConsoleGrantTTL, helper.ConsoleGrantUses
 	session := ""
 	if readonly {
-		ttl, uses = 30*time.Minute, 200
+		ttl, uses = helper.ConsoleShareGrantTTL, helper.ConsoleShareGrantUses
 		// A share link may only be minted by the operator who currently OWNS the session, and it is
 		// bound to that owner's namespaced session id — so one operator can't share (or even address)
 		// another operator's shell.
@@ -1099,7 +1099,7 @@ func (s *Service) handleConsoleGrantAll(w http.ResponseWriter, r *http.Request) 
 		router.JSONError(w, err.Error(), status)
 		return
 	}
-	ttl, uses := 5*time.Minute, 50
+	ttl, uses := helper.ConsoleGrantTTL, helper.ConsoleGrantUses
 	grants := map[string]string{}
 	for _, mid := range grantAllTargets(req.MachineIDs) {
 		m, err := s.machineByID(mid)
