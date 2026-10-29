@@ -96,6 +96,9 @@ releases will be tagged as they are cut.
   fill the disk (dangling-only; tagged/in-use images, volumes and build cache are untouched).
 
 ### Fixed
+- **Live connections work again over HTTPS** (the live feed, the console and its session list):
+  a WebSocket through Traefik is marked "wss", not "https", so the panel didn't recognise it as
+  secure and ignored its session cookie.
 - **Settings → Web → Live routing loads again**: a site that had "redirect-to-https" ticked got
   the HTTPS redirect twice (its own plus the automatic one), which broke the page. A site's route
   now lists each middleware once, and the redirect is always the last step, after the checks.

@@ -11,12 +11,14 @@ const sessionCookieBase = "motte_session"
 
 // EffectiveHTTPS reports whether the browser reached the panel over HTTPS, accounting for a
 // terminating reverse proxy (Traefik) that forwards plain HTTP internally. It trusts
-// X-Forwarded-Proto because the panel always sits behind that proxy (see ADR-0007).
+// X-Forwarded-Proto because the panel always sits behind that proxy (see ADR-0007). For a
+// WebSocket, Traefik sends "wss" (not "https") when the browser connected securely.
 func EffectiveHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	proto := r.Header.Get("X-Forwarded-Proto")
+	return strings.EqualFold(proto, "https") || strings.EqualFold(proto, "wss")
 }
 
 // SessionCookieName returns the session cookie name. When secure, it uses the __Host-
