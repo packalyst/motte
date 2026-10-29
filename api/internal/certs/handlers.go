@@ -18,7 +18,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 
 // GET /api/certs
 func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
-	router.JSON(w, s.Overview(r.Context()))
+	router.JSON(w, s.Overview())
 }
 
 // POST /api/certs/listener/renew replaces the agent listener's certificate now.
@@ -41,5 +41,5 @@ func (s *Service) handleRenewListener(w http.ResponseWriter, r *http.Request) {
 		actor = p.Username
 	}
 	events.Audit("certs", "listener_cert_renewed", events.SeverityInfo, actor, helper.GetClientIP(r), "Agent listener certificate renewed by hand")
-	router.JSON(w, s.Overview(r.Context()))
+	router.JSON(w, s.Overview())
 }

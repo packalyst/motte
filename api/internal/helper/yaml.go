@@ -107,11 +107,11 @@ func GetYAMLPath(content string, path string) (interface{}, error) {
 	return nodeToValue(node), nil
 }
 
-// InsertYAMLArrayItem inserts a value into an array at the specified path
-// The value is inserted at the end of the array, or at a specific index if provided
-// Path should point to the array, not including the index
-// Example: InsertYAMLArrayItem(content, "routers.api.middlewares", "sentinel_vpn@file")
-func InsertYAMLArrayItem(content string, path string, value string) (string, error) {
+// InsertYAMLArrayItem inserts a value into an array at the specified path: ahead of the item
+// equal to before when there is one, else at the end. Nothing changes if the value is already
+// there. Path should point to the array, not including the index.
+// Example: InsertYAMLArrayItem(content, "routers.api.middlewares", "sentinel_vpn@file", "")
+func InsertYAMLArrayItem(content string, path string, value string, before string) (string, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
 		return content, fmt.Errorf("failed to parse YAML: %w", err)
@@ -142,13 +142,19 @@ func InsertYAMLArrayItem(content string, path string, value string) (string, err
 		}
 	}
 
-	// Append new item
 	newNode := &yaml.Node{
 		Kind:  yaml.ScalarNode,
 		Tag:   "!!str",
 		Value: value,
 	}
-	node.Content = append(node.Content, newNode)
+	at := len(node.Content)
+	for i, item := range node.Content {
+		if before != "" && item != nil && item.Value == before {
+			at = i
+			break
+		}
+	}
+	node.Content = append(node.Content[:at], append([]*yaml.Node{newNode}, node.Content[at:]...)...)
 
 	out, err := yaml.Marshal(&root)
 	if err != nil {

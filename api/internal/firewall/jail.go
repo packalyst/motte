@@ -243,7 +243,13 @@ func (s *Service) ensureDefaultJails() error {
 		{Name: "turbotunnels", Enabled: true, LogFile: helper.TurbotunnelsAuthLogPath(),
 			FilterRegex: `TURBOTUNNELS_AUTH_FAIL SRC=(\d+\.\d+\.\d+\.\d+)`,
 			MaxRetry:    5, FindTime: 3600, BanTime: 2592000, Port: "all", Action: "drop"},
+		// Bans sources the port-80 gate keeps dropping while Cloudflare-only is on (scanners
+		// reaching the server directly); the panel writes the gate's drops to this file.
+		{Name: "webgate", Enabled: true, LogFile: helper.WebGateLogPath(),
+			FilterRegex: `WEBGATE_DROP SRC=(\d+\.\d+\.\d+\.\d+)`,
+			MaxRetry:    webGateJailMaxRetry, FindTime: webGateJailFindTime, BanTime: webGateJailBanSeconds, Port: "all", Action: "drop"},
 	}
+	ensureWebGateLog()
 
 	for _, jail := range defaultJails {
 		s.db.Exec(`INSERT OR IGNORE INTO jails (name, enabled, log_file, filter_regex, max_retry, find_time, ban_time, port, action)

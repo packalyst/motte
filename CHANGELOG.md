@@ -137,6 +137,17 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **Plain HTTP only redirects to HTTPS**: the panel (by IP, admin domain or panel domain) and
+  every site with HTTPS on answer port 80 with a redirect to the same address on HTTPS (POSTs
+  stay POSTs), so passwords and session cookies never travel unencrypted. The panel by IP is
+  served over HTTPS with a self-signed certificate. Tailscale's control paths and sites without
+  HTTPS still answer on port 80.
+- **Cloudflare-only no longer blocks certificate renewal**: with it on, HTTPS stays reachable
+  only from Cloudflare, and on HTTP anyone else now gets no answer at all (the connection is
+  closed) — except Let's Encrypt's certificate check, so domains not proxied by Cloudflare
+  renew again. A new **webgate** jail bans addresses that keep trying port 80 directly (3 in
+  10 minutes → 1 day). The "Can't renew" warning on the Certificates page is gone with the
+  problem. The turbotunnels jail file is now size-capped too.
 - **Nothing kept in memory can grow without limit**: every per-address or per-key list the
   panel keeps in memory (request limit, login / 2FA / password lockouts, passkey sign-ins, the
   tunnel key guard and throttles, console grants and step-up windows, the 2FA replay guard, jail

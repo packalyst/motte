@@ -26,8 +26,8 @@ func (s *Service) Start() {
 // check sends each certificate's warning once per step it reaches: what was sent is kept in
 // cert_alerts, so a restart doesn't repeat it, and a renewed certificate (new expiry) starts over.
 // Rows for certificates that no longer exist are dropped.
-func (s *Service) check(ctx context.Context) error {
-	return s.checkList(trackedList(s.Overview(ctx)), time.Now())
+func (s *Service) check(context.Context) error {
+	return s.checkList(trackedList(s.Overview()), time.Now())
 }
 
 func (s *Service) checkList(list []tracked, now time.Time) error {

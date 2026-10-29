@@ -3028,6 +3028,11 @@ experimental:
 entryPoints:
   web:
     address: ":${HTTP_PORT}"
+    http:
+      # Port-80 gate: while Cloudflare-only is on, only Cloudflare, the panel's own networks
+      # and Let's Encrypt's HTTP challenge get through; anyone else is dropped silently.
+      middlewares:
+        - sentinel_web_gate@file
     forwardedHeaders:
       # trustedIPs are the Cloudflare CIDRs fetched at setup time from
       # https://www.cloudflare.com/ips-v4 and /ips-v6 (see above). Rerun

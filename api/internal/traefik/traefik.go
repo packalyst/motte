@@ -49,15 +49,16 @@ var (
 	RegenerateFleetRoute func() error
 )
 
-// fwBlockRouters are the panel's own routers that carry the block middleware (HTTP+HTTPS).
-var fwBlockRouters = []string{"ui", "ui-secure", "unified-api", "unified-api-secure"}
+// fwBlockRouters are the panel's own routers that carry the block middleware: the HTTP redirect
+// on the server IP / admin domain ("ui"), their HTTPS UI and API, and the panel domain's.
+var fwBlockRouters = []string{"ui", "ui-ip-secure", "unified-api-ip-secure", "ui-secure", "unified-api-secure"}
 
 // vpnOnlyRouters are the routers the VPN-only gate is applied to. It MUST include the API routers,
 // not just the UI: the SPA (ui) and the API it calls (unified-api) are one admin surface, and the
 // only off-VPN caller of admin-domain /api/* would be an attacker. Agents use the separate mTLS
 // listener + /agent route (not /api/*), and the public triggers live on the proxy domain, so none
-// of them are affected. Kept in sync with fwBlockRouters (same four routers).
-var vpnOnlyRouters = []string{"ui", "ui-secure", "unified-api", "unified-api-secure"}
+// of them are affected. Kept in sync with fwBlockRouters (same routers).
+var vpnOnlyRouters = fwBlockRouters
 
 // Sentinel middleware names - used throughout the codebase
 const (
@@ -65,6 +66,7 @@ const (
 	MiddlewareSentinelVPNSilent = "sentinel_vpn_silent"
 	MiddlewareSentinelDrop      = "sentinel_drop"
 	MiddlewareSentinelFWBlock   = "sentinel_fw_block"
+	MiddlewareRedirectHTTPS     = "redirect-to-https"
 	// With @file suffix for router middleware lists
 	MiddlewareSentinelVPNFile       = "sentinel_vpn@file"
 	MiddlewareSentinelVPNSilentFile = "sentinel_vpn_silent@file"
@@ -510,9 +512,10 @@ func (s *Service) addMiddlewareToRouter(routerName, middlewareName string) error
 		return fmt.Errorf("router '%s' not found", routerName)
 	}
 
-	// Insert middleware into router's middlewares array
+	// Insert middleware into router's middlewares array, ahead of a redirect: a redirect answers
+	// at once, so a gate after it would never run.
 	path := "http.routers." + routerName + ".middlewares"
-	newContent, err := helper.InsertYAMLArrayItem(content, path, middlewareName)
+	newContent, err := helper.InsertYAMLArrayItem(content, path, middlewareName, MiddlewareRedirectHTTPS)
 	if err != nil {
 		return fmt.Errorf("failed to add middleware: %w", err)
 	}
@@ -731,7 +734,7 @@ func (s *Service) RestoreVPNOnlyMode() {
 	// publicly reachable — the very bug this closes.)
 	if data, err := os.ReadFile(s.configPath); err == nil {
 		c := string(data)
-		if routerHasMiddleware(c, "ui", middleware) && routerHasMiddleware(c, "unified-api", middleware) {
+		if routerHasMiddleware(c, "ui", middleware) && routerHasMiddleware(c, "unified-api-ip-secure", middleware) {
 			return
 		}
 	}
@@ -942,16 +945,21 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockE
 				priority = "50"
 			}
 
-			// HTTP router (web entrypoint) - always created
+			// HTTP router (web entrypoint) - always created. With HTTPS on it only redirects
+			// there (after the route's own gates), so the site is never served unencrypted.
+			webMiddlewares := middlewares
+			if route.FrontendSSL {
+				webMiddlewares = append(append([]string{}, middlewares...), MiddlewareRedirectHTTPS+"@file")
+			}
 			sb.WriteString(fmt.Sprintf("    domain-%s:\n", name))
 			sb.WriteString(fmt.Sprintf("      rule: '%s'\n", rule))
 			sb.WriteString(fmt.Sprintf("      service: domain-%s-svc\n", name))
 			sb.WriteString(fmt.Sprintf("      priority: %s\n", priority))
 			sb.WriteString("      entryPoints:\n")
 			sb.WriteString("        - web\n")
-			if len(middlewares) > 0 {
+			if len(webMiddlewares) > 0 {
 				sb.WriteString("      middlewares:\n")
-				for _, mw := range middlewares {
+				for _, mw := range webMiddlewares {
 					sb.WriteString(fmt.Sprintf("        - %s\n", mw))
 				}
 			}

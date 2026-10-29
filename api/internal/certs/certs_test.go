@@ -1,7 +1,6 @@
 package certs
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -106,19 +105,6 @@ func TestCheckWarnsOncePerStep(t *testing.T) {
 	}
 }
 
-func TestRenewProblem(t *testing.T) {
-	ctx := context.Background()
-	if p := renewProblem(ctx, "localhost", "letsencrypt", false); p != "" {
-		t.Error("flagged with Cloudflare-only off")
-	}
-	if p := renewProblem(ctx, "localhost", "letsencrypt-dnschallenge", true); p != "" {
-		t.Error("flagged a DNS-challenge certificate")
-	}
-	if p := renewProblem(ctx, "localhost", "letsencrypt", true); p == "" {
-		t.Error("a domain pointing outside Cloudflare wasn't flagged with Cloudflare-only on")
-	}
-}
-
 // writeACME stores one certificate for domain, expiring in left, as Traefik's acme.json.
 func writeACME(t *testing.T, domain string, left time.Duration) {
 	t.Helper()
@@ -148,7 +134,7 @@ func TestOverview(t *testing.T) {
 	writeACME(t, "site.example", 5*day)
 	t.Setenv("SSL_DOMAIN", "panel.example")
 	t.Setenv("PROXY_DOMAIN", "")
-	o := s.Overview(context.Background())
+	o := s.Overview()
 	if len(o.Websites) != 2 {
 		t.Fatalf("websites: %+v", o.Websites)
 	}

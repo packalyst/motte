@@ -1,8 +1,22 @@
 # Traefik Dynamic Configuration
 http:
   routers:
-    # UI - catch all for main host only - HTTP
+    # Plain HTTP on the server IP / admin domain only redirects to HTTPS (panel, API and
+    # /api/v1 alike), so nothing is ever served unencrypted. Kept as "ui": the VPN-only and
+    # block-list toggles gate it like the HTTPS routers below.
     ui:
+      rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/`)"
+      service: ui
+      priority: 10
+      middlewares:
+        - sentinel_fw_block
+        - redirect-to-https  # last: gates added at runtime go ahead of it
+      entryPoints:
+        - web
+
+    # UI on the server IP / admin domain - HTTPS (Traefik's own self-signed certificate: a
+    # bare IP or a VPN-only name can't get a public one)
+    ui-ip-secure:
       rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/`)"
       service: ui
       priority: 10
@@ -10,10 +24,11 @@ http:
         - security-headers
         - sentinel_fw_block
       entryPoints:
-        - web
+        - websecure
+      tls: {}
 
-    # Unified API - all /api/* routes (except /api/v1 for headscale direct) - HTTP
-    unified-api:
+    # Unified API - all /api/* routes (except /api/v1 for headscale direct) - HTTPS
+    unified-api-ip-secure:
       rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
       service: unified-api
       priority: 100
@@ -22,9 +37,11 @@ http:
         - security-headers
         - sentinel_fw_block
       entryPoints:
-        - web
+        - websecure
+      tls: {}
 
-    # Headscale control plane - HTTP (for Tailscale clients)
+    # Headscale control plane - HTTP (for Tailscale clients; without a domain they use
+    # http://SERVER_IP, and their protocol is encrypted itself). Not redirected.
     # Includes /derp for DERP relay connections and /register for node registration
     headscale-control:
       rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`) || PathPrefix(`/register`) || PathPrefix(`/apple`) || PathPrefix(`/windows`))"
@@ -44,7 +61,7 @@ http:
 
     # Headscale API - BLOCKED for external access (UI uses /api/hs via unified API)
     # This prevents direct API access - all admin goes through unified API with server-side auth
-    headscale-api-blocked:
+    headscale-api-blocked-ip-secure:
       rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/api/v1`)"
       service: headscale
       priority: 100
@@ -53,7 +70,8 @@ http:
         - rate-limit-strict
         - security-headers
       entryPoints:
-        - web
+        - websecure
+      tls: {}
 
     # Block PWA files on non-main domains (prevent Chrome install prompt on other domains)
     block-pwa-catchall:
@@ -181,11 +199,24 @@ ${VPN_SOURCE_RANGE}
             blockReportURL: "http://host.docker.internal:${API_PORT}/internal/l7block"
           errorMode: "silent"
 
-    # Redirect HTTP to HTTPS (for public domain only)
+    # Redirect HTTP to HTTPS (same host and path, on the HTTPS port)
     redirect-to-https:
       redirectScheme:
         scheme: https
+        port: "${HTTPS_PORT}"
         permanent: true
+
+    # Port-80 gate (attached to the whole HTTP entry point when a domain is set; see
+    # sentinel/gate.go). While Cloudflare-only is on, only Cloudflare and the panel's own
+    # networks get past it, plus Let's Encrypt's HTTP challenge; anyone else is dropped
+    # silently and reported for the 'webgate' jail. With it off, the panel answers "off".
+    sentinel_web_gate:
+      plugin:
+        sentinel:
+          gate:
+            listUrl: "http://host.docker.internal:${API_PORT}/internal/webgate"
+            cacheTTL: 60
+            reportUrl: "http://host.docker.internal:${API_PORT}/internal/webgate/drops"
 
     # Drop unknown domains (silently closes connection for unconfigured hosts)
     sentinel_drop:

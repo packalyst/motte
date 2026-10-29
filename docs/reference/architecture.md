@@ -98,11 +98,12 @@ One Docker network is declared, plus the containers on host networking:
 
 ### Admin traffic (browser → panel)
 
-1. **Browser → (optional) Cloudflare → Traefik.** The admin panel is reachable at `http://SERVER_IP/`, on the VPN-only `ADMIN_DOMAIN` (default `manage.me`), and optionally a public `SSL_DOMAIN`. When Cloudflare fronts a domain, the real client IP is carried in `CF-Connecting-IP`; the api keeps Cloudflare's edge ranges current so that header is trusted only for requests that genuinely transit Cloudflare (`main.go:93`, `StartCloudflareIPUpdater`).
+1. **Browser → (optional) Cloudflare → Traefik.** The admin panel is reachable at `https://SERVER_IP/` (Traefik's self-signed certificate), on the VPN-only `ADMIN_DOMAIN` (default `manage.me`), and optionally a public `SSL_DOMAIN`. Plain HTTP only redirects to HTTPS. When Cloudflare fronts a domain, the real client IP is carried in `CF-Connecting-IP`; the api keeps Cloudflare's edge ranges current so that header is trusted only for requests that genuinely transit Cloudflare (`main.go:93`, `StartCloudflareIPUpdater`).
 2. **Traefik routing** (`traefik/dynamic/core.yml`, generated from `dynamic.yml.template`):
-   - `PathPrefix('/')` on the admin host/domain → the **ui** service (`http://ui:80`), priority 10.
-   - `PathPrefix('/api/') && !PathPrefix('/api/v1')` → the **unified-api** service, priority 100, behind `rate-limit`, `security-headers`, and `sentinel_fw_block` middlewares.
-   - Headscale control-plane paths (`/ts2021`, `/machine`, `/key`, `/noise`, `/derp`, `/register`, `/apple`, `/windows`) → **headscale** directly (Tailscale clients need these).
+   - On port 80 (`web`) the admin host/domain only **redirects** to HTTPS (router `ui`; gates run before the redirect). With a domain set, the whole port-80 entry point also carries the **port-80 gate** (`sentinel_web_gate`, see [networking-firewall.md](networking-firewall.md) §5.3).
+   - On HTTPS, `PathPrefix('/')` on the admin host/domain → the **ui** service (`http://ui:80`), priority 10 (`ui-ip-secure`; `ui-secure` on `SSL_DOMAIN`).
+   - `PathPrefix('/api/') && !PathPrefix('/api/v1')` → the **unified-api** service, priority 100, behind `rate-limit`, `security-headers`, and `sentinel_fw_block` middlewares (`unified-api-ip-secure`, `unified-api-secure`).
+   - Headscale control-plane paths (`/ts2021`, `/machine`, `/key`, `/noise`, `/derp`, `/register`, `/apple`, `/windows`) → **headscale** directly (Tailscale clients need these; on port 80 too, not redirected).
    - `/api/v1` (Headscale's own admin API) is **blocked** to the outside and gated by `sentinel_vpn` (VPN source ranges only) + strict rate limit — all Headscale admin goes through the api's `/api/hs` instead.
    - Unknown hosts and PWA files on non-admin domains are silently dropped (`sentinel_drop`, `catchall-drop`).
 3. **Traefik → api over `host.docker.internal`.** The unified-api service points at `http://host.docker.internal:${API_PORT}` (`core.yml:105-108`), resolved via the `extra_hosts: host-gateway` mapping on the Traefik container. This is the key wiring fact: **the api is host-networked, so Traefik cannot reach it by the `api` hostname on the bridge network** — it must go out to the host gateway and back to the published API port. (See MEMORY: "API is host-networked".)

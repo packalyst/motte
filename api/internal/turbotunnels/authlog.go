@@ -91,8 +91,8 @@ func processLogLines(lines []string, jailPath string, db *database.DB) {
 			}
 		}
 	}
-	if len(authMarkers) > 0 {
-		appendLines(jailPath, authMarkers)
+	if err := helper.AppendJailLines(jailPath, authMarkers); err != nil {
+		log.Printf("turbotunnels: cannot write the jail file: %v", err)
 	}
 }
 
@@ -170,16 +170,4 @@ func fetchLogLines(since int64) []string {
 		out = append(out, scanner.Text())
 	}
 	return out
-}
-
-// appendLines appends lines to the auth log (best-effort).
-func appendLines(path string, lines []string) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	for _, l := range lines {
-		f.WriteString(l + "\n")
-	}
 }

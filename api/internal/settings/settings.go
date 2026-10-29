@@ -133,7 +133,7 @@ type UpdateSettingsRequest struct {
 	AdGuardQuerylogSize     *int    `json:"adguard_querylog_size,omitempty"` // querylog.size_memory in MB
 	SessionTimeout          *string `json:"session_timeout,omitempty"`
 	IdleLockMinutes         *int    `json:"idle_lock_minutes,omitempty"`      // 0 = disable the idle lock
-	WebCloudflareOnly       *bool   `json:"web_cloudflare_only,omitempty"`    // true = allow only Cloudflare edge IPs to reach 80/443 (L3)
+	WebCloudflareOnly       *bool   `json:"web_cloudflare_only,omitempty"`    // true = only Cloudflare edge IPs reach 443 (L3) and get an answer on 80 (Traefik gate)
 	MetricsRetentionDays    *int    `json:"metrics_retention_days,omitempty"` // window (days) for all aggregate tables
 	DisplayTimezone         *string `json:"display_timezone,omitempty"`       // "browser" or an IANA zone; UI display only
 
@@ -332,8 +332,8 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if *req.WebCloudflareOnly {
-			log.Printf("Cloudflare-only web access ENABLED (80/443 restricted to Cloudflare)")
-			events.Log("settings", "web_cloudflare_only", events.SeverityWarning, "Cloudflare-only web access enabled — ports 80/443 now reachable only from Cloudflare (plus localhost, Docker and WireGuard)")
+			log.Printf("Cloudflare-only web access ENABLED (443 restricted to Cloudflare, 80 gated in Traefik)")
+			events.Log("settings", "web_cloudflare_only", events.SeverityWarning, "Cloudflare-only web access enabled — HTTPS (443) now reachable only from Cloudflare (plus localhost, Docker and the VPNs); on HTTP (80) anyone else gets no answer, except Let's Encrypt's certificate check")
 		} else {
 			log.Printf("Cloudflare-only web access DISABLED (80/443 open)")
 			events.Log("settings", "web_cloudflare_only", events.SeverityInfo, "Cloudflare-only web access disabled — ports 80/443 open to all sources")
@@ -575,9 +575,9 @@ func SetTraefikFWBlock(on bool) error {
 	return SetSetting("traefik_fw_block", v)
 }
 
-// GetWebCloudflareOnly reports whether ports 80/443 are restricted to Cloudflare edge
-// ranges (L3). Default OFF — the web ports are open until an operator explicitly turns
-// it on (which the cf_only nftables table then enforces).
+// GetWebCloudflareOnly reports whether the web ports are restricted to Cloudflare: 443 by the
+// cf_only nftables table (L3), 80 by Traefik's gate (which lets Let's Encrypt's HTTP challenge
+// through). Default OFF — the web ports are open until an operator explicitly turns it on.
 func GetWebCloudflareOnly() bool {
 	v, err := GetSetting("web_cloudflare_only")
 	if err != nil {

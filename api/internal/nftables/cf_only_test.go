@@ -58,7 +58,7 @@ func TestCloudflareOnlyBuild_Enabled(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	// References the Cloudflare set, keeps loopback trusted, and drops the web ports.
-	for _, want := range []string{"set cf_v4", "@cf_v4", "127.0.0.0/8", "tcp dport { 80, 443 } drop"} {
+	for _, want := range []string{"set cf_v4", "@cf_v4", "127.0.0.0/8", "tcp dport 443 drop"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("enabled build missing %q:\n%s", want, out)
 		}
@@ -69,12 +69,12 @@ func TestCloudflareOnlyBuild_Enabled(t *testing.T) {
 		t.Errorf("expected both input and forward chains:\n%s", out)
 	}
 	// The forward rules must be scoped to DNAT'd (externally-published) traffic only.
-	if !strings.Contains(out, "ct status dnat tcp dport { 80, 443 } drop") {
+	if !strings.Contains(out, "ct status dnat tcp dport 443 drop") {
 		t.Errorf("forward drop must be scoped to ct status dnat:\n%s", out)
 	}
 	// Never-lock-out invariant: the accept rules MUST precede the drop.
 	firstAccept := strings.Index(out, "accept")
-	drop := strings.Index(out, "tcp dport { 80, 443 } drop")
+	drop := strings.Index(out, "tcp dport 443 drop")
 	if firstAccept == -1 || drop == -1 || firstAccept > drop {
 		t.Fatalf("accepts must precede the drop (accept=%d drop=%d):\n%s", firstAccept, drop, out)
 	}
@@ -92,7 +92,7 @@ func TestCloudflareOnlyBuild_FailsClosedOnDBError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial Build: %v", err)
 	}
-	if !strings.Contains(out, "tcp dport { 80, 443 } drop") {
+	if !strings.Contains(out, "tcp dport 443 drop") {
 		t.Fatalf("precondition: an enabled build must drop the web ports:\n%s", out)
 	}
 
@@ -106,7 +106,7 @@ func TestCloudflareOnlyBuild_FailsClosedOnDBError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build after a DB error must not itself error: %v", err)
 	}
-	if !strings.Contains(out2, "tcp dport { 80, 443 } drop") {
+	if !strings.Contains(out2, "tcp dport 443 drop") {
 		t.Fatalf("fail-CLOSED expected: a transient DB error must keep the drop, got:\n%s", out2)
 	}
 }
@@ -132,7 +132,7 @@ func TestValidCIDROr(t *testing.T) {
 
 func TestTrustedAdminSourcesAlwaysHasLoopback(t *testing.T) {
 	// Loopback must always be present so the box can never lock itself out locally.
-	got := trustedAdminSources()
+	got := TrustedAdminSources()
 	var hasLoopback bool
 	for _, c := range got {
 		if c == "127.0.0.0/8" {
@@ -144,5 +144,27 @@ func TestTrustedAdminSourcesAlwaysHasLoopback(t *testing.T) {
 	}
 	if len(got) < 2 {
 		t.Fatalf("expected loopback + docker/WG fallbacks, got %v", got)
+	}
+}
+
+// Port 80 is never filtered by the kernel (Let's Encrypt must reach it; Traefik gates it), and
+// WebGateSources gives the gate the same sources the 443 rule accepts — nothing when off.
+func TestCloudflareOnlyLeavesPort80ToTheGate(t *testing.T) {
+	out, _ := NewCloudflareOnlyTable(cfTestDB(t, "on")).Build()
+	if strings.Contains(out, "dport 80") || strings.Contains(out, "dport { 80") {
+		t.Fatalf("the kernel rule must not touch port 80:\n%s", out)
+	}
+	if got := NewCloudflareOnlyTable(cfTestDB(t, "off")).WebGateSources(); got != nil {
+		t.Fatalf("off: gate sources %v, want nil (everyone)", got)
+	}
+	got := NewCloudflareOnlyTable(cfTestDB(t, "on")).WebGateSources()
+	has := map[string]bool{}
+	for _, c := range got {
+		has[c] = true
+	}
+	for _, want := range append([]string{"127.0.0.0/8", "::1/128", "104.16.0.0/13"}, TrustedAdminSources()...) {
+		if !has[want] {
+			t.Errorf("gate sources missing %q: %v", want, got)
+		}
 	}
 }
