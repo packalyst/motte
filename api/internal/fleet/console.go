@@ -454,15 +454,34 @@ func (a *agentConn) reapExpired() {
 // claimOwner records the opener of a session. It returns false if the session already has a
 // DIFFERENT owner — ownership persists across a detach (the tmux session lives on for resume), so a
 // second operator can't reattach a shell the first opened. Idempotent for the same user.
-func (a *agentConn) claimOwner(session string, userID int64) bool {
+// claimOwner makes userID the owner of a session, or confirms they already are (a reattach). A new
+// session counts against helper.MaxConsoleSessionsPerUser (the user's shells on this machine) and
+// helper.MaxConsoleSessionsPerMachine (everyone's): each is a real shell on the host, so neither a
+// user nor a stolen session can start them without end. Returns "" when allowed, else why not.
+func (a *agentConn) claimOwner(session string, userID int64) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if ex, ok := a.owners[session]; ok {
-		return ex == userID
+		if ex != userID {
+			return "session belongs to another operator"
+		}
+		return ""
+	}
+	mine := 0
+	for _, owner := range a.owners {
+		if owner == userID {
+			mine++
+		}
+	}
+	switch {
+	case mine >= helper.MaxConsoleSessionsPerUser:
+		return fmt.Sprintf("you have %d sessions open on this machine; close one first", mine)
+	case len(a.owners) >= helper.MaxConsoleSessionsPerMachine:
+		return fmt.Sprintf("this machine has %d sessions open; close one first", len(a.owners))
 	}
 	a.owners[session] = userID
 	a.ensureLabel(session)
-	return true
+	return ""
 }
 
 // isOwner reports whether userID currently owns the session (used to gate minting a share link).
@@ -478,13 +497,18 @@ func (a *agentConn) writeToAgent(f consoleFrame) {
 	_ = a.conn.WriteJSON(f)
 }
 
-func (a *agentConn) addBridge(session string, b *consoleBridge) (first bool) {
+// addBridge attaches a browser to a session, unless helper.MaxConsoleViewers are already attached
+// (ok false). first reports whether it is the only one.
+func (a *agentConn) addBridge(session string, b *consoleBridge) (first, ok bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if len(a.bridges[session]) >= helper.MaxConsoleViewers {
+		return false, false
+	}
 	first = len(a.bridges[session]) == 0
 	b.held = !first // not shared yet: showScreen releases it
 	a.bridges[session] = append(a.bridges[session], b)
-	return first
+	return first, true
 }
 
 func (a *agentConn) removeBridge(session string, b *consoleBridge) (last bool) {
@@ -769,9 +793,18 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	cols := clampDim(q.Get("cols"), 80)
 	rows := clampDim(q.Get("rows"), 24)
 
-	// Owner-only interactive attach (ownership persists across detach for resume).
-	if !readonly && !a.claimOwner(effSession, p.UserID) {
-		conn.WriteJSON(consoleFrame{T: "error", Msg: "session belongs to another operator"})
+	// Owner-only interactive attach (ownership persists across detach for resume); a new shell
+	// counts against the per-user and per-machine session limits.
+	if !readonly {
+		if reason := a.claimOwner(effSession, p.UserID); reason != "" {
+			conn.WriteJSON(consoleFrame{T: "error", Msg: reason})
+			return
+		}
+	}
+	b := &consoleBridge{browser: conn, session: effSession, readonly: readonly}
+	first, ok := a.addBridge(effSession, b)
+	if !ok {
+		conn.WriteJSON(consoleFrame{T: "error", Msg: fmt.Sprintf("%d browsers are already attached to this session", helper.MaxConsoleViewers)})
 		return
 	}
 	if !readonly {
@@ -783,8 +816,6 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	if recording {
 		a.attachRecorder(m, effSession, int(cols), int(rows), p)
 	}
-	b := &consoleBridge{browser: conn, session: effSession, readonly: readonly}
-	first := a.addBridge(effSession, b)
 	events.Audit("fleet", "console_open", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console opened on %q (session %s%s)", m.Name, effSession, roSuffix(readonly)))
 	// The first viewer opens/attaches the shell; later viewers just watch. A read-only viewer never

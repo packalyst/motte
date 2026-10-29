@@ -58,19 +58,22 @@ const (
 
 // Fleet: the browser console (package fleet).
 const (
-	ConsoleRecheck          = 30 * time.Second // an open console re-checks the user's access this often
-	ConsoleIdleTimeout      = 30 * time.Minute // a shell idle this long is ended
-	ConsoleMaxDuration      = 12 * time.Hour   // a shell open this long is ended
-	ConsoleStepUpGrace      = 10 * time.Minute // after a password, fleet actions need no new one for this long (sliding)
-	ConsoleStepUpGraceMax   = time.Hour        // but never longer than this after the password
-	ConsoleGrantTTL         = 5 * time.Minute  // a console grant (after a password) opens consoles for this long...
-	ConsoleGrantUses        = 50               // ...this many times (several tabs and reconnects)
-	ConsoleShareGrantTTL    = 30 * time.Minute // a read-only share link works this long...
-	ConsoleShareGrantUses   = 200              // ...this many times
-	MaxConsoleGrants        = 100_000          // console grants alive at once, in all
-	MaxConsoleGrantsPerUser = 1_000            // and per user
-	MaxConsoleGraceWindows  = 10_000           // sessions inside their grace window at once
-	MaxRecordingBytes       = 64 << 20         // one session's recording; past it, output isn't recorded (marked once)
+	MaxConsoleSessionsPerUser    = 10               // shells one user may have open on one machine
+	MaxConsoleSessionsPerMachine = 30               // shells open on one machine, all users together
+	MaxConsoleViewers            = 10               // browsers attached to one shell at once (the owner's tabs and read-only shares)
+	ConsoleRecheck               = 30 * time.Second // an open console re-checks the user's access this often
+	ConsoleIdleTimeout           = 30 * time.Minute // a shell idle this long is ended
+	ConsoleMaxDuration           = 12 * time.Hour   // a shell open this long is ended
+	ConsoleStepUpGrace           = 10 * time.Minute // after a password, fleet actions need no new one for this long (sliding)
+	ConsoleStepUpGraceMax        = time.Hour        // but never longer than this after the password
+	ConsoleGrantTTL              = 5 * time.Minute  // a console grant (after a password) opens consoles for this long...
+	ConsoleGrantUses             = 50               // ...this many times (several tabs and reconnects)
+	ConsoleShareGrantTTL         = 30 * time.Minute // a read-only share link works this long...
+	ConsoleShareGrantUses        = 200              // ...this many times
+	MaxConsoleGrants             = 100_000          // console grants alive at once, in all
+	MaxConsoleGrantsPerUser      = 1_000            // and per user
+	MaxConsoleGraceWindows       = 10_000           // sessions inside their grace window at once
+	MaxRecordingBytes            = 64 << 20         // one session's recording; past it, output isn't recorded (marked once)
 )
 
 // Firewall: jails and the port-80 gate (package firewall). The other jails' defaults are in
