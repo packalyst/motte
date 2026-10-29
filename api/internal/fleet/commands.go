@@ -134,8 +134,7 @@ func (s *Service) verifyStepUp(r *http.Request, what, currentPassword, currentTO
 	}
 	// Inside the shared fleet step-up grace window (from a recent console open or command)? Pass
 	// without prompting, and slide the window — so administering a fleet isn't a password per action.
-	if recentFleetStepUp(userID) {
-		touchStepUpGrace(userID)
+	if useFleetGrace(r) {
 		return 0, nil
 	}
 	if currentPassword == "" {
@@ -150,7 +149,7 @@ func (s *Service) verifyStepUp(r *http.Request, what, currentPassword, currentTO
 			fmt.Sprintf("Command %q denied: step-up re-authentication failed", what))
 		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication failed")
 	}
-	touchStepUpGrace(userID)
+	openFleetGrace(r)
 	return 0, nil
 }
 
@@ -351,13 +350,15 @@ func (s *Service) handleMachineCommands(w http.ResponseWriter, r *http.Request) 
 }
 
 // HandleDeregister (POST, mTLS) — the agent calls this while uninstalling, so the panel
-// flags the machine as uninstalled (shown in the list, delete to remove).
+// flags the machine as uninstalled (shown in the list, delete to remove) and keeps its history.
 func (s *Service) HandleDeregister(w http.ResponseWriter, r *http.Request) {
 	m := machineFrom(r)
 	if err := s.MarkUninstalled(m.ID); err != nil {
 		writeErr(w, http.StatusInternalServerError, "update failed")
 		return
 	}
+	events.Audit("fleet", "machine_uninstalled", events.SeverityWarning, "agent", helper.GetClientIP(r),
+		fmt.Sprintf("Agent on %q reported uninstall: certificate revoked, history kept", m.Name))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

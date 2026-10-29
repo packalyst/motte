@@ -1,6 +1,9 @@
 package fleet
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,9 +44,10 @@ func rowsFor(t *testing.T, svc *Service, id string) int {
 	return total
 }
 
-// Uninstalling deletes all of a machine's data and recordings, keeping only a marker row (name,
-// dates); deleting removes the row too. Another machine's data is untouched.
-func TestUninstallAndDeletePurgeEverything(t *testing.T) {
+// Uninstalling (asked for by the machine itself) revokes it but KEEPS its history and recordings,
+// so an intruder on the machine can't erase the evidence; an admin deleting it removes the row and
+// everything. Another machine's data is untouched.
+func TestUninstallKeepsHistoryDeletePurges(t *testing.T) {
 	useRecordStore(t)
 	svc := newTestService(t)
 	addMachine(t, svc, "gone", false)
@@ -56,11 +60,11 @@ func TestUninstallAndDeletePurgeEverything(t *testing.T) {
 	if err := svc.MarkUninstalled("gone"); err != nil {
 		t.Fatal(err)
 	}
-	if n := rowsFor(t, svc, "gone"); n != 0 {
-		t.Fatalf("uninstall left %d data rows", n)
+	if n := rowsFor(t, svc, "gone"); n != len(machineDataTables) {
+		t.Fatalf("uninstall kept %d of %d data rows", n, len(machineDataTables))
 	}
-	if _, err := os.Stat(recGone); !os.IsNotExist(err) {
-		t.Fatal("uninstall must delete the machine's recordings")
+	if _, err := os.Stat(recGone); err != nil {
+		t.Fatal("uninstall must keep the machine's recordings")
 	}
 	var name, status, report, tags string
 	var revoked int
@@ -89,5 +93,28 @@ func TestUninstallAndDeletePurgeEverything(t *testing.T) {
 	}
 	if _, err := os.Stat(recKeep); err != nil {
 		t.Fatal("another machine's recording was removed")
+	}
+}
+
+// TestDeregisterKeepsHistory: an agent signing off through the real handler (mTLS identity in the
+// request) is revoked and its history stays.
+func TestDeregisterKeepsHistory(t *testing.T) {
+	useRecordStore(t)
+	svc := newTestService(t)
+	addMachine(t, svc, "signoff", false)
+	seedMachineData(t, svc, "signoff")
+	r := httptest.NewRequest(http.MethodPost, "/deregister", nil)
+	rr := httptest.NewRecorder()
+	svc.HandleDeregister(rr, r.WithContext(context.WithValue(r.Context(), machineCtxKey, &Machine{ID: "signoff", Name: "signoff"})))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("deregister: %d %s", rr.Code, rr.Body)
+	}
+	var revoked int
+	_ = svc.db.QueryRow(`SELECT revoked FROM fleet_machines WHERE id = 'signoff'`).Scan(&revoked)
+	if revoked != 1 {
+		t.Error("deregister didn't revoke the machine")
+	}
+	if rowsFor(t, svc, "signoff") != len(machineDataTables) {
+		t.Error("deregister deleted the machine's history")
 	}
 }

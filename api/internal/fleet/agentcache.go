@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -224,6 +225,12 @@ func (c *agentCache) refreshLocked(ctx context.Context) error {
 		c.sig = sigStr // keep the signature fresh even when the release is unchanged
 		return nil
 	}
+	// Never step back: if the forge's "latest" is older than the release already cached (a release
+	// deleted or re-marked), new installs keep getting the cached one instead of an old signed build.
+	if c.tag != "" && !releaseAtLeast(tag, c.tag) {
+		log.Printf("fleet: keeping agent release %s; the forge's latest (%s) is not newer", c.tag, tag)
+		return nil
+	}
 	// New release (or first run): drop the whole cache and re-seed the marker + tag + sig.
 	if err := os.RemoveAll(c.dir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("purge cache: %w", err)
@@ -319,4 +326,48 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// releaseVersion parses a release tag ("agent-v0.1.55", "v0.1.55", "0.1.55", optionally with a
+// "-…" or "+…" suffix) into its numbers.
+func releaseVersion(tag string) ([]int, bool) {
+	v := strings.TrimPrefix(strings.TrimPrefix(tag, "agent-v"), "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	var out []int
+	for _, part := range strings.Split(v, ".") {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, len(out) > 0
+}
+
+// releaseAtLeast reports whether tag is the same version as current or newer. A tag that doesn't
+// parse is refused; a current tag that doesn't parse can't be compared, so it doesn't block.
+func releaseAtLeast(tag, current string) bool {
+	a, ok := releaseVersion(tag)
+	if !ok {
+		return false
+	}
+	b, ok := releaseVersion(current)
+	if !ok {
+		return true
+	}
+	for i := 0; i < len(a) || i < len(b); i++ {
+		var x, y int
+		if i < len(a) {
+			x = a[i]
+		}
+		if i < len(b) {
+			y = b[i]
+		}
+		if x != y {
+			return x > y
+		}
+	}
+	return true
 }

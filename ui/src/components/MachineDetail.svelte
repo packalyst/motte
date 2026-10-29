@@ -574,7 +574,7 @@
   async function del() {
     await cmd(null, null, st.gone ? {
       endpoint: '/api/fleet/machine/delete', title: `Remove ${machine.name}`,
-      message: `Remove ${machine.name} from the panel? Its data was already deleted when the agent was uninstalled; this removes the last trace. The audit log keeps the record.`,
+      message: `Remove ${machine.name} from the panel? Everything kept for it is deleted: reports, vulnerabilities, history and console recordings. The audit log keeps the record.`,
       confirmText: 'Remove', variant: 'destructive',
       done: () => `${machine.name} removed`, after: () => ondeleted?.(),
     } : {
@@ -699,8 +699,8 @@
   </div>
 {/snippet}
 
-<!-- An uninstalled machine: its agent signed off and its data is gone, so instead of empty tabs
-     this says what happened and offers the one thing left to do. -->
+<!-- An uninstalled machine: its agent signed off (its history is kept until it's removed), so
+     instead of empty tabs this says what happened and offers the one thing left to do. -->
 {#snippet uninstalled()}
   <div class="panel overflow-hidden !p-0">
     <div class="flex flex-col items-center gap-3 border-b border-dashed border-border bg-muted/30 px-6 py-8 text-center">
@@ -743,7 +743,7 @@
         <ul class="space-y-3">
           {#each [
             { icon: 'certificate', title: 'Certificate revoked', text: "The server's identity no longer works, so it can't reconnect." },
-            { icon: 'trash', title: 'Data deleted', text: 'Reports, vulnerabilities, history and console recordings.' },
+            { icon: 'database', title: 'History kept', text: 'Vulnerabilities, scan and file-change history, commands and console recordings stay until you remove it: the machine itself can’t erase them.' },
             { icon: 'history', title: 'Kept in the audit log', text: 'Activity still shows when it was added and removed.' },
           ] as f (f.title)}
             <li class="flex items-start gap-3">

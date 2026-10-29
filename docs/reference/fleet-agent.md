@@ -212,14 +212,15 @@ plus CVE handlers (`CVEGroups`, `ListCVEs`, `ListCVEsByCVE`, `ExportCVEs`,
 ### The deregister → MarkUninstalled flow
 
 Panel `HandleDeregister` (mTLS) calls `MarkUninstalled(id)`: the cert is **revoked**
-(`revoked=1`) and **all the machine's data is deleted** — queued commands, CVEs, FIM
-events, usage history (`machineDataTables`), the stored report, tags, and its console
-recordings + their keys (`purgeRecordings`, matched by the recording header, not the
-filename). Only a marker row stays (name, `enrolled_at`, `last_seen` = when it was
-uninstalled); the UI shows a dedicated "Agent uninstalled" page with **Remove from
-panel**. `DeleteMachine` runs the same purge and removes the row too, which invalidates
-the client cert (mTLS auth requires a live cert_fp lookup), so the host must re-enroll
-with a fresh token to return. Both close the live link and console at once.
+(`revoked=1`), the console is switched off and an activity entry (`machine_uninstalled`) is
+written. The machine's **history is kept** — queued commands, CVEs, FIM events, scans, usage
+history (`machineDataTables`) and its console recordings — because the request comes from the
+machine itself: an intruder on it must not be able to erase the evidence. The stored report and
+tags are cleared; the UI shows a dedicated "Agent uninstalled" page with **Remove from panel**.
+`DeleteMachine` (an admin, with step-up) deletes all of that data and the recordings + their keys
+(`purgeRecordings`, matched by the recording header, not the filename) and removes the row too,
+which invalidates the client cert (mTLS auth requires a live cert_fp lookup), so the host must
+re-enroll with a fresh token to return. Both close the live link and console at once.
 
 **Dry-run gotcha:** `deregisterFromPanel` early-returns under `dry_run`
 (`uninstall.go:79-82`) — it logs `[dry-run] deregister from panel` and sends
