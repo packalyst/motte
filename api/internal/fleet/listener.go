@@ -18,11 +18,23 @@ func (s *Service) tlsConfig() (*tls.Config, error) {
 		return nil, err
 	}
 	return &tls.Config{
-		GetCertificate: s.serverCertificate,
-		ClientAuth:     tls.VerifyClientCertIfGiven,
-		ClientCAs:      s.ca.Pool(),
-		MinVersion:     tls.VersionTLS12,
+		// Per handshake, so a CA rotation changes the accepted client CAs without a restart.
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) { return s.handshakeConfig(), nil },
+		MinVersion:         tls.VersionTLS12,
 	}, nil
+}
+
+// handshakeConfig is one handshake's TLS config: the current listener certificate, and client
+// certificates accepted from every current CA. No session resumption: a resumed session skips the
+// client-certificate check, so a machine cut off by a CA change could carry on in an old session.
+func (s *Service) handshakeConfig() *tls.Config {
+	return &tls.Config{
+		GetCertificate:         s.serverCertificate,
+		ClientAuth:             tls.VerifyClientCertIfGiven,
+		ClientCAs:              s.cas.Load().pool(),
+		MinVersion:             tls.VersionTLS12,
+		SessionTicketsDisabled: true,
+	}
 }
 
 // Handler is the fleet listener's mux. /enroll is token-gated; report/command
@@ -35,7 +47,7 @@ func (s *Service) Handler() http.Handler {
 	// has the panel's real cert and rides Traefik's rate-limit/blocklist middleware —
 	// one guarded door. This listener is only the mTLS channel (enroll/report/commands).
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ca": s.ca.Fingerprint()})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ca": s.CA().Fingerprint()})
 	})
 	mux.HandleFunc("POST /report", s.requireClientCert(s.HandleReport))
 	mux.HandleFunc("POST /cve-report", s.requireClientCert(s.HandleCVEReport))

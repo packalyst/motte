@@ -32,6 +32,7 @@ type Machine struct {
 	LastIP         string          `json:"last_ip,omitempty"` // address its last report came from (matches a VPN client when it reports over the tunnel)
 	Online         bool            `json:"online"`            // its link to the panel is up (see link.go)
 	CertExpires    *time.Time      `json:"cert_expires,omitempty"`
+	CertCA         string          `json:"-"` // fingerprint of the CA that issued its certificate
 	Summary        *MachineSummary `json:"summary,omitempty"`
 }
 
@@ -236,9 +237,9 @@ func (s *Service) uniqueMachineName(name string) string {
 
 func (s *Service) registerMachine(m Machine) error {
 	_, err := s.db.Exec(
-		`INSERT INTO fleet_machines (id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, revoked, cert_expires)
-		 VALUES (?, ?, ?, ?, ?, 'enrolled', ?, 0, ?)`,
-		m.ID, m.Name, m.MachineHash, m.CertFP, m.WGPubkey, m.EnrolledAt.UTC().Format(time.RFC3339), timeOrNil(m.CertExpires),
+		`INSERT INTO fleet_machines (id, name, machine_hash, cert_fp, wg_pubkey, status, enrolled_at, revoked, cert_expires, cert_ca)
+		 VALUES (?, ?, ?, ?, ?, 'enrolled', ?, 0, ?, ?)`,
+		m.ID, m.Name, m.MachineHash, m.CertFP, m.WGPubkey, m.EnrolledAt.UTC().Format(time.RFC3339), timeOrNil(m.CertExpires), sql.NullString{String: m.CertCA, Valid: m.CertCA != ""},
 	)
 	return err
 }

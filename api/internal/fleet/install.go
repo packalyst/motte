@@ -62,7 +62,7 @@ func (s *Service) HandleInstallScript(w http.ResponseWriter, r *http.Request) {
 
 	script := renderInstallScript(installScriptData{
 		PanelURL:      panelURL,
-		CAFingerprint: s.ca.Fingerprint(),
+		CAFingerprint: s.CA().Fingerprint(),
 		Token:         token,
 		BinaryB64:     b64(bin),
 		ManifestB64:   b64(manifest),

@@ -2265,6 +2265,24 @@
           "min_role": "admin"
         },
         {
+          "path": "/ca/rotate",
+          "methods": [
+            "POST"
+          ],
+          "handler": "RotateCA",
+          "description": "Start replacing the fleet CA (step-up)",
+          "min_role": "admin"
+        },
+        {
+          "path": "/ca/finish",
+          "methods": [
+            "POST"
+          ],
+          "handler": "FinishCARotation",
+          "description": "Finish replacing the fleet CA: drop the old one (step-up)",
+          "min_role": "admin"
+        },
+        {
           "path": "/bulk-command",
           "methods": [
             "POST"

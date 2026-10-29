@@ -31,7 +31,10 @@ func (s *Service) HandleRenew(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no machine")
 		return
 	}
-	if !renewAllowed(r.TLS.PeerCertificates[0], time.Now()) {
+	set := s.cas.Load()
+	presented := r.TLS.PeerCertificates[0]
+	// During a CA rotation a certificate from the old CA may renew at once, to move to the new one.
+	if !renewAllowed(presented, time.Now()) && !(set.rotating() && !issuedBy(presented, set.active)) {
 		writeErr(w, http.StatusConflict, "certificate is not due for renewal yet")
 		return
 	}
@@ -45,7 +48,7 @@ func (s *Service) HandleRenew(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid CSR")
 		return
 	}
-	certPEM, err := s.ca.SignClientCSR(block.Bytes, m.ID, s.clientCertTTL())
+	certPEM, err := set.active.SignClientCSR(block.Bytes, m.ID, s.clientCertTTL())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "csr rejected")
 		return
@@ -55,8 +58,8 @@ func (s *Service) HandleRenew(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "server error")
 		return
 	}
-	res, err := s.db.Exec(`UPDATE fleet_machines SET cert_fp_next = ?, cert_expires_next = ? WHERE id = ? AND revoked = 0`,
-		certFingerprintPEM(certPEM), notAfter.UTC().Format(time.RFC3339), m.ID)
+	res, err := s.db.Exec(`UPDATE fleet_machines SET cert_fp_next = ?, cert_expires_next = ?, cert_ca_next = ? WHERE id = ? AND revoked = 0`,
+		certFingerprintPEM(certPEM), notAfter.UTC().Format(time.RFC3339), set.active.Fingerprint(), m.ID)
 	if n, _ := res.RowsAffected(); err != nil || n == 0 {
 		writeErr(w, http.StatusInternalServerError, "server error")
 		return
@@ -71,8 +74,8 @@ func (s *Service) HandleRenew(w http.ResponseWriter, r *http.Request) {
 // from the cert it presented.
 func (s *Service) syncCert(m *Machine, presented *x509.Certificate, fp string) {
 	if fp != m.CertFP { // matched cert_fp_next: the agent switched to its renewed cert
-		res, err := s.db.Exec(`UPDATE fleet_machines SET cert_fp = cert_fp_next, cert_expires = cert_expires_next,
-			cert_fp_next = NULL, cert_expires_next = NULL WHERE id = ? AND cert_fp_next = ?`, m.ID, fp)
+		res, err := s.db.Exec(`UPDATE fleet_machines SET cert_fp = cert_fp_next, cert_expires = cert_expires_next, cert_ca = cert_ca_next,
+			cert_fp_next = NULL, cert_expires_next = NULL, cert_ca_next = NULL WHERE id = ? AND cert_fp_next = ?`, m.ID, fp)
 		if n, _ := res.RowsAffected(); err == nil && n == 1 {
 			m.CertFP = fp
 			log.Printf("fleet: machine %s switched to its renewed certificate", m.ID)

@@ -4,10 +4,11 @@
    * Let's Encrypt certificates, the fleet CA, the agent listener's certificate and the machines'
    * client certificates, with what needs attention. The server decides each one's warning state
    * (due: key → days step, 0 = expired); admin-only there. onload(overview) lets the page show the
-   * attention count in its menu.
+   * attention count in its menu. Replacing the fleet CA runs in two steps (Replace, then Finish once
+   * every machine moved), each after a password confirm.
    */
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast, openView } from '../stores/app.js'
+  import { apiGet, apiPost, toast, openView, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import { formatDate, formatExpiryDate, timeAgo } from '../lib/utils/format.js'
   import Icon from './Icon.svelte'
   import Badge from './Badge.svelte'
@@ -17,6 +18,7 @@
 
   let o = $state(null)
   let renewing = $state(false)
+  let caBusy = $state(false)
 
   function show(next) {
     o = next
@@ -43,6 +45,35 @@
       renewing = false
     }
   }
+
+  // A CA step (rotate or finish) behind a password confirm, then a fresh overview.
+  async function caStep(path, body, prompt, done) {
+    caBusy = true
+    try {
+      const res = await withStepUp((extra) => apiPost(path, { ...body, ...extra }), prompt)
+      if (res === STEPUP_CANCELLED) return
+      toast(done, 'success')
+      await load()
+    } catch (e) {
+      toast('Failed: ' + e.message, 'error')
+    } finally {
+      caBusy = false
+    }
+  }
+  const replaceCA = () => caStep('/api/fleet/ca/rotate', {}, {
+    title: 'Replace the fleet CA',
+    message: 'A new CA is made. Machines move to it by themselves within about an hour while online (agent 0.1.67 or later); the current CA stays in use until you finish. Confirm your password to start.',
+    confirmText: 'Replace CA',
+  }, 'CA replacement started')
+  const finishCA = (left) => caStep('/api/fleet/ca/finish', { force: left.length > 0 }, left.length ? {
+    title: 'Finish anyway',
+    message: `${left.map((m) => m.name).join(', ')} still ${left.length === 1 ? 'has' : 'have'} a certificate from the old CA and will be cut off: ${left.length === 1 ? 'it' : 'they'} must be re-enrolled. Confirm your password to finish.`,
+    confirmText: 'Finish and cut off', variant: 'destructive',
+  } : {
+    title: 'Finish the CA replacement',
+    message: 'Every machine has moved. The old CA stops being trusted and the new one takes over. Confirm your password to finish.',
+    confirmText: 'Finish',
+  }, 'The new CA is now the only one')
 
   function dueState(key) {
     const step = o?.due?.[key]
@@ -120,8 +151,31 @@
       </div>
     </div>
     <ul class="divide-y divide-border">
-      <li class="flex items-start justify-between gap-3 py-2.5">
-        {@render row('key', 'Fleet CA', `${expiry(fleet.ca.notAfter)} · ${shortFp(fleet.ca.fingerprint)}`, dueState('fleet-ca'))}
+      <li class="py-2.5">
+        <div class="flex items-start justify-between gap-3">
+          {@render row('key', fleet.previous ? 'Fleet CA (new)' : 'Fleet CA', `${expiry(fleet.ca.notAfter)} · ${shortFp(fleet.ca.fingerprint)}`, dueState('fleet-ca'))}
+        </div>
+        {#if fleet.previous}
+          {@const left = fleet.onOldCA || []}
+          <div class="mt-2 space-y-2 pl-10">
+            <p class="text-[11px] text-muted-foreground">Replacing the CA: the old one ({shortFp(fleet.previous.fingerprint)}) is still in use until you finish. {fleet.agents.length - left.length} of {fleet.agents.length} machines moved.</p>
+            {#if left.length}
+              <ul class="space-y-1">
+                {#each left as m (m.id)}
+                  <li class="flex flex-wrap items-center gap-x-2 text-[11px]">
+                    <button type="button" class="link-action" onclick={() => openView('clients', 'm=' + encodeURIComponent(m.id))}>{m.name}</button>
+                    <span class={m.oldAgent ? 'text-warning' : 'text-muted-foreground'}>{m.oldAgent ? 'agent too old: update it or re-enroll' : 'moves when it next connects'}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            <Button variant={left.length ? 'destructive' : 'primary'} size="sm" icon="check" loading={caBusy} onclick={() => finishCA(left)}>{left.length ? 'Finish anyway' : 'Finish'}</Button>
+          </div>
+        {:else}
+          <div class="mt-1.5 flex justify-end pl-10">
+            <Button variant="outline" size="sm" icon="refresh" loading={caBusy} onclick={replaceCA}>Replace CA</Button>
+          </div>
+        {/if}
       </li>
       <li class="py-2.5">
         <div class="flex items-start justify-between gap-3">

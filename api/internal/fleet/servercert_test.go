@@ -24,7 +24,7 @@ func TestServerCertCachedAndValid(t *testing.T) {
 	if left := time.Until(a.Leaf.NotAfter); left < serverCertTTL-time.Hour || left > serverCertTTL {
 		t.Fatalf("lifetime %v, want about %v", left, serverCertTTL)
 	}
-	if _, err := a.Leaf.Verify(x509.VerifyOptions{DNSName: "panel.example", Roots: svc.ca.Pool()}); err != nil {
+	if _, err := a.Leaf.Verify(x509.VerifyOptions{DNSName: "panel.example", Roots: svc.cas.Load().pool()}); err != nil {
 		t.Fatalf("doesn't verify for the panel domain against the CA: %v", err)
 	}
 }
@@ -36,7 +36,7 @@ func TestServerCertRenewsNearExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	short, err := svc.ca.ServerCertificate(svc.srvCert.hosts, serverCertRenewAt-time.Hour)
+	short, err := svc.CA().ServerCertificate(svc.srvCert.hosts, serverCertRenewAt-time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestListenerServesManagedCert(t *testing.T) {
 			c.Close()
 		}
 	}()
-	conn, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{RootCAs: svc.ca.Pool(), ServerName: "panel.example", MinVersion: tls.VersionTLS12})
+	conn, err := tls.Dial("tcp", ln.Addr().String(), &tls.Config{RootCAs: svc.cas.Load().pool(), ServerName: "panel.example", MinVersion: tls.VersionTLS12})
 	if err != nil {
 		t.Fatalf("agent-side handshake failed: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestCertStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.CA.Fingerprint != svc.ca.Fingerprint() || st.AgentLifetimeDays != 90 {
+	if st.CA.Fingerprint != svc.CA().Fingerprint() || st.AgentLifetimeDays != 90 {
 		t.Errorf("CA/lifetime: %+v", st)
 	}
 	if st.Listener != nil {

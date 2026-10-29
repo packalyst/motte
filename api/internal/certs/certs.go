@@ -191,6 +191,12 @@ func trackedList(o Overview) []tracked {
 			key: "fleet-ca", name: "Fleet CA", url: "/settings#s=certificates", notAfter: f.CA.NotAfter, levels: caLevels,
 			action: "Every agent stops trusting the panel when it expires.",
 		})
+		if f.Previous != nil {
+			out = append(out, tracked{
+				key: "fleet-ca-previous", name: "Fleet CA being replaced", url: "/settings#s=certificates", notAfter: f.Previous.NotAfter, levels: caLevels,
+				action: "The panel still presents it: finish the CA replacement before it expires.",
+			})
+		}
 		if f.Listener != nil {
 			out = append(out, tracked{
 				key: "fleet-listener", name: "Agent listener certificate", url: "/settings#s=certificates",

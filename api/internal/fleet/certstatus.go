@@ -25,12 +25,15 @@ type AgentCert struct {
 	LastSeen  *time.Time `json:"lastSeen,omitempty"`
 }
 
-// CertStatus is the fleet's certificates. Listener is nil while the agent listener is off.
+// CertStatus is the fleet's certificates. Listener is nil while the agent listener is off; Previous
+// and OnOldCA are set during a CA rotation.
 type CertStatus struct {
-	CA                CertInfo    `json:"ca"`
-	Listener          *CertInfo   `json:"listener"`
-	Agents            []AgentCert `json:"agents"`
-	AgentLifetimeDays int         `json:"agentLifetimeDays"` // what a new or renewed client cert lasts
+	CA                CertInfo     `json:"ca"`
+	Previous          *CertInfo    `json:"previous"` // the CA being replaced
+	OnOldCA           []MachineRef `json:"onOldCA"`  // machines that haven't moved to the new CA yet
+	Listener          *CertInfo    `json:"listener"`
+	Agents            []AgentCert  `json:"agents"`
+	AgentLifetimeDays int          `json:"agentLifetimeDays"` // what a new or renewed client cert lasts
 }
 
 func certInfo(c *x509.Certificate, hosts []string) CertInfo {
@@ -39,7 +42,16 @@ func certInfo(c *x509.Certificate, hosts []string) CertInfo {
 
 // CertStatus collects the fleet's certificates, soonest-expiring machine first.
 func (s *Service) CertStatus() (CertStatus, error) {
-	st := CertStatus{CA: certInfo(s.ca.cert, nil), Agents: []AgentCert{}, AgentLifetimeDays: int(s.clientCertTTL() / (24 * time.Hour))}
+	set := s.cas.Load()
+	st := CertStatus{CA: certInfo(set.active.cert, nil), Agents: []AgentCert{}, AgentLifetimeDays: int(s.clientCertTTL() / (24 * time.Hour))}
+	if set.rotating() {
+		prev := certInfo(set.prev.cert, nil)
+		st.Previous = &prev
+		var err error
+		if st.OnOldCA, err = s.machinesOnOldCA(); err != nil {
+			return st, err
+		}
+	}
 	if on, _ := s.Status(); on {
 		if c, hosts := s.currentListenerCert(); c != nil {
 			li := certInfo(c.Leaf, hosts)

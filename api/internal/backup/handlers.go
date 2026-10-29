@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"api/internal/auth"
@@ -129,7 +130,7 @@ func (s *Service) handlePreview(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]any{
 		"header":   hdr,
 		"plan":     Plan(s.db(), doc),
-		"warnings": warnings(hdr),
+		"warnings": append(warnings(hdr), fleetCAWarning(s.db(), doc)...),
 	})
 }
 
@@ -219,6 +220,34 @@ func (s *Service) decodeFile(w http.ResponseWriter, r *http.Request) (fileReq, b
 		return req, false
 	}
 	return req, true
+}
+
+// fleetCAWarning warns when the backup's fleet CA isn't one the panel uses now (it was replaced
+// after the backup): machines that moved to the current CA won't trust the panel after the
+// restore. Nothing when the backup has no fleet tier or the current CA can't be read.
+func fleetCAWarning(db *sql.DB, doc *Document) []string {
+	rows, ok := doc.Tables["fleet_ca"]
+	if !ok || db == nil {
+		return nil
+	}
+	q, err := db.Query(`SELECT cert_pem FROM fleet_ca`)
+	if err != nil {
+		return nil
+	}
+	defer q.Close()
+	current := map[string]bool{}
+	for q.Next() {
+		var p string
+		if q.Scan(&p) == nil {
+			current[strings.TrimSpace(p)] = true
+		}
+	}
+	for _, r := range rows {
+		if p, _ := r["cert_pem"].(string); !current[strings.TrimSpace(p)] {
+			return []string{"This backup's fleet CA isn't the one in use now: it was replaced after the backup. Machines that moved to the current CA won't trust the panel after the restore and must be re-enrolled."}
+		}
+	}
+	return nil
 }
 
 // warnings surfaces the human consequences of the opt-in tiers before import.
