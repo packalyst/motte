@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"api/internal/bounded"
 	"api/internal/helper"
 	"api/internal/routines"
 )
@@ -114,10 +115,6 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 	ticker := time.NewTicker(time.Duration(s.config.JailCheckInterval) * time.Second)
 	defer ticker.Stop()
 
-	// Cleanup ticker removes stale IPs from memory every 5 minutes
-	cleanupTicker := time.NewTicker(5 * time.Minute)
-	defer cleanupTicker.Stop()
-
 	// Compile (not MustCompile): create/update validate the pattern, but a bad value
 	// reaching here out-of-band (migration, direct DB edit) must not panic-crash the
 	// process — log and stop just this monitor instead.
@@ -126,7 +123,7 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 		log.Printf("jail %s: invalid filter regex %q, monitor not started: %v", name, filterRegex, err)
 		return
 	}
-	ipAttempts := make(map[string][]time.Time)
+	ipAttempts := bounded.New[string, []time.Time](maxJailTracked, bounded.DropOldest)
 
 	if lastLogPos == 0 {
 		if stat, err := os.Stat(logFile); err == nil {
@@ -142,28 +139,17 @@ func (s *Service) monitorJailWithContext(ctx context.Context, jailID int64, name
 			return
 		case <-ticker.C:
 			lastLogPos = s.processJailLogFile(name, logFile, regex, ipAttempts, lastLogPos, jailID, maxRetry, findTime, banTime)
-		case <-cleanupTicker.C:
-			// Remove IPs with no recent timestamps to prevent memory leak
-			cutoff := time.Now().Add(-time.Duration(findTime) * time.Second)
-			for ip, timestamps := range ipAttempts {
-				var recent []time.Time
-				for _, t := range timestamps {
-					if t.After(cutoff) {
-						recent = append(recent, t)
-					}
-				}
-				if len(recent) == 0 {
-					delete(ipAttempts, ip)
-				} else {
-					ipAttempts[ip] = recent
-				}
-			}
 		}
 	}
 }
 
-// processJailLogFile processes a jail log file and returns the new position
-func (s *Service) processJailLogFile(name, logFile string, regex *regexp.Regexp, ipAttempts map[string][]time.Time, lastLogPos int64, jailID int64, maxRetry, findTime, banTime int) int64 {
+// maxJailTracked caps the addresses one jail counts at once. Past it the least recently seen one
+// is forgotten (a log line can't be refused, and the newest attackers matter most).
+const maxJailTracked = 100_000
+
+// processJailLogFile processes a jail log file and returns the new position. ipAttempts holds each
+// address's matches within findTime.
+func (s *Service) processJailLogFile(name, logFile string, regex *regexp.Regexp, ipAttempts *bounded.Map[string, []time.Time], lastLogPos int64, jailID int64, maxRetry, findTime, banTime int) int64 {
 	// Validate log file path to prevent path injection
 	if err := helper.ValidateLogFilePath(logFile); err != nil {
 		return lastLogPos
@@ -207,28 +193,32 @@ func (s *Service) processJailLogFile(name, logFile string, regex *regexp.Regexp,
 			}
 		}
 
-		now := time.Now()
-		ipAttempts[srcIP] = append(ipAttempts[srcIP], now)
-
 		destPort := 0
 		if len(matches) >= 3 {
 			destPort, _ = strconv.Atoi(matches[2])
 		}
 		s.recordAttempt(srcIP, destPort, "tcp", name, "blocked")
 
-		// Clean old attempts outside findTime window
-		cutoff := now.Add(-time.Duration(findTime) * time.Second)
-		var recent []time.Time
-		for _, t := range ipAttempts[srcIP] {
-			if t.After(cutoff) {
-				recent = append(recent, t)
+		// Keep this address's matches within findTime; once there are maxRetry, ban it and
+		// forget them.
+		now := time.Now()
+		window := time.Duration(findTime) * time.Second
+		hits := 0
+		ipAttempts.Update(srcIP, now, func(times *[]time.Time, _ bool) time.Time {
+			recent := (*times)[:0]
+			for _, t := range *times {
+				if t.After(now.Add(-window)) {
+					recent = append(recent, t)
+				}
 			}
-		}
-		ipAttempts[srcIP] = recent
-
-		if len(recent) >= maxRetry {
-			s.blockIP(srcIP, name, fmt.Sprintf("Auto-blocked: %d attempts in %ds", len(recent), findTime), banTime)
-			delete(ipAttempts, srcIP)
+			*times = append(recent, now)
+			if hits = len(*times); hits >= maxRetry {
+				return now
+			}
+			return now.Add(window)
+		})
+		if hits >= maxRetry {
+			s.blockIP(srcIP, name, fmt.Sprintf("Auto-blocked: %d attempts in %ds", hits, findTime), banTime)
 		}
 	}
 

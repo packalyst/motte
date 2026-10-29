@@ -396,8 +396,6 @@ func main() {
 		// file (ban brute-forcers), authenticated connections → the logs table
 		// (shown on the Logs page).
 		turbotunnels.StartLogStreamer()
-		// Evict expired rotation abuse-guard entries so the in-memory maps stay bounded.
-		turbotunnels.StartRotateGuardCleanup()
 		log.Println("Turbotunnels service registered")
 	}
 

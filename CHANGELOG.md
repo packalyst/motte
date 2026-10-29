@@ -137,6 +137,14 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **Nothing kept in memory can grow without limit**: every per-address or per-key list the
+  panel keeps in memory (request limit, login / 2FA / password lockouts, passkey sign-ins, the
+  tunnel key guard and throttles, console grants and step-up windows, the 2FA replay guard, jail
+  counters, traffic flows) now goes through one shared, size-capped store. When one is full, the
+  security guards turn new addresses away (a flood can't erase a lockout), jails forget the
+  address seen longest ago, and traffic accounting counts a new connection once it closes. The
+  traffic counter's limit now matches the kernel's own connection table, and the outbound log's
+  DNS cache, which was never filled, is removed.
 - **Limits can't be dodged with IPv6 addresses**: the request limit, the login lockout, the
   passkey sign-in cap and the tunnel key guard count an IPv6 client by its /64 network (one
   connection usually owns a whole /64), so changing address no longer buys more password or key

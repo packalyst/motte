@@ -9,10 +9,12 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"api/internal/bounded"
 	"api/internal/database"
 	"api/internal/helper"
 	"api/internal/logs"
@@ -34,6 +36,12 @@ import (
 // contributed, so the two sources never double-count: each only adds the delta
 // beyond what was already recorded. Results roll up into traffic_usage keyed by
 // (peer_ip, dest_ip, dest_port, hour-bucket).
+//
+// The map holds at most as many flows as the kernel tracks (nf_conntrack_max), and
+// forgets one not seen for flowForget (its close was missed). Should it still fill
+// up, a new open flow isn't tracked rather than an old one forgotten: an untracked
+// flow is counted in full once, when it closes, while a forgotten one would have
+// its whole total counted again by the next poll.
 type ConntrackWatcher struct {
 	db     *database.DB
 	config logs.Config
@@ -52,14 +60,23 @@ type ConntrackWatcher struct {
 	processed atomic.Int64
 	lastError atomic.Value // string
 
-	mu      sync.Mutex
-	counted map[string]flowBytes // flow key -> bytes already recorded
+	counted *bounded.Map[string, flowBytes] // flow key -> bytes already recorded
 }
 
-type flowBytes struct {
-	up       int64
-	down     int64
-	lastSeen time.Time
+type flowBytes struct{ up, down int64 }
+
+const (
+	flowForget      = 30 * time.Minute
+	defaultMaxFlows = 262144 // the kernel's usual nf_conntrack_max, when it can't be read
+)
+
+// maxFlows is the kernel's conntrack table size, so a flow the kernel tracks always fits.
+func maxFlows() int {
+	b, err := os.ReadFile("/proc/sys/net/netfilter/nf_conntrack_max")
+	if n, perr := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && perr == nil && n > 0 {
+		return n
+	}
+	return defaultMaxFlows
 }
 
 // NewConntrackWatcher creates a new conntrack byte-accounting watcher.
@@ -74,7 +91,7 @@ func NewConntrackWatcher(db *database.DB, config logs.Config) *ConntrackWatcher 
 		dportRe:      regexp.MustCompile(`dport=(\d+)`),
 		bytesRe:      regexp.MustCompile(`bytes=(\d+)`),
 		pollInterval: time.Duration(helper.GetEnvIntOptional("LOGS_CONNTRACK_POLL_SECONDS", 10)) * time.Second,
-		counted:      make(map[string]flowBytes),
+		counted:      bounded.New[string, flowBytes](maxFlows(), bounded.Refuse),
 	}
 	w.lastError.Store("")
 	return w
@@ -212,39 +229,31 @@ func (w *ConntrackWatcher) processLine(line string, onClose bool) {
 	// concurrent connections to the same destination.
 	key := peerIP + "|" + sport + "|" + destIP + "|" + strconv.Itoa(destPort) + "|" + proto
 
-	w.mu.Lock()
-	prev := w.counted[key]
-	dUp := curUp - prev.up
-	dDown := curDown - prev.down
-	if dUp < 0 { // counter reset / flow id reuse — treat current as the delta
-		dUp = curUp
-	}
-	if dDown < 0 {
-		dDown = curDown
-	}
-	if onClose {
-		delete(w.counted, key)
-	} else {
-		w.counted[key] = flowBytes{up: curUp, down: curDown, lastSeen: time.Now()}
-	}
-	// Bound memory if DESTROY events are ever missed for many flows. Evict only
-	// STALE flows (their close was missed) — never wipe the whole map, which
-	// would make still-open flows re-count their full total as a delta.
-	if len(w.counted) > 200000 {
-		cutoff := time.Now().Add(-30 * time.Minute)
-		for k, v := range w.counted {
-			if v.lastSeen.Before(cutoff) {
-				delete(w.counted, k)
-			}
+	now := time.Now()
+	var dUp, dDown int64
+	tracked := w.counted.Update(key, now, func(prev *flowBytes, _ bool) time.Time {
+		dUp, dDown = curUp-prev.up, curDown-prev.down
+		if dUp < 0 { // counter reset / flow id reuse — treat current as the delta
+			dUp = curUp
 		}
+		if dDown < 0 {
+			dDown = curDown
+		}
+		if onClose {
+			return now // settled: forget the flow
+		}
+		*prev = flowBytes{up: curUp, down: curDown}
+		return now.Add(flowForget)
+	})
+	if !tracked {
+		return // the map is full: this open flow is counted when it closes
 	}
-	w.mu.Unlock()
 
 	if dUp <= 0 && dDown <= 0 {
 		return
 	}
 
-	bucket := time.Now().UTC().Truncate(time.Hour)
+	bucket := now.UTC().Truncate(time.Hour)
 	_, err := w.db.Exec(`
 		INSERT INTO traffic_usage
 			(peer_ip, dest_ip, dest_port, protocol, bucket, bytes_up, bytes_down, updated_at)

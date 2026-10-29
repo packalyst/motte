@@ -201,13 +201,26 @@ This is a single-admin-oriented panel (there's no self-serve signup — see
    reject replays (§ 2FA below).
 4. Generate a session and return the **raw** token to the client.
 
-The HTTP wrapper `handleLogin` (`auth.go:391-429`) does per-client-IP rate limiting
-*before* calling `Login`: `registerLoginAttempt` atomically checks lockout **and**
-reserves a slot (closing the check-then-record race). A `ErrTOTPRequired` result
-**refunds** the slot (correct password, 2FA still pending → not a failed attempt) and
-returns `428 Precondition Required`; a genuine failure keeps the slot counted; success
-clears attempts. Lockout: **5 attempts / 15-min window → 15-min lockout**
-(`ratelimit.go:14`, `helper/constants.go:47-48`), with a `Retry-After` header.
+The HTTP wrapper `handleLogin` (`auth.go`) does per-client rate limiting *before*
+calling `Login`: `loginLimiter.reserve` atomically checks lockout **and** reserves a
+slot (closing the check-then-record race). A `ErrTOTPRequired` result **refunds** the
+slot (correct password, 2FA still pending → not a failed attempt) and returns
+`428 Precondition Required`; a genuine failure keeps the slot counted; success clears
+attempts. Lockout: **5 attempts / 15-min window → 15-min lockout**
+(`auth/ratelimit.go`, `helper/constants.go`), with a `Retry-After` header. A client is
+an IPv4 address or an IPv6 **/64** (`helper.RateKey`), so changing address inside one
+connection's IPv6 block buys no extra guesses.
+
+**In-memory guards are bounded** (`internal/bounded`). Every per-key map the panel keeps
+in memory (request rate, login / 2FA / password lockouts, passkey sign-ins, the tunnel
+key guard and throttles, console grants and step-up windows, the 2FA replay guard, jail
+counters, conntrack flows) is a `bounded.Map` with a hard size cap and per-entry expiry,
+so no amount of outside traffic grows memory without limit. When a map is full: the
+security guards **refuse** new keys (a flood can never push out an existing lockout;
+login from a new address waits until entries expire, and a 2FA code the replay guard
+can't record is refused); the jail counter **drops the least recently seen** address
+(a log line can't be refused); conntrack doesn't track a new open flow (it is counted
+once, when it closes, rather than twice).
 
 ### Sessions & tokens (`auth.go`, `session.go`)
 
@@ -282,8 +295,8 @@ again, on top of a valid session:
   code, then sets `totp_enabled=1`.
 - **Disable** (`handleDisable2FA`): requires **both** the password and a valid current
   TOTP code, then clears `totp_secret_enc` and `totp_enabled`.
-- **At login** (`auth.go:229-259`): decrypt secret → **rate-limit** (atomic
-  reserve, 5 attempts / lockout, `registerTOTPAttempt`) → `totp.Validate` →
+- **At login** (`verifyTOTP`, `totp.go`): decrypt secret → **rate-limit** (atomic
+  reserve, 5 attempts / lockout, `totpLimiter`) → `totp.Validate` →
   **replay-reject** a code already consumed in its window (`totpReplayed` /
   `markTOTPUsed`, `ratelimit.go`) → clear attempts on success. The replay check closes
   the "same 6 digits reused within the 30-s window" gap that plain TOTP validation
