@@ -23,25 +23,23 @@
   // Left-menu sections; the open one is kept in the URL (#s=…) so a refresh or link lands on it.
   // Team is admin-only (the server enforces it too).
   const ALL_SECTIONS = [
-    { id: 'general', label: 'General', icon: 'settings', description: 'Your preferences, log collection and version information.' },
+    { id: 'general', label: 'General', icon: 'settings', description: 'Your preferences, the mail server, log collection and version information.' },
     { id: 'team', label: 'Team', icon: 'users', description: "Accounts that can sign in to this panel. Roles set what each may do; owner is the break-glass role and can't be the last one removed.", minRole: 'admin' },
     { id: 'headscale', label: 'Headscale', icon: 'server', description: 'The Headscale connection Tailscale clients use, and the VPN router.' },
-    { id: 'dns', label: 'DNS (AdGuard)', icon: 'shield-check', description: 'The AdGuard connection and DNS settings for VPN clients.' },
     { id: 'agents', label: 'Agents', icon: 'device-desktop', description: 'The listener that machine agents connect to.' },
     { id: 'certificates', label: 'Certificates', icon: 'certificate', description: 'Every certificate the panel depends on: when each expires, and what needs attention.', minRole: 'admin' },
     { id: 'networks', label: 'Networks', icon: 'router', description: 'Private networks the panel serves as gateway and DHCP server.' },
     { id: 'firewall', label: 'Firewall', icon: 'wall', description: 'Open ports, the port scanner and intrusion-detection jails.' },
-    { id: 'web', label: 'Web access', icon: 'world-www', description: 'Traefik settings and what it is routing right now, plus geolocation and country blocking.' },
+    { id: 'web', label: 'Web access', icon: 'world-www', description: 'Traefik settings and what it is routing right now, plus geolocation, country blocking and DNS.' },
     { id: 'docker', label: 'Docker', icon: 'box', description: 'The panel\'s containers: restart services, view logs and check their health.' },
     { id: 'backups', label: 'Backups', icon: 'database', description: 'Encrypted export and restore, and automatic off-host copies.' },
-    { id: 'email', label: 'Email', icon: 'mail', description: 'The mail server used to send alert emails.' },
   ]
   // How many certificates need attention: shown on the Certificates menu item (admins only).
   let certAttention = $state(0)
   const SECTIONS = $derived(ALL_SECTIONS.filter((x) => !x.minRole || hasRole($currentUser, x.minRole))
     .map((x) => (x.id === 'certificates' && certAttention ? { ...x, badge: certAttention } : x)))
   // Sections that were merged into another one: old links land on the new home.
-  const MERGED = { logs: 'general', geo: 'web' }
+  const MERGED = { logs: 'general', geo: 'web', email: 'general', dns: 'web' }
   const initial = MERGED[hashParam('s')] || hashParam('s')
   let section = $state(ALL_SECTIONS.some((x) => x.id === initial) ? initial : 'general')
   const current = $derived(SECTIONS.find((x) => x.id === section) || SECTIONS[0])
@@ -1231,82 +1229,6 @@
       </div>
       </div>
       {/if}
-      {#if section === 'dns'}
-      <div class="space-y-4">
-      <!-- AdGuard Settings (trial of the panel style used on the machine page) -->
-      <div class="panel">
-        <div class="panel-head">
-          <span class="panel-icon text-primary"><Icon name="shield" size={17} /></span>
-          <div class="min-w-0 flex-1">
-            <div class="panel-title">AdGuard Home</div>
-            <div class="panel-sub">sign-in · query log · dashboard</div>
-          </div>
-          <Button
-            onclick={regenerateAdguardCredentials}
-            variant="outline"
-            icon="wand"
-            title="Generate random secure credentials"
-          >
-            Generate
-          </Button>
-        </div>
-        <div class="grid grid-cols-2 gap-3">
-          <Input
-            id="adguardUsername"
-            label="Username"
-            type="text"
-            bind:value={adguardUsername}
-            placeholder="admin"
-            prefixIcon="user"
-            class="text-xs"
-          />
-          <Input
-            id="adguardPassword"
-            label="Password"
-            type="password"
-            bind:value={adguardPassword}
-            placeholder="Password"
-            prefixIcon="lock"
-            class="text-xs"
-          />
-        </div>
-        <div class="mt-4 grid grid-cols-2 gap-3 border-t border-dashed border-border pt-4">
-          <Input
-            label="Query Log Buffer"
-            type="number"
-            bind:value={adguardQuerylogSize}
-            prefixIcon="database"
-            class="text-xs"
-            min="1"
-          />
-          <div class="flex items-center justify-between">
-            <div>
-              <span class="text-xs font-medium text-foreground">Dashboard Access</span>
-              <p class="text-[10px] text-muted-foreground">External access to AdGuard UI</p>
-            </div>
-            <Checkbox variant="switch" bind:checked={adguardDashboardEnabled} />
-          </div>
-        </div>
-        <div class="panel-foot">
-          <Button
-            onclick={saveAdguard}
-            loading={savingAdguard}
-            disabled={!adguardChanged}
-            size="sm"
-            icon="device-floppy"
-          >
-            Save
-          </Button>
-          {#if adguardDashboardURL}
-            <a href={adguardDashboardURL} target="_blank" rel="noopener noreferrer" class="kt-btn kt-btn-secondary kt-btn-sm">
-              <Icon name="link" size={14} />
-              Open Dashboard
-            </a>
-          {/if}
-        </div>
-      </div>
-      </div>
-      {/if}
       {#if section === 'agents'}
       <div class="space-y-4">
       <AgentListener />
@@ -1575,6 +1497,10 @@
       </div>
       </div>
       {/if}
+      {#if section === 'general' && hasRole($currentUser, 'admin')}
+      <!-- Email (SMTP) for alerts, admin-only like its API. Per-user alert RULES live in Profile → Notifications. -->
+      <SmtpSettings />
+      {/if}
       {#if section === 'general'}
       <div class="space-y-4">
       <!-- Logs Watchers -->
@@ -1588,7 +1514,7 @@
             Enable or disable log collection from various sources.
           </p>
           {#if watcherStatuses.length > 0}
-            <div class="space-y-2">
+            <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
               {#each watcherStatuses as watcher}
                 {@const isToggling = togglingWatcher === watcher.name}
                 {@const hasError = watcher.enabled && watcher.lastError}
@@ -1881,6 +1807,82 @@
       </div>
       {/if}
       {#if section === 'web'}
+      <div class="space-y-4">
+      <!-- AdGuard Settings (trial of the panel style used on the machine page) -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-icon text-primary"><Icon name="shield" size={17} /></span>
+          <div class="min-w-0 flex-1">
+            <div class="panel-title">AdGuard Home</div>
+            <div class="panel-sub">sign-in · query log · dashboard</div>
+          </div>
+          <Button
+            onclick={regenerateAdguardCredentials}
+            variant="outline"
+            icon="wand"
+            title="Generate random secure credentials"
+          >
+            Generate
+          </Button>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <Input
+            id="adguardUsername"
+            label="Username"
+            type="text"
+            bind:value={adguardUsername}
+            placeholder="admin"
+            prefixIcon="user"
+            class="text-xs"
+          />
+          <Input
+            id="adguardPassword"
+            label="Password"
+            type="password"
+            bind:value={adguardPassword}
+            placeholder="Password"
+            prefixIcon="lock"
+            class="text-xs"
+          />
+        </div>
+        <div class="mt-4 grid grid-cols-2 gap-3 border-t border-dashed border-border pt-4">
+          <Input
+            label="Query Log Buffer"
+            type="number"
+            bind:value={adguardQuerylogSize}
+            prefixIcon="database"
+            class="text-xs"
+            min="1"
+          />
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="text-xs font-medium text-foreground">Dashboard Access</span>
+              <p class="text-[10px] text-muted-foreground">External access to AdGuard UI</p>
+            </div>
+            <Checkbox variant="switch" bind:checked={adguardDashboardEnabled} />
+          </div>
+        </div>
+        <div class="panel-foot">
+          <Button
+            onclick={saveAdguard}
+            loading={savingAdguard}
+            disabled={!adguardChanged}
+            size="sm"
+            icon="device-floppy"
+          >
+            Save
+          </Button>
+          {#if adguardDashboardURL}
+            <a href={adguardDashboardURL} target="_blank" rel="noopener noreferrer" class="kt-btn kt-btn-secondary kt-btn-sm">
+              <Icon name="link" size={14} />
+              Open Dashboard
+            </a>
+          {/if}
+        </div>
+      </div>
+      </div>
+      {/if}
+      {#if section === 'web'}
         <TraefikOverview />
       {/if}
       {#if section === 'docker'}
@@ -1973,12 +1975,6 @@
         </div>
       </div>
       <OffhostBackup />
-      </div>
-      {/if}
-      {#if section === 'email'}
-      <div class="space-y-4">
-      <!-- Email (SMTP) for alerts. Per-user alert RULES live in Profile → Notifications. -->
-      <SmtpSettings />
       </div>
       {/if}
       </div>
