@@ -2,6 +2,7 @@ package auth
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -83,7 +84,7 @@ func TestPasswordRecheckLockout(t *testing.T) {
 		t.Fatalf("right password: %v", err)
 	}
 
-	for i := 1; i <= maxPasswordAttempts; i++ {
+	for i := 1; i <= helper.PasswordMaxAttempts; i++ {
 		if err := svc.VerifyPassword(u.ID, "wrong"); !errors.Is(err, errPasswordIncorrect) {
 			t.Fatalf("wrong password %d: got %v", i, err)
 		}
@@ -149,58 +150,56 @@ func TestDisable2FAUsesStepUp(t *testing.T) {
 	}
 }
 
-// TestPasskeyLoginCap (B8): waiting passkey sign-ins are capped per IP and in total, and a slot is
-// freed once a sign-in finishes.
-func TestPasskeyLoginCap(t *testing.T) {
-	reset := func() {
-		waLoginChallenges = bounded.New[string, waLogin](maxPendingPasskeyLogins, bounded.Refuse)
-		waRegChallenges = bounded.New[int64, webauthn.SessionData](maxTrackedKeys, bounded.Refuse)
-	}
-	reset()
-	t.Cleanup(reset)
-	var data webauthn.SessionData
+// A passkey sign-in keeps no state until it succeeds: its challenge travels sealed in the
+// challengeId. A forged, altered, expired or foreign sealed value doesn't open; a verified sign-in
+// can be claimed once, so its answer can't be replayed.
+func TestPasskeySignInSealed(t *testing.T) {
+	newTestService(t)
+	t.Setenv("ENCRYPTION_SECRET", strings.Repeat("ab", 32)) // synthetic test key
+	helper.InitEncryption()
+	saved := waUsedLogins
+	waUsedLogins = bounded.New[string, struct{}](10, bounded.Refuse)
+	t.Cleanup(func() { waUsedLogins = saved })
 
-	var first string
-	for i := 1; i <= maxPendingPasskeyLoginsPerIP; i++ {
-		id, err := waStoreLoginChallenge("192.0.2.20", data)
-		if err != nil {
-			t.Fatalf("sign-in %d: %v", i, err)
-		}
-		if first == "" {
-			first = id
-		}
+	data := webauthn.SessionData{Challenge: "synthetic-challenge", UserVerification: "required"}
+	id, err := waSealLogin(data)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := waStoreLoginChallenge("192.0.2.20", data); !errors.Is(err, errTooManyPasskeyLogins) {
-		t.Fatalf("one over the per-IP cap: got %v", err)
+	got, ok := waOpenLogin(id)
+	if !ok || got.Challenge != data.Challenge || got.UserVerification != "required" {
+		t.Fatalf("sealed sign-in didn't open: %+v %v", got, ok)
 	}
-	if _, err := waStoreLoginChallenge("192.0.2.21", data); err != nil {
-		t.Fatalf("another IP: %v", err)
-	}
-	for i := 1; i <= maxPendingPasskeyLoginsPerIP; i++ {
-		if _, err := waStoreLoginChallenge(fmt.Sprintf("2001:db8:0:5::%x", i), data); err != nil {
-			t.Fatalf("IPv6 sign-in %d: %v", i, err)
-		}
-	}
-	if _, err := waStoreLoginChallenge("2001:db8:0:5:ffff::1", data); !errors.Is(err, errTooManyPasskeyLogins) {
-		t.Fatalf("a new address in the same /64 got past the per-IP cap: %v", err)
-	}
-	if _, ok := waTakeLoginChallenge(first); !ok {
-		t.Fatal("stored sign-in not found")
-	}
-	if _, err := waStoreLoginChallenge("192.0.2.20", data); err != nil {
-		t.Fatalf("after one finished: %v", err)
+	if time.Until(got.Expires) <= 0 || time.Until(got.Expires) > helper.PasskeyChallengeTTL {
+		t.Fatalf("expiry %v, want within %v", got.Expires, helper.PasskeyChallengeTTL)
 	}
 
-	// Total cap, from many IPs. A pending registration doesn't count toward it.
-	reset()
-	waStoreRegChallenge(1, data)
-	for i := 0; i < maxPendingPasskeyLogins; i++ {
-		if _, err := waStoreLoginChallenge(fmt.Sprintf("10.%d.%d.1", i/250, i%250), data); err != nil {
-			t.Fatalf("sign-in %d: %v", i, err)
+	// Sealed with the same key and otherwise valid (future expiry), but not marked as a sign-in.
+	otherJSON, _ := json.Marshal(webauthn.SessionData{Challenge: "x", Expires: time.Now().Add(time.Minute)})
+	other, _ := helper.Encrypt(string(otherJSON))
+	stale := data
+	stale.Expires = time.Now().Add(-time.Minute)
+	b, _ := json.Marshal(stale)
+	expired, _ := helper.Encrypt(waLoginSeal + string(b))
+	altered := []byte(id)
+	altered[len(altered)/2] ^= 1
+	for name, bad := range map[string]string{"forged": "not-a-sealed-value", "altered": string(altered),
+		"another kind": other, "expired": expired, "empty": ""} {
+		if _, ok := waOpenLogin(bad); ok {
+			t.Errorf("%s challengeId opened", name)
 		}
 	}
-	if _, err := waStoreLoginChallenge("203.0.113.1", data); !errors.Is(err, errTooManyPasskeyLogins) {
-		t.Fatalf("one over the total cap: got %v", err)
+
+	if !waClaimLogin(got) {
+		t.Fatal("a fresh sign-in couldn't be claimed")
+	}
+	if waClaimLogin(got) {
+		t.Fatal("the same sign-in was claimed twice (replay)")
+	}
+	waUsedLogins = bounded.New[string, struct{}](1, bounded.Refuse)
+	waClaimLogin(webauthn.SessionData{Challenge: "fills-it", Expires: time.Now().Add(time.Minute)})
+	if waClaimLogin(webauthn.SessionData{Challenge: "another", Expires: time.Now().Add(time.Minute)}) {
+		t.Fatal("a sign-in that couldn't be recorded was accepted")
 	}
 }
 
@@ -253,13 +252,13 @@ func TestLoginLockoutGroupsIPv6(t *testing.T) {
 		loginLimiter.clear("2001:db8:0:9::/64")
 		loginLimiter.clear("2001:db8:0:a::/64")
 	})
-	for i := 1; i <= maxLoginAttempts; i++ {
+	for i := 1; i <= helper.LoginMaxAttempts; i++ {
 		if c := login(fmt.Sprintf("[2001:db8:0:9::%x]:40000", i)); c != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: %d", i, c)
 		}
 	}
 	var ip string
-	if err := db.QueryRow(`SELECT ip FROM events WHERE type = 'login_failed' ORDER BY id DESC LIMIT 1`).Scan(&ip); err != nil || ip != fmt.Sprintf("2001:db8:0:9::%x", maxLoginAttempts) {
+	if err := db.QueryRow(`SELECT ip FROM events WHERE type = 'login_failed' ORDER BY id DESC LIMIT 1`).Scan(&ip); err != nil || ip != fmt.Sprintf("2001:db8:0:9::%x", helper.LoginMaxAttempts) {
 		t.Fatalf("audit logged %q (%v), want the sending address", ip, err)
 	}
 	if c := login("[2001:db8:0:9:ffff::1]:40000"); c != http.StatusTooManyRequests {

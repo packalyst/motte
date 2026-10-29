@@ -22,7 +22,7 @@ func TestAppendJailLines(t *testing.T) {
 		t.Fatalf("appended %q", b)
 	}
 
-	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxJailFileBytes)), 0o640); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", MaxJailFileBytes)), 0o640); err != nil {
 		t.Fatal(err)
 	}
 	AppendJailLines(path, []string{"A SRC=192.0.2.4"})

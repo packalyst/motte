@@ -222,16 +222,20 @@ func TestLockout(t *testing.T) {
 	}
 }
 
-// A full lockout map refuses new keys and never pushes out a locked one.
+// A full lockout map still counts a new key, forgetting the least recently used one; a key that
+// keeps trying stays tracked (and locked).
 func TestLockoutFull(t *testing.T) {
 	l := NewLockout[string](2, 1, time.Hour, time.Hour)
-	l.Reserve("attacker", t0)
-	l.Reserve("attacker", t0) // locked
-	l.Reserve("x", t0)
-	if r, _ := l.Reserve("y", t0); r != FullRetry {
-		t.Fatalf("new key while full: %v", r)
+	l.Reserve("old", t0)
+	l.Reserve("guesser", t0)
+	l.Reserve("guesser", t0) // locked, and the most recently used
+	if r, _ := l.Reserve("newcomer", t0); r != 0 {
+		t.Fatalf("a newcomer was refused while the map is full: %v", r)
 	}
-	if r, _ := l.Reserve("attacker", t0.Add(time.Second)); r == 0 {
-		t.Fatal("a flood of new keys lifted a lockout")
+	if _, ok := l.m.Get("old", t0); ok {
+		t.Fatal("the least recently used key wasn't the one forgotten")
+	}
+	if r, _ := l.Reserve("guesser", t0.Add(time.Second)); r == 0 {
+		t.Fatal("a key that kept trying lost its lockout")
 	}
 }

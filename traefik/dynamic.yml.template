@@ -27,13 +27,14 @@ http:
         - websecure
       tls: {}
 
-    # Unified API - all /api/* routes (except /api/v1 for headscale direct) - HTTPS
+    # Unified API - all /api/* routes (except /api/v1 for headscale direct) - HTTPS. No Traefik
+    # rate-limit: the API limits every request itself, per real visitor (behind Cloudflare
+    # Traefik would only see Cloudflare's address, so visitors would share one bucket).
     unified-api-ip-secure:
       rule: "(Host(`${SERVER_IP}`) || Host(`${ADMIN_DOMAIN}`)) && PathPrefix(`/api/`) && !PathPrefix(`/api/v1`)"
       service: unified-api
       priority: 100
       middlewares:
-        - rate-limit
         - security-headers
         - sentinel_fw_block
       entryPoints:
@@ -131,7 +132,8 @@ http:
           - url: "http://headscale:8080"
 
   middlewares:
-    # Rate limiting - requests per second average, burst
+    # Rate limiting - requests per second average, burst. For proxied sites that pick it; the
+    # panel's own API is limited by the API itself (per real visitor), not here.
     rate-limit:
       rateLimit:
         average: ${RATE_LIMIT_AVERAGE}

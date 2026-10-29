@@ -5,8 +5,10 @@ import "time"
 // Lockout locks a key out for lock once it has used more than max attempts within window.
 // Attempts are reserved before they're checked, so a burst of concurrent ones can't slip past a
 // stale count; a success Clears the key, an attempt that turned out not to be a failure is
-// Refunded. A key it can't track (the map is full) is refused, so a flood of new keys never
-// pushes out a lockout.
+// Refunded. When the map is full the least recently used key is forgotten, so a new key is always
+// counted: refusing it instead would let anyone holding many addresses (IPv6 hands them out by the
+// million) lock every newcomer out, while gaining nothing against them — with that many
+// addresses they can switch address before any of them is locked out anyway.
 type Lockout[K comparable] struct {
 	m      *Map[K, attempts]
 	max    int
@@ -20,12 +22,9 @@ type attempts struct {
 	lockedAt time.Time
 }
 
-// FullRetry is how long a key refused because the map is full is told to wait.
-const FullRetry = time.Minute
-
 // NewLockout tracks at most size keys.
 func NewLockout[K comparable](size, max int, window, lock time.Duration) *Lockout[K] {
-	return &Lockout[K]{m: New[K, attempts](size, Refuse), max: max, window: window, lock: lock}
+	return &Lockout[K]{m: New[K, attempts](size, DropOldest), max: max, window: window, lock: lock}
 }
 
 func (l *Lockout[K]) expiry(a *attempts) time.Time {
@@ -38,7 +37,7 @@ func (l *Lockout[K]) expiry(a *attempts) time.Time {
 // Reserve takes an attempt for key. It returns 0 when the attempt may go ahead, else how long
 // key is locked out, and whether this attempt is the one that locked it.
 func (l *Lockout[K]) Reserve(key K, now time.Time) (retry time.Duration, locked bool) {
-	tracked := l.m.Update(key, now, func(a *attempts, found bool) time.Time {
+	l.m.Update(key, now, func(a *attempts, found bool) time.Time {
 		if !found { // new, or its window or lockout has passed
 			*a = attempts{count: 1, first: now}
 			return l.expiry(a)
@@ -54,9 +53,6 @@ func (l *Lockout[K]) Reserve(key K, now time.Time) (retry time.Duration, locked 
 		}
 		return l.expiry(a)
 	})
-	if !tracked {
-		return FullRetry, false
-	}
 	return retry, locked
 }
 

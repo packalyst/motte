@@ -23,14 +23,6 @@ import (
 // webGateDropMarker starts each line of the jail file; the jail's pattern matches it.
 const webGateDropMarker = "WEBGATE_DROP SRC="
 
-const (
-	maxWebGateReport      = 64 << 10 // bytes of one drop report read
-	maxWebGateDropsPerIP  = 10       // lines written per address per report (the gate caps it too)
-	webGateJailMaxRetry   = 3
-	webGateJailFindTime   = 600   // 10 minutes
-	webGateJailBanSeconds = 86400 // 1 day
-)
-
 // HandleInternalWebGate serves who may use port 80: "off" when Cloudflare-only is off (everyone
 // may), else "on" followed by one CIDR per line (Cloudflare's ranges and the trusted admin
 // sources, the same ones the kernel lets reach 443). Internal-only, like the block list.
@@ -59,7 +51,7 @@ func (s *Service) HandleInternalWebGateDrops(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var lines []string
-	sc := bufio.NewScanner(io.LimitReader(r.Body, maxWebGateReport))
+	sc := bufio.NewScanner(io.LimitReader(r.Body, helper.MaxWebGateReportBytes))
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
 		if len(f) != 2 {
@@ -70,7 +62,7 @@ func (s *Service) HandleInternalWebGateDrops(w http.ResponseWriter, r *http.Requ
 		if ip == nil || err != nil || n < 1 || helper.IsNonPublicIP(ip) {
 			continue
 		}
-		for i := 0; i < min(n, maxWebGateDropsPerIP); i++ {
+		for i := 0; i < min(n, helper.MaxWebGateDropsPerIP); i++ {
 			lines = append(lines, webGateDropMarker+ip.String())
 		}
 	}

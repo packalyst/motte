@@ -250,7 +250,7 @@ func (s *Service) startListenerLocked(port int) {
 	s.port = port
 	go func() {
 		log.Printf("fleet: mTLS listener on :%d (CA %s)", port, s.CA().Fingerprint())
-		if err := srv.ServeTLS(limitPerIP(ln, maxFleetConnsPerIP), "", ""); err != nil && err != http.ErrServerClosed {
+		if err := srv.ServeTLS(limitPerIP(ln, helper.MaxFleetConnsPerIP), "", ""); err != nil && err != http.ErrServerClosed {
 			log.Printf("fleet: listener on :%d stopped: %v", port, err)
 		}
 	}()

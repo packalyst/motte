@@ -1,6 +1,7 @@
 package traefik
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,4 +223,39 @@ func TestSentinelIPFiltersUseCloudflareList(t *testing.T) {
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "domains.yml"))
 	check("domains", string(b))
+}
+
+// The panel API is limited once, by the API itself (per real visitor): no Traefik route to it
+// carries rate-limit too, and the API's own limiter is on.
+func TestPanelAPILimitedOnce(t *testing.T) {
+	v, err := helper.GetYAMLPath(renderCore(t, true), "http.routers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, r := range v.(map[string]interface{}) {
+		router := r.(map[string]interface{})
+		if router["service"] != "unified-api" {
+			continue
+		}
+		mws, _ := router["middlewares"].([]interface{})
+		for _, m := range mws {
+			if m == "rate-limit" {
+				t.Errorf("%s: Traefik's rate-limit on a route the API already limits", name)
+			}
+		}
+	}
+	b, err := os.ReadFile(filepath.Join("..", "..", "configs", "endpoints.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Middleware struct {
+			RateLimit struct {
+				Enabled bool `json:"enabled"`
+			} `json:"rateLimit"`
+		} `json:"middleware"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil || !cfg.Middleware.RateLimit.Enabled {
+		t.Fatalf("the API's own request limiter is off (%v)", err)
+	}
 }

@@ -2,12 +2,9 @@ package helper
 
 import "golang.org/x/crypto/argon2"
 
-// MaxConcurrentArgon2 caps simultaneous Argon2id computations across the panel (password hashes
-// and checks, backup passphrases): each takes 64 MiB, so a burst queues instead of exhausting
-// memory.
-const MaxConcurrentArgon2 = 4
-
-// argonSlots holds one token per computation allowed to run at once; the rest wait their turn.
+// argonSlots holds one token per computation allowed to run at once (MaxConcurrentArgon2: password
+// hashes and checks, backup passphrases take 64 MiB each), so a burst queues instead of exhausting
+// memory; the rest wait their turn.
 var argonSlots = make(chan struct{}, MaxConcurrentArgon2)
 
 // Argon2IDKey is the only way the panel runs Argon2id: it waits for a free slot, then derives.

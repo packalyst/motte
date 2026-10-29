@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"api/internal/helper"
+
 	"github.com/go-webauthn/webauthn/protocol"
 )
 
@@ -16,6 +18,8 @@ import (
 // challenge the finish step verifies against — a touch alone is never enough.
 func TestPasskeyRequiresUserVerification(t *testing.T) {
 	svc := newTestService(t)
+	t.Setenv("ENCRYPTION_SECRET", strings.Repeat("ab", 32)) // synthetic test key (sign-ins are sealed)
+	helper.InitEncryption()
 	const pw = "StrongP@ss1"
 	u, err := svc.CreateUser("passkey_user", pw, RoleViewer)
 	if err != nil {
@@ -66,7 +70,7 @@ func TestPasskeyRequiresUserVerification(t *testing.T) {
 	if got := login.PublicKey.UserVerification; got != protocol.VerificationRequired {
 		t.Errorf("login options: userVerification %q, want required", got)
 	}
-	if sd, ok := waTakeLoginChallenge(login.ChallengeID); !ok || sd.UserVerification != protocol.VerificationRequired {
+	if sd, ok := waOpenLogin(login.ChallengeID); !ok || sd.UserVerification != protocol.VerificationRequired {
 		t.Errorf("login challenge: userVerification %q (stored %v), want required", sd.UserVerification, ok)
 	}
 }

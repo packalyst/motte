@@ -13,24 +13,15 @@ import (
 	"api/internal/router"
 )
 
-// Abuse-guard tuning, all overridable via env (see the getters below).
-const (
-	defaultRotateFailWindow    = 300  // seconds (5 min)
-	defaultRotateFailThreshold = 10   // failed attempts per window
-	defaultRotateBlockDuration = 1800 // seconds (30 min)
-
-	maxGuardedClients = 100_000 // clients the key guard tracks at once; new ones are refused past it
-	maxThrottledKeys  = 10_000  // tunnel and webhook keys throttled at once (only valid keys get here)
-)
-
-// The public key endpoints' abuse guards (in-memory, bounded). keyGuard locks out a client (an
+// The public key endpoints' abuse guards (in-memory, bounded; numbers in helper/limits.go, each
+// overridable by its TURBOTUNNELS_ROTATE_* variable below). keyGuard locks out a client (an
 // IPv6 one by its /64) after rotateFailThreshold() invalid keys within rotateFailWindow(), for
-// rotateBlockDuration(); a flood of new clients can't push out a block. The throttles space out
+// rotateBlockDuration(); a flood of new clients can't lock others out of the links. The throttles space out
 // the firings of one rotate key or webhook.
 var (
-	keyGuard        = bounded.NewLockout[string](maxGuardedClients, rotateFailThreshold(), rotateFailWindow(), rotateBlockDuration())
-	rotateThrottle  = bounded.New[string, time.Time](maxThrottledKeys, bounded.DropOldest) // rotate key → next allowed
-	webhookThrottle = bounded.New[string, time.Time](maxThrottledKeys, bounded.DropOldest) // webhook id → next allowed
+	keyGuard        = bounded.NewLockout[string](helper.MaxGuardedTunnelClients, rotateFailThreshold(), rotateFailWindow(), rotateBlockDuration())
+	rotateThrottle  = bounded.New[string, time.Time](helper.MaxThrottledTunnelKeys, bounded.DropOldest) // rotate key → next allowed
+	webhookThrottle = bounded.New[string, time.Time](helper.MaxThrottledTunnelKeys, bounded.DropOldest) // webhook id → next allowed
 )
 
 // guardedClient is the key guard's key for the caller, or "" after answering 429 because it is
@@ -63,25 +54,30 @@ func throttled(m *bounded.Map[string, time.Time], key string, interval time.Dura
 // rotateMinInterval is the minimum spacing between rotations for one key,
 // overridable via TURBOTUNNELS_ROTATE_MIN_INTERVAL (seconds).
 func rotateMinInterval() time.Duration {
-	return time.Duration(helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_MIN_INTERVAL", 10)) * time.Second
+	return envSeconds("TURBOTUNNELS_ROTATE_MIN_INTERVAL", helper.TunnelRotateMinInterval)
 }
 
 // rotateFailWindow is the window over which invalid-key attempts are counted,
 // overridable via TURBOTUNNELS_ROTATE_FAIL_WINDOW (seconds).
 func rotateFailWindow() time.Duration {
-	return time.Duration(helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_FAIL_WINDOW", defaultRotateFailWindow)) * time.Second
+	return envSeconds("TURBOTUNNELS_ROTATE_FAIL_WINDOW", helper.TunnelKeyFailWindow)
 }
 
 // rotateFailThreshold is how many invalid-key attempts within the window trip a
 // block, overridable via TURBOTUNNELS_ROTATE_FAIL_THRESHOLD.
 func rotateFailThreshold() int {
-	return helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_FAIL_THRESHOLD", defaultRotateFailThreshold)
+	return helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_FAIL_THRESHOLD", helper.TunnelKeyMaxFails)
 }
 
 // rotateBlockDuration is how long a tripped source IP stays blocked,
 // overridable via TURBOTUNNELS_ROTATE_BLOCK_DURATION (seconds).
 func rotateBlockDuration() time.Duration {
-	return time.Duration(helper.GetEnvIntOptional("TURBOTUNNELS_ROTATE_BLOCK_DURATION", defaultRotateBlockDuration)) * time.Second
+	return envSeconds("TURBOTUNNELS_ROTATE_BLOCK_DURATION", helper.TunnelKeyBlockDuration)
+}
+
+// envSeconds is the duration set (in seconds) by the environment variable, or def.
+func envSeconds(name string, def time.Duration) time.Duration {
+	return time.Duration(helper.GetEnvIntOptional(name, int(def/time.Second))) * time.Second
 }
 
 // handleRotate is the PUBLIC rotation trigger: GET/POST /api/restart/{key}. It

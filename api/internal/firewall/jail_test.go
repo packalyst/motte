@@ -27,7 +27,7 @@ func TestJailCountsAndBans(t *testing.T) {
 	if err := os.WriteFile(logFile, []byte(lines), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	attempts := bounded.New[string, []time.Time](maxJailTracked, bounded.DropOldest)
+	attempts := bounded.New[string, []time.Time](helper.MaxJailTracked, bounded.DropOldest)
 	// A hit from before findTime doesn't count: 192.0.2.61's two new ones stay under maxRetry.
 	attempts.Update("192.0.2.61", time.Now(), func(times *[]time.Time, _ bool) time.Time {
 		*times = []time.Time{time.Now().Add(-time.Hour)}

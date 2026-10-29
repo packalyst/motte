@@ -37,10 +37,7 @@ import (
 	"api/internal/settings"
 )
 
-const (
-	recordMaxBytes    = 64 << 20 // per-session cap; past it, output is no longer recorded (marked once)
-	recordDefaultDays = 30       // retention when console_record_days is unset/invalid
-)
+const recordDefaultDays = 30 // retention when console_record_days is unset/invalid
 
 // recordDir is where session recordings are written. The default lives under DATA_DIR (the api's
 // persistent volume) — a relative path resolved against the container's /app and was silently lost
@@ -159,7 +156,7 @@ func openRecorder(m *Machine, session string, cols, rows int, meta recMeta) (*co
 	if h.Timestamp > 0 {
 		rec.start = time.Unix(h.Timestamp, 0)
 	}
-	rec.capped = rec.size >= recordMaxBytes
+	rec.capped = rec.size >= helper.MaxRecordingBytes
 	return rec, false, nil
 }
 
@@ -193,7 +190,7 @@ func (c *consoleRecorder) event(kind, text string) {
 	}
 	b, _ := json.Marshal([]any{time.Since(c.start).Seconds(), kind, text})
 	b = append(b, '\n')
-	if c.size+int64(len(b))+64 > recordMaxBytes { // 64: record framing + nonce + tag, with margin
+	if c.size+int64(len(b))+64 > helper.MaxRecordingBytes { // 64: record framing + nonce + tag, with margin
 		c.capped = true
 		note, _ := json.Marshal([]any{time.Since(c.start).Seconds(), "m", "recording size limit reached — later output not recorded"})
 		c.writeRecord(nil, append(note, '\n'))
@@ -514,7 +511,7 @@ func listRecordings(machines map[string]Machine, userID int64, admin bool) []rec
 		_, client, _ := strings.Cut(h.Meta.Session, "_")
 		out = append(out, recordingInfo{
 			Name: e.Name(), Title: h.Title, User: h.Meta.User, Started: h.Timestamp, Ended: info.ModTime().Unix(),
-			Size: info.Size(), Live: isRecording(m.ID, h.Meta.Session), Capped: info.Size() >= recordMaxBytes,
+			Size: info.Size(), Live: isRecording(m.ID, h.Meta.Session), Capped: info.Size() >= helper.MaxRecordingBytes,
 			Session: client, Width: h.Width, Height: h.Height, MachineID: m.ID, MachineName: m.Name,
 		})
 	}

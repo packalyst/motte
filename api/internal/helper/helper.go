@@ -46,18 +46,15 @@ func WebGateLogPath() string {
 	return GetEnvOptional("DATA_DIR", "/data") + "/webgate.log"
 }
 
-// maxJailFileBytes caps a file the panel writes for a jail. Past it the file starts over; the
-// jail notices the shorter file and reads it from the start.
-const maxJailFileBytes = 5 << 20
-
 // AppendJailLines appends lines to a file the panel writes for a jail, starting it over first
-// when it has reached maxJailFileBytes, so it can't fill the disk.
+// when it has reached MaxJailFileBytes, so it can't fill the disk (the jail notices the shorter
+// file and reads it from the start).
 func AppendJailLines(path string, lines []string) error {
 	if len(lines) == 0 {
 		return nil
 	}
 	flags := os.O_CREATE | os.O_APPEND | os.O_WRONLY
-	if st, err := os.Stat(path); err == nil && st.Size() >= maxJailFileBytes {
+	if st, err := os.Stat(path); err == nil && st.Size() >= MaxJailFileBytes {
 		flags |= os.O_TRUNC
 	}
 	f, err := os.OpenFile(path, flags, 0o640)

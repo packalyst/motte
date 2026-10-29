@@ -12,13 +12,15 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"api/internal/helper"
 )
 
-// TestAgentLimit: a certificate gets agentBurst requests at once, then one per agentRefill;
+// TestAgentLimit: a certificate gets helper.AgentRequestBurst requests at once, then one per helper.AgentRequestRefill;
 // another certificate has its own bucket.
 func TestAgentLimit(t *testing.T) {
 	now := time.Now()
-	for i := 0; i < agentBurst; i++ {
+	for i := 0; i < helper.AgentRequestBurst; i++ {
 		if !agentLimit.Allow("fp-burst", now) {
 			t.Fatalf("request %d refused inside the burst", i+1)
 		}
@@ -29,10 +31,10 @@ func TestAgentLimit(t *testing.T) {
 	if !agentLimit.Allow("fp-other", now) {
 		t.Fatal("another certificate was limited")
 	}
-	if !agentLimit.Allow("fp-burst", now.Add(agentRefill)) {
+	if !agentLimit.Allow("fp-burst", now.Add(helper.AgentRequestRefill)) {
 		t.Fatal("no request allowed after a refill")
 	}
-	if agentLimit.Allow("fp-burst", now.Add(agentRefill)) {
+	if agentLimit.Allow("fp-burst", now.Add(helper.AgentRequestRefill)) {
 		t.Fatal("more than one request allowed per refill")
 	}
 }
@@ -63,7 +65,7 @@ func TestRequireClientCertRateLimited(t *testing.T) {
 		h(rr, r)
 		return rr.Code
 	}
-	for i := 0; i < agentBurst; i++ {
+	for i := 0; i < helper.AgentRequestBurst; i++ {
 		if code := call(); code != http.StatusUnauthorized { // not enrolled: refused after the lookup
 			t.Fatalf("request %d: %d, want 401 (unknown cert)", i+1, code)
 		}

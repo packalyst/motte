@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"api/internal/helper"
 )
 
 func requestWithSession(token string) *http.Request {
@@ -40,7 +42,7 @@ func TestFleetGracePerSessionAndCapped(t *testing.T) {
 			return until
 		})
 	}
-	setWindow(time.Now().Add(time.Minute), time.Now().Add(-fleetStepUpGraceMax+time.Second))
+	setWindow(time.Now().Add(time.Minute), time.Now().Add(-helper.ConsoleStepUpGraceMax+time.Second))
 	if !useFleetGrace(a) {
 		t.Fatal("still inside the cap")
 	}

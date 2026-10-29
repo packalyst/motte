@@ -612,19 +612,18 @@ func (r *Router) securityHeadersMiddleware(next http.Handler) http.Handler {
 }
 
 // Request limit: per client (helper.RateKey: an IPv6 client by its /64), requestsPerSecond with a
-// burst of rateLimitBurstSeconds' worth. At most maxRateLimitClients are tracked at once; past
-// that, new clients are refused until buckets refill (clients already tracked keep their limit).
-const rateLimitBurstSeconds = 2
-
-var maxRateLimitClients = 100_000 // a var so tests can use a small cap
+// burst of helper.APIBurstSeconds' worth. At most maxRateLimitClients are tracked at once; past
+// that, new clients are refused until buckets refill (clients already tracked keep their limit; an
+// idle client's bucket is full again, and gone, within the burst, so this can't be filled).
+var maxRateLimitClients = helper.MaxRateLimitedClients // a var so tests can use a small cap
 
 // rateLimitMiddleware implements token bucket rate limiting per client
 func (r *Router) rateLimitMiddleware(next http.Handler) http.Handler {
 	rps := r.config.Middleware.RateLimit.RequestsPerSecond
 	if rps <= 0 {
-		rps = 100 // Default: 100 requests per second
+		rps = helper.APIRequestsPerSecond
 	}
-	limit := bounded.NewRate[string](maxRateLimitClients, float64(rps), float64(rps*rateLimitBurstSeconds))
+	limit := bounded.NewRate[string](maxRateLimitClients, float64(rps), float64(rps*helper.APIBurstSeconds))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		// Skip rate limiting for health checks

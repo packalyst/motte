@@ -137,6 +137,18 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **Limits can't be turned against everyone**: the login lockout and the tunnel link guard
+  forget their oldest entry when full instead of refusing newcomers, so a flood of (IPv6)
+  addresses can no longer stop everyone from logging in or using tunnel links. Starting a
+  passkey sign-in no longer stores anything on the server (the challenge travels sealed with
+  the browser), so it can't be filled up at all. Console grants are capped per user and a
+  repeated machine is ignored, so one operator can't block everyone's consoles.
+- **The panel API is rate-limited once, per real visitor**: Traefik's own limit no longer also
+  applies to it (behind Cloudflare it counted many visitors as one). Settings → Traefik →
+  Rate Limiting now applies to proxied sites that use it.
+- **Every limit in one file**: `api/internal/helper/limits.go` lists every attempt count, window,
+  cap and timeout. The tunnel guard's `TURBOTUNNELS_ROTATE_*` variables still override theirs, but
+  their defaults now live only there (`.env.example` shows them commented out).
 - **Pentest fixes (2026-10-29)**:
   - A 2FA code can't be reused within its window even after a newer one was used (every used
     code is remembered for 90 s, not only the latest).
