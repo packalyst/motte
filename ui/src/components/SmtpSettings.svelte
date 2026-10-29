@@ -30,6 +30,7 @@
   const snapshot = () => JSON.stringify({ ...cfg, pass: '' })
   const dirty = $derived(!loading && (snapshot() !== saved || passInput !== ''))
   const configured = $derived(!!(cfg.host && cfg.from))
+  const canTest = $derived(configured && !dirty) // a test uses the saved settings
 
   onMount(async () => {
     try {
@@ -79,8 +80,8 @@
 
 <div class="panel">
   <div class="panel-head">
-    <span class="panel-icon text-primary"><Icon name="server" size={17} /></span>
-    <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Mail server</div>
+    <span class="panel-icon text-primary"><Icon name="mail" size={17} /></span>
+    <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Email (SMTP)</div>
   </div>
   <div class="space-y-3">
     {#if loading}
@@ -97,35 +98,29 @@
         <Input label="Password" type="password" bind:value={passInput} placeholder={hasStoredPass ? 'stored — leave blank to keep' : 'optional'} prefixIcon="lock" autocomplete="new-password" />
       </div>
       <p class="text-[11px] text-muted-foreground">Each person chooses whether to receive alert emails, and their address, in Profile → Notifications.</p>
+
+      <div class="space-y-2 border-t border-dashed border-border pt-3">
+        <form class="flex flex-col gap-2 sm:flex-row sm:items-end" onsubmit={(e) => { e.preventDefault(); sendTest() }}>
+          <div class="min-w-0 flex-1">
+            <Input label="Send a test email to" type="email" bind:value={testTo} placeholder="you@example.com" prefixIcon="send" disabled={!canTest} />
+          </div>
+          <Button type="submit" variant="outline" icon="send" loading={testing} disabled={!canTest || !testTo.trim()}>Send test</Button>
+        </form>
+        {#if dirty}
+          <p class="text-[11px] text-warning flex items-center gap-1.5"><Icon name="alert-triangle" size={12} />Save your changes first — the test uses the saved settings.</p>
+        {:else if !configured}
+          <p class="text-[11px] text-muted-foreground">Set a host and a From address first.</p>
+        {/if}
+        {#if testResult}
+          <div class="flex items-start gap-2 rounded-lg px-3 py-2 text-xs {testResult.ok ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}">
+            <Icon name={testResult.ok ? 'circle-check' : 'alert-circle'} size={14} class="mt-0.5 shrink-0" />
+            <span class="min-w-0 break-words">{testResult.text}</span>
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
   <div class="panel-foot justify-end">
     <Button variant="primary" icon="device-floppy" loading={saving} disabled={loading || !dirty} onclick={save}>Save</Button>
-  </div>
-</div>
-
-<div class="panel">
-  <div class="panel-head">
-    <span class="panel-icon text-primary"><Icon name="send" size={17} /></span>
-    <div class="min-w-0 flex-1 panel-title flex items-center gap-2">Send a test email</div>
-  </div>
-  <div class="space-y-3">
-    <form class="flex flex-col gap-2 sm:flex-row sm:items-end" onsubmit={(e) => { e.preventDefault(); sendTest() }}>
-      <div class="min-w-0 flex-1">
-        <Input label="Send to" type="email" bind:value={testTo} placeholder="you@example.com" prefixIcon="mail" />
-      </div>
-      <Button type="submit" variant="outline" icon="send" loading={testing} disabled={loading || dirty || !configured || !testTo.trim()}>Send test</Button>
-    </form>
-    {#if dirty}
-      <p class="text-[11px] text-warning flex items-center gap-1.5"><Icon name="alert-triangle" size={12} />Save your changes first — the test uses the saved settings.</p>
-    {:else if !configured}
-      <p class="text-[11px] text-muted-foreground">Set a host and a From address first.</p>
-    {/if}
-    {#if testResult}
-      <div class="flex items-start gap-2 rounded-lg px-3 py-2 text-xs {testResult.ok ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}">
-        <Icon name={testResult.ok ? 'circle-check' : 'alert-circle'} size={14} class="mt-0.5 shrink-0" />
-        <span class="min-w-0 break-words">{testResult.text}</span>
-      </div>
-    {/if}
   </div>
 </div>
