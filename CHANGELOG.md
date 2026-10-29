@@ -7,6 +7,13 @@ releases will be tagged as they are cut.
 ## [Unreleased]
 
 ### Added
+- **Certificates** (Settings → Certificates, admins): every certificate the panel depends on
+  in one place: the websites' Let's Encrypt certificates, the fleet CA, the agent listener's
+  certificate (with Renew now) and the machines' certificates, each with its expiry and what
+  needs attention. A website that can't renew because Cloudflare-only blocks Let's Encrypt's
+  check is flagged. Admins get a "Certificate expiring" notification (push, webhook, email;
+  can be turned off in Profile) when one gets close to expiry without renewing, once per step,
+  and the menu item shows how many need attention.
 - **DNS rewrites, reworked**: a searchable list with each rewrite's type (IPv4, IPv6, alias,
   wildcard), an on/off switch, editing in one step (AdGuard's update, so a failed change never
   loses the old rewrite) and a confirmation before delete. Rewrites kept by Domain Routes are

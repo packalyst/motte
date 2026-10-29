@@ -378,6 +378,29 @@ the pinned CA fingerprint. Flow (`HandleEnroll`, `enroll.go:35-101`):
 
 ---
 
+### Certificate expiry watch (`api/internal/certs`)
+
+- **Settings → Certificates** (`GET /api/certs`, admin) lists every certificate the panel
+  depends on: Traefik's Let's Encrypt certificates (`traefik.GetCertificates`, with the resolver
+  that issued each), the panel's own domains that have none yet, the fleet CA, the agent
+  listener's certificate (only while the listener runs) and each enrolled machine's client
+  certificate. The server decides each one's warning state (`due`), so the page repeats no
+  thresholds.
+- **Can't-renew check:** with Cloudflare-only on, a domain on the HTTP check whose DNS points
+  outside Cloudflare is flagged: Let's Encrypt's check is dropped at 80/443. DNS-check
+  certificates and failed lookups are not flagged.
+- **Warning steps:** certificates that renew themselves (websites, listener, machines) warn only
+  below half of their renewal window (the last third of their life), so a normal renewal never
+  warns: 14/7/3/1 days and expired for a 90-day certificate. The fleet CA warns at 365/90/30/14/
+  7/3/1 days and expired.
+- **Delivery:** the daily `cert-expiry-check` routine (also at start) sends each step once per
+  certificate; `cert_alerts` records the step sent with the certificate's expiry, so a restart
+  doesn't repeat it and a renewed certificate starts over; rows of certificates that are gone
+  are dropped. Each warning is an Activity entry and goes to **admins and owners only**, on their
+  own channels, gated by their "Certificate expiring" preference (`cert_expiry`).
+- **Renew now** (`POST /api/certs/listener/renew`, admin, audited) replaces the listener
+  certificate; if that fails, the current one stays in use.
+
 ## 5. Web hardening & secrets handling
 
 ### Content-Security-Policy (Traefik, `traefik/dynamic.yml.template:128-152`)

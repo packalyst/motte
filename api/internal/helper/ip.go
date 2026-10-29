@@ -122,7 +122,7 @@ func GetClientIP(r *http.Request) string {
 	xff := splitForwarded(r.Header.Get("X-Forwarded-For"))
 
 	// Came through Cloudflare? Then CF-Connecting-IP is the real visitor.
-	if len(xff) > 0 && isCloudflareIP(xff[len(xff)-1]) {
+	if len(xff) > 0 && IsCloudflareIP(xff[len(xff)-1]) {
 		if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" {
 			return cf
 		}
@@ -153,7 +153,7 @@ var defaultCloudflareCIDRs = []string{
 }
 
 // cloudflareCIDRsStore holds the active []*net.IPNet. The updater swaps it
-// atomically so isCloudflareIP reads it lock-free on the request hot path.
+// atomically so IsCloudflareIP reads it lock-free on the request hot path.
 var cloudflareCIDRsStore atomic.Value
 
 func init() {
@@ -196,8 +196,8 @@ func mustParseCIDRs(list []string) []*net.IPNet {
 	return out
 }
 
-// isCloudflareIP reports whether ipStr is within a Cloudflare edge range.
-func isCloudflareIP(ipStr string) bool {
+// IsCloudflareIP reports whether ipStr is within a Cloudflare edge range.
+func IsCloudflareIP(ipStr string) bool {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return false

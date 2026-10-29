@@ -16,6 +16,7 @@ import (
 	"api/internal/auth"
 	"api/internal/auth/pwa"
 	"api/internal/backup"
+	"api/internal/certs"
 	"api/internal/clients"
 	"api/internal/config"
 	"api/internal/database"
@@ -604,6 +605,17 @@ func main() {
 		r.RegisterService("alerts", alertSvc.Handlers())
 		alertSvc.Start()
 		log.Println("Alerts service registered")
+	}
+
+	// Certificates: every certificate the panel depends on, and warnings before they expire.
+	if cDB, err := database.GetDB(); err != nil {
+		log.Printf("Certificates service unavailable: %v", err)
+	} else if certSvc, err := certs.New(cDB.DB, flSvc); err != nil {
+		log.Printf("Certificates service unavailable: %v", err)
+	} else {
+		r.RegisterService("certs", certSvc.Handlers())
+		certSvc.Start()
+		log.Println("Certificates service registered")
 	}
 
 	// Initialize WebSocket service

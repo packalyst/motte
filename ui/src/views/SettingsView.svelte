@@ -25,6 +25,7 @@
     { id: 'headscale', label: 'Headscale', icon: 'server', description: 'The Headscale connection Tailscale clients use, and the VPN router.' },
     { id: 'dns', label: 'DNS (AdGuard)', icon: 'shield-check', description: 'The AdGuard connection and DNS settings for VPN clients.' },
     { id: 'agents', label: 'Agents', icon: 'device-desktop', description: 'The listener that machine agents connect to.' },
+    { id: 'certificates', label: 'Certificates', icon: 'certificate', description: 'Every certificate the panel depends on: when each expires, and what needs attention.', minRole: 'admin' },
     { id: 'networks', label: 'Networks', icon: 'router', description: 'Private networks the panel serves as gateway and DHCP server.' },
     { id: 'firewall', label: 'Firewall', icon: 'wall', description: 'Open ports, the port scanner and intrusion-detection jails.' },
     { id: 'web', label: 'Web access', icon: 'world-www', description: 'Traefik settings and what it is routing right now, plus geolocation and country blocking.' },
@@ -32,7 +33,10 @@
     { id: 'backups', label: 'Backups', icon: 'database', description: 'Encrypted export and restore, and automatic off-host copies.' },
     { id: 'email', label: 'Email', icon: 'mail', description: 'The mail server used to send alert emails.' },
   ]
-  const SECTIONS = $derived(ALL_SECTIONS.filter((x) => !x.minRole || hasRole($currentUser, x.minRole)))
+  // How many certificates need attention: shown on the Certificates menu item (admins only).
+  let certAttention = $state(0)
+  const SECTIONS = $derived(ALL_SECTIONS.filter((x) => !x.minRole || hasRole($currentUser, x.minRole))
+    .map((x) => (x.id === 'certificates' && certAttention ? { ...x, badge: certAttention } : x)))
   // Sections that were merged into another one: old links land on the new home.
   const MERGED = { logs: 'general', geo: 'web' }
   const initial = MERGED[hashParam('s')] || hashParam('s')
@@ -46,6 +50,7 @@
   import Checkbox from '../components/Checkbox.svelte'
   import Modal from '../components/Modal.svelte'
   import OffhostBackup from '../components/OffhostBackup.svelte'
+  import Certificates from '../components/Certificates.svelte'
   import SmtpSettings from '../components/SmtpSettings.svelte'
 
   let { loading = $bindable(true) } = $props()
@@ -1061,6 +1066,10 @@
 
   onMount(() => {
     loadSettings()
+    // the Certificates section loads this itself when it's the one open
+    if (hasRole($currentUser, 'admin') && section !== 'certificates') {
+      apiGet('/api/certs').then((o) => (certAttention = o.attention)).catch(() => {})
+    }
   })
 </script>
 
@@ -1370,6 +1379,11 @@
       {#if section === 'agents'}
       <div class="space-y-4">
       <AgentListener />
+      </div>
+      {/if}
+      {#if section === 'certificates'}
+      <div class="space-y-4">
+      <Certificates onload={(o) => (certAttention = o.attention)} />
       </div>
       {/if}
       {#if section === 'networks'}

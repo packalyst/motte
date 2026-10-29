@@ -17,12 +17,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
-	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -130,10 +128,7 @@ func (c *CA) CertPEM() []byte { return c.certPEM }
 
 // Fingerprint returns the SHA-256 fingerprint of the CA cert, as "sha256:<hex>".
 // This is what the install command pins out-of-band.
-func (c *CA) Fingerprint() string {
-	sum := sha256.Sum256(c.cert.Raw)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
+func (c *CA) Fingerprint() string { return fingerprintFromCert(c.cert) }
 
 // Pool returns a CertPool containing just this CA (for verifying agent client certs).
 func (c *CA) Pool() *x509.CertPool {

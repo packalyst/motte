@@ -81,6 +81,7 @@ const (
 	NotifyLoginNewDevice NotificationType = "login_new_device"
 	NotifySystemAlert    NotificationType = "system_alert"
 	NotifyResourceAlert  NotificationType = "resource_alert"
+	NotifyCertExpiry     NotificationType = "cert_expiry"
 )
 
 // DefaultNotificationIcon is the icon used for all push notifications
@@ -95,6 +96,7 @@ var PreferenceDefaults = map[NotificationType]bool{
 	NotifyLoginNewDevice: true,  // ON - security alerts
 	NotifySystemAlert:    true,  // ON - important system notifications
 	NotifyResourceAlert:  true,  // ON - resource threshold alerts (rules in Profile → Notifications)
+	NotifyCertExpiry:     true,  // ON - a certificate close to expiry or failing to renew (admins only)
 }
 
 // VAPIDKeys holds the VAPID key pair for Web Push

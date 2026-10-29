@@ -28,11 +28,24 @@ type serverCertCache struct {
 
 // serverCertificate is the listener's tls.Config.GetCertificate.
 func (s *Service) serverCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	return s.listenerCert(false)
+}
+
+// RenewListenerCert replaces the listener certificate now ("Renew now"). The current one keeps
+// being served if making the new one fails.
+func (s *Service) RenewListenerCert() error {
+	_, err := s.listenerCert(true)
+	return err
+}
+
+// listenerCert returns the current listener certificate, making a new one first when forced, when
+// it's close to expiry, or when the host's addresses or domain changed.
+func (s *Service) listenerCert(force bool) (*tls.Certificate, error) {
 	c := &s.srvCert
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
-	stale := c.cert == nil || c.cert.Leaf.NotAfter.Sub(now) < serverCertRenewAt
+	stale := force || c.cert == nil || c.cert.Leaf.NotAfter.Sub(now) < serverCertRenewAt
 	var hosts []string
 	if stale || now.Sub(c.checked) >= serverCertRecheck {
 		hosts = detectHostSANs(s.sslDomain)
@@ -45,7 +58,7 @@ func (s *Service) serverCertificate(*tls.ClientHelloInfo) (*tls.Certificate, err
 	}
 	cert, err := s.ca.ServerCertificate(hosts, serverCertTTL)
 	if err != nil {
-		if c.cert != nil && now.Before(c.cert.Leaf.NotAfter) {
+		if !force && c.cert != nil && now.Before(c.cert.Leaf.NotAfter) {
 			log.Printf("fleet: could not renew the listener certificate, keeping the current one: %v", err)
 			return c.cert, nil
 		}
@@ -54,4 +67,11 @@ func (s *Service) serverCertificate(*tls.ClientHelloInfo) (*tls.Certificate, err
 	c.cert, c.hosts = &cert, hosts
 	log.Printf("fleet: listener certificate issued for %s, valid until %s", strings.Join(hosts, ", "), cert.Leaf.NotAfter.UTC().Format(time.DateOnly))
 	return c.cert, nil
+}
+
+// currentListenerCert is the certificate being served, without renewing it (nil before the first).
+func (s *Service) currentListenerCert() (*tls.Certificate, []string) {
+	s.srvCert.mu.Lock()
+	defer s.srvCert.mu.Unlock()
+	return s.srvCert.cert, slices.Clone(s.srvCert.hosts)
 }
