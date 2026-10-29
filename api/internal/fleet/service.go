@@ -239,18 +239,18 @@ func (s *Service) startListenerLocked(port int) {
 		log.Printf("fleet: TLS config failed: %v", err)
 		return
 	}
-	srv := &http.Server{
-		Addr:              ":" + strconv.Itoa(port),
-		Handler:           s.Handler(),
-		TLSConfig:         tc,
-		ReadHeaderTimeout: 10 * time.Second,
+	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	if err != nil {
+		log.Printf("fleet: listener on :%d: %v", port, err)
+		return
 	}
+	srv := newFleetServer(s.Handler(), tc)
 	s.srv = srv
 	s.enabled = true
 	s.port = port
 	go func() {
 		log.Printf("fleet: mTLS listener on :%d (CA %s)", port, s.CA().Fingerprint())
-		if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		if err := srv.ServeTLS(limitPerIP(ln, maxFleetConnsPerIP), "", ""); err != nil && err != http.ErrServerClosed {
 			log.Printf("fleet: listener on :%d stopped: %v", port, err)
 		}
 	}()

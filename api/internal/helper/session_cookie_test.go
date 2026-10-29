@@ -74,3 +74,39 @@ func TestSetSessionCookieAttributes(t *testing.T) {
 		t.Errorf("value = %q, want tok-123", c.Value)
 	}
 }
+
+// Over HTTPS only the __Host- cookie counts: a plain-name cookie (which a sibling subdomain can
+// set for the parent domain) is ignored, so it can't sign a logged-out browser into another
+// session. Over plain HTTP only the plain name exists.
+func TestSessionCookieNameByScheme(t *testing.T) {
+	req := func(https bool, cookies ...*http.Cookie) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		if https {
+			r.Header.Set("X-Forwarded-Proto", "https")
+		}
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		return r
+	}
+	plain := &http.Cookie{Name: "motte_session", Value: "planted"}
+	host := &http.Cookie{Name: "__Host-motte_session", Value: "mine"}
+	for _, c := range []struct {
+		name string
+		r    *http.Request
+		want string
+	}{
+		{"https, plain only", req(true, plain), ""},
+		{"https, both", req(true, plain, host), "mine"},
+		{"https, __Host- only", req(true, host), "mine"},
+		{"http, plain", req(false, plain), "planted"},
+		{"http, __Host- only", req(false, host), ""},
+	} {
+		if got := SessionToken(c.r); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+		if HasSessionCookie(c.r) != (c.want != "") {
+			t.Errorf("%s: HasSessionCookie disagrees", c.name)
+		}
+	}
+}

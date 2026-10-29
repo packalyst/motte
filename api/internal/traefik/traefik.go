@@ -73,6 +73,12 @@ const (
 	MiddlewareSentinelFWBlockFile   = "sentinel_fw_block@file"
 )
 
+// cloudflareListURL is where the sentinel plugin fetches the panel's live Cloudflare list (the
+// same URL the core template gives its sentinel middlewares).
+func cloudflareListURL() string {
+	return "http://host.docker.internal:" + helper.GetEnvOptional("API_PORT", "8081") + "/internal/cloudflare"
+}
+
 // Service handles Traefik operations
 type Service struct {
 	traefikAPI    string
@@ -1053,6 +1059,9 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockE
 						sb.WriteString(fmt.Sprintf("              - \"%s\"\n", escapeYAMLString(ip)))
 					}
 				}
+
+				// Which peers may name the visitor (CF-Connecting-IP): the panel's live list.
+				sb.WriteString(fmt.Sprintf("          cloudflareListUrl: \"%s\"\n", cloudflareListURL()))
 
 				// Error Mode (whitelist valid values)
 				errorMode := mw.config.ErrorMode

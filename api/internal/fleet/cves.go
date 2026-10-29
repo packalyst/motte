@@ -177,6 +177,12 @@ func (s *Service) IngestCVEs(machineID string, meta scanMeta, findings []CVE) er
 	return tx.Commit()
 }
 
+// cveIngestSlot lets one CVE report be decoded and stored at a time, panel-wide. Decoding a large
+// report takes a few hundred MB for a moment, so a (compromised) machine sending many at once must
+// not multiply that: a report that finds the slot taken is refused with 503, and the agent sends
+// it again on its next cycle (it retries until the panel accepts it).
+var cveIngestSlot = make(chan struct{}, 1)
+
 // HandleCVEReport (POST, mTLS) ingests a machine's full CVE list (gzip-compressed). The
 // machine comes from the client cert.
 func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +191,15 @@ func (s *Service) HandleCVEReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unknown machine")
 		return
 	}
+	select {
+	case cveIngestSlot <- struct{}{}:
+		defer func() { <-cveIngestSlot }()
+	default:
+		w.Header().Set("Retry-After", "15")
+		writeErr(w, http.StatusServiceUnavailable, "another CVE report is being stored, retry shortly")
+		return
+	}
+	allowLargeTransfer(w)                // a large report can take a while to upload and to store
 	body, ok := reportBody(w, r, 64<<20) // 64 MiB, compressed and decompressed
 	if !ok {
 		return

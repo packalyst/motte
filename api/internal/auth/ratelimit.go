@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log"
@@ -99,9 +98,16 @@ func (l *attemptLimiter[K]) refund(key K) { l.l.Refund(key, time.Now()) }
 // clear forgets a key's failed attempts after a success.
 func (l *attemptLimiter[K]) clear(key K) { l.l.Clear(key) }
 
-// usedTOTP holds the last successfully-used TOTP code per user, to block replay of a captured
-// code within its validity window (90s: the TOTP period plus the library's ±1 step skew).
-var usedTOTP = bounded.New[int64, string](maxTrackedKeys, bounded.Refuse)
+// usedTOTP holds every TOTP code a user got in with, for its validity window (90s: the TOTP
+// period plus the library's ±1 step skew), so none of them can be replayed — not only the latest:
+// a code used before a newer one stays valid for a while and must stay refused too. Entries are
+// only added for codes that just validated, so the map grows with real logins, not with guesses.
+var usedTOTP = bounded.New[usedTOTPCode, struct{}](maxTrackedKeys, bounded.Refuse)
+
+type usedTOTPCode struct {
+	userID int64
+	code   string
+}
 
 const totpReplayWindow = 90 * time.Second
 
@@ -117,13 +123,9 @@ var (
 func claimTOTPCode(userID int64, code string) error {
 	now := time.Now()
 	replayed := false
-	if !usedTOTP.Update(userID, now, func(used *string, found bool) time.Time {
-		if found && subtle.ConstantTimeCompare([]byte(*used), []byte(code)) == 1 {
-			replayed = true
-			return now.Add(totpReplayWindow) // keep the guard; its window restarts
-		}
-		*used = code
-		return now.Add(totpReplayWindow)
+	if !usedTOTP.Update(usedTOTPCode{userID, code}, now, func(_ *struct{}, found bool) time.Time {
+		replayed = found
+		return now.Add(totpReplayWindow) // a replay attempt keeps it refused for a full window
 	}) {
 		return errTOTPGuardFull
 	}

@@ -54,9 +54,15 @@ tab, sticky ctrl/alt, ^C, arrows…); its end button slides the keyboard down an
 - **Step-up** — a one-time, short-lived grant minted after step-up re-auth is required before a
   WebSocket opens (the WS itself can't do the 428 dance). Normal grants are multi-use within a few
   minutes (so one step-up covers several tabs/reconnects); read-only share grants live ~30 min.
-- **Audit** — enable/disable, grant issuance, and every session open/close.
+- **Audit** — enable/disable, grant issuance, every session open/close, and every action taken
+  through the console's panels rather than the terminal (upload, download, delete, create folder,
+  docker start/stop/restart: `relayBrowserFrame`, `consoleActionLabel`).
 - **Session recording** — optional per host; output is tee'd to an asciinema `.cast` + an audit
-  entry.
+  entry. Those panel actions are marked in the recording too, since their effect isn't in the
+  terminal output.
+- **Access re-checked while open** — the console and the console-events socket re-check the
+  session, role and scope every 30 s: ending, locking or demoting the session closes them, and a
+  scope change applies.
 - **Read-only share** — a view-only grant (input dropped server-side) handed via a `#fconsole=`
   deep link; the viewer must still be a logged-in panel user.
 - Disabling the toggle or revoking the machine tears down live sessions immediately.

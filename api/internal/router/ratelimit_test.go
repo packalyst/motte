@@ -62,3 +62,38 @@ func TestRateLimitCap(t *testing.T) {
 		t.Fatalf("a client already tracked was refused: %d", c)
 	}
 }
+
+// Authenticate: fail closed without a resolver; refuse missing, invalid and (unless allowed)
+// idle-locked sessions with the right status.
+func TestAuthenticate(t *testing.T) {
+	SetAuthResolver(nil)
+	if p, code, _ := Authenticate("any", false); p != nil || code != http.StatusServiceUnavailable {
+		t.Fatalf("no resolver: %v %d", p, code)
+	}
+	SetAuthResolver(func(token string) (*Principal, bool) {
+		switch token {
+		case "live":
+			return &Principal{UserID: 1}, true
+		case "locked":
+			return &Principal{UserID: 1, Locked: true}, true
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { SetAuthResolver(nil) })
+	for _, c := range []struct {
+		token       string
+		allowLocked bool
+		want        int
+	}{
+		{"", false, http.StatusUnauthorized},
+		{"bogus", false, http.StatusUnauthorized},
+		{"locked", false, http.StatusLocked},
+		{"locked", true, 0},
+		{"live", false, 0},
+	} {
+		p, code, _ := Authenticate(c.token, c.allowLocked)
+		if (c.want == 0) != (p != nil) || code != c.want {
+			t.Errorf("%q allowLocked=%v: principal=%v status %d, want %d", c.token, c.allowLocked, p != nil, code, c.want)
+		}
+	}
+}

@@ -91,7 +91,7 @@ func TestPasswordRecheckLockout(t *testing.T) {
 	if err := svc.VerifyPassword(u.ID, pw); !isTooMany(err) {
 		t.Fatalf("right password while locked out: got %v, want locked out", err)
 	}
-	if err := svc.ChangePassword(u.ID, pw, "N3wStrongP@ss"); !isTooMany(err) {
+	if err := svc.VerifyStepUp(u.ID, pw, ""); !isTooMany(err) { // what change-password checks
 		t.Fatalf("password change while locked out: got %v, want locked out", err)
 	}
 	if err := svc.VerifyPassword(other.ID, pw); err != nil {
@@ -270,8 +270,8 @@ func TestLoginLockoutGroupsIPv6(t *testing.T) {
 	}
 }
 
-// A 2FA code works once; and when the replay guard can't record it (its map is full) the code is
-// refused rather than left replayable.
+// A 2FA code works once, also after a newer one was used; and when the replay guard can't record
+// it (its map is full) the code is refused rather than left replayable.
 func TestTOTPSingleUse(t *testing.T) {
 	newTestService(t)
 	t.Setenv("ENCRYPTION_SECRET", strings.Repeat("cd", 32)) // synthetic test key
@@ -292,12 +292,25 @@ func TestTOTPSingleUse(t *testing.T) {
 	saved := usedTOTP
 	t.Cleanup(func() { usedTOTP = saved; totpLimiter.clear(9001); totpLimiter.clear(9002) })
 
-	usedTOTP = bounded.New[int64, string](10, bounded.Refuse)
+	usedTOTP = bounded.New[usedTOTPCode, struct{}](10, bounded.Refuse)
 	if err := verifyTOTP(9001, secret, code); err != nil {
 		t.Fatalf("first use: %v", err)
 	}
 	if err := verifyTOTP(9001, secret, code); err == nil {
 		t.Fatal("the same code was accepted twice")
+	}
+	// A newer code doesn't make an older one usable again (both are inside their window).
+	next, err := totp.GenerateCode(key.Secret(), time.Now().Add(30*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != code {
+		if err := verifyTOTP(9001, secret, next); err != nil {
+			t.Fatalf("newer code: %v", err)
+		}
+		if err := verifyTOTP(9001, secret, code); err == nil {
+			t.Fatal("an older code was accepted again after a newer one")
+		}
 	}
 
 	// Sent at the same moment, one code still passes only once.
@@ -317,7 +330,7 @@ func TestTOTPSingleUse(t *testing.T) {
 		t.Fatalf("one code passed %d times concurrently", n)
 	}
 
-	usedTOTP = bounded.New[int64, string](1, bounded.Refuse)
+	usedTOTP = bounded.New[usedTOTPCode, struct{}](1, bounded.Refuse)
 	_ = claimTOTPCode(1, "000000")
 	if err := verifyTOTP(9002, secret, code); err == nil {
 		t.Fatal("a code the replay guard couldn't record was accepted")

@@ -63,12 +63,13 @@ func ClearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// sessionCookieValue returns the session token carried by either cookie name, or "".
+// sessionCookieValue returns the session token from the cookie name for this connection, or "".
+// Over HTTPS only the __Host- cookie counts: the plain name can be set by a sibling subdomain
+// (Domain=parent), so accepting it would let one plant its own session on a logged-out browser.
+// Over plain HTTP browsers never send a __Host- (Secure) cookie, so only the plain name exists.
 func sessionCookieValue(r *http.Request) string {
-	for _, name := range []string{SessionCookieName(true), SessionCookieName(false)} {
-		if c, err := r.Cookie(name); err == nil && c.Value != "" {
-			return c.Value
-		}
+	if c, err := r.Cookie(SessionCookieName(EffectiveHTTPS(r))); err == nil {
+		return c.Value
 	}
 	return ""
 }

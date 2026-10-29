@@ -679,7 +679,7 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 // consoleRecheck is how often an open console re-checks what opening it required, so revoking,
 // demoting or deleting the operator, ending or locking their session, taking the machine out of
 // their scope or switching its console off cuts the shell within this time (not at consoleMaxDuration).
-const consoleRecheck = 30 * time.Second
+var consoleRecheck = 30 * time.Second
 
 // consoleAccess checks what every console needs, at open and again every consoleRecheck while it
 // stays open: a live, unlocked session with the operator role (the WS is mounted directly on the
@@ -687,8 +687,8 @@ const consoleRecheck = 30 * time.Second
 // grant), a known machine in that user's scope, and console enabled on it. It returns the principal
 // and machine, or the HTTP status and reason to refuse with.
 func (s *Service) consoleAccess(token, machineID string) (*router.Principal, *Machine, int, string) {
-	p, ok := router.ResolvePrincipal(token)
-	if !ok || p == nil || p.Locked {
+	p, _, _ := router.Authenticate(token, false)
+	if p == nil {
 		return nil, nil, http.StatusUnauthorized, "unauthorized"
 	}
 	if !auth.RoleAtLeast(p.Role, auth.RoleOperator) {
@@ -845,17 +845,66 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		if readonly {
 			continue // view-only: drop EVERY browser frame (data, file-put, file-get, resize, close…)
 		}
-		if !browserFrameTypes[f.T] {
-			continue // panel-only control frames (open, …) never come from a browser
-		}
-		f.Session = effSession // never let a browser target another session
-		if f.T == "resize" {
-			f.Cols, f.Rows = clampResize(f.Cols), clampResize(f.Rows) // bound every resize, not just open
-		} else if f.T == "data" {
-			a.touch(effSession) // keystrokes refresh the idle clock
-		}
-		a.writeToAgent(f)
+		a.relayBrowserFrame(f, effSession, func(label string) {
+			events.Audit("fleet", "console_action", events.SeverityWarning, p.Username, helper.GetClientIP(r),
+				fmt.Sprintf("Console on %q (session %s): %s", m.Name, effSession, label))
+		})
 	}
+}
+
+// relayBrowserFrame forwards one frame from an interactive browser to its own session on the agent.
+// Panel-only control frames (open, …) are dropped, the session is forced to the browser's own,
+// resizes are bounded and keystrokes refresh the idle clock. An action outside the terminal
+// (consoleActionLabel) is audited and marked in the session's recording first: its effect isn't in
+// the terminal output, so without that it would leave no trace.
+func (a *agentConn) relayBrowserFrame(f consoleFrame, session string, audit func(label string)) {
+	if !browserFrameTypes[f.T] {
+		return
+	}
+	f.Session = session // never let a browser target another session
+	switch f.T {
+	case "resize":
+		f.Cols, f.Rows = clampResize(f.Cols), clampResize(f.Rows) // bound every resize, not just open
+	case "data":
+		a.touch(session) // keystrokes refresh the idle clock
+	}
+	if label := consoleActionLabel(f); label != "" {
+		audit(label)
+		a.recordMarker(session, label)
+	}
+	a.writeToAgent(f)
+}
+
+// maxActionPath bounds the path quoted in an action's audit entry and recording marker.
+const maxActionPath = 256
+
+// consoleActionLabel describes a browser frame that writes, removes or takes files, or starts or
+// stops containers, on the machine through the console's panels instead of the terminal; "" for
+// everything else (keystrokes and resizes, which the recording already has, and the read-only
+// panels: listings, git status, docker ps/logs, diagnostics).
+func consoleActionLabel(f consoleFrame) string {
+	path := f.Path
+	if len(path) > maxActionPath {
+		path = path[:maxActionPath] + "…"
+	}
+	switch f.T {
+	case "file-put":
+		if f.Start { // once per upload, not per chunk
+			return "upload " + path
+		}
+	case "file-get":
+		return "download " + path
+	case "file-delete":
+		return "delete " + path
+	case "file-mkdir":
+		return "create folder " + path
+	case "docker":
+		switch f.Action {
+		case "start", "stop", "restart":
+			return "docker " + f.Action + " " + path
+		}
+	}
+	return ""
 }
 
 // browserFrameTypes is everything an interactive browser may send to its own session on the agent.

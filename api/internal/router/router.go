@@ -313,14 +313,26 @@ func SetAuthResolver(resolver AuthResolver) {
 	authResolver = resolver
 }
 
-// ResolvePrincipal resolves a session token to its principal via the registered resolver. For
-// handlers that authenticate outside the normal middleware (e.g. WebSocket upgrades mounted
-// directly on the mux). Returns (nil, false) when there is no resolver or the token is invalid.
-func ResolvePrincipal(token string) (*Principal, bool) {
-	if authResolver == nil || token == "" {
-		return nil, false
+// Authenticate is the one session check every authenticated entry point shares: the middleware,
+// and the handlers mounted outside it (setup once an admin exists, the console WebSockets). It
+// returns the principal of a live session, or nil with the status and message to refuse with:
+// 503 when auth isn't available (fail closed), 401 for a missing or invalid session, 423 for an
+// idle-locked one unless allowLocked (the unlock/logout/me/lock endpoints).
+func Authenticate(token string, allowLocked bool) (*Principal, int, string) {
+	if authResolver == nil {
+		return nil, http.StatusServiceUnavailable, "Authentication unavailable"
 	}
-	return authResolver(token)
+	if token == "" {
+		return nil, http.StatusUnauthorized, "Unauthorized"
+	}
+	p, ok := authResolver(token)
+	if !ok || p == nil {
+		return nil, http.StatusUnauthorized, "Invalid or expired session"
+	}
+	if p.Locked && !allowLocked {
+		return nil, http.StatusLocked, "Session locked"
+	}
+	return p, 0, ""
 }
 
 // StepUpFunc re-authenticates the caller of a sensitive, session-authorized request for a
@@ -456,37 +468,14 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// Auth is required but unavailable: the resolver is only registered when the
-		// auth service is enabled AND initializes successfully (see cmd/main.go). A nil
-		// resolver therefore means auth is disabled or failed to init at boot — fail
-		// CLOSED for protected paths rather than serving them with no authentication.
-		// Public paths (login, setup, health) are matched above, so this can't lock out
-		// the setup wizard or login.
-		if authResolver == nil {
-			JSONError(w, "Authentication unavailable", http.StatusServiceUnavailable)
-			return
-		}
-
-		// Extract token from Authorization header or cookie
-		token := helper.SessionToken(req)
-		if token == "" {
-			JSONError(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		// Validate token and resolve the principal (identity + role + scope).
-		principal, ok := authResolver(token)
-		if !ok || principal == nil {
-			JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
-			return
-		}
-
-		// An idle-locked session is refused with 423 everywhere except the unlock/logout/me/lock
-		// endpoints. This is what makes the idle lock a real server boundary: a page refresh (or
-		// any direct API call) stays locked until the user re-authenticates, instead of the lock
-		// being a client-only overlay that F5 clears.
-		if principal.Locked && !lockAllowedPath(path) {
-			JSONError(w, "Session locked", http.StatusLocked)
+		// Resolve the session (cookie or Bearer). Auth unavailable fails CLOSED for protected
+		// paths (public ones are matched above, so this can't lock out the setup wizard or
+		// login). An idle-locked session is refused with 423 everywhere except the
+		// unlock/logout/me/lock endpoints: that makes the idle lock a real server boundary, not
+		// a client-only overlay that F5 clears.
+		principal, status, msg := Authenticate(helper.SessionToken(req), lockAllowedPath(path))
+		if principal == nil {
+			JSONError(w, msg, status)
 			return
 		}
 

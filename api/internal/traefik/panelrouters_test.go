@@ -185,3 +185,41 @@ func TestPanelRoutersAllGated(t *testing.T) {
 		}
 	}
 }
+
+// Every sentinel middleware that judges the visitor's IP (an allow list or the block list) takes
+// the panel's live Cloudflare list, in the core config and in generated per-site ones; without it
+// a visitor behind Cloudflare would be judged by Cloudflare's address.
+func TestSentinelIPFiltersUseCloudflareList(t *testing.T) {
+	check := func(where, content string) {
+		v, err := helper.GetYAMLPath(content, "http.middlewares")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, m := range v.(map[string]interface{}) {
+			plugin, ok := m.(map[string]interface{})["plugin"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			s := plugin["sentinel"].(map[string]interface{})
+			f, ok := s["ipFilter"].(map[string]interface{})
+			if !ok || name == MiddlewareSentinelDrop { // drop admits nobody, whoever the visitor is
+				continue
+			}
+			if s["cloudflareListUrl"] != "http://host.docker.internal:8081/internal/cloudflare" {
+				t.Errorf("%s: %s judges IPs (%v) without the Cloudflare list", where, name, f)
+			}
+		}
+	}
+	check("core", renderCore(t, true))
+
+	t.Setenv("API_PORT", "8081")
+	dir := t.TempDir()
+	if err := GenerateDomainRoutes(dir, []DomainRouteConfig{{Domain: "site.example.test", TargetIP: "10.8.0.30", TargetPort: 80,
+		AccessMode: "vpn", SentinelConfig: &SentinelConfig{Enabled: true, ErrorMode: "403", IPFilter: struct {
+			SourceRange []string `json:"sourceRange,omitempty"`
+		}{SourceRange: []string{"10.8.0.0/16"}}}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "domains.yml"))
+	check("domains", string(b))
+}
