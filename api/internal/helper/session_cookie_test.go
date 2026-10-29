@@ -110,3 +110,23 @@ func TestSessionCookieNameByScheme(t *testing.T) {
 		}
 	}
 }
+
+// A WebSocket through Traefik over HTTPS carries X-Forwarded-Proto "wss": it is HTTPS too, so its
+// __Host- session cookie counts (otherwise every live connection was refused).
+func TestEffectiveHTTPSWebSocket(t *testing.T) {
+	for proto, want := range map[string]bool{"https": true, "wss": true, "WSS": true, "http": false, "ws": false, "": false} {
+		r := httptest.NewRequest(http.MethodGet, "/api/ws", nil)
+		if proto != "" {
+			r.Header.Set("X-Forwarded-Proto", proto)
+		}
+		if got := EffectiveHTTPS(r); got != want {
+			t.Errorf("X-Forwarded-Proto %q: %v, want %v", proto, got, want)
+		}
+	}
+	ws := httptest.NewRequest(http.MethodGet, "/api/fleet/console/events", nil)
+	ws.Header.Set("X-Forwarded-Proto", "wss")
+	ws.AddCookie(&http.Cookie{Name: "__Host-motte_session", Value: "mine"})
+	if got := SessionToken(ws); got != "mine" {
+		t.Fatalf("a secure WebSocket's session cookie was ignored: %q", got)
+	}
+}
