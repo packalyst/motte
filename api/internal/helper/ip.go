@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -139,6 +140,22 @@ func GetClientIP(r *http.Request) string {
 		return chain[0]
 	}
 	return remoteIP
+}
+
+// RateKey is the key per-client limits count by: an IPv4 address as is, an IPv6 address by its
+// /64 network. One IPv6 connection usually owns a whole /64, so counting single IPv6 addresses
+// would let one client dodge a limit (and fill its map) by changing address every request.
+// Anything that isn't an IP is returned unchanged.
+func RateKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	a = a.Unmap().WithZone("")
+	if a.Is4() {
+		return a.String()
+	}
+	return netip.PrefixFrom(a, 64).Masked().String()
 }
 
 // defaultCloudflareCIDRs is the bundled fallback list of Cloudflare edge ranges,

@@ -171,6 +171,14 @@ func TestPasskeyLoginCap(t *testing.T) {
 	if _, err := waStoreLoginChallenge("192.0.2.21", data); err != nil {
 		t.Fatalf("another IP: %v", err)
 	}
+	for i := 1; i <= maxPendingPasskeyLoginsPerIP; i++ {
+		if _, err := waStoreLoginChallenge(fmt.Sprintf("2001:db8:0:5::%x", i), data); err != nil {
+			t.Fatalf("IPv6 sign-in %d: %v", i, err)
+		}
+	}
+	if _, err := waStoreLoginChallenge("2001:db8:0:5:ffff::1", data); !errors.Is(err, errTooManyPasskeyLogins) {
+		t.Fatalf("a new address in the same /64 got past the per-IP cap: %v", err)
+	}
 	if _, ok := waTakeChallenge(waLoginPrefix + first); !ok {
 		t.Fatal("stored sign-in not found")
 	}
@@ -219,4 +227,40 @@ func TestFailedLoginAuditName(t *testing.T) {
 		}
 	}
 	loginLimiter.clear("192.0.2.30")
+}
+
+// Wrong passwords from new addresses inside one IPv6 /64 still lock it out; another /64 can still
+// try, and the audit log keeps the address that actually sent each attempt.
+func TestLoginLockoutGroupsIPv6(t *testing.T) {
+	svc := newTestService(t)
+	db, err := database.GetDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	login := func(addr string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"nobody","password":"wrong"}`))
+		req.RemoteAddr = addr
+		rec := httptest.NewRecorder()
+		svc.handleLogin(rec, req)
+		return rec.Code
+	}
+	t.Cleanup(func() {
+		loginLimiter.clear("2001:db8:0:9::/64")
+		loginLimiter.clear("2001:db8:0:a::/64")
+	})
+	for i := 1; i <= maxLoginAttempts; i++ {
+		if c := login(fmt.Sprintf("[2001:db8:0:9::%x]:40000", i)); c != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d", i, c)
+		}
+	}
+	var ip string
+	if err := db.QueryRow(`SELECT ip FROM events WHERE type = 'login_failed' ORDER BY id DESC LIMIT 1`).Scan(&ip); err != nil || ip != fmt.Sprintf("2001:db8:0:9::%x", maxLoginAttempts) {
+		t.Fatalf("audit logged %q (%v), want the sending address", ip, err)
+	}
+	if c := login("[2001:db8:0:9:ffff::1]:40000"); c != http.StatusTooManyRequests {
+		t.Fatalf("a new address in the same /64 kept guessing: %d", c)
+	}
+	if c := login("[2001:db8:0:a::1]:40000"); c != http.StatusUnauthorized {
+		t.Fatalf("another /64 was locked out: %d", c)
+	}
 }

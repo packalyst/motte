@@ -76,8 +76,9 @@ func waStoreChallenge(key string, data webauthn.SessionData) {
 
 // waStoreLoginChallenge keeps a passkey sign-in challenge under a fresh random id. Anyone can start
 // a sign-in, so how many may wait is capped, from one IP and in total; past either cap it returns
-// errTooManyPasskeyLogins until one finishes or expires.
+// errTooManyPasskeyLogins until one finishes or expires. An IPv6 client counts by its /64.
 func waStoreLoginChallenge(ip string, data webauthn.SessionData) (string, error) {
+	ip = helper.RateKey(ip)
 	handle := make([]byte, 16)
 	rand.Read(handle) // never fails (crypto/rand)
 	id := hex.EncodeToString(handle)

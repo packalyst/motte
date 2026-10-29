@@ -66,7 +66,7 @@ func rotateBlockDuration() time.Duration {
 // and returns the result.
 func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
 	key := router.ExtractPathParam(r, "/api/restart/")
-	ip := helper.GetClientIP(r)
+	ip := helper.RateKey(helper.GetClientIP(r)) // the abuse guard counts an IPv6 client by its /64
 
 	if rotateBlocked(ip) {
 		router.JSONError(w, "too many attempts, try again later", http.StatusTooManyRequests)

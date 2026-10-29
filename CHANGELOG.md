@@ -137,6 +137,11 @@ releases will be tagged as they are cut.
   the per-IP login rate-limit no longer collapses into one global bucket.
 
 ### Security
+- **Limits can't be dodged with IPv6 addresses**: the request limit, the login lockout, the
+  passkey sign-in cap and the tunnel key guard count an IPv6 client by its /64 network (one
+  connection usually owns a whole /64), so changing address no longer buys more password or key
+  guesses. The request limiter also tracks at most 100,000 clients at once, so a flood of new
+  addresses can't fill the panel's memory.
 - **Headscale auth keys are shown once**: the whole key appears only when it's created (copy the
   command then). The Auth Keys list shows just the start of each key, and Expire works by the
   key's id, the panel looking up the key itself, so the browser never holds an existing key.
