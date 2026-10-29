@@ -615,10 +615,21 @@
                   {/if}
                   <!-- Backend HTTPS Badge -->
                   {#if route.httpsBackend}
-                    <Badge variant="muted" size="sm">HTTPS↗</Badge>
+                    <span class="cursor-help" data-kt-tooltip>
+                      <Badge variant="muted" size="sm"><span class="inline-flex items-center gap-1"><Icon name="lock" size={11} />HTTPS</span></Badge>
+                      <span data-kt-tooltip-content class="kt-tooltip hidden">The panel reaches the target over HTTPS</span>
+                    </span>
                   {/if}
                   {#each (route.middlewares || []).filter(m => !m.includes('vpn-only')).slice(0, 2) as mw}
-                    <Badge variant="muted" size="sm">{mw.replace('@file', '')}</Badge>
+                    {@const name = mw.replace('@file', '')}
+                    {#if name === 'redirect-to-https'}
+                      <span class="cursor-help" data-kt-tooltip>
+                        <Badge variant="muted" size="sm"><span class="inline-flex items-center gap-1"><Icon name="corner-down-right" size={11} />{name}</span></Badge>
+                        <span data-kt-tooltip-content class="kt-tooltip hidden">Plain HTTP redirects to HTTPS (automatic for sites with HTTPS on)</span>
+                      </span>
+                    {:else}
+                      <Badge variant="muted" size="sm">{name}</Badge>
+                    {/if}
                   {/each}
                   {#if (route.middlewares || []).filter(m => !m.includes('vpn-only')).length > 2}
                     {@const extraMws = (route.middlewares || []).filter(m => !m.includes('vpn-only')).slice(2)}
