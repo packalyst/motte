@@ -20,7 +20,7 @@ func signedClientCert(t *testing.T, svc *Service, cn string) *x509.Certificate {
 	t.Helper()
 	_, csrPEM := makeCSR(t, cn)
 	b, _ := pem.Decode(csrPEM)
-	certPEM, err := svc.ca.SignClientCSR(b.Bytes, cn, time.Hour)
+	certPEM, err := svc.CA().SignClientCSR(b.Bytes, cn, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

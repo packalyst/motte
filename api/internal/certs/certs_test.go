@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"api/internal/fleet"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -194,5 +196,23 @@ func TestWarningsOnlyForAdmins(t *testing.T) {
 	ids, err := s.adminIDs()
 	if err != nil || !slices.Equal(ids, []int64{1, 2}) {
 		t.Fatalf("recipients %v (%v), want [1 2]", ids, err)
+	}
+}
+
+// During a CA replacement the old CA's expiry is watched too: the panel still presents it.
+func TestTrackedDuringCARotation(t *testing.T) {
+	now := time.Now()
+	f := &fleet.CertStatus{CA: fleet.CertInfo{NotAfter: now.Add(3650 * day)}, Previous: &fleet.CertInfo{NotAfter: now.Add(20 * day)}, AgentLifetimeDays: 90}
+	var prev *tracked
+	for _, tr := range trackedList(Overview{Fleet: f}) {
+		if tr.key == "fleet-ca-previous" {
+			prev = &tr
+		}
+	}
+	if prev == nil {
+		t.Fatal("old CA not tracked")
+	}
+	if l, due := currentLevel(*prev, now); !due || l != 30 {
+		t.Fatalf("level %d due %v", l, due)
 	}
 }

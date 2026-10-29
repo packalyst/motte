@@ -7,6 +7,11 @@ releases will be tagged as they are cut.
 ## [Unreleased]
 
 ### Added
+- **Replace the fleet CA** (Settings → Certificates, admins), for its expiry or a leaked key,
+  without cutting machines off: the current CA stays in use while machines move to the new one
+  by themselves (agent 0.1.67 or later, within about an hour while online); Finish is offered
+  once every machine moved, or "Finish anyway" cuts off the ones left, which must be re-enrolled.
+  Each step asks for the password. Restoring a backup from before a replacement warns first.
 - **Machine certificate lifetime** (Settings → Agents): 30, 60, 90 (default), 180 or 365 days,
   changed with a password confirm. The panel accepts renewal only in the last third of a
   certificate's life; agents from 0.1.67 renew right then and keep their trusted panel CAs up to

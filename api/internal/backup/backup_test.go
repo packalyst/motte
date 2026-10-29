@@ -278,3 +278,25 @@ func TestOpenRejectsOldFormat(t *testing.T) {
 		t.Fatal("a wg-panel-backup file opened")
 	}
 }
+
+// Restoring a backup whose fleet CA was replaced since warns that moved machines will need
+// re-enrolling; the same CA, or no fleet tier, doesn't.
+func TestFleetCAWarning(t *testing.T) {
+	db := testDB(t)
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS fleet_ca (id INTEGER PRIMARY KEY, cert_pem TEXT NOT NULL, key_enc TEXT NOT NULL, created_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = db.Exec(`INSERT INTO fleet_ca (cert_pem, key_enc, created_at) VALUES ('CURRENT-CA', 'k', 'now')`)
+	doc := func(pem string) *Document {
+		return &Document{Tables: map[string][]map[string]any{"fleet_ca": {{"cert_pem": pem}}}}
+	}
+	if w := fleetCAWarning(db, doc("CURRENT-CA\n")); len(w) != 0 {
+		t.Errorf("same CA warned: %v", w)
+	}
+	if w := fleetCAWarning(db, doc("REPLACED-CA")); len(w) != 1 {
+		t.Error("a replaced CA didn't warn")
+	}
+	if w := fleetCAWarning(db, &Document{Tables: map[string][]map[string]any{}}); len(w) != 0 {
+		t.Error("warned without a fleet tier")
+	}
+}

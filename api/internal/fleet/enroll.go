@@ -64,7 +64,8 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "server error")
 		return
 	}
-	certPEM, err := s.ca.SignClientCSR(block.Bytes, id, s.clientCertTTL())
+	ca := s.CA() // new machines get the CA the panel presents (the old one during a CA rotation)
+	certPEM, err := ca.SignClientCSR(block.Bytes, id, s.clientCertTTL())
 	if err != nil {
 		log.Printf("fleet: sign csr rejected: %v", err)
 		writeErr(w, http.StatusBadRequest, "csr rejected")
@@ -94,6 +95,7 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		Name:        name,
 		MachineHash: machineIdentityHash(req.MachineID, req.WGPubkey),
 		CertFP:      certFingerprintPEM(certPEM),
+		CertCA:      ca.Fingerprint(),
 		WGPubkey:    req.WGPubkey,
 		EnrolledAt:  time.Now(),
 	}
@@ -107,7 +109,7 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, enrollResponse{
 		MachineID:  id,
 		ClientCert: string(certPEM),
-		CACert:     string(s.ca.CertPEM()),
+		CACert:     string(ca.CertPEM()),
 	})
 }
 

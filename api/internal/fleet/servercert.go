@@ -45,7 +45,8 @@ func (s *Service) listenerCert(force bool) (*tls.Certificate, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
-	stale := force || c.cert == nil || c.cert.Leaf.NotAfter.Sub(now) < serverCertRenewAt
+	ca := s.CA()
+	stale := force || c.cert == nil || c.cert.Leaf.NotAfter.Sub(now) < serverCertRenewAt || !issuedBy(c.cert.Leaf, ca)
 	var hosts []string
 	if stale || now.Sub(c.checked) >= serverCertRecheck {
 		hosts = detectHostSANs(s.sslDomain)
@@ -56,7 +57,7 @@ func (s *Service) listenerCert(force bool) (*tls.Certificate, error) {
 	if !stale {
 		return c.cert, nil
 	}
-	cert, err := s.ca.ServerCertificate(hosts, serverCertTTL)
+	cert, err := ca.ServerCertificate(hosts, serverCertTTL)
 	if err != nil {
 		if !force && c.cert != nil && now.Before(c.cert.Leaf.NotAfter) {
 			log.Printf("fleet: could not renew the listener certificate, keeping the current one: %v", err)

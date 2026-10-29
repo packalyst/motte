@@ -20,7 +20,7 @@ func issueCert(t *testing.T, svc *Service, id string, ttl time.Duration) (*x509.
 	t.Helper()
 	_, csr := makeCSR(t, id)
 	b, _ := pem.Decode(csr)
-	certPEM, err := svc.ca.SignClientCSR(b.Bytes, id, ttl)
+	certPEM, err := svc.CA().SignClientCSR(b.Bytes, id, ttl)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func agedCert(t *testing.T, svc *Service, id string, lifetime, left time.Duratio
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(now.UnixNano()), Subject: pkix.Name{CommonName: id},
 		NotBefore: now.Add(left - lifetime), NotAfter: now.Add(left), KeyUsage: x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, svc.ca.cert, &key.PublicKey, svc.ca.key)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, svc.CA().cert, &key.PublicKey, svc.CA().key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestRenewKeepsOldCertUntilNewOneIsUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := renewed.Verify(x509.VerifyOptions{Roots: svc.CA().Pool(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil || renewed.Subject.CommonName != "m1" {
+	if _, err := renewed.Verify(x509.VerifyOptions{Roots: svc.cas.Load().pool(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil || renewed.Subject.CommonName != "m1" {
 		t.Fatalf("renewed cert must chain to the panel CA for the same machine: %v", err)
 	}
 

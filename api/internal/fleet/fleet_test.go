@@ -139,7 +139,7 @@ func TestEnrollEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := leaf.Verify(x509.VerifyOptions{
-		Roots:     svc.CA().Pool(),
+		Roots:     svc.cas.Load().pool(),
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}); err != nil {
 		t.Fatalf("issued cert does not chain to the panel CA: %v", err)

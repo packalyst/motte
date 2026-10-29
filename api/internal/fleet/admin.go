@@ -23,6 +23,8 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"CreateToken":            s.handleCreateToken,
 		"ReenrollMachine":        s.handleReenroll,
 		"CertLifetime":           s.handleCertLifetime,
+		"RotateCA":               s.handleRotateCA,
+		"FinishCARotation":       s.handleFinishCARotation,
 		"ListTokens":             s.handleListTokens,
 		"DeleteToken":            s.handleDeleteToken,
 		"ListMachines":           s.handleListMachines,
@@ -334,7 +336,7 @@ func (s *Service) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 		"listening":       enabled,
 		"domain":          s.sslDomain,        // download domain the install command uses (empty ⇒ none)
 		"hosts":           s.HostCandidates(), // addresses the agent could dial for mTLS (operator picks)
-		"fingerprint":     s.ca.Fingerprint(),
+		"fingerprint":     s.CA().Fingerprint(),
 		"agent_version":   s.agentCache.LatestVersion(r.Context()), // latest published, for "update available"
 		"migrating":       active,                                  // a port migration is in flight — lock the port field
 		"migrate_ends_at": rfc3339OrEmpty(endsAt),                  // when both ports close down to the new one
@@ -401,7 +403,7 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		Token:          tok.Plaintext,
 		Label:          tok.Label,
 		ExpiresAt:      tok.ExpiresAt,
-		CAFingerprint:  s.ca.Fingerprint(),
+		CAFingerprint:  s.CA().Fingerprint(),
 		PanelURL:       panelURL,
 		InstallCommand: install,
 	})
@@ -454,8 +456,8 @@ func (s *Service) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 // handleCAInfo returns the CA fingerprint + PEM (for building install commands).
 func (s *Service) handleCAInfo(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]string{
-		"fingerprint": s.ca.Fingerprint(),
-		"cert_pem":    string(s.ca.CertPEM()),
+		"fingerprint": s.CA().Fingerprint(),
+		"cert_pem":    string(s.CA().CertPEM()),
 	})
 }
 

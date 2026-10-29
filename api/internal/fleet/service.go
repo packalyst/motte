@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"api/internal/events"
@@ -28,9 +29,10 @@ var errBadPort = errors.New("invalid port")
 // when disabled.
 type Service struct {
 	db        *sql.DB
-	ca        *CA
-	sslDomain string          // panel's public domain, if any (added to cert SANs + host options)
-	srvCert   serverCertCache // the listener's own certificate (servercert.go)
+	cas       atomic.Pointer[caSet] // the panel's CAs (caset.go)
+	caMu      sync.Mutex            // serializes CA rotation steps
+	sslDomain string                // panel's public domain, if any (added to cert SANs + host options)
+	srvCert   serverCertCache       // the listener's own certificate (servercert.go)
 
 	// firewall port open/close callbacks (wired to the firewall service in main).
 	openPort  func(port int) error
@@ -131,13 +133,19 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 			log.Printf("fleet: VACUUM reclaimed space after removing %d orphan rows", removed)
 		}
 	}
-	ca, err := loadOrCreateCA(db)
+	cas, err := loadCASet(db)
 	if err != nil {
+		return nil, err
+	}
+	// Certificates issued before the panel recorded their CA all came from the one CA it had.
+	if _, err := db.Exec(`UPDATE fleet_machines SET cert_ca = ? WHERE cert_ca IS NULL`, cas.serving().Fingerprint()); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`UPDATE fleet_machines SET cert_ca_next = ? WHERE cert_ca_next IS NULL AND cert_fp_next IS NOT NULL`, cas.serving().Fingerprint()); err != nil {
 		return nil, err
 	}
 	svc := &Service{
 		db:             db,
-		ca:             ca,
 		sslDomain:      sslDomain,
 		openPort:       openPort,
 		closePort:      closePort,
@@ -145,14 +153,16 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 		fwBlockEnabled: fwBlockEnabled,
 		agentCache:     newAgentCache(),
 	}
+	svc.cas.Store(cas)
 	recordDB = db             // wrapped keys of the encrypted console recordings
 	consoleEventService = svc // lets the session-change hooks push live updates to console-events subscribers
 	startRecordJanitor()      // console recordings: delete past console_record_days (now + every 6h)
 	return svc, nil
 }
 
-// CA exposes the certificate authority (fingerprint / cert PEM for install commands).
-func (s *Service) CA() *CA { return s.ca }
+// CA is the CA the panel presents itself with (fingerprint / cert PEM for install commands): the
+// one being replaced during a CA rotation, else the only one.
+func (s *Service) CA() *CA { return s.cas.Load().serving() }
 
 const (
 	settingEnabled = "fleet_enabled"
@@ -239,7 +249,7 @@ func (s *Service) startListenerLocked(port int) {
 	s.enabled = true
 	s.port = port
 	go func() {
-		log.Printf("fleet: mTLS listener on :%d (CA %s)", port, s.ca.Fingerprint())
+		log.Printf("fleet: mTLS listener on :%d (CA %s)", port, s.CA().Fingerprint())
 		if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 			log.Printf("fleet: listener on :%d stopped: %v", port, err)
 		}
@@ -676,7 +686,9 @@ func ensureSchema(db *sql.DB) error {
 			id         INTEGER PRIMARY KEY,
 			cert_pem   TEXT NOT NULL,
 			key_enc    TEXT NOT NULL,
-			created_at TEXT NOT NULL
+			created_at TEXT NOT NULL,
+			state      TEXT NOT NULL DEFAULT 'active', -- active | previous (during a rotation, caset.go)
+			cross_pem  TEXT                           -- the active CA signed by the previous one
 		)`,
 		`CREATE TABLE IF NOT EXISTS fleet_tokens (
 			token_hash TEXT PRIMARY KEY,
@@ -798,6 +810,10 @@ func ensureSchema(db *sql.DB) error {
 		`ALTER TABLE fleet_machines ADD COLUMN cert_expires TEXT`,                 // current client cert's expiry
 		`ALTER TABLE fleet_machines ADD COLUMN cert_fp_next TEXT`,                 // renewed cert, until first used (renew.go)
 		`ALTER TABLE fleet_machines ADD COLUMN cert_expires_next TEXT`,
+		`ALTER TABLE fleet_machines ADD COLUMN cert_ca TEXT`,      // fingerprint of the CA that issued cert_fp
+		`ALTER TABLE fleet_machines ADD COLUMN cert_ca_next TEXT`, // ...and cert_fp_next
+		`ALTER TABLE fleet_ca ADD COLUMN state TEXT NOT NULL DEFAULT 'active'`,
+		`ALTER TABLE fleet_ca ADD COLUMN cross_pem TEXT`,
 	} {
 		if _, err := db.Exec(alt); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			log.Printf("fleet: migration %q: %v", alt, err)

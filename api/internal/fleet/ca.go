@@ -30,42 +30,29 @@ import (
 	"api/internal/helper"
 )
 
-// CA is the panel's internal certificate authority.
+// CA is one of the panel's certificate authorities.
 type CA struct {
+	id      int64 // its fleet_ca row
 	cert    *x509.Certificate
 	certPEM []byte
 	key     *ecdsa.PrivateKey
 }
 
-// loadOrCreateCA returns the panel CA, generating + persisting it on first use.
-// The CA cert is stored in the clear (it's public); the private key is stored
-// encrypted with the panel's ENCRYPTION_SECRET.
-func loadOrCreateCA(db *sql.DB) (*CA, error) {
-	var certPEM, keyEnc string
-	err := db.QueryRow(`SELECT cert_pem, key_enc FROM fleet_ca WHERE id = 1`).Scan(&certPEM, &keyEnc)
-	switch err {
-	case nil:
-		return parseCA(certPEM, keyEnc)
-	case sql.ErrNoRows:
-		return generateCA(db)
-	default:
-		return nil, err
-	}
-}
-
-func generateCA(db *sql.DB) (*CA, error) {
+// newCA makes a CA key and self-signed certificate (10 years) named name, and returns it with
+// the key encrypted under ENCRYPTION_SECRET, ready to store.
+func newCA(name string) (*CA, string, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	serial, err := randomSerial()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	now := time.Now()
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "motte-panel-ca"},
+		Subject:               pkix.Name{CommonName: name},
 		NotBefore:             now.Add(-5 * time.Minute),
 		NotAfter:              now.AddDate(10, 0, 0), // 10y
 		IsCA:                  true,
@@ -75,28 +62,34 @@ func generateCA(db *sql.DB) (*CA, error) {
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	keyEnc, err := helper.Encrypt(string(keyPEM))
+	keyEnc, err := helper.Encrypt(string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})))
 	if err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec(`INSERT INTO fleet_ca (id, cert_pem, key_enc, created_at) VALUES (1, ?, ?, ?)`,
-		string(certPEM), keyEnc, now.UTC().Format(time.RFC3339)); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return &CA{cert: cert, certPEM: certPEM, key: key}, nil
+	return &CA{cert: cert, certPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), key: key}, keyEnc, nil
+}
+
+// insertCA stores a CA in state ("active" | "previous") with an optional cross-signed copy.
+func insertCA(db interface {
+	Exec(string, ...any) (sql.Result, error)
+}, ca *CA, keyEnc, state, crossPEM string) error {
+	res, err := db.Exec(`INSERT INTO fleet_ca (cert_pem, key_enc, created_at, state, cross_pem) VALUES (?, ?, ?, ?, ?)`,
+		string(ca.certPEM), keyEnc, time.Now().UTC().Format(time.RFC3339), state, sql.NullString{String: crossPEM, Valid: crossPEM != ""})
+	if err != nil {
+		return err
+	}
+	ca.id, err = res.LastInsertId()
+	return err
 }
 
 func parseCA(certPEM, keyEnc string) (*CA, error) {
@@ -129,13 +122,6 @@ func (c *CA) CertPEM() []byte { return c.certPEM }
 // Fingerprint returns the SHA-256 fingerprint of the CA cert, as "sha256:<hex>".
 // This is what the install command pins out-of-band.
 func (c *CA) Fingerprint() string { return fingerprintFromCert(c.cert) }
-
-// Pool returns a CertPool containing just this CA (for verifying agent client certs).
-func (c *CA) Pool() *x509.CertPool {
-	p := x509.NewCertPool()
-	p.AddCert(c.cert)
-	return p
-}
 
 // SignClientCSR verifies a CSR and issues a short-lived CLIENT certificate bound
 // to commonName. The CSR's own signature is checked; only its public key is used.

@@ -301,14 +301,37 @@ TLS**. Full agent lifecycle: [fleet-agent.md](fleet-agent.md). Package
 ### The private CA (`ca.go`)
 
 - **P-256 ECDSA**, 10-year, `IsCA`, `MaxPathLenZero` (leaf-only issuance),
-  usage `CertSign|CRLSign` (`generateCA`, `ca.go:58-102`).
+  usage `CertSign|CRLSign` (`newCA`, `ca.go`).
 - Generated on the panel on first use. The **cert is stored in the clear** (it's
   public) in `fleet_ca.cert_pem`; the **private key is AES-256-GCM-encrypted**
   (`helper.Encrypt`) into `fleet_ca.key_enc` and **never leaves the panel**
   (`ca.go:9-11`, `84-92`). This is why `fleet_ca.key_enc` is a *critical* rekey column
   (§2).
 - `Fingerprint()` = `sha256:<hex>` of the CA cert DER — the value an agent **pins
-  out-of-band** at install so it can verify the panel it's talking to (`ca.go:131-136`).
+  out-of-band** at install so it can verify the panel it's talking to (`ca.go`).
+
+### Replacing the CA (`caset.go`)
+
+The CA signs leaves only, so agents can't verify the panel through a chain from a new CA.
+Replacing it (Settings → Certificates: admin, a fresh step-up for each step, audited) runs
+in two phases:
+
+- **Replace:** a new CA (`fleet_ca.state = 'active'`) is made, with a copy signed by the
+  old one (`cross_pem`); the old one becomes `previous` and **stays the panel's face**: the
+  listener certificate, the install pin and new enrollments. Client certs from both are
+  accepted (the listener builds its TLS config per handshake, with **no session
+  resumption**, so every connection's client cert is checked against the current CAs). Renewals come from the new
+  CA, and a cert from the old one may renew at once. `/trust` lists both CAs, the cross
+  copy and the new CA as `issuer`: an agent (0.1.67+) adopts the new CA only because the
+  old one vouches for it, then renews right away because its cert isn't from the issuer.
+- **Finish:** allowed once every enrolled machine's cert comes from the new CA
+  (`fleet_machines.cert_ca`, recorded at enrollment, renewal and promotion; it verified
+  that cert against the new CA, so it trusts it). The old CA row is deleted, the new one
+  becomes the face and the listener cert follows on the next handshake. **Finishing
+  early** cuts off the machines still on the old CA (listed, audited as critical; their
+  link and console are closed); they must be re-enrolled.
+- A restart mid-rotation resumes it (both rows persisted). Restoring a backup whose CA
+  isn't one in use now warns before import.
 
 ### Enrollment tokens (`tokens.go`) — one-time, hashed, short-lived
 
@@ -355,9 +378,10 @@ history; its live link and console are dropped. A bound token for a machine remo
 meantime enrolls nothing. Issuing and use are both audited.
 
 **Trusted CAs (`trust.go`, agent `trust.go`).** `GET /trust` (mTLS) lists the CAs the agent
-should trust, plus cross-signed copies. The agent keeps exactly the listed self-signed,
-valid CAs that it already trusts or that a cross copy, signed by a CA it already trusts,
-vouches for (same name and key); never more than four, never none.
+should trust, cross-signed copies, and the CA renewals come from. The agent keeps exactly
+the listed self-signed, valid CAs that it already trusts or that a cross copy, signed by a
+CA it already trusts, vouches for (same name and key); never more than four, never none.
+If its cert isn't from the issuer and it trusts the issuer, it renews at once.
 
 > **Hostname sanitisation (defence in depth).** The agent-supplied hostname is
 > attacker-controlled and later rendered in the UI, so `sanitizeMachineName`
