@@ -84,17 +84,17 @@ func TestCAPersistsAcrossReload(t *testing.T) {
 func TestTokenSingleUseAndExpiry(t *testing.T) {
 	svc := newTestService(t)
 
-	tok, err := svc.CreateToken("web-01", time.Hour, "")
+	tok, err := svc.CreateToken("web-01", time.Hour, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.redeemToken(tok.Plaintext); err != nil {
+	if _, _, err := svc.redeemToken(tok.Plaintext); err != nil {
 		t.Fatalf("first redeem should succeed: %v", err)
 	}
-	if _, err := svc.redeemToken(tok.Plaintext); err == nil {
+	if _, _, err := svc.redeemToken(tok.Plaintext); err == nil {
 		t.Fatal("second redeem MUST fail (single-use)")
 	}
-	if _, err := svc.redeemToken("totally-bogus"); err == nil {
+	if _, _, err := svc.redeemToken("totally-bogus"); err == nil {
 		t.Fatal("bogus token must fail")
 	}
 
@@ -107,14 +107,14 @@ func TestTokenSingleUseAndExpiry(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.redeemToken("expired-tok"); err == nil {
+	if _, _, err := svc.redeemToken("expired-tok"); err == nil {
 		t.Fatal("expired token must fail")
 	}
 }
 
 func TestEnrollEndToEnd(t *testing.T) {
 	svc := newTestService(t)
-	tok, _ := svc.CreateToken("web-01", time.Hour, "")
+	tok, _ := svc.CreateToken("web-01", time.Hour, "", "")
 	_, csrPEM := makeCSR(t, "agent")
 
 	body, _ := json.Marshal(enrollRequest{
@@ -183,7 +183,7 @@ func TestEnrollRejectsBadInputs(t *testing.T) {
 	}
 
 	// valid token but garbage CSR
-	tok, _ := svc.CreateToken("x", time.Hour, "")
+	tok, _ := svc.CreateToken("x", time.Hour, "", "")
 	body2, _ := json.Marshal(enrollRequest{Token: tok.Plaintext, CSR: "not a pem"})
 	rr2 := httptest.NewRecorder()
 	svc.HandleEnroll(rr2, httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewReader(body2)))

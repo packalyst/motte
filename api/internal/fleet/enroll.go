@@ -48,10 +48,14 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	label, err := s.redeemToken(req.Token)
+	label, boundID, err := s.redeemToken(req.Token)
 	if err != nil {
 		// Deliberately vague: don't distinguish invalid vs used vs expired.
 		writeErr(w, http.StatusUnauthorized, "invalid or used enrollment token")
+		return
+	}
+	if boundID != "" {
+		s.reenroll(w, r, boundID, block.Bytes, req)
 		return
 	}
 
@@ -60,7 +64,7 @@ func (s *Service) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "server error")
 		return
 	}
-	certPEM, err := s.ca.SignClientCSR(block.Bytes, id, s.clientCertTTL)
+	certPEM, err := s.ca.SignClientCSR(block.Bytes, id, s.clientCertTTL())
 	if err != nil {
 		log.Printf("fleet: sign csr rejected: %v", err)
 		writeErr(w, http.StatusBadRequest, "csr rejected")

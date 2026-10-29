@@ -21,6 +21,8 @@ import (
 func (s *Service) Handlers() router.ServiceHandlers {
 	return router.ServiceHandlers{
 		"CreateToken":            s.handleCreateToken,
+		"ReenrollMachine":        s.handleReenroll,
+		"CertLifetime":           s.handleCertLifetime,
 		"ListTokens":             s.handleListTokens,
 		"DeleteToken":            s.handleDeleteToken,
 		"ListMachines":           s.handleListMachines,
@@ -382,7 +384,7 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	if panelHost == "" {
 		panelHost = firstPublicIP()
 	}
-	tok, err := s.CreateToken(req.Label, ttl, panelHost)
+	tok, err := s.CreateToken(req.Label, ttl, panelHost, "")
 	if err != nil {
 		router.JSONError(w, "could not create token", http.StatusInternalServerError)
 		return
@@ -391,10 +393,9 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	// command needs no CA handling); the agent then talks mTLS to panelHost:port.
 	// Without a domain there's no trusted public cert, so no one-command install is
 	// offered (the UI tells the operator to set a domain).
-	panelURL, install := "", ""
+	panelURL, install := "", s.installCommand(tok.Plaintext, "")
 	if s.sslDomain != "" {
 		panelURL = fmt.Sprintf("https://%s:%d", panelHost, s.effectivePort())
-		install = fmt.Sprintf(`curl -fsSL "https://%s/agent/%s?arch=$(uname -m)" | sudo sh`, s.sslDomain, tok.Plaintext)
 	}
 	router.JSON(w, createTokenResponse{
 		Token:          tok.Plaintext,

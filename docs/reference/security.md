@@ -330,13 +330,34 @@ the pinned CA fingerprint. Flow (`HandleEnroll`, `enroll.go:35-101`):
 2. **Syntactic CSR check first, then redeem the token** — deliberately: redeem is a
    one-shot consume, so a malformed CSR mustn't burn the operator's token.
 3. `SignClientCSR` (`ca.go:145-173`): parse the CSR, **verify the CSR's own
-   signature**, use **only its public key**, and issue a short-lived
-   (`clientCertTTL = 90 days`, `service.go:88`) client cert (`ExtKeyUsageClientAuth`)
-   whose CN is a fresh panel-assigned machine id. **Agent private keys never transit**
-   — the panel only ever sees the public half in the CSR.
+   signature**, use **only its public key**, and issue a short-lived client cert
+   (`ExtKeyUsageClientAuth`; lifetime `clientCertTTL`, `certlife.go`: Settings → Agents,
+   30/60/90/180/365 days, default 90, any other stored value falls back to 90) whose CN
+   is a fresh panel-assigned machine id. **Agent private keys never transit** — the
+   panel only ever sees the public half in the CSR.
 4. Store the machine: sanitized display name, `machineIdentityHash`, cert fingerprint,
    WG pubkey.
 5. Return the client cert + the CA cert (trust anchor the agent stores).
+
+**Renewal window.** `/renew` is accepted only in the last third of the presented cert's
+own life, plus a day for clock skew (`renewAllowed`, `certlife.go`), when the agent starts
+asking; a stolen but valid cert can't mint fresh ones ahead of time. Measured on the cert,
+so a lifetime change applies from each machine's next cert. Changing the lifetime is
+admin + step-up + audited. **An expired client cert is never accepted** (the TLS
+handshake rejects it); there is no grace period.
+
+**Re-enroll (`reenroll.go`).** An admin, after a fresh step-up every time (like deleting a
+machine), mints a one-time, one-hour token bound to an existing machine
+(`fleet_tokens.machine_id`); the install command adds `--force`, which wipes the agent's
+old identity. `/enroll` with a bound token signs the CSR for that machine id and makes the
+new cert its only one (`cert_fp_next` cleared, reactivated if uninstalled), keeping its
+history; its live link and console are dropped. A bound token for a machine removed in the
+meantime enrolls nothing. Issuing and use are both audited.
+
+**Trusted CAs (`trust.go`, agent `trust.go`).** `GET /trust` (mTLS) lists the CAs the agent
+should trust, plus cross-signed copies. The agent keeps exactly the listed self-signed,
+valid CAs that it already trusts or that a cross copy, signed by a CA it already trusts,
+vouches for (same name and key); never more than four, never none.
 
 > **Hostname sanitisation (defence in depth).** The agent-supplied hostname is
 > attacker-controlled and later rendered in the UI, so `sanitizeMachineName`

@@ -51,6 +51,7 @@
   import Modal from '../components/Modal.svelte'
   import OffhostBackup from '../components/OffhostBackup.svelte'
   import Certificates from '../components/Certificates.svelte'
+  import CertLifetime from '../components/CertLifetime.svelte'
   import SmtpSettings from '../components/SmtpSettings.svelte'
 
   let { loading = $bindable(true) } = $props()
@@ -1379,6 +1380,7 @@
       {#if section === 'agents'}
       <div class="space-y-4">
       <AgentListener />
+      {#if hasRole($currentUser, 'admin')}<CertLifetime />{/if}
       </div>
       {/if}
       {#if section === 'certificates'}

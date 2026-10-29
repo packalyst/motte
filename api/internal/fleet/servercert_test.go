@@ -3,6 +3,7 @@ package fleet
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"net/http"
 	"slices"
 	"testing"
 	"time"
@@ -138,7 +139,7 @@ func TestCertStatus(t *testing.T) {
 		t.Fatalf("agents: %+v", st.Agents)
 	}
 	svc.mu.Lock()
-	svc.enabled = true
+	svc.srv = &http.Server{} // the listener is running
 	svc.mu.Unlock()
 	if st, _ = svc.CertStatus(); st.Listener == nil || st.Listener.Fingerprint != fingerprintFromCert(svc.srvCert.cert.Leaf) {
 		t.Fatalf("listener while on: %+v", st.Listener)

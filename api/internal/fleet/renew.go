@@ -14,15 +14,11 @@ import (
 	"api/internal/helper"
 )
 
-// Client-cert renewal. An agent whose cert is inside renewWindow of expiring asks for a new one over
+// Client-cert renewal. An agent whose cert is in the last third of its life asks for a new one over
 // its current mTLS identity, with a CSR for a key it just generated. The new cert is held as the
 // machine's *next* cert: both work until the agent first connects with the new one, which then
 // replaces the old (promoteCert). So a renewal that's interrupted — the agent never saves or uses
 // the new cert — can't lock the machine out; it just renews again next time.
-
-// renewWindow: renewal is only accepted this close to expiry, so a stolen-but-valid cert can't be
-// used to mint fresh certs indefinitely ahead of time.
-const renewWindow = 30 * 24 * time.Hour
 
 type renewRequest struct {
 	CSR string `json:"csr"`
@@ -35,7 +31,7 @@ func (s *Service) HandleRenew(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no machine")
 		return
 	}
-	if left := time.Until(r.TLS.PeerCertificates[0].NotAfter); left > renewWindow {
+	if !renewAllowed(r.TLS.PeerCertificates[0], time.Now()) {
 		writeErr(w, http.StatusConflict, "certificate is not due for renewal yet")
 		return
 	}
@@ -49,7 +45,7 @@ func (s *Service) HandleRenew(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid CSR")
 		return
 	}
-	certPEM, err := s.ca.SignClientCSR(block.Bytes, m.ID, s.clientCertTTL)
+	certPEM, err := s.ca.SignClientCSR(block.Bytes, m.ID, s.clientCertTTL())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "csr rejected")
 		return

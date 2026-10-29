@@ -4,15 +4,17 @@
    * go through Cloudflare), mint a one-time token and show the one-command install. Only offered
    * while the agent listener is on (Settings → Agents); the token endpoint is admin-only. Once the
    * command is shown, the modal can only be closed after copying it, so it isn't lost.
+   * With `machine`, it re-enrolls that machine instead: a one-time command (after a password
+   * confirm) that gives it a new certificate as the same machine, history kept.
    */
-  import { apiGet, apiPost, toast, openView } from '../stores/app.js'
+  import { apiGet, apiPost, toast, openView, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import { copyToClipboard } from '$lib/utils/clipboard.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Modal from './Modal.svelte'
   import Select from './Select.svelte'
 
-  let { open = $bindable(false), oncreated = undefined } = $props()
+  let { open = $bindable(false), oncreated = undefined, machine = null } = $props()
 
   let ep = $state(null) // listener state: { enabled, hosts:[], domain, … }
   let selectedHost = $state('')
@@ -33,6 +35,13 @@
   async function generate() {
     creating = true
     try {
+      if (machine) {
+        const res = await withStepUp((extra) => apiPost('/api/fleet/machine/reenroll', { machine_id: machine.id, panel_host: selectedHost, ...extra }),
+          { title: `Re-enroll ${machine.name}`, message: 'Confirm your password to issue a one-time re-enroll command.', confirmText: 'Issue command' })
+        if (res === STEPUP_CANCELLED) return
+        token = res
+        return
+      }
       // The machine's real name comes from its hostname at enroll; this label only names the token.
       const label = 'machine-' + Math.random().toString(36).slice(2, 8)
       token = await apiPost('/api/fleet/token', { label, ttl_seconds: 3600, panel_host: selectedHost })
@@ -56,7 +65,7 @@
   }
 </script>
 
-<Modal bind:open title={token ? 'Install command' : 'Enroll a machine'} size="lg" dismissible={!token || copied} showClose={!token || copied}>
+<Modal bind:open title={token ? 'Install command' : machine ? `Re-enroll ${machine.name}` : 'Enroll a machine'} size="lg" dismissible={!token || copied} showClose={!token || copied}>
   {#if !ep}
     <div class="py-6 text-center text-sm text-muted-foreground">Loading…</div>
   {:else if !ep.enabled}
@@ -70,7 +79,7 @@
     </div>
   {:else if token}
     <div class="space-y-3">
-      <p class="text-sm text-muted-foreground">Run this on the new machine. It works once and expires in an hour.</p>
+      <p class="text-sm text-muted-foreground">{#if machine}Run this on {machine.name}. It removes the agent's old identity and enrolls it again as this machine; the current certificate stops working. It works once and expires in an hour.{:else}Run this on the new machine. It works once and expires in an hour.{/if}</p>
       {#if token.install_command}
         <pre class="bg-muted rounded-lg p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all border border-border">{token.install_command}</pre>
       {:else}
@@ -79,6 +88,9 @@
     </div>
   {:else}
     <div class="space-y-3">
+      {#if machine}
+        <p class="text-sm text-muted-foreground">Gives {machine.name} a new certificate as the same machine, keeping its history: for a machine whose certificate expired while it was offline, or one being reinstalled.</p>
+      {/if}
       {#if ep.hosts?.length}
         <Select bind:value={selectedHost} size="lg" label="Agent connects to" options={ep.hosts.map((h) => ({ value: h, label: h }))} />
       {/if}
@@ -96,7 +108,7 @@
     {:else}
       <Button variant="secondary" onclick={() => (open = false)}>Cancel</Button>
       {#if ep?.enabled}
-        <Button icon="key" loading={creating} disabled={creating || !ep.domain} onclick={generate}>Generate install command</Button>
+        <Button icon="key" loading={creating} disabled={creating || !ep.domain} onclick={generate}>{machine ? 'Issue re-enroll command' : 'Generate install command'}</Button>
       {/if}
     {/if}
   {/snippet}
