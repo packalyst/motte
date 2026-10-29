@@ -68,6 +68,12 @@ releases will be tagged as they are cut.
   `.editorconfig`, and architecture decision records under `docs/adr/`.
 
 ### Changed
+- **Allowed ports** (Settings → Firewall) redesigned: amber when open to the internet, green when
+  VPN & LAN only, each port with its service, whether it's a system port, yours or
+  Docker's, and one control for Public / Private plus remove (your ports) or a lock explaining why it
+  stays. **Jails** use the same layout: how many IPs each has banned, its rule, and On / Off with
+  edit and delete; turning a jail off now asks first. The Firewall section reads Port Scanner,
+  Jails, Allowed Ports, and the jail form's fields carry icons (dropdowns can show one too now).
 - **Off-host backup destinations** are compact cards (type, name, where backups go) whose form
   opens under them; removing one asks first, and "Unsaved changes" shows next to Save.
 - **Docker settings**: a summary strip of containers, running and stopped; Restart asks first and
