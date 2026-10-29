@@ -19,7 +19,7 @@ import (
 // re-checks per user) and how many passkey sign-ins may wait for an answer. How many Argon2id
 // computations run at once is capped panel-wide by helper.Argon2IDKey.
 const (
-	maxLoginAttempts    = 5 // failed logins per IP before lockout
+	maxLoginAttempts    = 5 // failed logins per IP (IPv6: per /64) before lockout
 	maxTOTPAttempts     = 5 // failed 2FA codes per user before lockout
 	maxPasswordAttempts = 5 // wrong passwords per user at step-up, unlock and password change
 

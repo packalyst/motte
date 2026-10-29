@@ -34,7 +34,7 @@ func (s *Service) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Cap the request body so a large POST can't balloon memory during parsing.
 	r.Body = http.MaxBytesReader(w, r.Body, maxInboundBody)
 	tail := router.ExtractPathParamFull(r, "/api/hook/")
-	ip := helper.GetClientIP(r)
+	ip := helper.RateKey(helper.GetClientIP(r)) // the abuse guard counts an IPv6 client by its /64
 
 	if rotateBlocked(ip) {
 		router.JSONError(w, "too many attempts, try again later", http.StatusTooManyRequests)

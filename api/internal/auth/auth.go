@@ -412,8 +412,10 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Rate limit: atomically check the lockout AND reserve this attempt's slot, so a burst
-	// of concurrent attempts can't slip past a stale "under the limit" read.
-	if err := loginLimiter.reserve(clientIP); err != nil {
+	// of concurrent attempts can't slip past a stale "under the limit" read. An IPv6 client
+	// counts by its /64, so changing address doesn't buy more attempts.
+	limitKey := helper.RateKey(clientIP)
+	if err := loginLimiter.reserve(limitKey); err != nil {
 		events.Audit("auth", "login_blocked", events.SeverityWarning,
 			s.auditName(req.Username), clientIP,
 			"Login temporarily blocked: too many failed attempts")
@@ -425,7 +427,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err == ErrTOTPRequired {
 			// Correct password, 2FA still pending — not a failed attempt, so give the slot back.
-			loginLimiter.refund(clientIP)
+			loginLimiter.refund(limitKey)
 			router.JSONError(w, "2FA code required", http.StatusPreconditionRequired)
 			return
 		}
@@ -445,7 +447,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear failed attempts on successful login (refunds the reserved slot).
-	loginLimiter.clear(clientIP)
+	loginLimiter.clear(limitKey)
 
 	events.Audit("auth", "login", events.SeverityInfo, resp.User.Username, clientIP,
 		fmt.Sprintf("Login succeeded for %q", resp.User.Username))
