@@ -2,8 +2,9 @@
   /**
    * Segmented — a compact single-choice toggle (Avg / Peak, 24h / 7d, Deny / Allow, All / Online /
    * Offline). Use bind:value, or value + onchange for a controlled toggle. options:
-   * [{ value, label, count?, tone? }]; tone ('destructive' | 'success') colours
+   * [{ value, label, count?, tone? }]; tone ('destructive' | 'success' | 'warning') colours
    * the option while it is selected. stretch makes the options share the full width (mobile 50/50).
+   * trailing: a snippet shown after a divider inside the group (a row action, e.g. remove).
    * size: 'default' matches kt-input / kt-select height (use it beside inputs); 'sm' is the
    * compact one for card headers.
    */
@@ -15,6 +16,7 @@
     stretch = false,
     label = undefined, // accessible group name
     size = 'default',
+    trailing = undefined,
     class: className = '',
   } = $props()
 
@@ -27,6 +29,7 @@
   const toneActive = {
     destructive: 'bg-destructive/15 text-destructive',
     success: 'bg-success/15 text-success',
+    warning: 'bg-warning/15 text-warning',
   }
 
   // With onchange the parent decides (it may cancel, e.g. a declined confirmation); otherwise the
@@ -48,4 +51,8 @@
       {#if o.count !== undefined}<span class="tabular-nums {value === o.value ? 'opacity-70' : 'opacity-60'}">{o.count}</span>{/if}
     </button>
   {/each}
+  {#if trailing}
+    <span class="mx-0.5 h-4 w-px shrink-0 bg-border"></span>
+    {@render trailing()}
+  {/if}
 </div>
