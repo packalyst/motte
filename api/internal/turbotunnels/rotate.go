@@ -1,40 +1,64 @@
 package turbotunnels
 
 import (
-	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
+	"api/internal/bounded"
 	"api/internal/helper"
 	"api/internal/router"
-	"api/internal/routines"
 )
-
-// Rotation abuse guards (in-memory). A per-key minimum interval throttles
-// rotations; invalid-key attempts per source IP trip a temporary block.
-var (
-	rotMu      sync.Mutex
-	lastRotate = map[string]time.Time{}   // rotateKey -> last successful trigger
-	ipFails    = map[string]*failWindow{} // client IP -> failed-attempt window
-)
-
-type failWindow struct {
-	count        int
-	windowStart  time.Time
-	blockedUntil time.Time
-}
 
 // Abuse-guard tuning, all overridable via env (see the getters below).
 const (
 	defaultRotateFailWindow    = 300  // seconds (5 min)
 	defaultRotateFailThreshold = 10   // failed attempts per window
 	defaultRotateBlockDuration = 1800 // seconds (30 min)
+
+	maxGuardedClients = 100_000 // clients the key guard tracks at once; new ones are refused past it
+	maxThrottledKeys  = 10_000  // tunnel and webhook keys throttled at once (only valid keys get here)
 )
+
+// The public key endpoints' abuse guards (in-memory, bounded). keyGuard locks out a client (an
+// IPv6 one by its /64) after rotateFailThreshold() invalid keys within rotateFailWindow(), for
+// rotateBlockDuration(); a flood of new clients can't push out a block. The throttles space out
+// the firings of one rotate key or webhook.
+var (
+	keyGuard        = bounded.NewLockout[string](maxGuardedClients, rotateFailThreshold(), rotateFailWindow(), rotateBlockDuration())
+	rotateThrottle  = bounded.New[string, time.Time](maxThrottledKeys, bounded.DropOldest) // rotate key → next allowed
+	webhookThrottle = bounded.New[string, time.Time](maxThrottledKeys, bounded.DropOldest) // webhook id → next allowed
+)
+
+// guardedClient is the key guard's key for the caller, or "" after answering 429 because it is
+// locked out. The attempt is reserved: a valid key must keyGuard.Clear it, a request that failed
+// for another reason keyGuard.Refund it.
+func guardedClient(w http.ResponseWriter, r *http.Request) string {
+	client := helper.RateKey(helper.GetClientIP(r))
+	if retry, _ := keyGuard.Reserve(client, time.Now()); retry > 0 {
+		router.JSONError(w, "too many attempts, try again later", http.StatusTooManyRequests)
+		return ""
+	}
+	return client
+}
+
+// throttled reports whether key fired less than interval ago; if not, it starts a new interval.
+func throttled(m *bounded.Map[string, time.Time], key string, interval time.Duration) bool {
+	now := time.Now()
+	blocked := false
+	m.Update(key, now, func(next *time.Time, found bool) time.Time {
+		if found {
+			blocked = true
+			return *next
+		}
+		*next = now.Add(interval)
+		return *next
+	})
+	return blocked
+}
 
 // rotateMinInterval is the minimum spacing between rotations for one key,
 // overridable via TURBOTUNNELS_ROTATE_MIN_INTERVAL (seconds).
@@ -66,15 +90,14 @@ func rotateBlockDuration() time.Duration {
 // and returns the result.
 func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
 	key := router.ExtractPathParam(r, "/api/restart/")
-	ip := helper.RateKey(helper.GetClientIP(r)) // the abuse guard counts an IPv6 client by its /64
-
-	if rotateBlocked(ip) {
-		router.JSONError(w, "too many attempts, try again later", http.StatusTooManyRequests)
+	client := guardedClient(w, r)
+	if client == "" {
 		return
 	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
+		keyGuard.Refund(client, time.Now())
 		router.JSONError(w, "config error", http.StatusInternalServerError)
 		return
 	}
@@ -88,22 +111,16 @@ func (s *Service) handleRotate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if target == nil || target.RotateURL == "" {
-		rotateRecordFail(ip)
-		router.JSONError(w, "invalid key", http.StatusForbidden)
+		router.JSONError(w, "invalid key", http.StatusForbidden) // the reserved attempt stays counted
 		return
 	}
+	keyGuard.Clear(client) // a valid key clears this client's failure streak
 
 	// Per-key rate limit.
-	rotMu.Lock()
-	if last, ok := lastRotate[key]; ok && time.Since(last) < rotateMinInterval() {
-		rotMu.Unlock()
+	if throttled(rotateThrottle, key, rotateMinInterval()) {
 		router.JSONError(w, "rate limited, slow down", http.StatusTooManyRequests)
 		return
 	}
-	lastRotate[key] = time.Now()
-	rotMu.Unlock()
-
-	rotateClearFails(ip) // a valid key clears this IP's failure streak
 
 	ok, code, body := callProviderRotate(target.RotateURL)
 	providerResp := formatProviderBody(body)
@@ -149,69 +166,4 @@ func formatProviderBody(body string) interface{} {
 		return json.RawMessage(body)
 	}
 	return body
-}
-
-func rotateBlocked(ip string) bool {
-	rotMu.Lock()
-	defer rotMu.Unlock()
-	fw := ipFails[ip]
-	return fw != nil && time.Now().Before(fw.blockedUntil)
-}
-
-func rotateRecordFail(ip string) {
-	rotMu.Lock()
-	defer rotMu.Unlock()
-	now := time.Now()
-	fw := ipFails[ip]
-	if fw == nil || now.Sub(fw.windowStart) > rotateFailWindow() {
-		fw = &failWindow{windowStart: now}
-		ipFails[ip] = fw
-	}
-	fw.count++
-	if fw.count >= rotateFailThreshold() {
-		fw.blockedUntil = now.Add(rotateBlockDuration())
-	}
-}
-
-func rotateClearFails(ip string) {
-	rotMu.Lock()
-	delete(ipFails, ip)
-	rotMu.Unlock()
-}
-
-// StartRotateGuardCleanup registers the abuse-guard eviction as a supervised
-// routine so the in-memory maps can't grow without bound (e.g. from many
-// distinct — possibly spoofed — source IPs sending invalid keys).
-func StartRotateGuardCleanup() {
-	routines.Register(routines.Spec{
-		Name:        "turbotunnels-guard-cleanup",
-		Description: "Evict expired turbotunnels rotate/abuse-guard entries",
-		Interval:    5 * time.Minute,
-		Run:         func(context.Context) error { rotateGuardCleanup(); return nil },
-	})
-}
-
-// rotateGuardCleanup drops expired rate/abuse-guard entries in one pass.
-func rotateGuardCleanup() {
-	now := time.Now()
-	rotMu.Lock()
-	defer rotMu.Unlock()
-	for ip, fw := range ipFails {
-		// Drop once any block has lapsed AND the fail window is stale.
-		if now.After(fw.blockedUntil) && now.Sub(fw.windowStart) > rotateFailWindow() {
-			delete(ipFails, ip)
-		}
-	}
-	for k, ts := range lastRotate {
-		// Absent == "allowed", same as an expired entry.
-		if now.Sub(ts) > rotateMinInterval() {
-			delete(lastRotate, k)
-		}
-	}
-	for id, until := range webhookNextAllowed {
-		// Once the throttle window has passed, the entry is redundant.
-		if now.After(until) {
-			delete(webhookNextAllowed, id)
-		}
-	}
 }

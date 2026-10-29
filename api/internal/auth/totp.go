@@ -248,10 +248,9 @@ func verifyTOTP(userID int64, secretEnc sql.NullString, code string) error {
 	if !totp.Validate(code, secret) {
 		return errors.New("invalid 2FA code")
 	}
-	if totpReplayed(userID, code) {
-		return errors.New("2FA code already used, wait for the next code")
+	if err := claimTOTPCode(userID, code); err != nil {
+		return err
 	}
-	markTOTPUsed(userID, code)
 	totpLimiter.clear(userID)
 	return nil
 }

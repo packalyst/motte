@@ -14,25 +14,25 @@ import (
 	"time"
 )
 
-// TestAgentAllowed: a certificate gets agentBurst requests at once, then one per agentRefill;
+// TestAgentLimit: a certificate gets agentBurst requests at once, then one per agentRefill;
 // another certificate has its own bucket.
-func TestAgentAllowed(t *testing.T) {
+func TestAgentLimit(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < agentBurst; i++ {
-		if !agentAllowed("fp-burst", now) {
+		if !agentLimit.Allow("fp-burst", now) {
 			t.Fatalf("request %d refused inside the burst", i+1)
 		}
 	}
-	if agentAllowed("fp-burst", now) {
+	if agentLimit.Allow("fp-burst", now) {
 		t.Fatal("request past the burst allowed")
 	}
-	if !agentAllowed("fp-other", now) {
+	if !agentLimit.Allow("fp-other", now) {
 		t.Fatal("another certificate was limited")
 	}
-	if !agentAllowed("fp-burst", now.Add(agentRefill)) {
+	if !agentLimit.Allow("fp-burst", now.Add(agentRefill)) {
 		t.Fatal("no request allowed after a refill")
 	}
-	if agentAllowed("fp-burst", now.Add(agentRefill)) {
+	if agentLimit.Allow("fp-burst", now.Add(agentRefill)) {
 		t.Fatal("more than one request allowed per refill")
 	}
 }

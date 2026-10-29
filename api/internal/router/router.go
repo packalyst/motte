@@ -12,9 +12,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"api/internal/bounded"
 	"api/internal/config"
 	"api/internal/database"
 	"api/internal/helper"
@@ -622,60 +622,20 @@ func (r *Router) securityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Rate limiter state. Clients are counted by helper.RateKey (an IPv6 client by its /64), and the
-// map is capped: a bucket idle for rateLimitBurstSeconds is full again, the same as no bucket, so
-// sweeping it changes nothing; once the cap is reached anyway, new clients are refused until
-// buckets go idle (clients already counted keep their own limit).
-const (
-	rateLimitBurstSeconds = 2       // burst = 2s worth of requests; refills fully in that time
-	maxRateLimitBuckets   = 100_000 // clients tracked at once
-)
+// Request limit: per client (helper.RateKey: an IPv6 client by its /64), requestsPerSecond with a
+// burst of rateLimitBurstSeconds' worth. At most maxRateLimitClients are tracked at once; past
+// that, new clients are refused until buckets refill (clients already tracked keep their limit).
+const rateLimitBurstSeconds = 2
 
-var (
-	rateLimitBuckets = make(map[string]*rateLimitBucket)
-	rateLimitMu      sync.Mutex
-	rateLimitSwept   time.Time // last sweep, so a full map is swept at most once a second
-)
+var maxRateLimitClients = 100_000 // a var so tests can use a small cap
 
-type rateLimitBucket struct {
-	tokens     float64
-	lastUpdate time.Time
-}
-
-// sweepRateLimitBuckets drops buckets that have refilled. Caller holds rateLimitMu.
-func sweepRateLimitBuckets(now time.Time) {
-	cutoff := now.Add(-rateLimitBurstSeconds * time.Second)
-	for key, bucket := range rateLimitBuckets {
-		if bucket.lastUpdate.Before(cutoff) {
-			delete(rateLimitBuckets, key)
-		}
-	}
-	rateLimitSwept = now
-}
-
-func init() {
-	go func() {
-		for {
-			time.Sleep(1 * time.Minute)
-			rateLimitMu.Lock()
-			sweepRateLimitBuckets(time.Now())
-			rateLimitMu.Unlock()
-		}
-	}()
-}
-
-func rateLimited(w http.ResponseWriter) {
-	w.Header().Set("Retry-After", "1")
-	JSONError(w, "Rate limit exceeded", http.StatusTooManyRequests)
-}
-
-// rateLimitMiddleware implements token bucket rate limiting per client (helper.RateKey)
+// rateLimitMiddleware implements token bucket rate limiting per client
 func (r *Router) rateLimitMiddleware(next http.Handler) http.Handler {
 	rps := r.config.Middleware.RateLimit.RequestsPerSecond
 	if rps <= 0 {
 		rps = 100 // Default: 100 requests per second
 	}
-	burstSize := float64(rps * rateLimitBurstSeconds)
+	limit := bounded.NewRate[string](maxRateLimitClients, float64(rps), float64(rps*rateLimitBurstSeconds))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		// Skip rate limiting for health checks
@@ -683,43 +643,11 @@ func (r *Router) rateLimitMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, req)
 			return
 		}
-
-		key := helper.RateKey(helper.GetClientIP(req))
-		now := time.Now()
-
-		rateLimitMu.Lock()
-		bucket, exists := rateLimitBuckets[key]
-		if !exists {
-			if len(rateLimitBuckets) >= maxRateLimitBuckets && now.Sub(rateLimitSwept) >= time.Second {
-				sweepRateLimitBuckets(now)
-			}
-			if len(rateLimitBuckets) >= maxRateLimitBuckets {
-				rateLimitMu.Unlock()
-				rateLimited(w)
-				return
-			}
-			bucket = &rateLimitBucket{tokens: burstSize, lastUpdate: now}
-			rateLimitBuckets[key] = bucket
-		}
-
-		// Refill tokens based on elapsed time
-		elapsed := now.Sub(bucket.lastUpdate).Seconds()
-		bucket.tokens += elapsed * float64(rps)
-		if bucket.tokens > burstSize {
-			bucket.tokens = burstSize
-		}
-		bucket.lastUpdate = now
-
-		// Check if request can proceed
-		if bucket.tokens < 1 {
-			rateLimitMu.Unlock()
-			rateLimited(w)
+		if !limit.Allow(helper.RateKey(helper.GetClientIP(req)), time.Now()) {
+			w.Header().Set("Retry-After", "1")
+			JSONError(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
-
-		bucket.tokens--
-		rateLimitMu.Unlock()
-
 		next.ServeHTTP(w, req)
 	})
 }

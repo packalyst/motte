@@ -15,7 +15,7 @@ const machineCtxKey ctxKey = 0
 // verified any presented client cert against our CA (VerifyClientCertIfGiven), so
 // here we (a) require a cert was presented and (b) confirm its fingerprint maps to
 // an enrolled, non-revoked machine. Both must hold — a valid-but-unregistered cert,
-// or a revoked one, is rejected. Each cert is rate-limited first (agentAllowed).
+// or a revoked one, is rejected. Each cert is rate-limited first (agentLimit).
 func (s *Service) requireClientCert(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
@@ -24,7 +24,7 @@ func (s *Service) requireClientCert(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		fp := fingerprintFromCert(r.TLS.PeerCertificates[0])
-		if !agentAllowed(fp, time.Now()) {
+		if !agentLimit.Allow(fp, time.Now()) {
 			w.Header().Set("Retry-After", "1")
 			writeErr(w, http.StatusTooManyRequests, "too many requests")
 			return

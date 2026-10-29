@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"api/internal/auth"
+	"api/internal/bounded"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -73,10 +74,11 @@ const (
 
 type fleetGrace struct{ until, started time.Time }
 
-var (
-	stepUpGraceMu sync.Mutex
-	stepUpGraceAt = map[string]fleetGrace{} // login session (token hash) → its window
-)
+// stepUpGraceAt holds each login session's window (token hash → window), one per session that
+// typed its password; past maxGraceWindows new windows aren't opened (the password is asked again).
+const maxGraceWindows = 10_000
+
+var stepUpGraceAt = bounded.New[string, fleetGrace](maxGraceWindows, bounded.Refuse)
 
 // graceKey identifies the caller's login session without keeping its token.
 func graceKey(r *http.Request) string {
@@ -95,38 +97,33 @@ func useFleetGrace(r *http.Request) bool {
 	if key == "" {
 		return false
 	}
-	stepUpGraceMu.Lock()
-	defer stepUpGraceMu.Unlock()
 	now := time.Now()
-	g, ok := stepUpGraceAt[key]
-	if !ok || !now.Before(g.until) {
-		delete(stepUpGraceAt, key)
-		return false
-	}
-	g.until = now.Add(fleetStepUpGrace)
-	if limit := g.started.Add(fleetStepUpGraceMax); g.until.After(limit) {
-		g.until = limit
-	}
-	stepUpGraceAt[key] = g
-	return true
+	inside := false
+	stepUpGraceAt.Update(key, now, func(g *fleetGrace, found bool) time.Time {
+		if !found {
+			return now // no window: nothing to keep
+		}
+		inside = true
+		g.until = now.Add(fleetStepUpGrace)
+		if limit := g.started.Add(fleetStepUpGraceMax); g.until.After(limit) {
+			g.until = limit
+		}
+		return g.until
+	})
+	return inside
 }
 
-// openFleetGrace starts the caller's window after they typed their password, and drops expired
-// windows so the map stays small.
+// openFleetGrace starts the caller's window after they typed their password.
 func openFleetGrace(r *http.Request) {
 	key := graceKey(r)
 	if key == "" {
 		return
 	}
-	stepUpGraceMu.Lock()
-	defer stepUpGraceMu.Unlock()
 	now := time.Now()
-	for k, g := range stepUpGraceAt {
-		if !now.Before(g.until) {
-			delete(stepUpGraceAt, k)
-		}
-	}
-	stepUpGraceAt[key] = fleetGrace{until: now.Add(fleetStepUpGrace), started: now}
+	stepUpGraceAt.Update(key, now, func(g *fleetGrace, _ bool) time.Time {
+		*g = fleetGrace{until: now.Add(fleetStepUpGrace), started: now}
+		return g.until
+	})
 }
 
 // consoleStepUpGraced is consoleStepUp with the shared fleet grace window: within the window it
@@ -898,24 +895,24 @@ type consoleGrant struct {
 	uses      int
 }
 
-var (
-	grantMu sync.Mutex
-	grants  = map[string]*consoleGrant{}
-)
+// maxConsoleGrants caps the grants alive at once (each is minted after a password check and
+// lives minutes); past it, minting is refused rather than any grant dropped.
+const maxConsoleGrants = 10_000
 
+var consoleGrants = bounded.New[string, consoleGrant](maxConsoleGrants, bounded.Refuse)
+
+// mintGrant returns a new grant id, or "" when too many grants are alive.
 func mintGrant(userID int64, machineID, session string, readonly bool, ttl time.Duration, uses int) string {
 	buf := make([]byte, 24)
 	rand.Read(buf)
 	id := hex.EncodeToString(buf)
-	grantMu.Lock()
 	now := time.Now()
-	for k, g := range grants { // sweep expired
-		if now.After(g.expires) {
-			delete(grants, k)
-		}
+	if !consoleGrants.Update(id, now, func(g *consoleGrant, _ bool) time.Time {
+		*g = consoleGrant{userID: userID, machineID: machineID, session: session, readonly: readonly, expires: now.Add(ttl), uses: uses}
+		return g.expires
+	}) {
+		return ""
 	}
-	grants[id] = &consoleGrant{userID: userID, machineID: machineID, session: session, readonly: readonly, expires: now.Add(ttl), uses: uses}
-	grantMu.Unlock()
 	return id
 }
 
@@ -923,23 +920,24 @@ func mintGrant(userID int64, machineID, session string, readonly bool, ttl time.
 // consumes one use. A read-only (share) grant is usable by another logged-in operator in scope but
 // only for the single session it was minted for; a normal grant is bound to the user who minted it.
 func takeGrant(id, machineID, session string, userID int64) (*consoleGrant, bool) {
-	grantMu.Lock()
-	defer grantMu.Unlock()
-	g := grants[id]
-	if g == nil || time.Now().After(g.expires) || g.machineID != machineID {
-		return nil, false
-	}
-	if !g.readonly && g.userID != userID {
-		return nil, false
-	}
-	if g.readonly && g.session != session {
-		return nil, false // a share grant opens only the exact session it was created for
-	}
-	g.uses--
-	if g.uses <= 0 {
-		delete(grants, id)
-	}
-	return g, true
+	var taken *consoleGrant
+	now := time.Now()
+	consoleGrants.Update(id, now, func(g *consoleGrant, found bool) time.Time {
+		if !found {
+			return now // nothing to keep
+		}
+		if g.machineID != machineID || (!g.readonly && g.userID != userID) || (g.readonly && g.session != session) {
+			return g.expires // not this caller's grant: left untouched
+		}
+		g.uses--
+		c := *g
+		taken = &c
+		if g.uses <= 0 {
+			return now
+		}
+		return g.expires
+	})
+	return taken, taken != nil
 }
 
 // ---- recording (asciinema v2 .cast) -------------------------------------------------------------
@@ -1002,6 +1000,10 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	id := mintGrant(p.UserID, m.ID, session, readonly, ttl, uses)
+	if id == "" {
+		router.JSONError(w, "too many console grants right now, try again shortly", http.StatusServiceUnavailable)
+		return
+	}
 	events.Audit("fleet", "console_grant", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console grant issued for %q%s", m.Name, roSuffix(readonly)))
 	router.JSON(w, map[string]any{"grant": id, "readonly": readonly, "session": session, "expiresInSec": int(ttl.Seconds())})
@@ -1039,7 +1041,9 @@ func (s *Service) handleConsoleGrantAll(w http.ResponseWriter, r *http.Request) 
 		if err != nil || m == nil || !scopeAllows(p, *m) || !m.ConsoleEnabled {
 			continue
 		}
-		grants[m.ID] = mintGrant(p.UserID, m.ID, "", false, ttl, uses)
+		if id := mintGrant(p.UserID, m.ID, "", false, ttl, uses); id != "" {
+			grants[m.ID] = id
+		}
 	}
 	events.Audit("fleet", "console_grant", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console grants issued for %d machine(s)", len(grants)))

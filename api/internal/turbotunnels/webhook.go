@@ -13,15 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"api/internal/helper"
 	"api/internal/router"
 )
-
-// webhookNextAllowed maps a webhook ID to the earliest time it may fire again —
-// only populated for webhooks that set a min-interval. Guarded by rotMu (shared
-// with rotate) and pruned by StartRotateGuardCleanup once entries expire, so it
-// can't grow without bound.
-var webhookNextAllowed = map[string]time.Time{}
 
 // maxInboundBody caps how much of an inbound JSON body we read.
 const maxInboundBody = 64 << 10
@@ -34,15 +27,14 @@ func (s *Service) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Cap the request body so a large POST can't balloon memory during parsing.
 	r.Body = http.MaxBytesReader(w, r.Body, maxInboundBody)
 	tail := router.ExtractPathParamFull(r, "/api/hook/")
-	ip := helper.RateKey(helper.GetClientIP(r)) // the abuse guard counts an IPv6 client by its /64
-
-	if rotateBlocked(ip) {
-		router.JSONError(w, "too many attempts, try again later", http.StatusTooManyRequests)
+	client := guardedClient(w, r)
+	if client == "" {
 		return
 	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
+		keyGuard.Refund(client, time.Now())
 		router.JSONError(w, "config error", http.StatusInternalServerError)
 		return
 	}
@@ -68,14 +60,13 @@ func (s *Service) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if target == nil {
-		rotateRecordFail(ip)
-		router.JSONError(w, "invalid key", http.StatusForbidden)
+		router.JSONError(w, "invalid key", http.StatusForbidden) // the reserved attempt stays counted
 		return
 	}
 
-	// A valid key set clears this IP's brute-force streak. From here on, errors
+	// A valid key set clears this client's brute-force streak. From here on, errors
 	// are the caller's mistakes, not guessing, so they must NOT count as fails.
-	rotateClearFails(ip)
+	keyGuard.Clear(client)
 
 	// Declared method only.
 	if r.Method != target.Method {
@@ -248,20 +239,12 @@ func encodeQueryLiteralPlus(v url.Values) string {
 	return b.String()
 }
 
-// webhookAllow enforces the per-webhook minimum interval. 0 = unlimited. Stores an
-// expiry (next-allowed time) so the sweeper can evict lapsed entries.
+// webhookAllow enforces the per-webhook minimum interval. 0 = unlimited.
 func webhookAllow(wh *Webhook) bool {
 	if wh.MinIntervalSec <= 0 {
 		return true
 	}
-	rotMu.Lock()
-	defer rotMu.Unlock()
-	now := time.Now()
-	if until, ok := webhookNextAllowed[wh.ID]; ok && now.Before(until) {
-		return false
-	}
-	webhookNextAllowed[wh.ID] = now.Add(time.Duration(wh.MinIntervalSec) * time.Second)
-	return true
+	return !throttled(webhookThrottle, wh.ID, time.Duration(wh.MinIntervalSec)*time.Second)
 }
 
 // webhookRefund rolls back the rate-limit window reserved by webhookAllow. Called
@@ -272,9 +255,7 @@ func webhookRefund(wh *Webhook) {
 	if wh.MinIntervalSec <= 0 {
 		return
 	}
-	rotMu.Lock()
-	delete(webhookNextAllowed, wh.ID)
-	rotMu.Unlock()
+	webhookThrottle.Delete(wh.ID)
 }
 
 // callWebhook forwards the validated params (plus the webhook's fixed values) to

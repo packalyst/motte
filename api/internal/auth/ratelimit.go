@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"api/internal/bounded"
 	"api/internal/helper"
 	"api/internal/router"
 )
@@ -61,133 +61,76 @@ func tooManyAttempts(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-type attempt struct {
-	count    int
-	firstTry time.Time
-	lockedAt time.Time
-}
+// maxTrackedKeys caps each limiter: IPs (login) or users (2FA, password). Past it, new keys are
+// refused until entries expire; keys already tracked, lockouts included, are never pushed out.
+const maxTrackedKeys = 100_000
 
 // attemptLimiter locks a key (an IP or a user) out for loginLockoutTime after max failed
 // attempts within loginLockoutWindow.
 type attemptLimiter[K comparable] struct {
 	what string // "Login", "2FA", "Password": in logs and errors
-	max  int
-	mu   sync.Mutex
-	m    map[K]*attempt
+	l    *bounded.Lockout[K]
 }
 
 func newAttemptLimiter[K comparable](what string, max int) *attemptLimiter[K] {
-	return &attemptLimiter[K]{what: what, max: max, m: make(map[K]*attempt)}
+	return &attemptLimiter[K]{what: what, l: bounded.NewLockout[K](maxTrackedKeys, max, loginLockoutWindow, loginLockoutTime)}
 }
 
-// reserve ATOMICALLY checks the lockout and reserves an attempt slot in a single critical
-// section, closing the check-then-increment race where a burst of concurrent requests could all
-// pass a stale "under the limit" read. Call it BEFORE the expensive check; every attempt
-// consumes a slot up front, and a success (clear) or a not-a-failure result (refund) gives it
-// back. Returns a *tooManyAttemptsError while the key is locked out.
+// reserve ATOMICALLY checks the lockout and reserves an attempt slot, closing the
+// check-then-increment race where a burst of concurrent requests could all pass a stale "under
+// the limit" read. Call it BEFORE the expensive check; every attempt consumes a slot up front,
+// and a success (clear) or a not-a-failure result (refund) gives it back. Returns a
+// *tooManyAttemptsError while the key is locked out.
 func (l *attemptLimiter[K]) reserve(key K) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-	a, ok := l.m[key]
-	if !ok {
-		l.m[key] = &attempt{count: 1, firstTry: now}
-		return nil
+	retry, locked := l.l.Reserve(key, time.Now())
+	if locked {
+		log.Printf("%s rate limit: %v locked out", l.what, key)
 	}
-
-	// Currently locked out?
-	if !a.lockedAt.IsZero() {
-		if remaining := loginLockoutTime - now.Sub(a.lockedAt); remaining > 0 {
-			return &tooManyAttemptsError{what: strings.ToLower(l.what), retry: remaining}
-		}
-		// Lockout expired — reset and count this as the first attempt of a new window.
-		*a = attempt{count: 1, firstTry: now}
-		return nil
-	}
-
-	// Counting window expired — reset.
-	if now.Sub(a.firstTry) > loginLockoutWindow {
-		*a = attempt{count: 1, firstTry: now}
-		return nil
-	}
-
-	// Reserve this attempt; lock once we exceed the allowance.
-	a.count++
-	if a.count > l.max {
-		a.lockedAt = now
-		log.Printf("%s rate limit: %v locked out after %d attempts", l.what, key, a.count)
-		return &tooManyAttemptsError{what: strings.ToLower(l.what), retry: loginLockoutTime}
+	if retry > 0 {
+		return &tooManyAttemptsError{what: strings.ToLower(l.what), retry: retry}
 	}
 	return nil
 }
 
 // refund returns a slot reserved by reserve when the attempt was not actually a failure
 // (correct password, but 2FA still pending). No-op once locked.
-func (l *attemptLimiter[K]) refund(key K) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if a, ok := l.m[key]; ok && a.lockedAt.IsZero() && a.count > 0 {
-		a.count--
-		if a.count == 0 {
-			delete(l.m, key)
-		}
-	}
-}
+func (l *attemptLimiter[K]) refund(key K) { l.l.Refund(key, time.Now()) }
 
 // clear forgets a key's failed attempts after a success.
-func (l *attemptLimiter[K]) clear(key K) {
-	l.mu.Lock()
-	delete(l.m, key)
-	l.mu.Unlock()
-}
+func (l *attemptLimiter[K]) clear(key K) { l.l.Clear(key) }
 
-// sweep drops entries whose lockout or counting window has passed, so the map can't grow
-// unbounded.
-func (l *attemptLimiter[K]) sweep(now time.Time) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for k, a := range l.m {
-		if a.lockedAt.IsZero() {
-			if now.Sub(a.firstTry) > loginLockoutWindow {
-				delete(l.m, k)
-			}
-		} else if now.Sub(a.lockedAt) > loginLockoutTime {
-			delete(l.m, k)
-		}
-	}
-}
+// usedTOTP holds the last successfully-used TOTP code per user, to block replay of a captured
+// code within its validity window (90s: the TOTP period plus the library's ±1 step skew).
+var usedTOTP = bounded.New[int64, string](maxTrackedKeys, bounded.Refuse)
+
+const totpReplayWindow = 90 * time.Second
 
 var (
-	// Last successfully-used TOTP code per user, to block replay of a captured code
-	// within its validity window. Keyed by user ID, so bounded by the user count.
-	usedTOTP      = make(map[int64]usedTOTPCode)
-	usedTOTPMutex sync.Mutex
+	errTOTPReplayed  = errors.New("2FA code already used, wait for the next code")
+	errTOTPGuardFull = errors.New("too many 2FA checks right now, try again shortly")
 )
 
-// usedTOTPCode records a consumed code and when the replay guard for it expires.
-type usedTOTPCode struct {
-	code    string
-	expires time.Time
-}
-
-// totpReplayed reports whether code was already consumed by this user within its window.
-func totpReplayed(userID int64, code string) bool {
-	usedTOTPMutex.Lock()
-	defer usedTOTPMutex.Unlock()
-	u, ok := usedTOTP[userID]
-	if !ok || time.Now().After(u.expires) {
-		return false
+// claimTOTPCode records a valid code as used, in the same step that checks it wasn't already, so
+// two requests carrying the same code can't both pass. It fails when the code was used within
+// its window, or when it can't be recorded (the map is full): a code that couldn't be recorded
+// could be replayed, so it is refused.
+func claimTOTPCode(userID int64, code string) error {
+	now := time.Now()
+	replayed := false
+	if !usedTOTP.Update(userID, now, func(used *string, found bool) time.Time {
+		if found && subtle.ConstantTimeCompare([]byte(*used), []byte(code)) == 1 {
+			replayed = true
+			return now.Add(totpReplayWindow) // keep the guard; its window restarts
+		}
+		*used = code
+		return now.Add(totpReplayWindow)
+	}) {
+		return errTOTPGuardFull
 	}
-	return subtle.ConstantTimeCompare([]byte(u.code), []byte(code)) == 1
-}
-
-// markTOTPUsed records a successfully-used code so it can't be replayed. The window
-// (90s) covers the TOTP period plus the library's ±1 step validation skew.
-func markTOTPUsed(userID int64, code string) {
-	usedTOTPMutex.Lock()
-	defer usedTOTPMutex.Unlock()
-	usedTOTP[userID] = usedTOTPCode{code: code, expires: time.Now().Add(90 * time.Second)}
+	if replayed {
+		return errTOTPReplayed
+	}
+	return nil
 }
 
 func init() {
@@ -202,23 +145,4 @@ func init() {
 		tp = strings.TrimSpace(helper.GetEnvOptional("TRAEFIK_CONTAINER_IP", ""))
 	}
 	helper.InitTrustedProxies(tp)
-}
-
-// cleanupRateLimitMaps removes stale attempt entries and expired TOTP replay guards so
-// those maps can't grow unbounded. Registered as a routine (see Service.Start); the
-// supervisor calls it on its interval.
-func cleanupRateLimitMaps() error {
-	now := time.Now()
-	loginLimiter.sweep(now)
-	totpLimiter.sweep(now)
-	passwordLimiter.sweep(now)
-
-	usedTOTPMutex.Lock()
-	for userID, u := range usedTOTP {
-		if now.After(u.expires) {
-			delete(usedTOTP, userID)
-		}
-	}
-	usedTOTPMutex.Unlock()
-	return nil
 }

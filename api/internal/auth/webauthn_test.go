@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 )
@@ -44,7 +44,7 @@ func TestPasskeyRequiresUserVerification(t *testing.T) {
 	if got := reg.Response.AuthenticatorSelection.UserVerification; got != protocol.VerificationRequired {
 		t.Errorf("register options: userVerification %q, want required", got)
 	}
-	if sd, ok := waTakeChallenge("reg:" + strconv.FormatInt(u.ID, 10)); !ok || sd.UserVerification != protocol.VerificationRequired {
+	if sd, ok := waRegChallenges.Take(u.ID, time.Now()); !ok || sd.UserVerification != protocol.VerificationRequired {
 		t.Errorf("register challenge: userVerification %q (stored %v), want required", sd.UserVerification, ok)
 	}
 
@@ -66,7 +66,7 @@ func TestPasskeyRequiresUserVerification(t *testing.T) {
 	if got := login.PublicKey.UserVerification; got != protocol.VerificationRequired {
 		t.Errorf("login options: userVerification %q, want required", got)
 	}
-	if sd, ok := waTakeChallenge("login:" + login.ChallengeID); !ok || sd.UserVerification != protocol.VerificationRequired {
+	if sd, ok := waTakeLoginChallenge(login.ChallengeID); !ok || sd.UserVerification != protocol.VerificationRequired {
 		t.Errorf("login challenge: userVerification %q (stored %v), want required", sd.UserVerification, ok)
 	}
 }

@@ -34,21 +34,20 @@ func TestFleetGracePerSessionAndCapped(t *testing.T) {
 
 	// Typed long ago and used all along: still capped.
 	key := graceKey(a)
-	stepUpGraceMu.Lock()
-	stepUpGraceAt[key] = fleetGrace{until: time.Now().Add(time.Minute), started: time.Now().Add(-fleetStepUpGraceMax + time.Second)}
-	stepUpGraceMu.Unlock()
+	setWindow := func(until, started time.Time) {
+		stepUpGraceAt.Update(key, time.Now(), func(g *fleetGrace, _ bool) time.Time {
+			*g = fleetGrace{until: until, started: started}
+			return until
+		})
+	}
+	setWindow(time.Now().Add(time.Minute), time.Now().Add(-fleetStepUpGraceMax+time.Second))
 	if !useFleetGrace(a) {
 		t.Fatal("still inside the cap")
 	}
-	stepUpGraceMu.Lock()
-	until := stepUpGraceAt[key].until
-	stepUpGraceMu.Unlock()
-	if time.Until(until) > 2*time.Second {
-		t.Fatalf("the window slid past the cap: %v left", time.Until(until))
+	if g, _ := stepUpGraceAt.Get(key, time.Now()); time.Until(g.until) > 2*time.Second {
+		t.Fatalf("the window slid past the cap: %v left", time.Until(g.until))
 	}
-	stepUpGraceMu.Lock()
-	stepUpGraceAt[key] = fleetGrace{until: time.Now().Add(-time.Second), started: time.Now().Add(-2 * time.Hour)}
-	stepUpGraceMu.Unlock()
+	setWindow(time.Now().Add(-time.Second), time.Now().Add(-2*time.Hour))
 	if useFleetGrace(a) {
 		t.Fatal("past the cap the password is asked again")
 	}

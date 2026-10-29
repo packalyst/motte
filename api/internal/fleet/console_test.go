@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"api/internal/bounded"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -38,6 +40,19 @@ func TestConsoleGrants(t *testing.T) {
 	}
 	if _, ok := takeGrant(rid, "m1", "sX", 100); !ok {
 		t.Error("readonly grant should allow multiple uses")
+	}
+
+	// A refused take doesn't use the grant up.
+	mid := mintGrant(7, "m1", "", false, time.Minute, 2)
+	takeGrant(mid, "m2", "s1", 7)
+	takeGrant(mid, "m1", "s1", 8)
+	for i := 1; i <= 2; i++ {
+		if _, ok := takeGrant(mid, "m1", "s1", 7); !ok {
+			t.Errorf("use %d of 2 refused after wrong takes", i)
+		}
+	}
+	if _, ok := takeGrant(mid, "m1", "s1", 7); ok {
+		t.Error("a grant was used more times than minted")
 	}
 
 	// Expired grant is rejected.
@@ -202,5 +217,22 @@ func TestSnapshotTimeoutCleansUp(t *testing.T) {
 	a.mu.Unlock()
 	if n != 0 || b.held {
 		t.Fatalf("%d waiters left, held=%v", n, b.held)
+	}
+}
+
+// Past the cap a grant isn't minted ("") rather than another one dropped.
+func TestGrantCap(t *testing.T) {
+	saved := consoleGrants
+	t.Cleanup(func() { consoleGrants = saved })
+	consoleGrants = bounded.New[string, consoleGrant](1, bounded.Refuse)
+	first := mintGrant(7, "m1", "", false, time.Minute, 1)
+	if first == "" {
+		t.Fatal("first grant not minted")
+	}
+	if id := mintGrant(7, "m1", "", false, time.Minute, 1); id != "" {
+		t.Fatal("a grant was minted past the cap")
+	}
+	if _, ok := takeGrant(first, "m1", "s1", 7); !ok {
+		t.Fatal("the existing grant was lost")
 	}
 }

@@ -1,17 +1,23 @@
 package auth
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"api/internal/bounded"
 	"api/internal/database"
+	"api/internal/helper"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/pquerna/otp/totp"
 )
 
 func isTooMany(err error) bool {
@@ -19,6 +25,8 @@ func isTooMany(err error) bool {
 	return errors.As(err, &e)
 }
 
+// The lockout itself is tested in package bounded; this checks auth's wrapper: a locked-out key
+// gets a *tooManyAttemptsError naming what was locked, refund and clear reach the lockout.
 func TestAttemptLimiter(t *testing.T) {
 	l := newAttemptLimiter[string]("Test", 3)
 	for i := 1; i <= 3; i++ {
@@ -26,30 +34,28 @@ func TestAttemptLimiter(t *testing.T) {
 			t.Fatalf("attempt %d: %v", i, err)
 		}
 	}
-	if err := l.reserve("a"); !isTooMany(err) {
+	err := l.reserve("a")
+	if !isTooMany(err) || !strings.Contains(err.Error(), "too many failed test attempts") {
 		t.Fatalf("attempt 4: got %v, want locked out", err)
-	}
-	if err := l.reserve("a"); !isTooMany(err) {
-		t.Fatalf("while locked: got %v, want locked out", err)
 	}
 	if err := l.reserve("b"); err != nil {
 		t.Fatalf("another key is unaffected: %v", err)
-	}
-
-	// refund gives a slot back; clear forgets the key.
-	l.refund("b")
-	if _, ok := l.m["b"]; ok {
-		t.Error("refunding the only attempt should drop the key")
 	}
 	l.clear("a")
 	if err := l.reserve("a"); err != nil {
 		t.Fatalf("after clear: %v", err)
 	}
-
-	// sweep drops entries once their window or lockout has passed.
-	l.sweep(time.Now().Add(loginLockoutWindow + loginLockoutTime + time.Second))
-	if len(l.m) != 0 {
-		t.Errorf("sweep left %d entries", len(l.m))
+	for i := 0; i < 2; i++ {
+		l.reserve("c")
+	}
+	l.refund("c")
+	for i := 0; i < 2; i++ {
+		if err := l.reserve("c"); err != nil {
+			t.Fatalf("after a refund, attempt %d: %v", i+1, err)
+		}
+	}
+	if err := l.reserve("c"); !isTooMany(err) {
+		t.Fatalf("refund gave back more than one attempt: %v", err)
 	}
 }
 
@@ -147,9 +153,8 @@ func TestDisable2FAUsesStepUp(t *testing.T) {
 // freed once a sign-in finishes.
 func TestPasskeyLoginCap(t *testing.T) {
 	reset := func() {
-		waMu.Lock()
-		waChallenges = map[string]*waChallenge{}
-		waMu.Unlock()
+		waLoginChallenges = bounded.New[string, waLogin](maxPendingPasskeyLogins, bounded.Refuse)
+		waRegChallenges = bounded.New[int64, webauthn.SessionData](maxTrackedKeys, bounded.Refuse)
 	}
 	reset()
 	t.Cleanup(reset)
@@ -179,7 +184,7 @@ func TestPasskeyLoginCap(t *testing.T) {
 	if _, err := waStoreLoginChallenge("2001:db8:0:5:ffff::1", data); !errors.Is(err, errTooManyPasskeyLogins) {
 		t.Fatalf("a new address in the same /64 got past the per-IP cap: %v", err)
 	}
-	if _, ok := waTakeChallenge(waLoginPrefix + first); !ok {
+	if _, ok := waTakeLoginChallenge(first); !ok {
 		t.Fatal("stored sign-in not found")
 	}
 	if _, err := waStoreLoginChallenge("192.0.2.20", data); err != nil {
@@ -188,7 +193,7 @@ func TestPasskeyLoginCap(t *testing.T) {
 
 	// Total cap, from many IPs. A pending registration doesn't count toward it.
 	reset()
-	waStoreChallenge("reg:1", data)
+	waStoreRegChallenge(1, data)
 	for i := 0; i < maxPendingPasskeyLogins; i++ {
 		if _, err := waStoreLoginChallenge(fmt.Sprintf("10.%d.%d.1", i/250, i%250), data); err != nil {
 			t.Fatalf("sign-in %d: %v", i, err)
@@ -262,5 +267,59 @@ func TestLoginLockoutGroupsIPv6(t *testing.T) {
 	}
 	if c := login("[2001:db8:0:a::1]:40000"); c != http.StatusUnauthorized {
 		t.Fatalf("another /64 was locked out: %d", c)
+	}
+}
+
+// A 2FA code works once; and when the replay guard can't record it (its map is full) the code is
+// refused rather than left replayable.
+func TestTOTPSingleUse(t *testing.T) {
+	newTestService(t)
+	t.Setenv("ENCRYPTION_SECRET", strings.Repeat("cd", 32)) // synthetic test key
+	helper.InitEncryption()
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: "test", AccountName: "replay"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc, err := helper.Encrypt(key.Secret())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := sql.NullString{String: enc, Valid: true}
+	code, err := totp.GenerateCode(key.Secret(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := usedTOTP
+	t.Cleanup(func() { usedTOTP = saved; totpLimiter.clear(9001); totpLimiter.clear(9002) })
+
+	usedTOTP = bounded.New[int64, string](10, bounded.Refuse)
+	if err := verifyTOTP(9001, secret, code); err != nil {
+		t.Fatalf("first use: %v", err)
+	}
+	if err := verifyTOTP(9001, secret, code); err == nil {
+		t.Fatal("the same code was accepted twice")
+	}
+
+	// Sent at the same moment, one code still passes only once.
+	var wg sync.WaitGroup
+	var passed atomic.Int32
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if claimTOTPCode(9003, "123456") == nil {
+				passed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := passed.Load(); n != 1 {
+		t.Fatalf("one code passed %d times concurrently", n)
+	}
+
+	usedTOTP = bounded.New[int64, string](1, bounded.Refuse)
+	_ = claimTOTPCode(1, "000000")
+	if err := verifyTOTP(9002, secret, code); err == nil {
+		t.Fatal("a code the replay guard couldn't record was accepted")
 	}
 }
