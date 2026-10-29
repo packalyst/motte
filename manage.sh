@@ -1670,7 +1670,7 @@ perform_update() {
         exec "$0" rebuild
     else
         echo ""
-        echo -e "${CYAN}Run ./manage.sh to rebuild when ready${NC}"
+        echo -e "${CYAN}Run ${CMD} to rebuild when ready${NC}"
     fi
 }
 
@@ -1876,7 +1876,7 @@ ensure_dependencies
 # exact same stack without re-asking anything or touching external DNS.
 if [ "$REBUILD_MODE" = true ]; then
     if [ ! -f .env ]; then
-        echo -e "${RED}✗ .env not found — run ./manage.sh (setup) first.${NC}"
+        echo -e "${RED}✗ .env not found — run ${CMD} (setup) first.${NC}"
         exit 1
     fi
     set -a
@@ -3413,5 +3413,5 @@ else
     echo -e "${YELLOW}AdGuard credentials:${NC} ${ADGUARD_USER} / (password in .env)"
 fi
 
-echo -e "${CYAN}Tip: Run ./manage.sh again to manage running containers${NC}"
+echo -e "${CYAN}Tip: Run ${CMD} again to manage running containers${NC}"
 echo ""
