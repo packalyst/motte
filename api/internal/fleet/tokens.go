@@ -36,8 +36,9 @@ func hashToken(plaintext string) string {
 
 // CreateToken mints a one-time enrollment token valid for ttl. panelHost is the direct
 // origin address the agent will dial for mTLS (an IP the operator picked) — recorded so
-// the install endpoint can bake it into the script's --panel later.
-func (s *Service) CreateToken(label string, ttl time.Duration, panelHost string) (*Token, error) {
+// the install endpoint can bake it into the script's --panel later. machineID binds a
+// re-enroll token to an existing machine ("" for a new one).
+func (s *Service) CreateToken(label string, ttl time.Duration, panelHost, machineID string) (*Token, error) {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
@@ -47,8 +48,8 @@ func (s *Service) CreateToken(label string, ttl time.Duration, panelHost string)
 	}
 	exp := time.Now().Add(ttl).UTC()
 	if _, err := s.db.Exec(
-		`INSERT INTO fleet_tokens (token_hash, label, panel_host, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`,
-		hashToken(val), label, panelHost, exp.Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339),
+		`INSERT INTO fleet_tokens (token_hash, label, panel_host, expires_at, created_at, machine_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		hashToken(val), label, panelHost, exp.Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339), sql.NullString{String: machineID, Valid: machineID != ""},
 	); err != nil {
 		return nil, err
 	}
@@ -117,8 +118,9 @@ func (s *Service) lookupToken(plaintext string) (panelHost string, live bool) {
 
 // redeemToken atomically validates + consumes a token. A single UPDATE guarded by
 // (used=0 AND not expired) means only one concurrent caller can ever win, so a
-// token can't be used twice. Returns the token's label.
-func (s *Service) redeemToken(plaintext string) (string, error) {
+// token can't be used twice. Returns the token's label and, for a re-enroll token,
+// the machine it's bound to.
+func (s *Service) redeemToken(plaintext string) (label, machineID string, err error) {
 	h := hashToken(plaintext)
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.Exec(
@@ -126,12 +128,12 @@ func (s *Service) redeemToken(plaintext string) (string, error) {
 		now, h, now,
 	)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return "", errInvalidToken
+		return "", "", errInvalidToken
 	}
-	var label string
-	_ = s.db.QueryRow(`SELECT label FROM fleet_tokens WHERE token_hash = ?`, h).Scan(&label)
-	return label, nil
+	var bound sql.NullString
+	_ = s.db.QueryRow(`SELECT label, machine_id FROM fleet_tokens WHERE token_hash = ?`, h).Scan(&label, &bound)
+	return label, bound.String, nil
 }

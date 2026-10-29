@@ -7,6 +7,14 @@ releases will be tagged as they are cut.
 ## [Unreleased]
 
 ### Added
+- **Machine certificate lifetime** (Settings → Agents): 30, 60, 90 (default), 180 or 365 days,
+  changed with a password confirm. The panel accepts renewal only in the last third of a
+  certificate's life; agents from 0.1.67 renew right then and keep their trusted panel CAs up to
+  date, older ones keep asking from 28 days before expiry and renew once it's accepted. An expired
+  certificate is never accepted.
+- **Re-enroll** a machine (machine page, admins): a one-time command, issued after a password
+  confirm, gives a machine whose certificate expired, or an uninstalled one being reinstalled, a
+  new certificate as the same machine, keeping its history.
 - **Certificates** (Settings → Certificates, admins): every certificate the panel depends on
   in one place: the websites' Let's Encrypt certificates, the fleet CA, the agent listener's
   certificate (with Renew now) and the machines' certificates, each with its expiry and what

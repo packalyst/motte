@@ -37,17 +37,10 @@ func certInfo(c *x509.Certificate, hosts []string) CertInfo {
 	return CertInfo{NotBefore: c.NotBefore, NotAfter: c.NotAfter, Fingerprint: fingerprintFromCert(c), Hosts: hosts}
 }
 
-// ListenerEnabled reports whether the agent listener is running.
-func (s *Service) ListenerEnabled() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.enabled
-}
-
 // CertStatus collects the fleet's certificates, soonest-expiring machine first.
 func (s *Service) CertStatus() (CertStatus, error) {
-	st := CertStatus{CA: certInfo(s.ca.cert, nil), Agents: []AgentCert{}, AgentLifetimeDays: int(s.clientCertTTL / (24 * time.Hour))}
-	if s.ListenerEnabled() {
+	st := CertStatus{CA: certInfo(s.ca.cert, nil), Agents: []AgentCert{}, AgentLifetimeDays: int(s.clientCertTTL() / (24 * time.Hour))}
+	if on, _ := s.Status(); on {
 		if c, hosts := s.currentListenerCert(); c != nil {
 			li := certInfo(c.Leaf, hosts)
 			st.Listener = &li

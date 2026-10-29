@@ -14,6 +14,7 @@
   import { subscribe, unsubscribe, fleetStore, wsConnected } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
+  import AddMachineModal from './AddMachineModal.svelte'
   import Badge from './Badge.svelte'
   import Input from './Input.svelte'
   import EmptyState from './EmptyState.svelte'
@@ -37,6 +38,7 @@
   // --- Browser console (point 7) ---
   const canOpenConsole = $derived(hasRole($currentUser, 'operator'))
   const isAdmin = $derived(hasRole($currentUser, 'admin'))
+  let reenrollOpen = $state(false) // the re-enroll dialog (a new certificate for this same machine)
   // Local mirrors (toggled optimistically from the API response), re-synced when the parent hands
   // in a fresher machine.
   let consoleEnabled = $state(false)
@@ -734,7 +736,7 @@
           <li class="relative">
             <span class="absolute -left-[25px] top-1 h-2.5 w-2.5 rounded-full border-2 border-dashed border-muted-foreground bg-card ring-4 ring-card"></span>
             <div class="text-sm font-medium text-muted-foreground">Bring it back</div>
-            <div class="text-[11px] text-muted-foreground">Install the agent again: it joins as a new machine.</div>
+            <div class="text-[11px] text-muted-foreground">Re-enroll it: a one-time command installs the agent again as this same machine, history included.</div>
           </li>
         </ol>
       </div>
@@ -758,7 +760,8 @@
       </div>
     </div>
 
-    <div class="flex justify-end border-t border-dashed border-border px-6 py-4">
+    <div class="flex justify-end gap-2 border-t border-dashed border-border px-6 py-4">
+      {#if isAdmin}<Button variant="outline" size="sm" icon="certificate" onclick={() => (reenrollOpen = true)}>Re-enroll</Button>{/if}
       <Button variant="destructive" size="sm" icon="trash" onclick={del}>Remove from panel</Button>
     </div>
   </div>
@@ -913,6 +916,13 @@
                 {/if}
               </div>
             {/each}
+            <div class="flex items-start justify-between gap-3 border-t border-dashed border-border pt-4">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-foreground">Certificate</div>
+                <div class="text-[11px] text-muted-foreground">{machine.cert_expires ? formatExpiryDate(machine.cert_expires) + '. ' : ''}The agent renews it by itself while online. If it expired while the machine was offline, re-enroll it.</div>
+              </div>
+              {#if isAdmin}<Button variant="outline" size="sm" icon="certificate" onclick={() => (reenrollOpen = true)}>Re-enroll</Button>{/if}
+            </div>
             <div class="border-t border-dashed border-border pt-4">
               <div class="mb-2 text-sm font-medium text-foreground">Tags</div>
               <TagEditor {tags} canEdit={isAdmin} onsave={saveTags} />
@@ -1360,3 +1370,4 @@
   {/if}
 </Modal>
 
+{#if isAdmin}<AddMachineModal bind:open={reenrollOpen} {machine} />{/if}

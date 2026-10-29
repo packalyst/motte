@@ -23,7 +23,11 @@ func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/certs/listener/renew replaces the agent listener's certificate now.
 func (s *Service) handleRenewListener(w http.ResponseWriter, r *http.Request) {
-	if s.fleet == nil || !s.fleet.ListenerEnabled() {
+	if s.fleet == nil {
+		router.JSONError(w, "The agent listener is off", http.StatusConflict)
+		return
+	}
+	if on, _ := s.fleet.Status(); !on {
 		router.JSONError(w, "The agent listener is off", http.StatusConflict)
 		return
 	}

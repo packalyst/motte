@@ -82,8 +82,6 @@ type Service struct {
 	migrateSent     map[string]time.Time // machine id -> when set-panel-port was last queued for it
 	migrateExtended bool                 // the grace window passed with machines still to move
 	migrateGen      int                  // bumped per migration; an older migration's watcher stops
-
-	clientCertTTL time.Duration
 }
 
 // SetBroadcast wires the WS broadcast fn so report ingests push live to the UI.
@@ -146,7 +144,6 @@ func New(db *sql.DB, sslDomain string, openPort, closePort func(int) error, bloc
 		blockedIPs:     blockedIPs,
 		fwBlockEnabled: fwBlockEnabled,
 		agentCache:     newAgentCache(),
-		clientCertTTL:  90 * 24 * time.Hour,
 	}
 	recordDB = db             // wrapped keys of the encrypted console recordings
 	consoleEventService = svc // lets the session-change hooks push live updates to console-events subscribers
@@ -688,7 +685,8 @@ func ensureSchema(db *sql.DB) error {
 			expires_at TEXT NOT NULL,
 			used       INTEGER DEFAULT 0,
 			used_at    TEXT,
-			created_at TEXT NOT NULL
+			created_at TEXT NOT NULL,
+			machine_id TEXT -- set for a re-enroll token: the machine it re-issues a certificate for
 		)`,
 		`CREATE TABLE IF NOT EXISTS fleet_machines (
 			id           TEXT PRIMARY KEY,
@@ -790,6 +788,7 @@ func ensureSchema(db *sql.DB) error {
 	// MUST run before any index that references a migrated column (below).
 	for _, alt := range []string{
 		`ALTER TABLE fleet_tokens ADD COLUMN panel_host TEXT`,
+		`ALTER TABLE fleet_tokens ADD COLUMN machine_id TEXT`, // re-enroll tokens
 		`ALTER TABLE fleet_cves ADD COLUMN project TEXT`,
 		`ALTER TABLE fleet_machines ADD COLUMN tags TEXT DEFAULT ''`,              // RBAC tag-scoping
 		`ALTER TABLE fleet_machines ADD COLUMN console_enabled INTEGER DEFAULT 0`, // browser console gate (point 7)

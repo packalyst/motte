@@ -2246,6 +2246,25 @@
           "min_role": "admin"
         },
         {
+          "path": "/machine/reenroll",
+          "methods": [
+            "POST"
+          ],
+          "handler": "ReenrollMachine",
+          "description": "Issue a one-time command that gives an existing machine a new certificate (step-up)",
+          "min_role": "admin"
+        },
+        {
+          "path": "/cert-lifetime",
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "handler": "CertLifetime",
+          "description": "Get or set (step-up) how long machine certificates last",
+          "min_role": "admin"
+        },
+        {
           "path": "/bulk-command",
           "methods": [
             "POST"
