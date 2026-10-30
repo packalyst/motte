@@ -14,15 +14,12 @@
   const views = {
     overview: () => import('./OverviewView.svelte'),
     clients: () => import('./ClientsView.svelte'),
-    users: () => import('./UsersView.svelte'),
     firewall: () => import('./FirewallView.svelte'),
     server: () => import('./ServerView.svelte'),
     console: () => import('./ConsoleView.svelte'),
     sessions: () => import('./SessionsView.svelte'),
     iplookup: () => import('./IpLookupView.svelte'),
-    routes: () => import('./RoutesView.svelte'),
-    authkeys: () => import('./AuthKeysView.svelte'),
-    apikeys: () => import('./ApiKeysView.svelte'),
+    headscale: () => import('./HeadscaleView.svelte'),
     domains: () => import('./DomainRoutesView.svelte'),
     tunnels: () => import('./TunnelsView.svelte'),
     adguard: () => import('./AdGuardView.svelte'),
@@ -64,7 +61,6 @@
   const menuGroups = {
     'grp-monitoring': ['analytics', 'logs', 'activity', 'routines'],
     'grp-web': ['domains', 'tunnels', 'adguard'],
-    'grp-headscale': ['routes', 'users', 'authkeys', 'apikeys'],
   }
   // Expand the group that contains the current view on load.
   let expandedMenus = $state(
@@ -151,15 +147,7 @@
     { id: 'divider1', divider: true },
     { id: 'clients', label: 'Clients', icon: 'devices' },
     { id: 'sessions', label: 'Sessions', icon: 'terminal-2', minRole: 'operator' },
-    {
-      id: 'grp-headscale', label: 'Headscale', icon: 'key',
-      children: [
-        { id: 'routes', label: 'Routes', icon: 'git-branch' },
-        { id: 'users', label: 'Users', icon: 'users' },
-        { id: 'authkeys', label: 'Auth Keys', icon: 'key' },
-        { id: 'apikeys', label: 'API Keys', icon: 'code' },
-      ]
-    },
+    { id: 'headscale', label: 'Headscale', icon: 'key' },
     { id: 'divider2', divider: true },
     { id: 'firewall', label: 'Firewall', icon: 'shield' },
     { id: 'server', label: 'Host', icon: 'shield-lock' },
