@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { toast, apiGet, apiPost, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiDelete, confirm, stepUpConfirm, setConfirmLoading } from '../stores/app.js'
   import { createDebouncedSearch, lazyLoad } from '../stores/helpers.js'
   import { usePaginatedState } from '$lib/composables/index.js'
   import { formatRelativeDate, formatTime } from '$lib/utils/format.js'
@@ -455,18 +455,19 @@
   // Delete all entries
   async function confirmDeleteAll() {
     const listName = viewAction === 'allow' ? 'allow' : 'deny'
-    const confirmed = await confirm({
+    const su = await stepUpConfirm({
       title: `Delete all ${listName} rules`,
       message: `This will permanently delete all ${blockedTotal} ${listName}-list rules.`,
       description: `All IPs, ranges, countries and ASNs in the ${listName} list will be removed. Ports and essential entries are not affected.`,
       warning: 'This action cannot be undone!',
-      confirmText: 'Delete All'
+      confirmText: 'Delete All',
+      variant: 'destructive'
     })
-    if (!confirmed) return
+    if (!su?.confirmed || !su?.password) return
 
     setConfirmLoading(true)
     try {
-      const result = await apiDelete(`/api/fw/entries/all?action=${viewAction}`)
+      const result = await apiDelete(`/api/fw/entries/all?action=${viewAction}`, { currentPassword: su.password, totpCode: su.totp || '' })
       await loadBlocked()
       toast(`Deleted ${result.deleted} entries`, 'success')
     } catch (e) {

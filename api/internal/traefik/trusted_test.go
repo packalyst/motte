@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"api/internal/helper"
+	"api/internal/router"
 )
 
 const trustedTestConfig = `http:
@@ -53,10 +54,23 @@ func TestTrustedNetworksSaveAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Service{configPath: path}
+	const addExtra = `{"rateLimitAverage":100,"rateLimitBurst":200,"strictRateAverage":10,"strictRateBurst":20,"ipAllowlist":["198.51.100.7"]}`
 
+	// A new trusted network needs step-up: refused, nothing is saved.
+	router.SetStepUpFunc(func(w http.ResponseWriter, _ *http.Request) bool {
+		w.WriteHeader(http.StatusPreconditionRequired)
+		return false
+	})
+	t.Cleanup(func() { router.SetStepUpFunc(nil) })
 	rr := httptest.NewRecorder()
-	s.handleUpdateConfig(rr, httptest.NewRequest(http.MethodPut, "/api/traefik/config",
-		strings.NewReader(`{"rateLimitAverage":100,"rateLimitBurst":200,"strictRateAverage":10,"strictRateBurst":20,"ipAllowlist":["198.51.100.7"]}`)))
+	s.handleUpdateConfig(rr, httptest.NewRequest(http.MethodPut, "/api/traefik/config", strings.NewReader(addExtra)))
+	if rr.Code != http.StatusPreconditionRequired || saved != nil {
+		t.Fatalf("without step-up: %d, persisted %v", rr.Code, saved)
+	}
+
+	router.SetStepUpFunc(func(http.ResponseWriter, *http.Request) bool { return true })
+	rr = httptest.NewRecorder()
+	s.handleUpdateConfig(rr, httptest.NewRequest(http.MethodPut, "/api/traefik/config", strings.NewReader(addExtra)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("save: %d %s", rr.Code, rr.Body.String())
 	}
@@ -80,6 +94,17 @@ func TestTrustedNetworksSaveAndRestore(t *testing.T) {
 	s.RestoreTrustedNetworks()
 	if got := s.GetConfig().IPAllowlist; !slices.Equal(got, want) {
 		t.Fatalf("after restore: %v, want %v", got, want)
+	}
+
+	// Saving the same list again (or the rate limits alone) adds nothing: no step-up asked.
+	router.SetStepUpFunc(func(w http.ResponseWriter, _ *http.Request) bool {
+		w.WriteHeader(http.StatusPreconditionRequired)
+		return false
+	})
+	rr = httptest.NewRecorder()
+	s.handleUpdateConfig(rr, httptest.NewRequest(http.MethodPut, "/api/traefik/config", strings.NewReader(addExtra)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unchanged list: %d %s", rr.Code, rr.Body)
 	}
 
 	// A malformed or too-broad entry is refused and changes nothing.
