@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -242,9 +243,15 @@ func (a *agentConn) ensureLabel(session string) {
 // sit idle (idle timeout). The reaper tells the agent to KILL (not detach) past-limit sessions.
 
 // touch records activity on a session (first open sets `opened`; every call refreshes `seen`), so
-// the reaper can tell an active long-running command from an abandoned shell.
+// the reaper can tell an active long-running command from an abandoned shell. Only sessions the
+// panel tracks (opened from a browser, or adopted by syncSessions): an id the agent merely
+// mentions adds nothing, so the agent can't grow these maps.
 func (a *agentConn) touch(session string) {
 	a.mu.Lock()
+	if _, ok := a.owners[session]; !ok {
+		a.mu.Unlock()
+		return
+	}
 	now := time.Now()
 	if _, ok := a.opened[session]; !ok {
 		a.opened[session] = now
@@ -256,22 +263,28 @@ func (a *agentConn) touch(session string) {
 // syncSessions rebuilds the owner map from the agent's authoritative list of live tmux sessions
 // (their names embed the owner: "<userID>_<client id>"). This restores resume after a panel restart
 // or agent reconnect, when the in-memory owners map was lost but the tmux sessions survived. It only
-// ADDS missing entries — it never overrides a session the panel is already tracking.
+// ADDS missing entries — it never overrides a session the panel is already tracking — and no more
+// than helper.MaxConsoleSessionsPerMachine in all, the cap a browser open has too (the list comes
+// from the agent: a longer one is not believed).
 func (a *agentConn) syncSessions(ids []string) {
 	now := time.Now()
-	live := make(map[string]bool, len(ids))
-	changed := false
+	live := make(map[string]bool, min(len(ids), helper.MaxConsoleSessionsPerMachine))
+	changed, dropped := false, 0
 	a.mu.Lock()
 	for _, id := range ids {
 		uid := ownerFromSession(id)
 		if uid == 0 {
 			continue
 		}
-		live[id] = true
 		if _, ok := a.owners[id]; !ok {
+			if len(a.owners) >= helper.MaxConsoleSessionsPerMachine {
+				dropped++
+				continue
+			}
 			a.owners[id] = uid
 			changed = true
 		}
+		live[id] = true
 		if _, ok := a.opened[id]; !ok {
 			a.opened[id] = now // real open time is unknown after a restart; start the reaper clock now
 		}
@@ -301,6 +314,9 @@ func (a *agentConn) syncSessions(ids []string) {
 	}
 	a.sessWaiters = nil
 	a.mu.Unlock()
+	if dropped > 0 {
+		log.Printf("console: machine %s reported %d more sessions than the %d a machine may have; ignored", a.machineID, dropped, helper.MaxConsoleSessionsPerMachine)
+	}
 	if changed {
 		notifySessionsChanged(a.machineID) // push the new list to console-events subscribers
 	}
@@ -632,6 +648,12 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "no machine")
 		return
 	}
+	// Only a machine whose console is switched on may hold the channel (the toggle saves "on"
+	// before it tells the agent to connect).
+	if cur, err := s.machineByID(m.ID); err != nil || cur == nil || !cur.ConsoleEnabled {
+		writeErr(w, http.StatusForbidden, "console is off for this machine")
+		return
+	}
 	conn, err := agentUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -662,8 +684,10 @@ func (s *Service) HandleConsoleChannel(w http.ResponseWriter, r *http.Request) {
 	// A vanished machine is noticed (its sessions and recordings closed) instead of the channel
 	// waiting forever; the agent likewise drops a panel that stops pinging.
 	stopPing := keepAlive(conn)
+	stopExpiry := closeAtCertExpiry(r, conn)
 	defer func() {
 		stopPing()
+		stopExpiry()
 		close(stopReaper)
 		regDel(m.ID, a)
 		a.closeAll()
