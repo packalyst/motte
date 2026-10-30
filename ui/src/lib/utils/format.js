@@ -28,16 +28,16 @@ export function withTz(opts = {}) {
 // Number Formatting
 // ============================================================================
 
+const compactNumber = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+
 /**
- * Format large numbers with K/M suffix
+ * Format large numbers with K/M/B suffix
  * @param {number} num - Number to format
- * @returns {string} Formatted string (e.g., "1.5K", "2.3M")
+ * @returns {string} Formatted string (e.g., "999", "1.5K", "2M")
  */
 export function formatNumber(num) {
   if (!num) return '0'
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M'
-  if (num >= 1000) return (num / 1000).toFixed(1) + 'K'
-  return num.toString()
+  return compactNumber.format(num)
 }
 
 /**
