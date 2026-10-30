@@ -50,31 +50,3 @@ func TestCanAssignAndModify(t *testing.T) {
 		t.Errorf("owner should be able to modify another owner: %v", err)
 	}
 }
-
-// TestOwnerCount backs the break-glass guard: it must count owners accurately so the handlers
-// can refuse to drop the last one.
-func TestOwnerCount(t *testing.T) {
-	svc := newTestService(t)
-	base, err := svc.ownerCount() // the database is shared: other tests' owners count too
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.CreateUser("owner1", "StrongP@ss1", RoleOwner); err != nil {
-		t.Fatal(err)
-	}
-	if n, _ := svc.ownerCount(); n != base+1 {
-		t.Fatalf("ownerCount = %d, want %d", n, base+1)
-	}
-	if _, err := svc.CreateUser("viewer1", "StrongP@ss1", RoleViewer); err != nil {
-		t.Fatal(err)
-	}
-	if n, _ := svc.ownerCount(); n != base+1 {
-		t.Fatalf("ownerCount after adding a viewer = %d, want %d", n, base+1)
-	}
-	if _, err := svc.CreateUser("owner2", "StrongP@ss2", RoleOwner); err != nil {
-		t.Fatal(err)
-	}
-	if n, _ := svc.ownerCount(); n != base+2 {
-		t.Fatalf("ownerCount = %d, want %d", n, base+2)
-	}
-}

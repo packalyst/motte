@@ -2,6 +2,7 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -66,12 +67,56 @@ func (s *Service) getUser(id int64) (*User, error) {
 	return &u, nil
 }
 
-// ownerCount returns how many owner accounts exist — the break-glass guard reads this before
-// any demotion or deletion so the panel can never be left without an owner.
-func (s *Service) ownerCount() (int, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role = ?`, RoleOwner).Scan(&n)
-	return n, err
+// errLastOwner refuses a change that would leave the panel without an owner (break-glass).
+var errLastOwner = errors.New("the last owner")
+
+// keepsAnOwner is the SQL condition, on the users row being changed, that never takes away the
+// last owner: the row isn't an owner, stays one, or another owner remains. It is part of the
+// change's own statement, so two owners removing each other at the same moment can't both pass a
+// count taken before either change (SQLite runs one write at a time). Its arguments are
+// keepsAnOwnerArgs.
+const keepsAnOwner = `(role <> ? OR ? = ? OR (SELECT COUNT(*) FROM users WHERE role = ?) > 1)`
+
+func keepsAnOwnerArgs(newRole string) []any { return []any{RoleOwner, newRole, RoleOwner, RoleOwner} }
+
+// changeKeepingAnOwner runs change (an UPDATE … SET … or a DELETE FROM users, with its own args)
+// on user id, guarded by keepsAnOwner; newRole is the role the user ends up with ("" when
+// deleted). errLastOwner when the guard refused, sql.ErrNoRows when the user is gone.
+func (s *Service) changeKeepingAnOwner(id int64, newRole, change string, args ...any) error {
+	args = append(append(args, id), keepsAnOwnerArgs(newRole)...)
+	res, err := s.db.Exec(change+` WHERE id = ? AND `+keepsAnOwner, args...)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return err
+	}
+	if _, err := s.getUser(id); err != nil {
+		return err
+	}
+	return errLastOwner
+}
+
+// setRole changes a user's role, never demoting the last owner.
+func (s *Service) setRole(id int64, role string) error {
+	return s.changeKeepingAnOwner(id, role, `UPDATE users SET role = ?`, role)
+}
+
+// deleteUser deletes a user, never the last owner.
+func (s *Service) deleteUser(id int64) error {
+	return s.changeKeepingAnOwner(id, "", `DELETE FROM users`)
+}
+
+// changeFailed answers a failed setRole or deleteUser.
+func changeFailed(w http.ResponseWriter, err error, lastOwner string) {
+	switch {
+	case errors.Is(err, errLastOwner):
+		router.JSONError(w, lastOwner, http.StatusConflict)
+	case errors.Is(err, sql.ErrNoRows):
+		router.JSONError(w, "user not found", http.StatusNotFound)
+	default:
+		router.JSONError(w, "update failed", http.StatusInternalServerError)
+	}
 }
 
 // handleListUsers (GET /api/auth/users) lists accounts with their roles and scopes.
@@ -133,14 +178,8 @@ func (s *Service) handleUpdateUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Break-glass: never demote the last owner.
-	if target.Role == RoleOwner && req.Role != RoleOwner {
-		if n, _ := s.ownerCount(); n <= 1 {
-			router.JSONError(w, "cannot demote the last owner", http.StatusConflict)
-			return
-		}
-	}
-	if _, err := s.db.Exec(`UPDATE users SET role = ? WHERE id = ?`, req.Role, target.ID); err != nil {
-		router.JSONError(w, "update failed", http.StatusInternalServerError)
+	if err := s.setRole(target.ID, req.Role); err != nil {
+		changeFailed(w, err, "cannot demote the last owner")
 		return
 	}
 	events.Audit("auth", "user_role_changed", events.SeverityWarning, caller.Username, helper.GetClientIP(r),
@@ -220,14 +259,8 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	if target.Role == RoleOwner {
-		if n, _ := s.ownerCount(); n <= 1 {
-			router.JSONError(w, "cannot delete the last owner", http.StatusConflict)
-			return
-		}
-	}
-	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, target.ID); err != nil {
-		router.JSONError(w, "delete failed", http.StatusInternalServerError)
+	if err := s.deleteUser(target.ID); err != nil {
+		changeFailed(w, err, "cannot delete the last owner")
 		return
 	}
 	events.Audit("auth", "user_deleted", events.SeverityWarning, caller.Username, helper.GetClientIP(r),
