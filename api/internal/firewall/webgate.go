@@ -42,11 +42,10 @@ func (s *Service) HandleInternalWebGate(w http.ResponseWriter, r *http.Request) 
 }
 
 // HandleInternalWebGateDrops records the gate's dropped addresses ("ip count" per line) in the
-// 'webgate' jail's file. A report gets addresses banned, so only Traefik itself may send one:
-// the caller must be TRAEFIK_CONTAINER_IP exactly, not just any internal address. Public IPv4
+// 'webgate' jail's file (from Traefik only, like every /internal/* endpoint). Public IPv4
 // addresses only (the jail and the firewall ban IPv4; private and VPN sources are never gated).
 func (s *Service) HandleInternalWebGateDrops(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || !internalCallerAllowed(r) || !fromTraefik(r) {
+	if r.Method != http.MethodPost || !internalCallerAllowed(r) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -70,18 +69,6 @@ func (s *Service) HandleInternalWebGateDrops(w http.ResponseWriter, r *http.Requ
 		log.Printf("webgate: cannot write the jail file: %v", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// fromTraefik reports whether the request's socket address is Traefik's container. Fails closed
-// when the address isn't configured.
-func fromTraefik(r *http.Request) bool {
-	want := net.ParseIP(strings.TrimSpace(os.Getenv("TRAEFIK_CONTAINER_IP")))
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	got := net.ParseIP(host)
-	return want != nil && got != nil && got.Equal(want)
 }
 
 // ensureWebGateLog creates the jail's file, so its monitor finds it at boot (a jail whose file is

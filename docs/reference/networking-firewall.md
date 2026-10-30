@@ -184,7 +184,7 @@ With a domain set, `manage.sh` attaches `sentinel_web_gate@file` to Traefik's wh
 - always lets an ACME challenge through: exactly `/.well-known/acme-challenge/<base64url token>`, nothing more, answered by Traefik's own ACME handler;
 - **drops anyone else silently** (connection closed, no response, whatever the router's error mode);
 - fails closed until the list has been fetched once, then keeps the last good list when a fetch fails;
-- reports dropped addresses in batches (bounded) to `/internal/webgate/drops`, accepted only from `TRAEFIK_CONTAINER_IP`. The panel writes public IPv4 ones as `WEBGATE_DROP SRC=<ip>` to `DATA_DIR/webgate.log` (size-capped, `helper.AppendJailLines`), which the default **`webgate` jail** watches: 3 drops in 10 minutes → banned for a day, on every port.
+- reports dropped addresses in batches (bounded) to `/internal/webgate/drops`, accepted only from `TRAEFIK_CONTAINER_IP` (like every `/internal/*` endpoint). The panel writes public IPv4 ones as `WEBGATE_DROP SRC=<ip>` to `DATA_DIR/webgate.log` (size-capped, `helper.AppendJailLines`), which the default **`webgate` jail** watches: 3 drops in 10 minutes → banned for a day, on every port.
 
 Plain HTTP itself only redirects (see [security.md](security.md)): the panel on the server IP / admin domain, the panel domain and every site with HTTPS on answer `301`/`308` to the same URL on HTTPS. Tailscale's control paths and sites without HTTPS are still served on port 80.
 
@@ -255,7 +255,7 @@ See [data-model.md](data-model.md) for the `vpn_clients` / `vpn_acl_rules` / `vp
 **Firewall block-list at L7 (`sentinel_fw_block`).** The API serves the same blocked-source data over the internal Docker network at `GET /internal/blocklist` (`firewall/blocklist_internal.go:75`, plain text, one CIDR/IP per line), assembled by `AllBlockedCIDRs` (explicit ip/range blocks + expanded country + ASN CIDRs — the same data that feeds the nftables sets). The plugin fetches and caches it (`denyCache`, 300 s), parses it into an `ipDenySet` (exact IPs in a map, CIDRs in a slice), and drops any request whose **real client IP** (Cloudflare-aware `getClientIP`) is in the list.
 
 - **Fail-open:** if the list can't be fetched, `fetch()` returns nil and nothing is denied — a list outage never locks anyone out (`sentinel.go:571`, `dynamic.yml.template` comment).
-- **Internal-only endpoints:** both `/internal/blocklist` and `/internal/l7block` **refuse any request carrying `CF-Connecting-IP` / `X-Forwarded-For` / `X-Real-IP`** (those only appear on public-edge traffic) → answer direct internal calls only. Unauthenticated by design (not routed by Traefik; the data isn't secret).
+- **Internal-only endpoints:** every `/internal/*` endpoint (`firewall/internal_access.go`) answers **only Traefik's own address** (`TRAEFIK_CONTAINER_IP`, the socket address, not a header), and refuses any request carrying `CF-Connecting-IP` / `X-Forwarded-For` / `X-Real-IP` (those only appear on public-edge traffic). A VPN client, a LAN device or any other private address gets 404, and so does everyone when the address isn't configured. Unauthenticated by design (not routed by Traefik; Traefik is the only caller).
 
 **L7 block metrics.** Silent drops leave no access-log trace, so the plugin POSTs a periodic best-effort `{"count":N}` (every ≥20 s, `recordDrop`, `sentinel.go:393`) to `POST /internal/l7block` (`firewall/l7stats.go`), stored in `l7_block_samples`. Fire-and-forget — a failed report never affects blocking.
 
