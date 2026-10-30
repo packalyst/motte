@@ -395,7 +395,9 @@
   async function regenerateHeadscaleKey() {
     regeneratingKey = true
     try {
-      await apiPost('/api/setup/generate-apikey', {})
+      const res = await withStepUp((extra) => apiPost('/api/setup/generate-apikey', { ...extra }),
+        { title: 'Regenerate the Headscale API key', message: 'Confirm your password to issue a new key.', confirmText: 'Regenerate' })
+      if (res === STEPUP_CANCELLED) return
       headscaleHasKey = true
       toast('API key regenerated successfully', 'success')
     } catch (e) {
@@ -482,14 +484,17 @@
   async function saveTraefik() {
     savingTraefik = true
     try {
-      const res = await apiPut('/api/traefik/config', {
+      // A new trusted network asks for the password (the server answers 428).
+      const res = await withStepUp((extra) => apiPut('/api/traefik/config', {
         rateLimitAverage: traefikForm.rateLimitAverage,
         rateLimitBurst: traefikForm.rateLimitBurst,
         strictRateAverage: traefikForm.strictRateAverage,
         strictRateBurst: traefikForm.strictRateBurst,
         ipAllowlist: traefikForm.ipAllowlist,
-        dashboardEnabled: traefikForm.dashboardEnabled
-      })
+        dashboardEnabled: traefikForm.dashboardEnabled,
+        ...extra
+      }), { title: 'Add a trusted network', message: 'Confirm your password to let a new network past the VPN-only and Cloudflare-only gates.', confirmText: 'Save' })
+      if (res === STEPUP_CANCELLED) return
       originalTraefik = {
         rateLimitAverage: traefikForm.rateLimitAverage,
         rateLimitBurst: traefikForm.rateLimitBurst,
@@ -640,7 +645,10 @@
   async function setVPNOnlyMode(mode) {
     vpnOnlyLoading = true
     try {
-      await apiPost('/api/traefik/vpn-only', { mode })
+      // Switching it off asks for the password (the server answers 428).
+      const res = await withStepUp((extra) => apiPost('/api/traefik/vpn-only', { mode, ...extra }),
+        { title: 'Turn VPN-only off', message: 'The panel will be reachable from the internet. Confirm your password.', confirmText: 'Turn off', variant: 'destructive' })
+      if (res === STEPUP_CANCELLED) return
       vpnOnlyMode = mode
       const messages = {
         'off': 'VPN-only mode disabled',

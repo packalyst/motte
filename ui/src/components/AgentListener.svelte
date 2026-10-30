@@ -73,7 +73,10 @@
   async function saveConfig() {
     savingCfg = true
     try {
-      const res = await apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort) })
+      // Switching the listener off or moving it asks for the password (the server answers 428).
+      const res = await withStepUp((extra) => apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort), ...extra }),
+        { title: cfgEnabled ? 'Move the agent listener' : 'Switch the agent listener off', message: 'Confirm your password to change how the machines reach the panel.', confirmText: 'Save' })
+      if (res === STEPUP_CANCELLED) return
       ep = { ...ep, ...res }
       if (res.migrating) {
         toast('New port sent to the agents — the old port stays open until they have all reconnected', 'success')

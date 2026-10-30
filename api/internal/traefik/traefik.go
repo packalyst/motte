@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -326,6 +327,12 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	extras, err := helper.TrustedExtrasFrom(config.IPAllowlist)
 	if err != nil {
 		router.JSONError(w, "Invalid IP allowlist: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// A new trusted network widens who counts as inside (past VPN-only, Cloudflare-only and the
+	// port-80 gate): step-up re-auth. Removing one, or the other settings here, needs none.
+	current := helper.TrustedExtras()
+	if slices.ContainsFunc(extras, func(e string) bool { return !slices.Contains(current, e) }) && !router.StepUp(w, r) {
 		return
 	}
 	if PersistTrustedNetworks != nil {
@@ -661,6 +668,10 @@ func (s *Service) handleSetVPNOnly(w http.ResponseWriter, r *http.Request) {
 	// Validate mode
 	if req.Mode != "off" && req.Mode != "403" && req.Mode != "silent" {
 		router.JSONError(w, "invalid mode: must be 'off', '403', or 'silent'", http.StatusBadRequest)
+		return
+	}
+	// Switching it off puts the panel UI and API on the open internet: step-up re-auth.
+	if req.Mode == "off" && s.GetVPNOnlyMode() != "off" && !router.StepUp(w, r) {
 		return
 	}
 

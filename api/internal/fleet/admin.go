@@ -251,6 +251,14 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldEnabled, oldPort := s.Status()
+	// Switching the listener off, or moving it, cuts the machines off (a move until they reconnect):
+	// a step-up, like the other fleet actions (none inside the fleet step-up grace window).
+	if oldEnabled && (!req.Enabled || req.Port != oldPort) {
+		if status, err := s.verifyStepUp(r, "switch the agent listener off or move it", req.CurrentPassword, req.TotpCode); err != nil {
+			router.JSONError(w, err.Error(), status)
+			return
+		}
+	}
 
 	// A live port change with agents enrolled migrates gracefully (dual-listen + notify)
 	// instead of the hard switch ReloadFromSettings would do (which strands them). Resolve
@@ -320,9 +328,11 @@ func boolStr(b bool) string {
 }
 
 type createTokenRequest struct {
-	Label      string `json:"label"`
-	TTLSeconds int    `json:"ttl_seconds"`
-	PanelHost  string `json:"panel_host"` // direct origin the agent dials for mTLS (IP the operator picked)
+	Label           string `json:"label"`
+	TTLSeconds      int    `json:"ttl_seconds"`
+	PanelHost       string `json:"panel_host"`      // direct origin the agent dials for mTLS (IP the operator picked)
+	CurrentPassword string `json:"currentPassword"` // step-up
+	TotpCode        string `json:"totpCode"`
 }
 
 // handleEndpoints tells the UI the fleet state + the addresses agents can reach the
@@ -375,6 +385,11 @@ type createTokenResponse struct {
 func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	var req createTokenRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req)
+	// A token lets whoever holds it enroll a machine into the fleet: step-up.
+	if status, err := s.verifyStepUp(r, "create an enrollment token", req.CurrentPassword, req.TotpCode); err != nil {
+		router.JSONError(w, err.Error(), status)
+		return
+	}
 	ttl := time.Duration(req.TTLSeconds) * time.Second
 	if ttl <= 0 {
 		ttl = time.Hour

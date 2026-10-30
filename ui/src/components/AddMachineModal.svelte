@@ -44,7 +44,10 @@
       }
       // The machine's real name comes from its hostname at enroll; this label only names the token.
       const label = 'machine-' + Math.random().toString(36).slice(2, 8)
-      token = await apiPost('/api/fleet/token', { label, ttl_seconds: 3600, panel_host: selectedHost })
+      const res = await withStepUp((extra) => apiPost('/api/fleet/token', { label, ttl_seconds: 3600, panel_host: selectedHost, ...extra }),
+        { title: 'Add a machine', message: 'Confirm your password to create a one-time install command.', confirmText: 'Create command' })
+      if (res === STEPUP_CANCELLED) return
+      token = res
       oncreated?.()
     } catch (e) {
       toast('Failed to create token: ' + e.message, 'error')

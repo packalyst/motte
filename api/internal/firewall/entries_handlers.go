@@ -182,17 +182,20 @@ func validateEntryEnums(action, direction, protocol string) error {
 	return nil
 }
 
+// errAdminRule refuses an operator's change to an allow-rule or port entry.
+const errAdminRule = "only admins can change allow-rules and open ports"
+
 // opensFirewall reports whether an entry of this action/type widens access rather than
 // restricting it: an `allow` entry emits `ip saddr @allowed_* accept` ahead of the block
-// sets, and a `port` entry opens a port. Both are admin-grade — operators may manage blocks
-// only (the sanctioned way to open a port is the admin-only /fw/ports endpoint).
+// sets, and a `port` entry opens a port. Both are admin-grade in every direction — creating,
+// enabling, disabling, deleting or overwriting one — so operators manage blocks only (the
+// sanctioned way to open a port is the admin-only /fw/ports endpoint).
 func opensFirewall(action, entryType string) bool {
 	return action == nftables.ActionAllow || entryType == nftables.EntryTypePort
 }
 
 // anyOpensFirewall reports whether any of the entries ids is one that widens access
-// (opensFirewall). Re-enabling such an entry, or widening its direction, opens the firewall as
-// much as creating it, so it's admin-grade too. An error counts as yes (the strict side).
+// (opensFirewall), so that only an admin may touch them. An error counts as yes (the strict side).
 func (s *Service) anyOpensFirewall(ids []int64) bool {
 	if len(ids) == 0 {
 		return false
@@ -268,6 +271,17 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	if opensFirewall(req.Action, req.Type) && !callerIsAdmin(r) {
 		router.JSONError(w, "only admins can create allow-rules or open ports", http.StatusForbidden)
 		return
+	}
+	// The insert below overwrites an entry with the same key: an operator's block must not replace
+	// an admin's allow-rule or open port.
+	if !callerIsAdmin(r) {
+		var opens int
+		err := s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries WHERE entry_type = ? AND value = ? AND protocol = ? AND (action = ? OR entry_type = ?)`,
+			req.Type, normalizedValue, req.Protocol, nftables.ActionAllow, nftables.EntryTypePort).Scan(&opens)
+		if err != nil || opens > 0 {
+			router.JSONError(w, errAdminRule, http.StatusForbidden)
+			return
+		}
 	}
 	// Self-protection: a block must never cut off the panel itself. Allowing is harmless.
 	if req.Action == nftables.ActionBlock {
@@ -378,14 +392,22 @@ func (s *Service) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 
 	// Check if essential (capture value/type for the activity feed)
 	var essential bool
-	var entryValue, entryType string
-	err = s.db.QueryRow("SELECT essential, value, entry_type FROM firewall_entries WHERE id = ?", id).Scan(&essential, &entryValue, &entryType)
+	var entryValue, entryType, entryAction string
+	err = s.db.QueryRow("SELECT essential, value, entry_type, action FROM firewall_entries WHERE id = ?", id).Scan(&essential, &entryValue, &entryType, &entryAction)
 	if err == sql.ErrNoRows {
 		router.JSONError(w, "entry not found", http.StatusNotFound)
 		return
 	}
+	if err != nil {
+		router.DBError(w, err)
+		return
+	}
 	if essential {
 		router.JSONError(w, "cannot delete essential entry", http.StatusForbidden)
+		return
+	}
+	if opensFirewall(entryAction, entryType) && !callerIsAdmin(r) {
+		router.JSONError(w, errAdminRule, http.StatusForbidden)
 		return
 	}
 
@@ -532,9 +554,9 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enabling an allow-rule or port entry, or changing its direction, opens the firewall: admin.
-	if req.Action != "delete" && req.Action != "disable" && !callerIsAdmin(r) && s.anyOpensFirewall(req.IDs) {
-		router.JSONError(w, "only admins can enable or change allow-rules and open ports", http.StatusForbidden)
+	// Allow-rules and port entries are admin-grade, whatever the action (opensFirewall).
+	if !callerIsAdmin(r) && s.anyOpensFirewall(req.IDs) {
+		router.JSONError(w, errAdminRule, http.StatusForbidden)
 		return
 	}
 
@@ -679,6 +701,10 @@ func (s *Service) handleDeleteBySource(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "source required", http.StatusBadRequest)
 		return
 	}
+	// Wipes every rule of a source at once: step-up re-auth.
+	if !router.StepUp(w, r) {
+		return
+	}
 
 	result, err := s.db.Exec("DELETE FROM firewall_entries WHERE source = ? AND essential = 0", source)
 	if err != nil {
@@ -703,7 +729,10 @@ func (s *Service) handleDeleteAll(w http.ResponseWriter, r *http.Request) {
 	// Scope to the Access Rules the caller is looking at: an optional action
 	// (block/allow) and always the source types only — never touch ports, which
 	// have their own management. Without an action it clears both lists' source
-	// rules (legacy callers).
+	// rules (legacy callers). Wipes a whole list at once: step-up re-auth.
+	if !router.StepUp(w, r) {
+		return
+	}
 	query := "DELETE FROM firewall_entries WHERE essential = 0 AND entry_type IN ('ip', 'range', 'country', 'asn')"
 	var args []interface{}
 	if action := r.URL.Query().Get("action"); action == "block" || action == "allow" {
@@ -756,10 +785,9 @@ func (s *Service) handleToggleEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enabling an allow-rule or port entry, or changing its direction, opens the firewall: admin.
-	widens := (req.Enabled != nil && *req.Enabled) || req.Direction != ""
-	if widens && !callerIsAdmin(r) && s.anyOpensFirewall([]int64{id}) {
-		router.JSONError(w, "only admins can enable or change allow-rules and open ports", http.StatusForbidden)
+	// Allow-rules and port entries are admin-grade, whatever the change (opensFirewall).
+	if !callerIsAdmin(r) && s.anyOpensFirewall([]int64{id}) {
+		router.JSONError(w, errAdminRule, http.StatusForbidden)
 		return
 	}
 

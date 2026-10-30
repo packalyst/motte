@@ -50,6 +50,17 @@ func (s *Service) requireAuthIfAdminExists(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+// stepUp runs step-up re-auth for the signed-in caller of a setup endpoint: these are public in
+// the router, so the request carries no principal until requireAuthIfAdminExists' check is redone.
+func stepUp(w http.ResponseWriter, r *http.Request) bool {
+	p, code, msg := router.Authenticate(helper.SessionToken(r), false)
+	if p == nil {
+		router.JSONError(w, msg, code)
+		return false
+	}
+	return router.StepUp(w, r.WithContext(router.ContextWithPrincipal(r.Context(), p)))
+}
+
 // SetupStatus represents the setup state
 type SetupStatus struct {
 	Completed          bool `json:"completed"`
@@ -207,6 +218,10 @@ func (s *Service) handleGenerateAPIKey(w http.ResponseWriter, r *http.Request) {
 	status, _ := s.GetStatus()
 
 	if status.Completed {
+		// A regenerated key is handed to the caller: step-up re-auth (not in the first-run wizard).
+		if !stepUp(w, r) {
+			return
+		}
 		// Check if current key expires in more than 7 days
 		expiresIn, err := getHeadscaleKeyExpiration()
 		if err == nil && expiresIn > 7*24*time.Hour {
