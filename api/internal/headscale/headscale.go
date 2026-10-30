@@ -3,6 +3,7 @@ package headscale
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -453,16 +454,8 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		if n.User.Name != name || !validNodeID.MatchString(n.ID) {
 			continue
 		}
-		forgetNode(n.ID)
-		resp, err := helper.HeadscaleDelete("/node/" + n.ID)
-		if err != nil {
-			headscaleUnreachable(w, err)
-			return
-		}
-		resp.Body.Close()
-		if resp.StatusCode >= 300 {
-			log.Printf("headscale: delete node %s of %s: %s", n.ID, name, resp.Status)
-			router.JSONError(w, "could not delete the user's devices", http.StatusBadGateway)
+		if err := deleteNode(n.ID); err != nil {
+			nodeDeleteFailed(w, err, "could not delete the user's devices")
 			return
 		}
 		removed++
@@ -523,12 +516,44 @@ func (s *Service) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	forgetNode(id)
-	s.proxyDelete(w, "/node/"+id)
+	if err := deleteNode(id); err != nil {
+		nodeDeleteFailed(w, err, "could not delete the device")
+		return
+	}
+	router.JSON(w, map[string]any{})
 }
 
-// forgetNode removes the panel's own records of a Headscale node about to be deleted: its row in
-// the unified client list and that client's domain routes.
+// errHeadscaleUnreachable marks a Headscale request that got no answer at all.
+var errHeadscaleUnreachable = errors.New("headscale unreachable")
+
+// deleteNode deletes a node in Headscale and only then the panel's own records of it (forgetNode):
+// a delete Headscale refuses or never answers leaves the device's routes, ACL rules, virtual IPs
+// and LAN grants as they were, so it can simply be retried.
+func deleteNode(id string) error {
+	resp, err := helper.HeadscaleDelete("/node/" + id)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errHeadscaleUnreachable, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("delete node %s: headscale answered %s", id, resp.Status)
+	}
+	forgetNode(id)
+	return nil
+}
+
+// nodeDeleteFailed answers a failed deleteNode: 424 when Headscale is unreachable, else 502 with msg.
+func nodeDeleteFailed(w http.ResponseWriter, err error, msg string) {
+	if errors.Is(err, errHeadscaleUnreachable) {
+		headscaleUnreachable(w, err)
+		return
+	}
+	log.Printf("headscale: %v", err)
+	router.JSONError(w, msg, http.StatusBadGateway)
+}
+
+// forgetNode removes the panel's own records of a deleted Headscale node: its row in the unified
+// client list (with what hangs off it: ACL rules, virtual IPs, LAN grants) and its domain routes.
 func forgetNode(id string) {
 	db, err := database.GetDB()
 	if err != nil {

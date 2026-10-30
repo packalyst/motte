@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"api/internal/helper"
@@ -64,6 +65,9 @@ func TestProxyResponseJoinKeys(t *testing.T) {
 	}
 }
 
+// refuseNodeDeletes makes fakeHeadscale answer 500 to a node delete (Headscale refusing it).
+var refuseNodeDeletes atomic.Bool
+
 // fakeHeadscale serves two users (alice owns node 7, bob node 8), a pre-auth key for alice (key
 // id 20), an API key and a route, and records what's posted or deleted.
 func fakeHeadscale(t *testing.T) *[]string {
@@ -86,6 +90,8 @@ func fakeHeadscale(t *testing.T) *[]string {
 			w.Write([]byte(`{"routes":[{"id":"3","prefix":"192.0.2.0/24","node":` + nodeJSON + `}]}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/apikey"):
 			w.Write([]byte(`{"apiKeys":[{"id":"1","prefix":"abc1234"}]}`))
+		case r.Method == http.MethodDelete && refuseNodeDeletes.Load() && strings.Contains(r.URL.Path, "/node/"):
+			http.Error(w, `{"message":"refused"}`, http.StatusInternalServerError)
 		case r.Method == http.MethodDelete:
 			*posted = append(*posted, "DELETE "+r.URL.Path)
 			w.Write([]byte(`{}`))
