@@ -31,7 +31,7 @@ func TestSecretEndpointsRequireAdmin(t *testing.T) {
 	// service -> handler that must be admin-only.
 	required := map[string]map[string]bool{
 		"wireguard":    {"GetPeerConfig": true, "GetPeerQR": true},
-		"headscale":    {"GetPreAuthKeys": true},
+		"headscale":    {"GetKeys": true},
 		"turbotunnels": {"GetConfig": true},
 	}
 	for svc, handlers := range required {
@@ -40,9 +40,16 @@ func TestSecretEndpointsRequireAdmin(t *testing.T) {
 			t.Errorf("service %q missing from endpoints.json", svc)
 			continue
 		}
+		seen := map[string]bool{}
 		for _, e := range s.Endpoints {
 			if handlers[e.Handler] && e.MinRole != "admin" && e.MinRole != "owner" {
 				t.Errorf("%s/%s (%s) returns secrets but min_role=%q, want admin/owner", svc, e.Handler, e.Path, e.MinRole)
+			}
+			seen[e.Handler] = true
+		}
+		for h := range handlers { // a renamed handler must not slip out of this check
+			if !seen[h] {
+				t.Errorf("%s/%s is not in endpoints.json; update this list", svc, h)
 			}
 		}
 	}

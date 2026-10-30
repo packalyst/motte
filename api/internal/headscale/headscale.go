@@ -34,6 +34,7 @@ type Node struct {
 	Name        string   `json:"name"`
 	GivenName   string   `json:"givenName"`
 	IPAddresses []string `json:"ipAddresses"`
+	User        User     `json:"user"`
 }
 
 // Route represents a Headscale route
@@ -254,20 +255,19 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"CreateUser":       s.handleCreateUser,
 		"DeleteUser":       s.handleDeleteUser,
 		"RenameUser":       s.handleRenameUser,
+		"GetOverview":      s.handleGetOverview,
+		"GetKeys":          s.handleGetKeys,
 		"GetNodes":         s.handleGetNodes,
 		"DeleteNode":       s.handleDeleteNode,
 		"RenameNode":       s.handleRenameNode,
 		"ExpireNode":       s.handleExpireNode,
-		"GetNodeRoutes":    s.handleGetNodeRoutes,
 		"UpdateNodeTags":   s.handleUpdateNodeTags,
 		"GetRoutes":        s.handleGetRoutes,
 		"EnableRoute":      s.handleEnableRoute,
 		"DisableRoute":     s.handleDisableRoute,
 		"DeleteRoute":      s.handleDeleteRoute,
-		"GetPreAuthKeys":   s.handleGetPreAuthKeys,
 		"CreatePreAuthKey": s.handleCreatePreAuthKey,
 		"ExpirePreAuthKey": s.handleExpirePreAuthKey,
-		"GetAPIKeys":       s.handleGetAPIKeys,
 		"CreateAPIKey":     s.handleCreateAPIKey,
 		"DeleteAPIKey":     s.handleDeleteAPIKey,
 	}
@@ -425,10 +425,17 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	s.proxyPost(w, "/user", string(body))
 }
 
+// handleDeleteUser deletes a user and, first, every node they own (Headscale keeps a user who still
+// has nodes). One step-up covers the whole delete. The user's nodes are picked from the full node
+// list by owner here, so a filter Headscale might ignore can never widen the delete.
 func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	name := router.ExtractPathParam(r, "/api/hs/users/")
 	if !validName.MatchString(name) {
 		router.JSONError(w, "invalid user name", http.StatusBadRequest)
+		return
+	}
+	// Destructive + irreversible (it takes the user's devices off the VPN): step-up re-auth.
+	if !router.StepUp(w, r) {
 		return
 	}
 
@@ -436,7 +443,37 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	nodes, err := GetNodes()
+	if err != nil {
+		headscaleUnreachable(w, err)
+		return
+	}
+	removed := 0
+	for _, n := range nodes {
+		if n.User.Name != name || !validNodeID.MatchString(n.ID) {
+			continue
+		}
+		forgetNode(n.ID)
+		resp, err := helper.HeadscaleDelete("/node/" + n.ID)
+		if err != nil {
+			headscaleUnreachable(w, err)
+			return
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			log.Printf("headscale: delete node %s of %s: %s", n.ID, name, resp.Status)
+			router.JSONError(w, "could not delete the user's devices", http.StatusBadGateway)
+			return
+		}
+		removed++
+	}
 
+	actor := ""
+	if p := router.CurrentUser(r); p != nil {
+		actor = p.Username
+	}
+	events.Audit("headscale", "user_delete", events.SeverityWarning, actor, helper.GetClientIP(r),
+		fmt.Sprintf("User %s deleted with %d device(s)", name, removed))
 	s.proxyDelete(w, "/user/"+userID)
 }
 
@@ -486,18 +523,23 @@ func (s *Service) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-delete from vpn_clients for unified view
-	if db, err := database.GetDB(); err == nil {
-		// Get client ID and delete associated domain routes first
-		var clientID int
-		err := db.QueryRow(`SELECT id FROM vpn_clients WHERE external_id = ? AND type = 'headscale'`, id).Scan(&clientID)
-		if err == nil && clientID > 0 {
-			domains.DeleteClientRoutes(clientID)
-		}
-		db.Exec(`DELETE FROM vpn_clients WHERE external_id = ? AND type = 'headscale'`, id)
-	}
-
+	forgetNode(id)
 	s.proxyDelete(w, "/node/"+id)
+}
+
+// forgetNode removes the panel's own records of a Headscale node about to be deleted: its row in
+// the unified client list and that client's domain routes.
+func forgetNode(id string) {
+	db, err := database.GetDB()
+	if err != nil {
+		return
+	}
+	var clientID int
+	err = db.QueryRow(`SELECT id FROM vpn_clients WHERE external_id = ? AND type = 'headscale'`, id).Scan(&clientID)
+	if err == nil && clientID > 0 {
+		domains.DeleteClientRoutes(clientID)
+	}
+	db.Exec(`DELETE FROM vpn_clients WHERE external_id = ? AND type = 'headscale'`, id)
 }
 
 func (s *Service) handleRenameNode(w http.ResponseWriter, r *http.Request) {
@@ -521,15 +563,6 @@ func (s *Service) handleExpireNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.proxyPost(w, "/node/"+id+"/expire", "")
-}
-
-func (s *Service) handleGetNodeRoutes(w http.ResponseWriter, r *http.Request) {
-	id := router.ExtractPathParam(r, "/api/hs/nodes/")
-	if !validNodeID.MatchString(id) {
-		router.JSONError(w, "invalid node id", http.StatusBadRequest)
-		return
-	}
-	s.proxyGet(w, "/node/"+id+"/routes")
 }
 
 func (s *Service) handleUpdateNodeTags(w http.ResponseWriter, r *http.Request) {
@@ -604,21 +637,6 @@ func (s *Service) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- PreAuth Keys ---
-
-func (s *Service) handleGetPreAuthKeys(w http.ResponseWriter, r *http.Request) {
-	// Admin-gated read (no step-up): a page-load GET carries no re-auth creds. Step-up guards the
-	// mint action (handleCreatePreAuthKey), which is where a new join secret is actually handed out.
-	user := r.URL.Query().Get("user")
-	if user == "" {
-		router.JSONError(w, "user parameter required", http.StatusBadRequest)
-		return
-	}
-	if !validName.MatchString(user) {
-		router.JSONError(w, "invalid user name", http.StatusBadRequest)
-		return
-	}
-	s.proxyGet(w, "/preauthkey?user="+user)
-}
 
 func (s *Service) handleCreatePreAuthKey(w http.ResponseWriter, r *http.Request) {
 	// Step-up: minting a preauth key hands out a tailnet-join secret.
@@ -705,12 +723,6 @@ func preAuthKeyByID(user, id string) (string, error) {
 }
 
 // --- API Keys ---
-
-func (s *Service) handleGetAPIKeys(w http.ResponseWriter, r *http.Request) {
-	// Admin-gated read (no step-up): a page-load GET carries no re-auth creds, and the list returns
-	// only key prefixes, not secrets. Step-up guards the mint action (handleCreateAPIKey).
-	s.proxyGet(w, "/apikey")
-}
 
 func (s *Service) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// Step-up: minting an API key issues a headscale control-plane credential.

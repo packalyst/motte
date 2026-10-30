@@ -74,7 +74,7 @@ func (s *Service) NotifyNodeOffline(nodeName string) {
 		Data: map[string]string{
 			"type": "node_offline",
 			"node": nodeName,
-			"url":  "/nodes",
+			"url":  "/clients",
 		},
 	})
 }
@@ -89,7 +89,7 @@ func (s *Service) NotifyNodeOnline(nodeName string) {
 		Data: map[string]string{
 			"type": "node_online",
 			"node": nodeName,
-			"url":  "/nodes",
+			"url":  "/clients",
 		},
 	})
 }

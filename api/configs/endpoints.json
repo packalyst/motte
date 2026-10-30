@@ -881,6 +881,23 @@
       "enabled": true,
       "endpoints": [
         {
+          "path": "/overview",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetOverview",
+          "description": "Users, nodes and routes in one reply (no keys)"
+        },
+        {
+          "path": "/keys",
+          "methods": [
+            "GET"
+          ],
+          "handler": "GetKeys",
+          "description": "Every user's pre-auth keys (prefixes only) and the API keys",
+          "min_role": "admin"
+        },
+        {
           "path": "/users",
           "methods": [
             "GET"
@@ -945,14 +962,6 @@
           "description": "Expire node"
         },
         {
-          "path": "/nodes/{id}/routes",
-          "methods": [
-            "GET"
-          ],
-          "handler": "GetNodeRoutes",
-          "description": "Get node routes"
-        },
-        {
           "path": "/nodes/{id}/tags",
           "methods": [
             "PUT"
@@ -995,15 +1004,6 @@
         {
           "path": "/preauthkeys",
           "methods": [
-            "GET"
-          ],
-          "handler": "GetPreAuthKeys",
-          "description": "List pre-auth keys",
-          "min_role": "admin"
-        },
-        {
-          "path": "/preauthkeys",
-          "methods": [
             "POST"
           ],
           "handler": "CreatePreAuthKey",
@@ -1016,15 +1016,6 @@
           ],
           "handler": "ExpirePreAuthKey",
           "description": "Expire pre-auth key"
-        },
-        {
-          "path": "/apikeys",
-          "methods": [
-            "GET"
-          ],
-          "handler": "GetAPIKeys",
-          "description": "List API keys",
-          "min_role": "admin"
         },
         {
           "path": "/apikeys",

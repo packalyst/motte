@@ -14,7 +14,7 @@ import (
 const syntheticJoinKey = "00000000000000000000000000000000synthetic"
 
 // nodeJSON is a Headscale 0.25-shaped node carrying the key it joined with.
-const nodeJSON = `{"id":"7","name":"laptop","ipAddresses":["100.64.0.7"],"online":true,` +
+const nodeJSON = `{"id":"7","name":"laptop","user":{"id":"1","name":"alice"},"ipAddresses":["100.64.0.7"],"online":true,` +
 	`"preAuthKey":{"id":"18","key":"` + syntheticJoinKey + `","reusable":true,"used":true}}`
 
 func TestStripJoinKeys(t *testing.T) {
@@ -64,7 +64,8 @@ func TestProxyResponseJoinKeys(t *testing.T) {
 	}
 }
 
-// fakeHeadscale serves a pre-auth key list for alice (key id 20) and records what's posted.
+// fakeHeadscale serves two users (alice owns node 7, bob node 8), a pre-auth key for alice (key
+// id 20), an API key and a route, and records what's posted or deleted.
 func fakeHeadscale(t *testing.T) *[]string {
 	t.Helper()
 	posted := &[]string{}
@@ -72,7 +73,22 @@ func fakeHeadscale(t *testing.T) *[]string {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/preauthkey"):
-			w.Write([]byte(`{"preAuthKeys":[{"id":"20","key":"` + syntheticJoinKey + `","used":false}]}`))
+			if r.URL.Query().Get("user") == "alice" {
+				w.Write([]byte(`{"preAuthKeys":[{"id":"20","key":"` + syntheticJoinKey + `","used":false}]}`))
+				return
+			}
+			w.Write([]byte(`{"preAuthKeys":[]}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/user"):
+			w.Write([]byte(`{"users":[{"id":"1","name":"alice"},{"id":"2","name":"bob"}]}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/node"):
+			w.Write([]byte(`{"nodes":[` + nodeJSON + `,{"id":"8","name":"desk","user":{"id":"2","name":"bob"}}]}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/routes"):
+			w.Write([]byte(`{"routes":[{"id":"3","prefix":"192.0.2.0/24","node":` + nodeJSON + `}]}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/apikey"):
+			w.Write([]byte(`{"apiKeys":[{"id":"1","prefix":"abc1234"}]}`))
+		case r.Method == http.MethodDelete:
+			*posted = append(*posted, "DELETE "+r.URL.Path)
+			w.Write([]byte(`{}`))
 		case r.Method == http.MethodPost:
 			b, _ := io.ReadAll(r.Body)
 			*posted = append(*posted, r.URL.Path+" "+string(b))
@@ -102,8 +118,9 @@ func TestPreAuthKeysShownOnce(t *testing.T) {
 		return rec
 	}
 
-	if rec := call(s.handleGetPreAuthKeys, http.MethodGet, "/api/hs/preauthkeys?user=alice", ""); strings.Contains(rec.Body.String(), syntheticJoinKey) {
-		t.Errorf("list carries a whole key: %s", rec.Body)
+	if rec := call(s.handleGetKeys, http.MethodGet, "/api/hs/keys", ""); strings.Contains(rec.Body.String(), syntheticJoinKey) ||
+		!strings.Contains(rec.Body.String(), `"keyPrefix":"`+syntheticJoinKey[:keyPrefixLen]+`"`) || !strings.Contains(rec.Body.String(), `"prefix":"abc1234"`) {
+		t.Errorf("key list must carry every key by its prefix only: %s", rec.Body)
 	}
 
 	router.SetStepUpFunc(func(http.ResponseWriter, *http.Request) bool { return true })
@@ -132,5 +149,51 @@ func TestPreAuthKeysShownOnce(t *testing.T) {
 	}
 	if len(*posted) != n {
 		t.Fatal("an invalid or unknown expire reached Headscale")
+	}
+}
+
+// The viewers' overview has the users, nodes and routes, and no key of any kind.
+func TestOverviewCarriesNoKeys(t *testing.T) {
+	fakeHeadscale(t)
+	t.Setenv("WG_IP_RANGE", "10.8.0.0/24")
+	rec := httptest.NewRecorder()
+	(&Service{}).handleGetOverview(rec, httptest.NewRequest(http.MethodGet, "/api/hs/overview", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || strings.Contains(body, syntheticJoinKey) || strings.Contains(body, "preAuthKey") || strings.Contains(body, "apiKeys") {
+		t.Fatalf("overview: %d %s", rec.Code, body)
+	}
+	for _, want := range []string{`"name":"bob"`, `"desk"`, `"192.0.2.0/24"`, `"panelRouter"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview lacks %s: %s", want, body)
+		}
+	}
+}
+
+// Deleting a user takes step-up, then removes only that user's nodes, then the user.
+func TestDeleteUserCascade(t *testing.T) {
+	posted := fakeHeadscale(t)
+	s := &Service{}
+	del := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s.handleDeleteUser(rec, httptest.NewRequest(http.MethodDelete, "/api/hs/users/alice", strings.NewReader(`{}`)))
+		return rec
+	}
+
+	router.SetStepUpFunc(func(w http.ResponseWriter, _ *http.Request) bool {
+		w.WriteHeader(http.StatusPreconditionRequired)
+		return false
+	})
+	if rec := del(); rec.Code != http.StatusPreconditionRequired || len(*posted) != 0 {
+		t.Fatalf("without step-up: %d, sent %v", rec.Code, *posted)
+	}
+
+	router.SetStepUpFunc(func(http.ResponseWriter, *http.Request) bool { return true })
+	t.Cleanup(func() { router.SetStepUpFunc(nil) })
+	if rec := del(); rec.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+	want := []string{"DELETE /node/7", "DELETE /user/1"}
+	if strings.Join(*posted, ",") != strings.Join(want, ",") {
+		t.Fatalf("sent %v, want %v (bob's node 8 must stay)", *posted, want)
 	}
 }

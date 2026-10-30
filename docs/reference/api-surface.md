@@ -91,13 +91,15 @@ Live: `GET /sessions`, `GET /server`. Per-peer virtual IPs:
 `GET /vips/{vipId}/commands`.
 
 ### headscale — `/api/hs`
-Admin wrapper over the Headscale REST API. Users: `GET|POST /users`,
-`DELETE /users/{name}`, `PUT /users/{name}/rename/{newName}`. Nodes:
-`GET /nodes`, `DELETE /nodes/{id}`, `POST /nodes/{id}/rename/{name}`,
-`POST /nodes/{id}/expire`, `GET /nodes/{id}/routes`, `PUT /nodes/{id}/tags`.
+Admin wrapper over the Headscale REST API. Page reads: `GET /overview` (users,
+nodes, routes and the panel router in one reply, no keys) and `GET /keys` (admin:
+every user's pre-auth keys by prefix, and the API keys). Users: `GET|POST /users`,
+`DELETE /users/{name}` (step-up; deletes the user's nodes first),
+`PUT /users/{name}/rename/{newName}`. Nodes: `GET /nodes`, `DELETE /nodes/{id}`,
+`POST /nodes/{id}/rename/{name}`, `POST /nodes/{id}/expire`, `PUT /nodes/{id}/tags`.
 Routes: `GET /routes`, `POST /routes/{id}/enable|disable`, `DELETE /routes/{id}`.
-Keys: `GET|POST /preauthkeys`, `POST /preauthkeys/expire`,
-`GET|POST /apikeys`, `DELETE /apikeys/{id}`.
+Keys: `POST /preauthkeys`, `POST /preauthkeys/expire`, `POST /apikeys`,
+`DELETE /apikeys/{id}`.
 
 ### vpn (unified clients + ACL) — `/api/vpn`
 Combined WireGuard+Headscale client view and ACL engine: `GET /clients`,
