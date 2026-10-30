@@ -18,6 +18,7 @@ import (
 // plus the allowed sources while it's on.
 func TestInternalWebGate(t *testing.T) {
 	s := lockoutService(t)
+	t.Setenv("TRAEFIK_CONTAINER_IP", "172.18.0.5")
 	get := func(remote string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/internal/webgate", nil)
 		r.RemoteAddr = remote

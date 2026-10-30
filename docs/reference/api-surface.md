@@ -195,8 +195,10 @@ the config-driven router, so they bypass the session-auth middleware:
   plugin** feed. `/internal/blocklist` serves the firewall's current
   block-list; `/internal/l7block` ingests the sentinel's periodic L7 block
   count. Both are fetched container-to-container over the Docker network, never
-  routed by Traefik, and the handlers **refuse proxied requests** — they are not
-  reachable from outside. Registered only when the firewall service is up.
+  routed by Traefik. Like every `/internal/*` endpoint they answer **only
+  Traefik's own address** (`TRAEFIK_CONTAINER_IP`) and refuse proxied requests,
+  so no VPN client, LAN device or outside caller can use them. Registered only
+  when the firewall service is up.
 - **`GET /agent/{token}`** — fleet self-extracting agent installer
   (`flSvc.HandleInstallScript`). Bypasses auth because a new machine has no
   session; the one-time token in the path is the credential. Reached via

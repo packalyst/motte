@@ -74,9 +74,9 @@ func (s *Service) ExplicitBlockedCIDRs() ([]string, error) {
 // the Traefik sentinel plugin to fetch over the internal Docker network.
 //
 // Unauthenticated by design — it is internal-only (the api port isn't internet-exposed),
-// not routed by Traefik, and the data (a list of blocked IPs) is not a secret. Access is
-// restricted to loopback/private-network callers by their real socket address (see
-// internalCallerAllowed), so a request with a public source or forged edge headers is refused.
+// not routed by Traefik, and the data (a list of blocked IPs) is not a secret. Only Traefik's own
+// address may fetch it (internalCallerAllowed), so any other source or forged edge headers are
+// refused.
 func (s *Service) HandleInternalBlocklist(w http.ResponseWriter, r *http.Request) {
 	if !internalCallerAllowed(r) {
 		http.Error(w, "not found", http.StatusNotFound)

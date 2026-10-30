@@ -23,9 +23,8 @@ func (s *Service) ensureL7Table() {
 	})
 }
 
-// HandleInternalL7Block records a batch of sentinel block counts. Internal-only: it accepts
-// only loopback/private-network callers by their real socket address (internalCallerAllowed),
-// the same guard the blocklist endpoint uses.
+// HandleInternalL7Block records a batch of sentinel block counts. Internal-only: from Traefik's
+// own address (internalCallerAllowed), like every /internal/* endpoint.
 func (s *Service) HandleInternalL7Block(w http.ResponseWriter, r *http.Request) {
 	if !internalCallerAllowed(r) {
 		http.Error(w, "not found", http.StatusNotFound)

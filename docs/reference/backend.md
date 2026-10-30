@@ -108,8 +108,9 @@ The typical **naming convention** inside a package:
 11. **Build the HTTP handler**: `r.Build()` produces the middleware-wrapped mux,
     then `main` creates a second `http.ServeMux` that mounts:
     - `/api/ws` → `wsSvc.HandleWebSocket`
-    - `/internal/blocklist`, `/internal/l7block` → firewall (bypass auth; refuse
-      proxied requests) — for the Traefik sentinel plugin
+    - `/internal/blocklist`, `/internal/l7block`, `/internal/cloudflare`,
+      `/internal/webgate`, `/internal/webgate/drops` → firewall (bypass auth;
+      Traefik's own address only) — for the Traefik sentinel plugin
     - `GET /agent/{token}` → fleet self-extracting installer (bypass auth)
     - `/` → the main router handler
 12. **`http.Server`** with 30s read/write + 60s idle timeouts, listening on
