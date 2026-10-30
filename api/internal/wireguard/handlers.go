@@ -144,6 +144,7 @@ func (s *Service) handleUpdatePeer(w http.ResponseWriter, r *http.Request) {
 
 	s.peerStore.Add(peer)
 	s.syncConfig()
+	stripSensitiveKeys(peer) // a copy (peerStore.Get), saved above: the stored keys stay
 	router.JSON(w, peer)
 }
 
