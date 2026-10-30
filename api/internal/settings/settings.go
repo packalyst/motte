@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -86,42 +87,6 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"SelectSettings": s.handleSelectSettings,
 		"UpdateSettings": s.handleUpdateSettings,
 	}
-}
-
-// SettingsResponse for GET /api/settings
-type SettingsResponse struct {
-	// Headscale
-	HeadscaleAPIURL string `json:"headscale_api_url"` // Internal API URL (readonly, auto-detected)
-	HeadscaleURL    string `json:"headscale_url"`     // Public URL for Tailscale clients
-	HeadscaleAPIKey bool   `json:"headscale_api_key"` // true if set, don't expose actual key
-
-	// AdGuard
-	AdGuardUsername         string `json:"adguard_username"`
-	AdGuardPassword         bool   `json:"adguard_password"`          // true if set
-	AdGuardDashboardEnabled bool   `json:"adguard_dashboard_enabled"` // true = 0.0.0.0, false = 127.0.0.1
-	AdGuardDashboardURL     string `json:"adguard_dashboard_url"`     // URL when dashboard enabled
-
-	// Session
-	SessionTimeout  string `json:"session_timeout"`
-	IdleLockMinutes int    `json:"idle_lock_minutes"` // 0 = idle lock disabled
-
-	// Port Scanner
-	ScannerPortStart  int `json:"scanner_port_start"`
-	ScannerPortEnd    int `json:"scanner_port_end"`
-	ScannerConcurrent int `json:"scanner_concurrent"`
-	ScannerPauseMs    int `json:"scanner_pause_ms"`
-	ScannerTimeoutMs  int `json:"scanner_timeout_ms"`
-
-	// Traefik (aggregated)
-	Traefik     interface{} `json:"traefik,omitempty"`
-	VPNOnlyMode string      `json:"vpn_only_mode,omitempty"`
-
-	// Geolocation (aggregated)
-	Geo       interface{} `json:"geo,omitempty"`
-	GeoStatus interface{} `json:"geo_status,omitempty"`
-
-	// VPN Router (aggregated)
-	Router interface{} `json:"router,omitempty"`
 }
 
 // UpdateSettingsRequest for PUT /api/settings
@@ -234,12 +199,10 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 	result["web_cloudflare_only_available"] = domainBehindCloudflare()
 
 	// Session
-	if timeout, err := getSetting("session_timeout"); err == nil {
-		result["session_timeout"] = timeout
-	} else {
-		result["session_timeout"] = strconv.Itoa(config.GetSessionConfig().TimeoutHours)
-	}
-	result["idle_lock_minutes"] = GetSettingInt("idle_lock_minutes", 0)
+	result["session_timeout"] = strconv.Itoa(SessionTimeoutHours())
+	result["session_timeout_choices"] = helper.SessionTimeoutHours
+	result["idle_lock_minutes"] = IdleLockMinutes()
+	result["idle_lock_choices"] = helper.IdleLockMinutes
 
 	// Aggregate-metrics retention window (days)
 	result["metrics_retention_days"] = GetRetentionDays()
@@ -280,6 +243,18 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req UpdateSettingsRequest
 	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	// Checked before anything is saved: a timeout of 0 or less would end every new sign-in at once,
+	// the owner's too, so only the offered lengths are taken.
+	if req.SessionTimeout != nil {
+		if h, err := strconv.Atoi(*req.SessionTimeout); err != nil || !slices.Contains(helper.SessionTimeoutHours, h) {
+			router.JSONError(w, fmt.Sprintf("session timeout must be one of %v hours", helper.SessionTimeoutHours), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.IdleLockMinutes != nil && !slices.Contains(helper.IdleLockMinutes, *req.IdleLockMinutes) {
+		router.JSONError(w, fmt.Sprintf("idle lock must be one of %v minutes", helper.IdleLockMinutes), http.StatusBadRequest)
 		return
 	}
 
@@ -397,16 +372,10 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Updated session_timeout to %s hours", *req.SessionTimeout)
 	}
 
-	// Idle lock (minutes of inactivity before the UI locks and requires re-auth). 0 disables it;
-	// clamp to a sane ceiling. Opt-in — default 0 so behaviour is unchanged until an admin sets it.
+	// Idle lock (minutes of inactivity before the UI locks and requires re-auth; checked above).
+	// Opt-in: 0 (off) until an admin sets it.
 	if req.IdleLockMinutes != nil {
 		v := *req.IdleLockMinutes
-		if v < 0 {
-			v = 0
-		}
-		if v > 1440 {
-			v = 1440
-		}
 		if err := setSetting("idle_lock_minutes", strconv.Itoa(v)); err != nil {
 			router.JSONError(w, "Failed to save idle_lock_minutes: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -623,7 +592,6 @@ func SetSettingEncrypted(key, value string) error {
 	return setSettingEncrypted(key, value)
 }
 
-// GetSettingInt exports the integer getter for other packages
 // DisplayTimezone is how the UI shows dates: "browser" (default, each viewer's own zone) or an
 // IANA zone name. Display only; sent to every signed-in user with /api/auth/me.
 func DisplayTimezone() string {
@@ -633,8 +601,31 @@ func DisplayTimezone() string {
 	return "browser"
 }
 
+// GetSettingInt exports the integer getter for other packages
 func GetSettingInt(key string, defaultVal int) int {
 	return getSettingInt(key, defaultVal)
+}
+
+// settingChoice is the saved int setting when it is one of choices, else def (a value saved before
+// the save check, or edited into the database, is never used).
+func settingChoice(key string, choices []int, def int) int {
+	if v, err := getSetting(key); err == nil {
+		if i, err := strconv.Atoi(v); err == nil && slices.Contains(choices, i) {
+			return i
+		}
+	}
+	return def
+}
+
+// SessionTimeoutHours is how many hours a new sign-in lasts (helper.SessionTimeoutHours; default
+// the configured one).
+func SessionTimeoutHours() int {
+	return settingChoice("session_timeout", helper.SessionTimeoutHours, config.GetSessionConfig().TimeoutHours)
+}
+
+// IdleLockMinutes is how many idle minutes lock the screen, 0 for never (helper.IdleLockMinutes).
+func IdleLockMinutes() int {
+	return settingChoice("idle_lock_minutes", helper.IdleLockMinutes, 0)
 }
 
 // DeleteSetting removes a setting from the database

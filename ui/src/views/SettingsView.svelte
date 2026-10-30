@@ -112,6 +112,11 @@
 
   // Session settings
   let sessionTimeout = $state('24')
+  let sessionChoices = $state([]) // the sign-in lengths the server accepts, in hours
+  let idleChoices = $state([]) // and the idle-lock minutes (0 = off)
+  // a length's name: "8 hours" up to a day, then "7 days"
+  const hoursLabel = (h) => (h < 48 ? `${h} hour${h === 1 ? '' : 's'}` : `${h / 24} days`)
+  const idleLabel = (m) => (m === 0 ? 'Disabled' : `After ${m < 60 ? `${m} min` : hoursLabel(m / 60)}`)
   let idleLock = $state('0') // minutes of inactivity before the UI locks; '0' = disabled
   let metricsRetention = $state('90')
   let displayTimezone = $state('browser')
@@ -262,6 +267,8 @@
 
       // Session
       sessionTimeout = settings.session_timeout || '24'
+      sessionChoices = settings.session_timeout_choices || []
+      idleChoices = settings.idle_lock_choices || []
       idleLock = String(settings.idle_lock_minutes ?? 0)
       metricsRetention = String(settings.metrics_retention_days || 90)
       displayTimezone = settings.display_timezone || 'browser'
@@ -1027,25 +1034,13 @@
               label="Session Timeout"
               helperText="How long a sign-in lasts before you have to sign in again."
               bind:value={sessionTimeout}
-              options={[
-                { value: '1', label: '1 hour' },
-                { value: '8', label: '8 hours' },
-                { value: '24', label: '24 hours' },
-                { value: '168', label: '7 days' },
-                { value: '720', label: '30 days' }
-              ]}
+              options={sessionChoices.map((h) => ({ value: String(h), label: hoursLabel(h) }))}
             />
             <Select
               label="Idle lock"
               helperText="Locks the screen for everyone after this long without activity; re-entering the password (and 2FA code) unlocks it."
               bind:value={idleLock}
-              options={[
-                { value: '0', label: 'Disabled' },
-                { value: '5', label: 'After 5 min' },
-                { value: '15', label: 'After 15 min' },
-                { value: '30', label: 'After 30 min' },
-                { value: '60', label: 'After 1 hour' }
-              ]}
+              options={idleChoices.map((m) => ({ value: String(m), label: idleLabel(m) }))}
             />
             <Select
               label="Items per page"

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log"
@@ -14,13 +15,23 @@ import (
 	"api/internal/router"
 )
 
-// The failed-attempt lockouts: login per client, 2FA codes and password re-checks per user. Their
-// numbers are in helper/limits.go.
+// The failed-attempt lockouts: login per client and per account, 2FA codes and password
+// re-checks per user. Their numbers are in helper/limits.go.
 var (
 	loginLimiter    = newAttemptLimiter[string]("Login", helper.LoginMaxAttempts)
+	accountLimiter  = newAttemptLimiterFor[accountKey]("Account login", helper.AccountLoginMaxAttempts, helper.AccountLoginWindow, helper.AccountLoginPause)
 	totpLimiter     = newAttemptLimiter[int64]("2FA", helper.TOTPMaxAttempts)
 	passwordLimiter = newAttemptLimiter[int64]("Password", helper.PasswordMaxAttempts)
 )
+
+// accountKey is the account limiter's key: a hash of the typed username, so every entry is the
+// same small size however long the name, and unknown names count exactly like real ones (the
+// limiter can't tell anyone which accounts exist).
+type accountKey [sha256.Size]byte
+
+func accountKeyOf(username string) accountKey {
+	return sha256.Sum256([]byte(normalizeUsername(username)))
+}
 
 // tooManyAttemptsError is returned while a key is locked out; handlers answer 429.
 type tooManyAttemptsError struct {
@@ -54,7 +65,12 @@ type attemptLimiter[K comparable] struct {
 }
 
 func newAttemptLimiter[K comparable](what string, max int) *attemptLimiter[K] {
-	return &attemptLimiter[K]{what: what, l: bounded.NewLockout[K](helper.MaxTrackedSignInKeys, max, helper.LoginLockoutWindow, helper.LoginLockoutDuration)}
+	return newAttemptLimiterFor[K](what, max, helper.LoginLockoutWindow, helper.LoginLockoutDuration)
+}
+
+// newAttemptLimiterFor is newAttemptLimiter with its own window and lockout length.
+func newAttemptLimiterFor[K comparable](what string, max int, window, lock time.Duration) *attemptLimiter[K] {
+	return &attemptLimiter[K]{what: what, l: bounded.NewLockout[K](helper.MaxTrackedSignInKeys, max, window, lock)}
 }
 
 // reserve ATOMICALLY checks the lockout and reserves an attempt slot, closing the

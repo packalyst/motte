@@ -173,7 +173,7 @@ func validatePassword(password string) error {
 // (unrestricted); callers assign a narrower scope afterwards with SetUserScope.
 func (s *Service) CreateUser(username, password, role string) (*User, error) {
 	// Validate input
-	username = strings.TrimSpace(strings.ToLower(username))
+	username = normalizeUsername(username)
 	if len(username) < 3 {
 		return nil, errors.New("username must be at least 3 characters")
 	}
@@ -214,7 +214,7 @@ func (s *Service) CreateUser(username, password, role string) (*User, error) {
 
 // Login validates credentials and creates a session
 func (s *Service) Login(username, password, totpCode, ipAddress, userAgent string) (*LoginResponse, error) {
-	username = strings.TrimSpace(strings.ToLower(username))
+	username = normalizeUsername(username)
 
 	// Get user including 2FA fields
 	var user User
@@ -271,8 +271,7 @@ func (s *Service) createSession(user User, ipAddress, userAgent string) (*LoginR
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
 	}
-	sessionHours := settings.GetSettingInt("session_timeout", 24)
-	expiresAt := time.Now().Add(time.Duration(sessionHours) * time.Hour)
+	expiresAt := time.Now().Add(time.Duration(settings.SessionTimeoutHours()) * time.Hour)
 
 	if _, err := s.db.Exec(
 		"INSERT INTO sessions (id, user_id, expires_at, ip_address, user_agent, last_active) VALUES (?, ?, ?, ?, ?, ?)",
@@ -391,8 +390,11 @@ func parseTime(s string) time.Time {
 
 // auditName is the name a failed or blocked login is logged under: the typed username only when
 // such a user exists, so a password pasted into the username field never lands in the audit log.
+// normalizeUsername is how a username is stored and looked up: trimmed, lower case.
+func normalizeUsername(s string) string { return strings.TrimSpace(strings.ToLower(s)) }
+
 func (s *Service) auditName(typed string) string {
-	name := strings.ToLower(strings.TrimSpace(typed))
+	name := normalizeUsername(typed)
 	var one int
 	if name != "" && s.db.QueryRow("SELECT 1 FROM users WHERE username = ?", name).Scan(&one) == nil {
 		return name
@@ -422,12 +424,24 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		tooManyAttempts(w, err)
 		return
 	}
+	// And per account, from every client together: a guess spread over many addresses. Password
+	// login only (passkey sign-in doesn't come here). A paused account costs this client nothing.
+	account := accountKeyOf(req.Username)
+	if err := accountLimiter.reserve(account); err != nil {
+		loginLimiter.refund(limitKey)
+		events.Audit("auth", "login_account_paused", events.SeverityWarning,
+			s.auditName(req.Username), clientIP,
+			"Password login to this account paused: too many failed attempts from all addresses (passkeys still work)")
+		tooManyAttempts(w, err)
+		return
+	}
 
 	resp, err := s.Login(req.Username, req.Password, req.TOTPCode, clientIP, userAgent)
 	if err != nil {
 		if err == ErrTOTPRequired {
-			// Correct password, 2FA still pending — not a failed attempt, so give the slot back.
+			// Correct password, 2FA still pending — not a failed attempt, so give the slots back.
 			loginLimiter.refund(limitKey)
+			accountLimiter.refund(account)
 			router.JSONError(w, "2FA code required", http.StatusPreconditionRequired)
 			return
 		}
@@ -446,8 +460,9 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear failed attempts on successful login (refunds the reserved slot).
+	// Clear failed attempts on successful login (refunds the reserved slots).
 	loginLimiter.clear(limitKey)
+	accountLimiter.clear(account)
 
 	events.Audit("auth", "login", events.SeverityInfo, resp.User.Username, clientIP,
 		fmt.Sprintf("Login succeeded for %q", resp.User.Username))
@@ -500,7 +515,7 @@ func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	}{
 		User:            user,
 		TOTPEnabled:     s.TOTPEnabled(user.ID),
-		IdleLockMinutes: settings.GetSettingInt("idle_lock_minutes", 0),
+		IdleLockMinutes: settings.IdleLockMinutes(),
 		Locked:          s.IsSessionLocked(token),
 		DisplayTimezone: settings.DisplayTimezone(),
 	}
