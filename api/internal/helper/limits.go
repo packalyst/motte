@@ -19,6 +19,19 @@ const (
 	MaxTrackedSignInKeys = 100_000          // clients or users each lockout tracks at once; past it the oldest is forgotten
 	PasskeyChallengeTTL  = 3 * time.Minute  // a passkey registration or sign-in must finish within this
 	MaxConcurrentArgon2  = 4                // password hashes computed at once, panel-wide (64 MiB each)
+	// Failed password logins to one account from all clients together (a guess spread over many
+	// addresses) before password login to it pauses. Only password login: passkeys and open
+	// sessions keep working, so this can't lock the owner out of the panel.
+	AccountLoginMaxAttempts = 50
+	AccountLoginWindow      = time.Hour // counted over this
+	AccountLoginPause       = time.Hour // and the pause lasts this long
+)
+
+// Settings → Preferences (packages auth and settings): the server accepts only these and the UI
+// offers exactly these.
+var (
+	SessionTimeoutHours = []int{1, 8, 24, 168, 720} // how long a sign-in may last, in hours
+	IdleLockMinutes     = []int{0, 5, 15, 30, 60}   // minutes without activity before the screen locks; 0 = never
 )
 
 // API requests (package router).
