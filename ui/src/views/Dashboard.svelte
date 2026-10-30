@@ -9,6 +9,7 @@
   import Icon from '../components/Icon.svelte'
   import Logo from '../components/Logo.svelte'
   import PullToRefresh from '../components/PullToRefresh.svelte'
+  import MobileNav from '../components/MobileNav.svelte'
 
   // Lazy load views - each becomes a separate chunk
   const views = {
@@ -175,6 +176,10 @@
   // Items with a minRole are hidden below it (the page and the server enforce it as well).
   const visibleNav = $derived(navItems.filter((i) => !i.minRole || hasRole(user, i.minRole)))
 
+  // On phones a menu group is a plain item in the sidebar, and its pages are switched by the bottom
+  // bar, shown while one of them is open. On desktop it stays a submenu.
+  const dockGroup = $derived(navItems.find(isChildActive))
+
   // Check if current view is a child of a menu
   function isChildActive(item) {
     if (!item.children) return false
@@ -248,13 +253,32 @@
     </div>
 
     <!-- Sidebar nav -->
+    {#snippet navButton(item, active, onclick, extra = '')}
+      <button
+        {onclick}
+        class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] cursor-pointer {extra}
+          {active
+            ? 'bg-slate-900 text-slate-50 dark:bg-zinc-800'
+            : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
+      >
+        <span class="flex h-6 w-6 items-center justify-center rounded-md
+          {active
+            ? 'bg-slate-800 text-slate-200 dark:bg-zinc-700'
+            : 'bg-muted text-muted-foreground'}">
+          <Icon name={item.icon} size={14} />
+        </span>
+        <span class="font-medium">{item.label}</span>
+      </button>
+    {/snippet}
     <nav class="flex-1 space-y-1 overflow-y-auto px-3 py-3 text-sm bg-muted/50">
       {#each visibleNav as item}
         {#if item.divider}
           <div class="my-2 -mx-3 border-t border-dashed border-border"></div>
         {:else if item.children}
-          <!-- Parent menu with children -->
-          <div>
+          <!-- phones: one item that opens the group's first page (the bottom bar switches between them) -->
+          {@render navButton(item, isChildActive(item), () => (isChildActive(item) ? closeSidebar() : navigate(item.children[0].id, true)), 'lg:hidden')}
+          <!-- desktop: the submenu -->
+          <div class="hidden lg:block">
             <button
               onclick={() => toggleMenu(item.id)}
               class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] cursor-pointer
@@ -299,21 +323,7 @@
             {/if}
           </div>
         {:else}
-          <button
-            onclick={() => navigate(item.id)}
-            class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] cursor-pointer
-              {$currentView === item.id
-                ? 'bg-slate-900 text-slate-50 dark:bg-zinc-800'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
-          >
-            <span class="flex h-6 w-6 items-center justify-center rounded-md
-              {$currentView === item.id
-                ? 'bg-slate-800 text-slate-200 dark:bg-zinc-700'
-                : 'bg-muted text-muted-foreground'}">
-              <Icon name={item.icon} size={14} />
-            </span>
-            <span class="font-medium">{item.label}</span>
-          </button>
+          {@render navButton(item, $currentView === item.id, () => navigate(item.id))}
         {/if}
       {/each}
     </nav>
@@ -508,6 +518,9 @@
           </div>
         </div>
       </PullToRefresh>
+      {#if dockGroup}
+        <MobileNav look="bottom" items={dockGroup.children} active={$currentView} onselect={(id) => navigate(id, true)} label={dockGroup.label} />
+      {/if}
     </section>
   </main>
 </div>

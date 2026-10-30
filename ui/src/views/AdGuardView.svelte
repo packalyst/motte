@@ -213,8 +213,8 @@
       { icon: 'globe', tone: 'warning', value: blockedServices.length, label: 'blocked services' },
     ]} />
 
-    <!-- Segmented tab bar — pills on desktop, MobileNav's app tab bar at the bottom below lg
-         (like the machine page) -->
+    <!-- Segmented tab bar — pills on desktop, MobileNav's select below lg (the bottom bar there
+         switches between the Web & Proxy pages) -->
     <div class="space-y-3">
       <div class="hidden lg:flex gap-0.5 bg-muted p-1 rounded-lg w-fit">
         {#each tabs as t}
@@ -227,7 +227,7 @@
           </button>
         {/each}
       </div>
-      <MobileNav items={tabs} active={activeTab} onselect={setTab} label="DNS sections" look="bottom" />
+      <MobileNav items={tabs} active={activeTab} onselect={setTab} label="DNS sections" />
 
       <!-- Overview is two panels of its own; the other tabs are a table each -->
       <div class={activeTab === 'overview' ? 'space-y-4' : ''}>
