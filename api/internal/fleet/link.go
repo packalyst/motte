@@ -101,6 +101,7 @@ func (s *Service) HandleLink(w http.ResponseWriter, r *http.Request) {
 	s.broadcastLink(m.ID, true)
 
 	stop := keepAlive(conn)
+	stopExpiry := closeAtCertExpiry(r, conn)
 	var readErr error
 	for {
 		if _, _, readErr = conn.NextReader(); readErr != nil {
@@ -108,6 +109,7 @@ func (s *Service) HandleLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	stop()
+	stopExpiry()
 	conn.Close()
 	goingAway := websocket.IsCloseError(readErr, websocket.CloseGoingAway)
 
@@ -136,6 +138,20 @@ func (s *Service) HandleLink(w http.ResponseWriter, r *http.Request) {
 // broadcastLink pushes a presence change to browsers allowed to see the machine.
 func (s *Service) broadcastLink(machineID string, online bool) {
 	s.scopedBroadcast(machineID, "fleet", map[string]any{"machine_id": machineID, "online": online})
+}
+
+// closeAtCertExpiry closes an agent's long-lived socket when the client certificate it was opened
+// with expires: TLS checks expiry only at the handshake, and an expired certificate is never
+// accepted, so the socket can't outlive it. A healthy agent has renewed by then and reconnects
+// with the new one. A request without a certificate (requireClientCert refuses those first) is
+// closed at once. stop cancels the timer.
+func closeAtCertExpiry(r *http.Request, conn *websocket.Conn) (stop func()) {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		conn.Close()
+		return func() {}
+	}
+	t := time.AfterFunc(time.Until(r.TLS.PeerCertificates[0].NotAfter), func() { conn.Close() })
+	return func() { t.Stop() }
 }
 
 // keepAlive pings an agent connection every linkPingEvery; with no pong for linkReadWait the peer

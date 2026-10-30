@@ -18,7 +18,7 @@ func TestLinkRingsAndTracksPresence(t *testing.T) {
 	addMachine(t, svc, "m1", false)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		svc.HandleLink(w, r.WithContext(context.WithValue(r.Context(), machineCtxKey, &Machine{ID: "m1"})))
+		svc.HandleLink(w, withCert(r.WithContext(context.WithValue(r.Context(), machineCtxKey, &Machine{ID: "m1"})), time.Hour))
 	}))
 	defer srv.Close()
 
@@ -82,7 +82,7 @@ func TestLinkGoingAwayIsOfflineAtOnce(t *testing.T) {
 	svc := newTestService(t)
 	addMachine(t, svc, "m2", false)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		svc.HandleLink(w, r.WithContext(context.WithValue(r.Context(), machineCtxKey, &Machine{ID: "m2"})))
+		svc.HandleLink(w, withCert(r.WithContext(context.WithValue(r.Context(), machineCtxKey, &Machine{ID: "m2"})), time.Hour))
 	}))
 	defer srv.Close()
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
