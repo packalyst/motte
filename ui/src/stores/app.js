@@ -24,8 +24,8 @@ theme.subscribe(value => {
 })
 
 // Valid view IDs for URL routing
-export const validViews = ['overview', 'users', 'firewall', 'server', 'console', 'sessions', 'iplookup',
-                           'clients', 'routes', 'authkeys', 'apikeys', 'domains', 'tunnels', 'adguard',
+export const validViews = ['overview', 'headscale', 'firewall', 'server', 'console', 'sessions', 'iplookup',
+                           'clients', 'domains', 'tunnels', 'adguard',
                            'logs', 'analytics', 'activity', 'routines', 'settings', 'profile', 'about']
 
 // Get initial tab from URL hash (for tab persistence on refresh)
@@ -37,30 +37,17 @@ export function getInitialTab(defaultTab, validTabs) {
   return tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : defaultTab
 }
 
-// Views that were merged into another page: old links and saved views land on the new one.
-// networks: devices are on Clients, the networks themselves in Settings → Networks.
-// A string maps to a view; [view, hash] also opens a section of it (the hash is only added when the
-// URL has none, so an explicit one wins).
-const viewAliases = { nodes: 'clients', fleet: 'clients', networks: 'clients', team: ['settings', 's=team'], traefik: ['settings', 's=web'], docker: ['settings', 's=docker'] }
-function resolveView(v) {
-  const a = viewAliases[v]
-  if (!Array.isArray(a)) return a || v
-  if (typeof window !== 'undefined' && !window.location.hash) {
-    window.history.replaceState(window.history.state, '', window.location.pathname + '#' + a[1])
-  }
-  return a[0]
-}
-
 // Get view from current URL path
 function getViewFromPath() {
   if (typeof window === 'undefined') return null
-  const path = resolveView(window.location.pathname.slice(1)) // Remove leading /
+  const path = window.location.pathname.slice(1) // Remove leading /
   return validViews.includes(path) ? path : null
 }
 
 // Current view - URL takes priority, then localStorage, then default
 const urlView = typeof window !== 'undefined' ? getViewFromPath() : null
-const savedView = typeof localStorage !== 'undefined' ? resolveView(localStorage.getItem('hs_view')) : 'overview'
+const storedView = typeof localStorage !== 'undefined' ? localStorage.getItem('hs_view') : null
+const savedView = validViews.includes(storedView) ? storedView : 'overview'
 export const currentView = writable(urlView || savedView || 'overview')
 
 // Track if we're handling popstate to avoid double-pushing
@@ -79,19 +66,16 @@ currentView.subscribe(value => {
     if (value !== _lastView) { previousView.set(_lastView); _lastView = value }
     localStorage.setItem('hs_view', value)
     // Update URL without reload (skip if handling popstate)
-    // An old path that's an alias of this view (/team → settings#s=team) keeps its hash.
-    const aliased = resolveView(window.location.pathname.slice(1)) === value
     const newPath = '/' + value
-    const newURL = newPath + (aliased ? window.location.hash : '')
     if (!handlingPopstate && window.location.pathname !== newPath) {
       // In a trivial session history (one entry — a fresh tab or standalone
       // PWA) pushState is treated as replaceState and Chrome logs a warning;
       // call replaceState directly there to keep the console clean. Once there
       // is real history to go back to, push so back/forward still work.
       if (window.history.length <= 1) {
-        window.history.replaceState({ view: value }, '', newURL)
+        window.history.replaceState({ view: value }, '', newPath)
       } else {
-        window.history.pushState({ view: value }, '', newURL)
+        window.history.pushState({ view: value }, '', newPath)
       }
     }
   }
@@ -147,7 +131,7 @@ export function setHashParam(key, value) {
 // Handle browser back/forward
 if (typeof window !== 'undefined') {
   window.addEventListener('popstate', (event) => {
-    const view = resolveView(event.state?.view) || getViewFromPath() || 'overview'
+    const view = event.state?.view || getViewFromPath() || 'overview'
     if (validViews.includes(view)) {
       handlingPopstate = true
       currentView.set(view)
