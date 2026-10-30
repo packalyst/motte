@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { theme, toast, apiGet, apiPost, apiPut, apiDelete, apiPostBlob, generateAdguardCredentials, confirm, stepUpConfirm, withStepUp, STEPUP_CANCELLED, hashParam, setHashParam, currentUser, hasRole } from '../stores/app.js'
-  import { withTz, setDisplayTimezone, formatBanTime } from '../lib/utils/format.js'
+  import { withTz, setDisplayTimezone, formatBanTime, formatNumber } from '../lib/utils/format.js'
   import Icon from '../components/Icon.svelte'
   import Input from '../components/Input.svelte'
   import Button from '../components/Button.svelte'
@@ -1339,7 +1339,7 @@
             <ul class="grid grid-cols-1 gap-2 lg:grid-cols-2">
               {#each jails as jail (jail.id)}
                 {@const banned = jail.currentlyBanned || 0}
-                <TileRow value={banned} unit="banned" tone={!jail.enabled ? 'muted' : banned ? 'destructive' : 'success'} dim={!jail.enabled}
+                <TileRow value={formatNumber(banned)} unit="banned" hint="{banned.toLocaleString()} banned" tone={!jail.enabled ? 'muted' : banned ? 'destructive' : 'success'} dim={!jail.enabled}
                   title={jail.name.charAt(0).toUpperCase() + jail.name.slice(1)} subIcon="clock"
                   sub="{jail.maxRetry} tries in {formatBanTime(jail.findTime)} → ban {formatBanTime(jail.banTime)}">
                   {#snippet actions()}
