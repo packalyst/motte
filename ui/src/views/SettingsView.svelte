@@ -1231,8 +1231,9 @@
       {/if}
       {#if section === 'agents'}
       <div class="space-y-4">
-      <AgentListener />
-      {#if hasRole($currentUser, 'admin')}<CertLifetime />{/if}
+      <AgentListener>
+        {#if hasRole($currentUser, 'admin')}<CertLifetime />{/if}
+      </AgentListener>
       </div>
       {/if}
       {#if section === 'certificates'}

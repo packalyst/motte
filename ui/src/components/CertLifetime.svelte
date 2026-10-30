@@ -1,12 +1,11 @@
 <script>
   /**
-   * CertLifetime — how long machines' client certificates last (Settings → Agents). Machines renew
-   * theirs in its last third while online; a change applies from each machine's next certificate.
-   * Saving asks for the password again (admin-only on the server).
+   * CertLifetime — how long machines' client certificates last (Settings → Agents, inside the agent
+   * listener card). Machines renew theirs in its last third while online; a change applies from each
+   * machine's next certificate. Saving asks for the password again (admin-only on the server).
    */
   import { onMount } from 'svelte'
   import { apiGet, apiPost, toast, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
-  import Icon from './Icon.svelte'
   import Select from './Select.svelte'
   import Button from './Button.svelte'
 
@@ -39,24 +38,13 @@
   }
 </script>
 
-<div class="panel">
-  <div class="panel-head">
-    <span class="panel-icon text-primary"><Icon name="certificate" size={17} /></span>
+<div class="min-w-0">
+  <div class="flex items-end gap-2">
     <div class="min-w-0 flex-1">
-      <div class="panel-title">Machine certificates</div>
-      <div class="panel-sub">how long each machine's identity lasts before it renews</div>
+      <Select bind:value={days} label="Certificate lifetime" prefixIcon="certificate" disabled={!cur || saving}
+        options={(cur?.choices || [30, 60, 90, 180, 365]).map((d) => ({ value: String(d), label: `${d} days` }))} />
     </div>
+    <Button size="sm" variant="primary" icon="device-floppy" iconOnly tooltip="Save" aria-label="Save certificate lifetime" loading={saving} disabled={!cur || saving || Number(days) === cur.days} onclick={save} />
   </div>
-  <div class="max-w-xs">
-    <Select bind:value={days} size="lg" label="Lifetime" disabled={!cur || saving}
-      options={(cur?.choices || [30, 60, 90, 180, 365]).map((d) => ({ value: String(d), label: `${d} days` }))} />
-  </div>
-  <div class="mt-3">
-    <Button size="sm" icon="device-floppy" loading={saving} disabled={!cur || saving || Number(days) === cur.days} onclick={save}>Save</Button>
-  </div>
-  <div class="panel-foot">
-    <p class="flex items-start gap-1.5 text-[11px] text-muted-foreground">
-      <Icon name="info-circle" size={13} class="mt-0.5 shrink-0" />A machine renews its certificate by itself in the last third of its life, while online, and the panel accepts renewal only then. Shorter means a stolen certificate works for less time; a machine offline for longer than this must be re-enrolled. A change applies from each machine's next certificate.
-    </p>
-  </div>
+  <p class="field-hint">Renews by itself in its last third while online. Shorter is safer; a machine offline longer must be re-enrolled.</p>
 </div>

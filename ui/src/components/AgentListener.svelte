@@ -2,13 +2,16 @@
   /**
    * AgentListener — the fleet agent listener control (Settings → Agents): on/off and port. A port
    * change keeps the old port open for a few minutes while agents move over; the config is locked
-   * until then. Saving is admin-only on the server.
+   * until then. Saving is admin-only on the server. children: more agent settings shown beside the
+   * port (Settings puts the machine certificate lifetime there, for admins).
    */
   import { onMount } from 'svelte'
   import { apiGet, apiPost, toast, confirm, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Input from './Input.svelte'
   import Checkbox from './Checkbox.svelte'
+
+  let { children = undefined } = $props()
 
   let ep = $state(null) // { enabled, port, listening, migrating, migrate_ends_at, … }
   let cfgEnabled = $state(false)
@@ -109,9 +112,10 @@
       <!-- switching off stays possible during a port change: it closes both ports -->
       <Checkbox variant="switch" bind:checked={cfgEnabled} onchange={saveConfig} disabled={!ep || savingCfg} aria-label="Accept agent connections" />
     </div>
-    <div class="max-w-xs">
+    <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
       <Input type="number" bind:value={cfgPort} min="1" max="65535" prefixIcon="plug" label="Port" disabled={migrating || !ep}
         suffixAddonBtn={{ icon: 'device-floppy', label: 'Save', variant: 'primary', onclick: saveConfig, disabled: savingCfg || migrating || !ep }} />
+      {@render children?.()}
     </div>
     {#if migrating}
       <p class="flex items-start gap-1.5 text-[11px] text-warning">
