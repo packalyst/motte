@@ -225,7 +225,11 @@ body {
 .kt-modal.open {
   display: flex !important;
 }
+/* Every modal's overlay dims and blurs what is under it, an open modal included (see Modal.svelte). */
 .kt-modal {
+  background: rgb(0 0 0 / 0.3);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
     max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
 }

@@ -40,8 +40,8 @@
 
   onMount(() => {
     if (modalElement && KTModal) {
-      // A stacked modal sits above the modals under it, its backdrop included (KTUI's default is 90).
-      ktModal = KTModal.getOrCreateInstance(modalElement, stacked ? { zindex: '100' } : undefined)
+      // Layer and dimming come from the markup below (data-kt-modal-zindex, no KTUI backdrop).
+      ktModal = KTModal.getOrCreateInstance(modalElement)
 
       // KTUI closes the modal itself on Escape and dispatches a plain 'hidden' event; sync `open`
       // from it so the modal can be opened again.
@@ -59,17 +59,6 @@
     if (!dismissible || (!stacked && openStacked.size > 0)) e.detail.payload.cancel = true
   }
 
-  // KTUI loses track of a backdrop when a modal reopens while its close is still fading out (it
-  // removes the new backdrop and leaves the old one, invisible, over the whole page, so nothing
-  // can be clicked any more). Once no modal is open, any backdrop left is an orphan: remove it.
-  function sweepBackdrops() {
-    if (document.querySelector('.kt-modal.open')) return
-    const stale = document.querySelectorAll('.kt-modal-backdrop')
-    if (!stale.length) return // nothing left behind: the scroll lock isn't ours to touch
-    stale.forEach((el) => el.remove())
-    document.body.style.overflow = '' // KTModal's lock, left with its backdrop
-  }
-
   function handleHideEvent(e) {
     // KTUI events bubble: a tooltip inside the modal fires 'hidden' too — only the modal's own counts
     if (e.target !== modalElement) return
@@ -78,7 +67,6 @@
       // KTUI unlocked page scroll on hide; a modal still open under this one needs it locked.
       if (document.querySelector('.kt-modal.open')) document.body.style.overflow = 'hidden'
     }
-    sweepBackdrops()
     if (open) {
       if (onclose) {
         onclose()
@@ -100,7 +88,6 @@
       if (ktModal.dispose) {
         ktModal.dispose()
       }
-      setTimeout(sweepBackdrops, 500) // the element is gone, so no 'hidden' arrives: sweep after the fade
     }
   })
 
@@ -130,12 +117,16 @@
   }
 </script>
 
+<!-- The overlay is its own dimmed, blurred backdrop (see .kt-modal in app.css), not KTUI's separate
+     one: that landed under an open modal, and lost track of itself on a quick reopen. A stacked modal
+     (zindex 100, above the default 90) so dims the modal under it too. -->
 <div
   bind:this={modalElement}
   class="kt-modal"
   data-kt-modal="true"
-  data-kt-modal-backdrop="true"
+  data-kt-modal-backdrop="false"
   data-kt-modal-backdrop-static="true"
+  data-kt-modal-zindex={stacked ? '100' : '90'}
   role="presentation"
   onclick={(e) => { if (dismissible && e.target === modalElement) handleClose() }}
 >
