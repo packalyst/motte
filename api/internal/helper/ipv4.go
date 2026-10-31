@@ -98,3 +98,33 @@ func RFC1918Ranges() []string {
 	}
 	return out
 }
+
+// FreeUpperHalfIPv4 returns the first free host address in the upper half of cidr, or "" when there
+// is none. Virtual IPs and LAN devices' VPN addresses come from there, so they stay visually apart
+// from VPN clients (handed out from the low end). Addresses ending in .0 or .255 are skipped: even
+// inside a larger prefix some devices and tools refuse them. inUse reports a taken address.
+func FreeUpperHalfIPv4(cidr string, inUse func(ip string) bool) string {
+	p, isRange, err := ParseIPv4(cidr)
+	// Guard the shift/loop math against a pathological mask: real VPN ranges are /16–/30.
+	if err != nil || !isRange || p.Bits() < 8 || p.Bits() > 30 {
+		return ""
+	}
+	n := 1 << (32 - p.Bits())
+	start := n / 2
+	if n < 8 {
+		start = 2 // tiny range: scan from the start
+	}
+	a := p.Addr()
+	for i := 0; i < start; i++ {
+		a = a.Next()
+	}
+	for i := start; i < n-1; i, a = i+1, a.Next() {
+		if b := a.As4(); b[3] == 0 || b[3] == 255 {
+			continue
+		}
+		if ip := a.String(); !inUse(ip) {
+			return ip
+		}
+	}
+	return ""
+}

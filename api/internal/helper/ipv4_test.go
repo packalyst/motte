@@ -79,3 +79,27 @@ func TestWithinRFC1918(t *testing.T) {
 		t.Errorf("RFC1918Ranges() = %v", r)
 	}
 }
+
+func TestFreeUpperHalfIPv4(t *testing.T) {
+	none := func(string) bool { return false }
+	taken := map[string]bool{"10.8.0.129": true}
+	for _, c := range []struct {
+		cidr  string
+		inUse func(string) bool
+		want  string
+	}{
+		{"10.8.0.0/24", none, "10.8.0.128"},
+		{"10.8.0.0/24", func(ip string) bool { return ip == "10.8.0.128" || taken[ip] }, "10.8.0.130"},
+		{"10.8.0.0/16", none, "10.8.128.1"}, // .0 skipped
+		{"10.8.0.0/30", none, "10.8.0.2"},   // tiny range: from the start, never the broadcast
+		{"10.8.0.0/24", func(string) bool { return true }, ""},
+		{"10.8.0.0/31", none, ""}, // pathological masks refused
+		{"10.0.0.0/7", none, ""},
+		{"10.8.0.1", none, ""}, // not a range
+		{"", none, ""},
+	} {
+		if got := FreeUpperHalfIPv4(c.cidr, c.inUse); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.cidr, got, c.want)
+		}
+	}
+}

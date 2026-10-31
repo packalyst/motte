@@ -2,6 +2,7 @@ package dhcp
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -48,10 +49,11 @@ func (t *ReachabilityTable) Priority() int { return 15 }
 
 // devicePolicy is one approved, unblocked LAN device's forwarding policy.
 type devicePolicy struct {
-	IP       string   // its IPv4 address inside the network
-	MAC      string   // its MAC: the gate keys on IP + MAC, so copying an approved device's IP isn't enough
-	Allowed  []string // VPN client IPs that may reach it, and it them
-	Internet bool     // may route out the WAN
+	IP       string     // its IPv4 address inside the network
+	MAC      string     // its MAC: the gate keys on IP + MAC, so copying an approved device's IP isn't enough
+	VPNIP    string     // its VPN address, swapped for IP on the box; empty when it has no usable one
+	Allowed  []vpnGrant // VPN clients that may reach it (and, Both, it them)
+	Internet bool       // may route out the WAN
 }
 
 // netPolicy is a network's forwarding policy, resolved from the DB before rendering so the
@@ -88,7 +90,11 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 	if err != nil {
 		return p, err
 	}
-	acl, err := s.networkACLIPs(n.ID)
+	acl, err := s.networkGrants(n.ID)
+	if err != nil {
+		return p, err
+	}
+	space, err := s.loadVPNSpace()
 	if err != nil {
 		return p, err
 	}
@@ -106,9 +112,62 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 		if !c.Approved || ip == nil || ip.To4() == nil || !cnet.Contains(ip) || !validMAC(mac) {
 			continue
 		}
-		p.Devices = append(p.Devices, devicePolicy{IP: ip.String(), MAC: mac, Allowed: acl[c.ID], Internet: c.Internet})
+		d := devicePolicy{IP: ip.String(), MAC: mac, Allowed: acl[c.ID], Internet: c.Internet}
+		if space.usable(c.VPNIP) {
+			d.VPNIP = c.VPNIP
+		} else if c.VPNIP != "" {
+			log.Printf("dhcp: LAN device %s: VPN address %s is not usable (outside the WireGuard range or also held by a VPN client); not reachable through it", mac, c.VPNIP)
+		}
+		p.Devices = append(p.Devices, d)
 	}
 	return p, nil
+}
+
+// enforced reports whether a network's rules are rendered: enabled, with a valid interface and
+// subnet (defensive: never emit an unvalidated name or CIDR).
+func (n *Network) enforced() bool {
+	_, _, err := net.ParseCIDR(n.CIDR)
+	return n.Enabled && validIface(n.Iface) && err == nil
+}
+
+// HeadscaleGrant is a LAN device's access for one Headscale node, for the Headscale policy: the node
+// may reach VPNIP and, Both, VPNIP the node. The nft rules stay the gate; without this entry
+// Headscale itself drops the traffic before it ever reaches the box.
+type HeadscaleGrant struct {
+	ClientID int64
+	VPNIP    string
+	Both     bool
+}
+
+// HeadscaleGrants lists them for every device the firewall currently lets through by its VPN
+// address, so the policy never grants more than the rules do.
+func HeadscaleGrants(db *database.DB) ([]HeadscaleGrant, error) {
+	s := &Service{db: db}
+	nets, err := s.listNetworks()
+	if err != nil {
+		return nil, err
+	}
+	var out []HeadscaleGrant
+	for i := range nets {
+		if !nets[i].enforced() {
+			continue
+		}
+		p, err := s.networkPolicy(&nets[i])
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range p.Devices {
+			if d.VPNIP == "" {
+				continue
+			}
+			for _, g := range d.Allowed {
+				if g.Headscale && net.ParseIP(g.IP) != nil {
+					out = append(out, HeadscaleGrant{ClientID: g.ClientID, VPNIP: d.VPNIP, Both: g.Both})
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // hasInternet reports whether any device in the policy may route out the WAN.
@@ -124,14 +183,11 @@ func (p netPolicy) hasInternet() bool {
 // renderReachability builds the nft script (pure: no DB, no host calls) so it can be unit-tested
 // and syntax-checked with `nft -c`. Every IP/CIDR/MAC/iface is validated before emission.
 func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, privateRanges []string) string {
-	var blk, fwd, in, nat strings.Builder
+	var blk, fwd, in, dnat, nat strings.Builder
 	for i := range nets {
 		n := &nets[i]
-		if !n.Enabled || !validIface(n.Iface) {
+		if !n.enforced() {
 			continue
-		}
-		if _, _, err := net.ParseCIDR(n.CIDR); err != nil {
-			continue // defensive: never emit an unvalidated CIDR
 		}
 		p := pol[n.ID]
 		fmt.Fprintf(&fwd, "        # network %s (%s, %s)\n", n.Iface, n.CIDR, n.Mode)
@@ -162,16 +218,32 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 			return fmt.Sprintf("iifname %q ether saddr %s ip saddr %s", n.Iface, d.MAC, d.IP)
 		}
 
-		// Per-device access: each granted VPN client and that one device reach each OTHER — the grant
-		// is symmetric, like the VPN ACL. Emitted ABOVE the private-range drop below so a granted
-		// client inside a VPN range stays reachable.
+		// Per-device access: each granted VPN client reaches that one device; a two-way grant lets
+		// the device reach the client too, like the VPN ACL. Emitted ABOVE the private-range drop
+		// below so a granted client inside a VPN range stays reachable.
 		for _, d := range devices {
-			for _, ip := range d.Allowed {
-				if net.ParseIP(ip) == nil {
+			granted, both := false, false
+			for _, g := range d.Allowed {
+				if net.ParseIP(g.IP) == nil {
 					continue
 				}
-				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr %s accept\n", ip, d.IP)
-				fmt.Fprintf(&fwd, "        %s ip daddr %s accept\n", from(d), ip)
+				granted = true
+				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr %s accept\n", g.IP, d.IP)
+				if g.Both {
+					both = true
+					fmt.Fprintf(&fwd, "        %s ip daddr %s accept\n", from(d), g.IP)
+				}
+			}
+			// The VPN address swap. In: what reaches the VPN address over a VPN interface goes to the
+			// device (never from the WAN or a LAN); the forward rules above still decide who gets
+			// through, as they see the device's real address. Out: only for a two-way grant, the
+			// device's own connections into the VPN leave from its VPN address so replies find it.
+			if !granted || net.ParseIP(d.VPNIP).To4() == nil {
+				continue
+			}
+			fmt.Fprintf(&dnat, "        iifname %s ip daddr %s dnat ip to %s\n", nftables.VPNIfaces, d.VPNIP, d.IP)
+			if both {
+				fmt.Fprintf(&nat, "        iifname %q ip saddr %s oifname %s snat ip to %s\n", n.Iface, d.IP, nftables.VPNIfaces, d.VPNIP)
 			}
 		}
 
@@ -225,6 +297,10 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 	sb.WriteString("    chain input {\n")
 	sb.WriteString("        type filter hook input priority 10; policy accept;\n")
 	sb.WriteString(in.String())
+	sb.WriteString("    }\n")
+	sb.WriteString("    chain prerouting {\n")
+	sb.WriteString("        type nat hook prerouting priority dstnat; policy accept;\n")
+	sb.WriteString(dnat.String())
 	sb.WriteString("    }\n")
 	sb.WriteString("    chain postrouting {\n")
 	sb.WriteString("        type nat hook postrouting priority 100; policy accept;\n")

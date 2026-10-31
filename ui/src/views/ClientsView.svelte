@@ -383,6 +383,8 @@
               { icon: 'clock', text: timeAgo(c.last_seen) },
             ] : [
               { icon: 'network', text: c.ip || '—', mono: true },
+              // a LAN device's VPN address: where VPN clients reach it
+              ...(c.vpn_ip ? [{ icon: 'shield-lock', text: c.vpn_ip, mono: true }] : []),
               { icon: 'clock', text: c.online ? 'Active now' : timeAgo(c.last_seen) },
             ]}
             stats={clientStats}

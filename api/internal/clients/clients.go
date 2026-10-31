@@ -62,7 +62,8 @@ type Client struct {
 	CPU      *float64 `json:"cpu,omitempty"` // busy %, memory and root-disk used % (machines only)
 	Mem      *float64 `json:"mem,omitempty"`
 	Disk     *float64 `json:"disk,omitempty"`
-	MAC      string   `json:"mac,omitempty"` // LAN devices only
+	MAC      string   `json:"mac,omitempty"`    // LAN devices only
+	VPNIP    string   `json:"vpn_ip,omitempty"` // LAN devices: the address VPN clients reach it at
 	// LAN devices: the active lease's end (unix seconds) and the network's lease length
 	LeaseExpires int64    `json:"lease_expires,omitempty"`
 	LeaseSecs    int      `json:"lease_secs,omitempty"`
@@ -307,7 +308,7 @@ func fromLAN(n dhcp.Network, d dhcp.Client) Client {
 		d.LeaseExpires = 0 // its old lease may linger in the lease file, but it won't be renewed
 	}
 	e := Client{Key: "lan:" + strconv.FormatInt(d.ID, 10), Kind: "lan", Name: firstNonEmpty(d.Name, d.MAC), IP: d.IP,
-		Online: d.Online && !d.Blocked, LastSeen: d.LastSeen, Meta: n.Iface + " · " + n.CIDR, MAC: d.MAC,
+		Online: d.Online && !d.Blocked, LastSeen: d.LastSeen, Meta: n.Iface + " · " + n.CIDR, MAC: d.MAC, VPNIP: d.VPNIP,
 		LeaseExpires: d.LeaseExpires, LeaseSecs: n.LeaseSecs, Internet: &internet,
 		Pending: !d.Approved && !d.Blocked, Blocked: d.Blocked, Open: OpenRef{NetworkID: n.ID, LanID: d.ID}}
 	switch {

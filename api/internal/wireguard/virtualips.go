@@ -1,7 +1,6 @@
 package wireguard
 
 import (
-	"encoding/binary"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 
 	"api/internal/database"
 	"api/internal/events"
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -27,58 +27,23 @@ type VirtualIP struct {
 	AllowedClientIDs []int64 `json:"allowedClientIds"`
 }
 
-// allocateVirtualIP picks a free IP from the upper half of the WireGuard range, so
-// virtual IPs stay visually distinct from peer IPs (assigned from the low end).
-// Returns "" if the range is full. Excludes peers, the server IP, and existing vips.
+// allocateVirtualIP picks a free IP from the upper half of the WireGuard range (see
+// helper.FreeUpperHalfIPv4). Returns "" if the range is full. Excludes the server IP, peers and
+// every address another owner holds (virtual IPs, LAN devices' VPN addresses).
 func (s *Service) allocateVirtualIP() string {
-	baseIP, maskBits := parseIPRange(s.config.IPRange)
-	if baseIP == nil {
-		return ""
-	}
-	// Guard the shift/loop math against a pathological mask: maskBits==0 would make
-	// 1<<32 wrap to 0 and numIPs-1 underflow to ~4 billion (a hang). Real WG ranges
-	// are /16–/30.
-	if maskBits < 8 || maskBits > 30 {
-		return ""
-	}
-	base := binary.BigEndian.Uint32(baseIP)
-	numIPs := uint32(1) << uint(32-maskBits)
-
 	used := map[string]bool{s.config.ServerIP: true}
 	for _, p := range s.peerStore.List() {
 		used[p.IPAddress] = true
 	}
-	if db, err := database.GetDB(); err == nil {
-		if rows, err := db.Query(`SELECT ip FROM vpn_virtual_ips`); err == nil {
-			for rows.Next() {
-				var ip string
-				if rows.Scan(&ip) == nil {
-					used[ip] = true
-				}
-			}
-			rows.Close()
-		}
+	db, err := database.GetDB()
+	if err != nil {
+		return ""
 	}
-
-	start := numIPs / 2
-	if numIPs < 8 {
-		start = 2 // tiny range: fall back to scanning from the start
+	owners, err := db.VPNAddressOwners()
+	if err != nil {
+		return "" // fail closed: never hand out an address we couldn't check
 	}
-	for i := start; i < numIPs-1; i++ {
-		var b [4]byte
-		binary.BigEndian.PutUint32(b[:], base+i)
-		// Skip addresses whose last octet is 0 or 255: even inside a larger
-		// prefix they look like network/broadcast addresses and some devices
-		// and tools refuse them, so keep vips to unambiguous host addresses.
-		if b[3] == 0 || b[3] == 255 {
-			continue
-		}
-		ip := fmt.Sprintf("%d.%d.%d.%d", b[0], b[1], b[2], b[3])
-		if !used[ip] {
-			return ip
-		}
-	}
-	return ""
+	return helper.FreeUpperHalfIPv4(s.config.IPRange, func(ip string) bool { return used[ip] || owners[ip] != "" })
 }
 
 // vipChainName sanitizes a virtual-IP label into a valid iptables chain fragment

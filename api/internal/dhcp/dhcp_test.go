@@ -184,8 +184,8 @@ func TestReachabilityPerDevice(t *testing.T) {
 	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Mode: "approve", Enabled: true}}
 	pol := map[int64]netPolicy{1: {
 		Devices: []devicePolicy{
-			{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []string{"10.8.0.2"}, Internet: true}, // camera: one client, internet
-			{IP: "10.20.20.66", MAC: "02:00:00:00:00:66"},                                                // printer: nobody, no internet
+			{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}}, Internet: true}, // camera: one client both ways, internet
+			{IP: "10.20.20.66", MAC: "02:00:00:00:00:66"},                                                                    // printer: nobody, no internet
 		},
 		Blocked: []string{"02:00:00:00:00:09"},
 	}}
@@ -247,7 +247,7 @@ func TestReachabilityPerDevice(t *testing.T) {
 	}
 
 	// No device with internet → no WAN path or NAT at all.
-	pol[1] = netPolicy{Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []string{"10.8.0.2"}}}}
+	pol[1] = netPolicy{Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2"}}}}}
 	none := renderReachability(nets, pol, "eth0", testPrivateRanges)
 	if strings.Contains(none, "oifname") {
 		t.Fatalf("no device has internet, so nothing may route out:\n%s", none)
@@ -261,8 +261,9 @@ func TestReachabilityPerDevice(t *testing.T) {
 
 	// Invalid values are never emitted.
 	bad := map[int64]netPolicy{1: {Devices: []devicePolicy{
-		{IP: "not-an-ip", MAC: "02:00:00:00:00:01", Allowed: []string{"1.2.3.4; flush ruleset"}, Internet: true},
+		{IP: "not-an-ip", MAC: "02:00:00:00:00:01", Allowed: []vpnGrant{{IP: "1.2.3.4; flush ruleset", Both: true}}, Internet: true},
 		{IP: "10.20.20.77", MAC: "02:00:00:00:00:77; flush ruleset", Internet: true},
+		{IP: "10.20.20.78", MAC: "02:00:00:00:00:78", VPNIP: "10.8.128.9; flush ruleset", Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}}},
 	}, Blocked: []string{"zz:zz"}}}
 	if out := renderReachability(nets, bad, "eth0", testPrivateRanges); strings.Contains(out, "flush") || strings.Contains(out, "zz:zz") || strings.Contains(out, "not-an-ip") || strings.Contains(out, "10.20.20.77") {
 		t.Fatalf("invalid values leaked into the ruleset:\n%s", out)
@@ -324,7 +325,8 @@ func TestReachabilityNftSyntax(t *testing.T) {
 		{ID: 3, Iface: "ens21", CIDR: "172.16.0.0/24", GatewayIP: "172.16.0.1", Enabled: false}, // disabled → skipped
 	}
 	pol := map[int64]netPolicy{
-		1: {Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []string{"10.8.0.2", "10.8.0.3"}, Internet: true}},
+		1: {Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", VPNIP: "10.8.128.5",
+			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true}},
 			Blocked: []string{"02:00:00:00:00:09"}},
 		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20"}}},
 	}

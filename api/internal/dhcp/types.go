@@ -32,9 +32,18 @@ type Client struct {
 	Approved  bool   `json:"approved"`
 	Blocked   bool   `json:"blocked"`  // no address (dnsmasq ignore) and dropped by MAC in the firewall
 	Internet  bool   `json:"internet"` // may route out the WAN; seeded from the network's nat_enabled
-	LastSeen  string `json:"last_seen,omitempty"`
+	// VPNIP is the device's address inside the WireGuard range, given on its first grant: VPN
+	// clients reach it there and the box swaps it for IP. Empty until then.
+	VPNIP    string `json:"vpn_ip,omitempty"`
+	LastSeen string `json:"last_seen,omitempty"`
 	// Online and LeaseExpires are derived at read time from the live dnsmasq lease file, not
 	// stored. LeaseExpires is the active lease's end (unix seconds); 0 = none or never expires.
 	Online       bool  `json:"online"`
 	LeaseExpires int64 `json:"lease_expires,omitempty"`
+}
+
+// Grant lets a VPN client reach a LAN device; Bidirectional lets the device reach it too.
+type Grant struct {
+	ClientID      int64 `json:"id"`
+	Bidirectional bool  `json:"bidirectional"`
 }
