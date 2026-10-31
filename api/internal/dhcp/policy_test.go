@@ -60,7 +60,7 @@ func TestNetworkPolicyFromDB(t *testing.T) {
 	_ = s.setClientApproved(cam, true)
 	_ = s.setClientApproved(outside, true)
 	_ = s.setClientBlocked(blocked, true, false)
-	if err := s.addDeviceACL(cam, vpnID); err != nil {
+	if err := s.setDeviceACL(cam, vpnID, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +68,7 @@ func TestNetworkPolicyFromDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Devices) != 1 || p.Devices[0].IP != "10.20.20.51" || p.Devices[0].MAC != "02:00:00:00:00:01" || len(p.Devices[0].Allowed) != 1 || p.Devices[0].Allowed[0] != "10.8.0.2" || !p.Devices[0].Internet {
+	if len(p.Devices) != 1 || p.Devices[0].IP != "10.20.20.51" || p.Devices[0].MAC != "02:00:00:00:00:01" || len(p.Devices[0].Allowed) != 1 || p.Devices[0].Allowed[0].IP != "10.8.0.2" || !p.Devices[0].Internet {
 		t.Fatalf("only the approved camera, with its one grant, may be forwardable: %+v", p.Devices)
 	}
 	if len(p.Blocked) != 1 || p.Blocked[0] != "02:00:00:00:00:03" {

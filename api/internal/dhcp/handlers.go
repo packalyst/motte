@@ -1,6 +1,7 @@
 package dhcp
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -287,15 +288,17 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]any{"ok": true})
 }
 
-// handleAddDeviceACL lets a VPN client reach a device (and the device it).
-// POST /api/dhcp/clients/{id}/acl {"client_id":n}
+// handleAddDeviceACL lets a VPN client reach a device (bidirectional: and the device it), or changes
+// an existing grant's direction. The device gets its VPN address on its first grant.
+// POST /api/dhcp/clients/{id}/acl {"client_id":n,"bidirectional":bool}
 func (s *Service) handleAddDeviceACL(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
 	if !ok {
 		return
 	}
 	var req struct {
-		ClientID int64 `json:"client_id"`
+		ClientID      int64 `json:"client_id"`
+		Bidirectional bool  `json:"bidirectional"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -305,11 +308,23 @@ func (s *Service) handleAddDeviceACL(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "unknown VPN client", http.StatusBadRequest)
 		return
 	}
-	if err := s.addDeviceACL(c.ID, req.ClientID); err != nil {
+	if err := s.assignVPNIP(c.ID); err != nil {
+		if errors.Is(err, errNoVPNAddress) {
+			router.JSONError(w, err.Error(), http.StatusConflict)
+		} else {
+			router.JSONError(w, "could not give the device a VPN address", http.StatusInternalServerError)
+		}
+		return
+	}
+	if err := s.setDeviceACL(c.ID, req.ClientID, req.Bidirectional); err != nil {
 		router.JSONError(w, "could not grant access", http.StatusInternalServerError)
 		return
 	}
-	audit(r, "lan_device_access", "Granted VPN client "+vpnIP+" access to LAN device "+c.label())
+	way := "one-way"
+	if req.Bidirectional {
+		way = "two-way"
+	}
+	audit(r, "lan_device_access", "Granted VPN client "+vpnIP+" "+way+" access to LAN device "+c.label())
 	s.devicesChanged(c.NetworkID)
 	router.JSON(w, map[string]any{"ok": true})
 }

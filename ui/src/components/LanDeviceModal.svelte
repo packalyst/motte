@@ -1,7 +1,7 @@
 <script>
   /**
-   * LanDeviceModal — one LAN device: Overview (name and reserved IP), Access (which VPN clients may
-   * reach it, its internet switch), Ad blocking (admins) and Actions (approve, block/unblock, forget). Open it by setting
+   * LanDeviceModal — one LAN device: Overview (its LAN and VPN addresses, name and reserved IP), Access
+   * (which VPN clients may reach it, one-way or both ways, its internet switch), Ad blocking (admins) and Actions (approve, block/unblock, forget). Open it by setting
    * `deviceId`; closing sets it back to null. Every change is admin-only and audited on the server;
    * onchanged() lets the parent refresh. Access starts empty: nobody reaches a device until granted.
    */
@@ -16,6 +16,7 @@
   import Modal from './Modal.svelte'
   import Input from './Input.svelte'
   import Checkbox from './Checkbox.svelte'
+  import AccessRow from './AccessRow.svelte'
   import Tabs from './Tabs.svelte'
   import ContentBlock from './ContentBlock.svelte'
   import OptionCard from './OptionCard.svelte'
@@ -35,7 +36,7 @@
   let open = $state(false)
   let tab = $state('overview')
   let device = $state(null)
-  let allowed = $state([]) // VPN client ids granted access
+  let allowed = $state([]) // grants: [{ id: VPN client id, bidirectional }]
   let vpnClients = $state([])
   let busy = $state(false)
   let resName = $state('')
@@ -97,9 +98,11 @@
     document.getElementById('lan-device-name')?.focus()
   }
   const saveReservation = () => act(() => apiPut(base(), { ip: resIP.trim(), name: resName.trim() }), 'Saved')
+  const grantOf = (vpn) => allowed.find((g) => g.id === vpn.id)
+  const grant = (vpn, bidirectional) => act(() => apiPost(base() + '/acl', { client_id: vpn.id, bidirectional }))
   function toggleAccess(vpn) {
-    const has = allowed.includes(vpn.id)
-    act(() => (has ? apiDelete(`${base()}/acl/${vpn.id}`) : apiPost(base() + '/acl', { client_id: vpn.id })))
+    if (grantOf(vpn)) act(() => apiDelete(`${base()}/acl/${vpn.id}`))
+    else grant(vpn, false)
   }
   async function forget() {
     const ok = await confirm({
@@ -151,7 +154,8 @@
     <div class="p-4 max-h-[60vh] overflow-y-auto space-y-4">
       {#if tab === 'overview'}
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          <ContentBlock variant="data" size="sm" solid light label="IP address" value={device.ip || '—'} copyable={!!device.ip} mono />
+          <ContentBlock variant="data" size="sm" solid light label="LAN IP" value={device.ip || '—'} copyable={!!device.ip} mono />
+          <ContentBlock variant="data" size="sm" solid light label="VPN IP" value={device.vpn_ip || 'On first access'} copyable={!!device.vpn_ip} mono={!!device.vpn_ip} />
           <ContentBlock variant="data" size="sm" solid light label="MAC address" value={device.mac} copyable mono />
           <ContentBlock variant="data" size="sm" solid light label="Network" value={network || '—'} />
           <ContentBlock variant="data" size="sm" solid light label="Lease" value={leaseLeft ? fmtUptime(leaseLeft) + ' left' : device.online ? 'Static' : 'None'} rightIcon="clock" />
@@ -190,18 +194,18 @@
           {#if !vpnClients.length}
             <p class="text-sm text-muted-foreground">No VPN clients yet.</p>
           {:else}
-            <div class="border border-border rounded-lg max-h-60 overflow-y-auto divide-y divide-border">
+            <div class="border border-border rounded-lg max-h-60 overflow-y-auto">
               {#each vpnClients as vc (vc.id)}
-                <label class="flex items-center gap-2.5 p-2.5 text-sm {isAdmin && !busy ? 'cursor-pointer hover:bg-muted/40' : ''}">
-                  <Checkbox checked={allowed.includes(vc.id)} disabled={!isAdmin || busy} onchange={() => toggleAccess(vc)} />
-                  <span class="min-w-0 flex-1 truncate text-foreground">{vc.name}</span>
-                  <span class="font-mono text-[11px] text-muted-foreground">{vc.ip}</span>
-                  <span class="text-[10px] text-muted-foreground">{vc.type === 'wireguard' ? 'WG' : 'TS'}</span>
-                </label>
+                {@const g = grantOf(vc)}
+                <AccessRow name={vc.name} ip={vc.ip} type={vc.type} checked={!!g} both={!!g?.bidirectional}
+                  disabled={!isAdmin || busy} bothTitle="Let this device also reach {vc.name}"
+                  ontoggle={() => toggleAccess(vc)} onboth={() => grant(vc, !g.bidirectional)} />
               {/each}
             </div>
           {/if}
-          <p class="text-[11px] text-muted-foreground mt-2">Nobody can reach a device until you allow them. An allowed client and the device can reach each other.</p>
+          <p class="text-[11px] text-muted-foreground mt-2">
+            Nobody can reach a device until you allow them. Allowed clients reach it at its VPN IP{device.vpn_ip ? ` (${device.vpn_ip})` : ''}; use "Bi" to let the device reach them too.
+          </p>
         </div>
 
       {:else if tab === 'adblock'}

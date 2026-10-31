@@ -338,18 +338,18 @@ func (ps *PeerStore) allocateIPLocked(ipRange string) string {
 	for _, p := range ps.cache {
 		usedIPs[p.IPAddress] = true
 	}
-	// Also reserve virtual IPs (extra /32s hosted by peers) so a new peer can never
-	// be assigned one — that would collide with the peer that hosts it.
-	if db, err := database.GetDB(); err == nil {
-		if rows, err := db.Query(`SELECT ip FROM vpn_virtual_ips`); err == nil {
-			for rows.Next() {
-				var vip string
-				if rows.Scan(&vip) == nil {
-					usedIPs[vip] = true
-				}
-			}
-			rows.Close()
-		}
+	// Also reserve what other owners hold (virtual IPs routed to a peer, LAN devices' VPN
+	// addresses), so a new peer can never collide with one. Unreadable → hand out nothing.
+	db, err := database.GetDB()
+	if err != nil {
+		return ""
+	}
+	owners, err := db.VPNAddressOwners()
+	if err != nil {
+		return ""
+	}
+	for ip := range owners {
+		usedIPs[ip] = true
 	}
 
 	baseIP, maskBits := parseIPRange(ipRange)

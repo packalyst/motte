@@ -17,11 +17,15 @@ import (
 type Service struct {
 	db  *database.DB
 	nft *nftables.Service
+	// headscalePolicy regenerates the Headscale policy, which carries the LAN grants of Headscale
+	// nodes (see HeadscaleGrants). Nil when the VPN service is off.
+	headscalePolicy func()
 }
 
-// New creates the DHCP service. nft may be nil (reachability rules are then skipped, logged).
-func New(db *database.DB, nft *nftables.Service) *Service {
-	s := &Service{db: db, nft: nft}
+// New creates the DHCP service. nft may be nil (reachability rules are then skipped, logged);
+// headscalePolicy may be nil (no Headscale policy to keep in step).
+func New(db *database.DB, nft *nftables.Service, headscalePolicy func()) *Service {
+	s := &Service{db: db, nft: nft, headscalePolicy: headscalePolicy}
 	if nft != nil {
 		nft.RegisterTable(NewReachabilityTable(db))
 	}
@@ -109,10 +113,14 @@ func (s *Service) ReconcileAll() {
 }
 
 // reapplyReachability asks the firewall to rebuild (the reachability table reads the DB each
-// build). Best-effort — a nil nft service just means reachability isn't enforced yet.
+// build) and the Headscale policy to follow. Best-effort — a nil nft service just means
+// reachability isn't enforced yet.
 func (s *Service) reapplyReachability() {
 	if s.nft != nil {
 		s.nft.RequestApply()
+	}
+	if s.headscalePolicy != nil {
+		s.headscalePolicy()
 	}
 }
 

@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"api/internal/database"
+	"api/internal/dhcp"
 	"api/internal/helper"
 )
 
@@ -33,8 +35,14 @@ type ACLEntry struct {
 	Dst    []string `json:"dst"`
 }
 
+// aclMu serialises policy writes: VPN rule changes and LAN grant changes both regenerate it, and
+// two interleaved writes of the one file could leave Headscale a broken policy.
+var aclMu sync.Mutex
+
 // GenerateAndApplyHeadscaleACL generates Headscale ACL policy from the database and applies it
 func GenerateAndApplyHeadscaleACL() error {
+	aclMu.Lock()
+	defer aclMu.Unlock()
 	acl, err := generateHeadscaleACL()
 	if err != nil {
 		return err
@@ -117,10 +125,7 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 	}
 
 	// Reserved host names that must not be claimed by a client (emitted below).
-	routerName := helper.GetEnv("VPN_ROUTER_NAME")
-	if routerName == "" {
-		routerName = "vpn-router"
-	}
+	routerName := helper.GetRouterName()
 
 	// Assign a STABLE, UNIQUE Headscale host name per client. sanitizeHostName is lossy
 	// ("cam 1" and "cam-1" both collapse to "cam-1"), so without this two clients could claim
@@ -231,6 +236,23 @@ func generateHeadscaleACL() (*HeadscaleACL, error) {
 				Dst:    []string{dstName + ":*"},
 			})
 			allowedPairs[key] = true
+		}
+	}
+
+	// LAN devices: a granted Headscale node may reach the device's VPN address and, two-way, the
+	// device it. Mirrors the nft rules (dhcp.HeadscaleGrants lists only what they let through).
+	lanGrants, err := dhcp.HeadscaleGrants(db)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range lanGrants {
+		c, ok := clients[int(g.ClientID)]
+		if !ok || c.Policy == helper.ACLPolicyBlockAll {
+			continue
+		}
+		acl.ACLs = append(acl.ACLs, ACLEntry{Action: "accept", Src: []string{names[c.ID]}, Dst: []string{g.VPNIP + ":*"}})
+		if g.Both {
+			acl.ACLs = append(acl.ACLs, ACLEntry{Action: "accept", Src: []string{g.VPNIP}, Dst: []string{names[c.ID] + ":*"}})
 		}
 	}
 

@@ -12,6 +12,7 @@
   import { formatDate, timeAgo, formatBytes } from '$lib/utils/format.js'
   import { deviceIcon, downloadPeerConfig, copyPeerConfig } from '$lib/nodes.js'
   import Icon from './Icon.svelte'
+  import AccessRow from './AccessRow.svelte'
   import Segmented from './Segmented.svelte'
   import Badge from './Badge.svelte'
   import Modal from './Modal.svelte'
@@ -967,44 +968,20 @@
                   </div>
                   <div class="border border-border rounded-lg max-h-48 overflow-y-auto">
                     {#each aclView.filter(c => routerRunning || (selectedNode?._type === 'wireguard' ? c.type === 'wireguard' : c.type === 'headscale')) as client}
-                      {@const isBlockedPolicy = client.aclPolicy === 'block_all' || client.aclPolicy === 'allow_all'}
-                      <div class="flex items-center gap-2 p-2.5 border-b border-border last:border-b-0 {isBlockedPolicy ? 'opacity-60' : 'hover:bg-accent/30'} transition-colors">
-                        <!-- Allow checkbox -->
-                        <button
-                          onclick={() => !isBlockedPolicy && toggleClient(client.id)}
-                          disabled={isBlockedPolicy}
-                          class="w-5 h-5 rounded border flex items-center justify-center shrink-0
-                            {isBlockedPolicy ? 'border-border bg-muted cursor-not-allowed' : client.isEnabled ? 'bg-primary border-primary text-white cursor-pointer' : 'border-border cursor-pointer'}"
-                        >
-                          {#if client.isEnabled && !isBlockedPolicy}
-                            <Icon name="check" size={12} />
+                      <AccessRow name={client.name} ip={client.ip} type={client.type}
+                        checked={client.isEnabled} both={client.isBi}
+                        disabled={client.aclPolicy === 'block_all' || client.aclPolicy === 'allow_all'}
+                        bothTitle="Allow {client.name} to also reach this client"
+                        ontoggle={() => toggleClient(client.id)}
+                        onboth={client.aclPolicy === 'selected' ? () => toggleBidirectional(client.id) : undefined}>
+                        {#snippet note()}
+                          {#if client.aclPolicy === 'block_all'}
+                            <span class="text-destructive ml-1">• Can't be reached</span>
+                          {:else if client.aclPolicy === 'allow_all'}
+                            <span class="text-success ml-1">• You can connect</span>
                           {/if}
-                        </button>
-                        <!-- Client info -->
-                        <div class="flex-1 min-w-0" onclick={() => !isBlockedPolicy && toggleClient(client.id)} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && !isBlockedPolicy && toggleClient(client.id)} role="button" tabindex="0" class:cursor-pointer={!isBlockedPolicy}>
-                          <div class="text-sm font-medium text-foreground truncate">{client.name}</div>
-                          <div class="text-[10px] text-muted-foreground">
-                            {client.ip} • {client.type === 'wireguard' ? 'WG' : 'TS'}
-                            {#if client.aclPolicy === 'block_all'}
-                              <span class="text-destructive ml-1">• Can't be reached</span>
-                            {:else if client.aclPolicy === 'allow_all'}
-                              <span class="text-success ml-1">• You can connect</span>
-                            {/if}
-                          </div>
-                        </div>
-                        <!-- Bidirectional toggle (only if enabled and target has 'selected' policy) -->
-                        {#if client.isEnabled && client.aclPolicy === 'selected'}
-                          <button
-                            onclick={() => toggleBidirectional(client.id)}
-                            class="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] transition-colors shrink-0
-                              {client.isBi ? 'bg-info/15 text-info border border-info/30' : 'bg-muted/50 text-muted-foreground border border-border hover:border-info/30'}"
-                            title="Allow {client.name} to also reach this client"
-                          >
-                            <Icon name="arrows-right-left" size={12} />
-                            Bi
-                          </button>
-                        {/if}
-                      </div>
+                        {/snippet}
+                      </AccessRow>
                     {:else}
                       <div class="p-4 text-center text-sm text-muted-foreground">
                         No clients found

@@ -280,7 +280,16 @@ func main() {
 		if dhcpDB, err := database.GetDB(); err != nil {
 			log.Printf("Warning: Failed to initialize dhcp service: %v", err)
 		} else {
-			dhcpSvc = dhcp.New(dhcpDB, nftSvc)
+			// LAN grants of Headscale nodes live in the Headscale policy too; keep it in step.
+			var headscalePolicy func()
+			if config.IsServiceEnabled("vpn") {
+				headscalePolicy = func() {
+					if err := vpn.GenerateAndApplyHeadscaleACL(); err != nil {
+						log.Printf("dhcp: Headscale policy: %v", err)
+					}
+				}
+			}
+			dhcpSvc = dhcp.New(dhcpDB, nftSvc, headscalePolicy)
 			r.RegisterService("dhcp", dhcpSvc.Handlers())
 			// Re-apply live state (interface, dnsmasq, FORWARD punch-through, reachability) on boot:
 			// a plain restart otherwise leaves Docker's flushed FORWARD chain dropping segment traffic.

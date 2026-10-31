@@ -85,12 +85,12 @@ func (s *Service) deleteNetwork(id int64) error {
 
 // --- DHCP clients (reservations), keyed by MAC ---
 
-const clientCols = `id, network_id, mac, ip, name, approved, blocked, internet, COALESCE(last_seen,'')`
+const clientCols = `id, network_id, mac, ip, name, approved, blocked, internet, vpn_ip, COALESCE(last_seen,'')`
 
 func scanClient(row interface{ Scan(...any) error }) (*Client, error) {
 	var c Client
 	var approved, blocked, internet int
-	if err := row.Scan(&c.ID, &c.NetworkID, &c.MAC, &c.IP, &c.Name, &approved, &blocked, &internet, &c.LastSeen); err != nil {
+	if err := row.Scan(&c.ID, &c.NetworkID, &c.MAC, &c.IP, &c.Name, &approved, &blocked, &internet, &c.VPNIP, &c.LastSeen); err != nil {
 		return nil, err
 	}
 	c.Approved, c.Blocked, c.Internet = approved == 1, blocked == 1, internet == 1
@@ -184,25 +184,30 @@ func (s *Service) dnsmasqHosts(networkID int64) (reservations []Client, blocked 
 
 // --- per-device reachability ACL (which VPN clients may reach a LAN device) ---
 
-func (s *Service) listDeviceACL(deviceID int64) ([]int64, error) {
-	rows, err := s.db.Query(`SELECT source_client_id FROM dhcp_client_acl WHERE device_id = ?`, deviceID)
+func (s *Service) listDeviceACL(deviceID int64) ([]Grant, error) {
+	rows, err := s.db.Query(`SELECT source_client_id, bidirectional FROM dhcp_client_acl WHERE device_id = ?`, deviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	ids := []int64{}
+	out := []Grant{}
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var g Grant
+		var both int
+		if err := rows.Scan(&g.ClientID, &both); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		g.Bidirectional = both == 1
+		out = append(out, g)
 	}
-	return ids, rows.Err()
+	return out, rows.Err()
 }
 
-func (s *Service) addDeviceACL(deviceID, clientID int64) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO dhcp_client_acl (device_id, source_client_id) VALUES (?,?)`, deviceID, clientID)
+// setDeviceACL grants a VPN client access to a device, or changes the grant's direction.
+func (s *Service) setDeviceACL(deviceID, clientID int64, bidirectional bool) error {
+	_, err := s.db.Exec(`INSERT INTO dhcp_client_acl (device_id, source_client_id, bidirectional) VALUES (?,?,?)
+		ON CONFLICT(device_id, source_client_id) DO UPDATE SET bidirectional = excluded.bidirectional`,
+		deviceID, clientID, b2i(bidirectional))
 	return err
 }
 
@@ -211,9 +216,17 @@ func (s *Service) removeDeviceACL(deviceID, clientID int64) error {
 	return err
 }
 
-// networkACLIPs maps each device of a network to the IPs of the VPN clients allowed to reach it.
-func (s *Service) networkACLIPs(networkID int64) (map[int64][]string, error) {
-	rows, err := s.db.Query(`SELECT a.device_id, v.ip FROM dhcp_client_acl a
+// vpnGrant is one granted VPN client as the firewall and the Headscale policy need it.
+type vpnGrant struct {
+	ClientID  int64
+	IP        string // the VPN client's address
+	Headscale bool   // a Headscale node (its access also goes in the Headscale policy)
+	Both      bool   // the device may reach it too
+}
+
+// networkGrants maps each device of a network to the VPN clients allowed to reach it.
+func (s *Service) networkGrants(networkID int64) (map[int64][]vpnGrant, error) {
+	rows, err := s.db.Query(`SELECT a.device_id, v.id, v.ip, v.type, a.bidirectional FROM dhcp_client_acl a
 		JOIN dhcp_clients d ON d.id = a.device_id
 		JOIN vpn_clients v ON v.id = a.source_client_id
 		WHERE d.network_id = ?`, networkID)
@@ -221,14 +234,17 @@ func (s *Service) networkACLIPs(networkID int64) (map[int64][]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[int64][]string{}
+	out := map[int64][]vpnGrant{}
 	for rows.Next() {
 		var id int64
-		var ip string
-		if err := rows.Scan(&id, &ip); err != nil {
+		var g vpnGrant
+		var typ string
+		var both int
+		if err := rows.Scan(&id, &g.ClientID, &g.IP, &typ, &both); err != nil {
 			return nil, err
 		}
-		out[id] = append(out[id], ip)
+		g.Headscale, g.Both = typ == "headscale", both == 1
+		out[id] = append(out[id], g)
 	}
 	return out, rows.Err()
 }

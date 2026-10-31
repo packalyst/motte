@@ -67,6 +67,9 @@ func loadNoInternetPeerIPs(db *database.DB) []string {
 	return ips
 }
 
+// VPNIfaces is the set of the box's VPN interfaces: WireGuard and the Headscale router's.
+const VPNIfaces = `{ "wg0", "tailscale0" }`
+
 // FirewallTable builds the inet firewall table
 type FirewallTable struct {
 	db              *database.DB
