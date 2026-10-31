@@ -23,6 +23,11 @@ import (
 // settings import cycle). Defaults to enabled.
 var FWBlockEnabled = func() bool { return true }
 
+// RoutesApplied runs after every route apply so what else reads the routes follows: the LAN
+// firewall lets Traefik in to a LAN device only for its enabled routes. Wired by main.go to the
+// firewall's apply (a hook avoids a domains -> nftables import); a no-op until then.
+var RoutesApplied = func() {}
+
 // ensureVPNMiddleware adds sentinel_vpn@file if no VPN middleware exists
 // validateMiddlewaresAndResolver rejects middleware names / cert-resolver values that
 // aren't safe to write into the generated Traefik YAML (see traefik.GenerateDomainRoutes).
@@ -175,14 +180,16 @@ type DomainRoute struct {
 	CreatedAt      time.Time               `json:"createdAt"`
 	UpdatedAt      time.Time               `json:"updatedAt"`
 	VPNClientName  string                  `json:"vpnClientName,omitempty"`
+	LANDeviceID    *int64                  `json:"lanDeviceId,omitempty"`   // set when the target is a LAN device's VPN address
+	LANDeviceName  string                  `json:"lanDeviceName,omitempty"` // its name, or MAC when unnamed
 }
 
 // New creates a new domains service
 func New() *Service {
 	svc := &Service{
 		traefikConfigDir: helper.GetEnvOptional("TRAEFIK_CONFIG", "/traefik/dynamic"),
-		vpnIP:            helper.GetEnvOptional("WG_SERVER_IP", "10.8.0.1"), // VPN IP for VPN-only domains
-		publicIP:         helper.GetEnvOptional("SERVER_IP", "127.0.0.1"),   // Public IP (for reference)
+		vpnIP:            vpnDNSTarget(),
+		publicIP:         helper.GetEnvOptional("SERVER_IP", "127.0.0.1"), // Public IP (for reference)
 	}
 	log.Printf("Domains service initialized, Traefik config: %s, VPN IP: %s", svc.traefikConfigDir, svc.vpnIP)
 	return svc
@@ -190,8 +197,9 @@ func New() *Service {
 
 // ApplyRoutes generates Traefik config and syncs AdGuard DNS (exported for use by other packages)
 func ApplyRoutes() error {
+	defer RoutesApplied()
 	traefikConfigDir := helper.GetEnvOptional("TRAEFIK_CONFIG", "/traefik/dynamic")
-	vpnIP := helper.GetEnvOptional("WG_SERVER_IP", "10.8.0.1") // VPN IP for DNS rewrites
+	vpnIP := vpnDNSTarget()
 
 	db, err := database.GetDB()
 	if err != nil {
@@ -266,27 +274,30 @@ func (s *Service) applyRoutes() error {
 	return ApplyRoutes()
 }
 
-// DeleteClientRoutes removes all domain routes for a VPN client and applies changes
+// DeleteClientRoutes removes all domain routes for a VPN client, with their DNS rewrites, and
+// applies the change.
 func DeleteClientRoutes(clientID int) (int, error) {
 	db, err := database.GetDB()
 	if err != nil {
 		return 0, err
 	}
-
-	result, err := db.Exec(`DELETE FROM domain_routes WHERE vpn_client_id = ?`, clientID)
+	tx, err := db.Begin()
 	if err != nil {
 		return 0, err
 	}
-
-	rows, _ := result.RowsAffected()
-	if rows > 0 {
-		log.Printf("Deleted %d domain routes for VPN client %d", rows, clientID)
-		if err := ApplyRoutes(); err != nil {
-			log.Printf("Warning: failed to apply routes after client deletion: %v", err)
-		}
+	defer tx.Rollback()
+	removed, err := deleteRoutes(tx, `vpn_client_id = ?`, clientID)
+	if err != nil {
+		return 0, err
 	}
-
-	return int(rows), nil
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if len(removed) > 0 {
+		log.Printf("Deleted %d domain routes for VPN client %d", len(removed), clientID)
+	}
+	removed.Apply()
+	return len(removed), nil
 }
 
 // Handlers returns the handler map for the router
@@ -304,6 +315,49 @@ func (s *Service) Handlers() router.ServiceHandlers {
 	}
 }
 
+// routeSelect reads a route with the names of the VPN client or LAN device it targets; scanRoute
+// scans one row of it. Shared by the list and the single-route read.
+const routeSelect = `
+	SELECT d.id, d.domain, d.target_ip, d.target_port, d.vpn_client_id,
+	       d.enabled, d.https_backend, d.skip_cert_verify, d.middlewares, d.description,
+	       d.access_mode, d.frontend_ssl, COALESCE(d.sentinel_config, ''),
+	       COALESCE(d.cert_resolver, ''),
+	       d.created_at, d.updated_at, COALESCE(v.name, ''),
+	       d.lan_device_id, COALESCE(NULLIF(c.name, ''), c.mac, '')
+	FROM domain_routes d
+	LEFT JOIN vpn_clients v ON d.vpn_client_id = v.id
+	LEFT JOIN dhcp_clients c ON d.lan_device_id = c.id`
+
+func scanRoute(row interface{ Scan(...any) error }) (DomainRoute, error) {
+	var route DomainRoute
+	var vpnClientID, lanDeviceID sql.NullInt64
+	var middlewaresJSON, sentinelConfigJSON string
+	var accessMode, certResolver sql.NullString
+	var frontendSSL sql.NullBool
+	if err := row.Scan(
+		&route.ID, &route.Domain, &route.TargetIP, &route.TargetPort,
+		&vpnClientID, &route.Enabled, &route.HTTPSBackend, &route.SkipCertVerify, &middlewaresJSON,
+		&route.Description, &accessMode, &frontendSSL, &sentinelConfigJSON,
+		&certResolver,
+		&route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
+		&lanDeviceID, &route.LANDeviceName,
+	); err != nil {
+		return route, err
+	}
+	if vpnClientID.Valid {
+		id := int(vpnClientID.Int64)
+		route.VPNClientID = &id
+	}
+	if lanDeviceID.Valid {
+		route.LANDeviceID = &lanDeviceID.Int64
+	}
+	route.Middlewares, route.AccessMode, route.FrontendSSL, route.SentinelConfig = parseRouteFields(middlewaresJSON, accessMode, frontendSSL, sentinelConfigJSON)
+	if certResolver.Valid {
+		route.CertResolver = certResolver.String
+	}
+	return route, nil
+}
+
 func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	db, err := database.GetDB()
 	if err != nil {
@@ -311,16 +365,7 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query(`
-		SELECT d.id, d.domain, d.target_ip, d.target_port, d.vpn_client_id,
-		       d.enabled, d.https_backend, d.skip_cert_verify, d.middlewares, d.description,
-		       d.access_mode, d.frontend_ssl, COALESCE(d.sentinel_config, ''),
-		       COALESCE(d.cert_resolver, ''),
-		       d.created_at, d.updated_at, COALESCE(v.name, '') as vpn_client_name
-		FROM domain_routes d
-		LEFT JOIN vpn_clients v ON d.vpn_client_id = v.id
-		ORDER BY d.domain
-	`)
+	rows, err := db.Query(routeSelect + ` ORDER BY d.domain`)
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -329,29 +374,9 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 
 	routes := []DomainRoute{}
 	for rows.Next() {
-		var route DomainRoute
-		var vpnClientID sql.NullInt64
-		var middlewaresJSON string
-		var accessMode sql.NullString
-		var frontendSSL sql.NullBool
-		var sentinelConfigJSON string
-		var certResolver sql.NullString
-		if err := rows.Scan(
-			&route.ID, &route.Domain, &route.TargetIP, &route.TargetPort,
-			&vpnClientID, &route.Enabled, &route.HTTPSBackend, &route.SkipCertVerify, &middlewaresJSON,
-			&route.Description, &accessMode, &frontendSSL, &sentinelConfigJSON,
-			&certResolver,
-			&route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
-		); err != nil {
+		route, err := scanRoute(rows)
+		if err != nil {
 			continue
-		}
-		if vpnClientID.Valid {
-			id := int(vpnClientID.Int64)
-			route.VPNClientID = &id
-		}
-		route.Middlewares, route.AccessMode, route.FrontendSSL, route.SentinelConfig = parseRouteFields(middlewaresJSON, accessMode, frontendSSL, sentinelConfigJSON)
-		if certResolver.Valid {
-			route.CertResolver = certResolver.String
 		}
 		routes = append(routes, route)
 	}
@@ -375,29 +400,7 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var route DomainRoute
-	var vpnClientID sql.NullInt64
-	var middlewaresJSON string
-	var accessMode sql.NullString
-	var frontendSSL sql.NullBool
-	var sentinelConfigJSON string
-	var certResolver sql.NullString
-	err = db.QueryRow(`
-		SELECT d.id, d.domain, d.target_ip, d.target_port, d.vpn_client_id,
-		       d.enabled, d.https_backend, d.skip_cert_verify, d.middlewares, d.description,
-		       d.access_mode, d.frontend_ssl, COALESCE(d.sentinel_config, ''),
-		       COALESCE(d.cert_resolver, ''),
-		       d.created_at, d.updated_at, COALESCE(v.name, '') as vpn_client_name
-		FROM domain_routes d
-		LEFT JOIN vpn_clients v ON d.vpn_client_id = v.id
-		WHERE d.id = ?
-	`, id).Scan(
-		&route.ID, &route.Domain, &route.TargetIP, &route.TargetPort,
-		&vpnClientID, &route.Enabled, &route.HTTPSBackend, &route.SkipCertVerify, &middlewaresJSON,
-		&route.Description, &accessMode, &frontendSSL, &sentinelConfigJSON,
-		&certResolver,
-		&route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
-	)
+	route, err := scanRoute(db.QueryRow(routeSelect+` WHERE d.id = ?`, id))
 	if err == sql.ErrNoRows {
 		router.JSONError(w, "route not found", http.StatusNotFound)
 		return
@@ -405,14 +408,6 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		router.JSONError(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if vpnClientID.Valid {
-		id := int(vpnClientID.Int64)
-		route.VPNClientID = &id
-	}
-	route.Middlewares, route.AccessMode, route.FrontendSSL, route.SentinelConfig = parseRouteFields(middlewaresJSON, accessMode, frontendSSL, sentinelConfigJSON)
-	if certResolver.Valid {
-		route.CertResolver = certResolver.String
 	}
 
 	router.JSON(w, route)
@@ -509,9 +504,9 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := db.Exec(`
-		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, https_backend, skip_cert_verify, middlewares, description, access_mode, frontend_ssl, sentinel_config, cert_resolver)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.HTTPSBackend, req.SkipCertVerify, string(middlewaresJSON), req.Description, req.AccessMode, req.FrontendSSL, sentinelConfigJSON, req.CertResolver)
+		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, lan_device_id, https_backend, skip_cert_verify, middlewares, description, access_mode, frontend_ssl, sentinel_config, cert_resolver)
+		VALUES (?, ?, ?, ?, `+lanDeviceByVPNIP+`, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.TargetIP, req.HTTPSBackend, req.SkipCertVerify, string(middlewaresJSON), req.Description, req.AccessMode, req.FrontendSSL, sentinelConfigJSON, req.CertResolver)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			router.JSONError(w, "domain already exists", http.StatusConflict)
@@ -662,8 +657,8 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *req.Domain)
 	}
 	if req.TargetIP != nil {
-		updates = append(updates, "target_ip = ?")
-		args = append(args, *req.TargetIP)
+		updates = append(updates, "target_ip = ?", "lan_device_id = "+lanDeviceByVPNIP)
+		args = append(args, *req.TargetIP, *req.TargetIP)
 	}
 	if req.TargetPort != nil {
 		updates = append(updates, "target_port = ?")

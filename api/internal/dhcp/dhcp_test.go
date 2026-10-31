@@ -189,7 +189,7 @@ func TestReachabilityPerDevice(t *testing.T) {
 		},
 		Blocked: []string{"02:00:00:00:00:09"},
 	}}
-	got := renderReachability(nets, pol, "eth0", testPrivateRanges)
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
 	for _, want := range []string{
 		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`,                                               // granted client → that device
 		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 ip daddr 10.8.0.2 accept`, // and back, from its MAC only
@@ -248,13 +248,13 @@ func TestReachabilityPerDevice(t *testing.T) {
 
 	// No device with internet → no WAN path or NAT at all.
 	pol[1] = netPolicy{Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2"}}}}}
-	none := renderReachability(nets, pol, "eth0", testPrivateRanges)
+	none := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
 	if strings.Contains(none, "oifname") {
 		t.Fatalf("no device has internet, so nothing may route out:\n%s", none)
 	}
 
 	// No approved devices → nothing forwardable.
-	empty := renderReachability(nets, map[int64]netPolicy{}, "eth0", testPrivateRanges)
+	empty := renderReachability(nets, map[int64]netPolicy{}, "eth0", testPrivateRanges, routeOrigin{})
 	if fwd := empty[strings.Index(empty, "chain forward"):strings.Index(empty, "chain input")]; strings.Count(fwd, " accept\n") != 1 { // only the ct accept
 		t.Fatalf("with no devices, only the established accept may exist in forward:\n%s", empty)
 	}
@@ -265,7 +265,7 @@ func TestReachabilityPerDevice(t *testing.T) {
 		{IP: "10.20.20.77", MAC: "02:00:00:00:00:77; flush ruleset", Internet: true},
 		{IP: "10.20.20.78", MAC: "02:00:00:00:00:78", VPNIP: "10.8.128.9; flush ruleset", Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}}},
 	}, Blocked: []string{"zz:zz"}}}
-	if out := renderReachability(nets, bad, "eth0", testPrivateRanges); strings.Contains(out, "flush") || strings.Contains(out, "zz:zz") || strings.Contains(out, "not-an-ip") || strings.Contains(out, "10.20.20.77") {
+	if out := renderReachability(nets, bad, "eth0", testPrivateRanges, routeOrigin{}); strings.Contains(out, "flush") || strings.Contains(out, "zz:zz") || strings.Contains(out, "not-an-ip") || strings.Contains(out, "10.20.20.77") {
 		t.Fatalf("invalid values leaked into the ruleset:\n%s", out)
 	}
 }
@@ -326,11 +326,12 @@ func TestReachabilityNftSyntax(t *testing.T) {
 	}
 	pol := map[int64]netPolicy{
 		1: {Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", VPNIP: "10.8.128.5",
-			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true}},
+			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true, Routes: []int{80, 443}},
+			{IP: "10.20.20.56", MAC: "02:00:00:00:00:56", VPNIP: "10.8.128.6", Routes: []int{8080}}},
 			Blocked: []string{"02:00:00:00:00:09"}},
 		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20"}}},
 	}
-	script := renderReachability(nets, pol, "eth0", testPrivateRanges)
+	script := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"})
 
 	// Disabled network must not appear; NAT-off network must not get a masquerade. Check the
 	// disabled net's specific /24 (not the bare prefix — 172.16.0.0/12 is in the private_ranges set).

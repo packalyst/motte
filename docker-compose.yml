@@ -100,8 +100,11 @@ services:
       - "127.0.0.1:${HEADSCALE_INTERNAL_PORT}:8080"
       # DERP direct port - bypasses Traefik to avoid TLS cert issues with IP-only setup
       - "${DERP_HTTP_PORT:-8443}:8080"
-    cap_add:
-      - NET_ADMIN
+    # Only Traefik may send from Traefik's address on vpn-network: the firewall lets domain routes
+    # to LAN devices in from it. NET_RAW (raw packets) and NET_ADMIN (changing its own address)
+    # would let a container forge it; headscale needs neither (plain TCP/UDP sockets).
+    cap_drop:
+      - NET_RAW
     networks:
       vpn-network:
         ipv4_address: ${HEADSCALE_CONTAINER_IP}
@@ -252,6 +255,8 @@ services:
     container_name: ui
     restart: unless-stopped
     logging: *default-logging
+    cap_drop:
+      - NET_RAW # can't forge Traefik's address (see headscale)
     networks:
       vpn-network:
         ipv4_address: ${UI_CONTAINER_IP}
@@ -299,6 +304,8 @@ services:
     container_name: turbotunnels
     restart: "no"
     logging: *default-logging
+    cap_drop:
+      - ALL # image build only; the panel creates the real container with the same CapDrop
     networks:
       vpn-network:
         ipv4_address: ${TURBOTUNNELS_CONTAINER_IP:-172.18.0.5}

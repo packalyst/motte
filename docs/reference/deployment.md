@@ -55,7 +55,7 @@ run from the project root, so relative bind mounts resolve against the checkout.
 |---|---|---|---|
 | `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | **`network_mode: none`** | Filters the Docker API; listens only on a root-only socket file (`/run/motte-docker/docker.sock` on the host), mounted into `api` alone. |
 | `traefik` | `traefik:v3.7.16` | `vpn-network` (static IP `${TRAEFIK_CONTAINER_IP}`) | Reverse proxy; ports `${HTTP_PORT}:80`, `${HTTPS_PORT}:443`, `${TRAEFIK_PORT}:8080`. |
-| `headscale` | `headscale/headscale:0.25` | `vpn-network` (`${HEADSCALE_CONTAINER_IP}`) | Tailscale control plane + embedded DERP. `command: serve`, `cap_add: NET_ADMIN`. |
+| `headscale` | `headscale/headscale:0.25` | `vpn-network` (`${HEADSCALE_CONTAINER_IP}`) | Tailscale control plane + embedded DERP. `command: serve`, `cap_drop: NET_RAW`. |
 | `api` | built from `./api` (arg `VERSION`) | **`network_mode: host`, `pid: host`, `privileged: true`** | The unified backend. Reaches Docker via `DOCKER_HOST=unix:///run/docker-proxy/docker.sock` (the proxy's socket). |
 | `adguard` | `adguard/adguardhome:v0.107.79` | **`network_mode: host`** | DNS + query logging. |
 | `ui` | built from `./ui` (`target: production`) | `vpn-network` (`${UI_CONTAINER_IP}`) | Svelte dashboard; Traefik routes `PathPrefix('/')` to it. |

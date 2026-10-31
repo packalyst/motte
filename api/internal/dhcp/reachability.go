@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"api/internal/database"
@@ -54,6 +55,15 @@ type devicePolicy struct {
 	VPNIP    string     // its VPN address, swapped for IP on the box; empty when it has no usable one
 	Allowed  []vpnGrant // VPN clients that may reach it (and, Both, it them)
 	Internet bool       // may route out the WAN
+	Routes   []int      // TCP ports of the enabled domain routes to its VPN address (Traefik's way in)
+}
+
+// routeOrigin is where Traefik's traffic enters the host (helper.TraefikOrigin): domain routes to
+// LAN devices are let in from exactly this interface and address, nothing else. Zero when it
+// can't be resolved, and then no route is let in at all.
+type routeOrigin struct {
+	Iface string
+	IP    string
 }
 
 // netPolicy is a network's forwarding policy, resolved from the DB before rendering so the
@@ -78,7 +88,26 @@ func (t *ReachabilityTable) Build() (string, error) {
 		}
 	}
 	wan, _ := defaultRouteInterface()
-	return renderReachability(nets, pol, wan, privateReachRanges()), nil
+	return renderReachability(nets, pol, wan, privateReachRanges(), traefikOrigin(pol)), nil
+}
+
+// traefikOrigin resolves Traefik's origin when a domain route needs it; when it can't be, those
+// routes stay shut and the reason is logged.
+func traefikOrigin(pol map[int64]netPolicy) routeOrigin {
+	for _, p := range pol {
+		for _, d := range p.Devices {
+			if len(d.Routes) == 0 {
+				continue
+			}
+			iface, ip, err := helper.TraefikOrigin()
+			if err != nil {
+				log.Printf("dhcp: domain routes to LAN devices stay shut: %v", err)
+				return routeOrigin{}
+			}
+			return routeOrigin{Iface: iface, IP: ip.String()}
+		}
+	}
+	return routeOrigin{}
 }
 
 // networkPolicy resolves a network's devices into forwarding policy. Only approved, unblocked
@@ -98,6 +127,10 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 	if err != nil {
 		return p, err
 	}
+	routes, err := s.networkRoutePorts(n.ID)
+	if err != nil {
+		return p, err
+	}
 	_, cnet, err := net.ParseCIDR(n.CIDR)
 	if err != nil {
 		return p, nil // an invalid network renders nothing (renderReachability skips it too)
@@ -114,7 +147,7 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 		}
 		d := devicePolicy{IP: ip.String(), MAC: mac, Allowed: acl[c.ID], Internet: c.Internet}
 		if space.usable(c.VPNIP) {
-			d.VPNIP = c.VPNIP
+			d.VPNIP, d.Routes = c.VPNIP, routes[c.ID]
 		} else if c.VPNIP != "" {
 			log.Printf("dhcp: LAN device %s: VPN address %s is not usable (outside the WireGuard range or also held by a VPN client); not reachable through it", mac, c.VPNIP)
 		}
@@ -182,7 +215,7 @@ func (p netPolicy) hasInternet() bool {
 
 // renderReachability builds the nft script (pure: no DB, no host calls) so it can be unit-tested
 // and syntax-checked with `nft -c`. Every IP/CIDR/MAC/iface is validated before emission.
-func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, privateRanges []string) string {
+func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, privateRanges []string, traefik routeOrigin) string {
 	var blk, fwd, in, dnat, nat strings.Builder
 	for i := range nets {
 		n := &nets[i]
@@ -233,6 +266,14 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 					both = true
 					fmt.Fprintf(&fwd, "        %s ip daddr %s accept\n", from(d), g.IP)
 				}
+			}
+			// Domain routes: Traefik, and only Traefik (its address on its own Docker bridge), reaches
+			// the device on the routes' ports through its VPN address. The forward rule only takes
+			// traffic that came through that swap, so Traefik still can't reach the device directly.
+			if ports := portSet(d.Routes); ports != "" && net.ParseIP(d.VPNIP).To4() != nil &&
+				validIface(traefik.Iface) && net.ParseIP(traefik.IP).To4() != nil {
+				fmt.Fprintf(&dnat, "        iifname %q ip saddr %s ip daddr %s tcp dport %s dnat ip to %s\n", traefik.Iface, traefik.IP, d.VPNIP, ports, d.IP)
+				fmt.Fprintf(&fwd, "        iifname %q ip saddr %s ip daddr %s tcp dport %s ct status dnat accept\n", traefik.Iface, traefik.IP, d.IP, ports)
 			}
 			// The VPN address swap. In: what reaches the VPN address over a VPN interface goes to the
 			// device (never from the WAN or a LAN); the forward rules above still decide who gets
@@ -308,6 +349,24 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 	sb.WriteString("    }\n")
 	sb.WriteString("}\n")
 	return sb.String()
+}
+
+// portSet renders TCP ports as an nft port or anonymous set, keeping only valid ports; "" when
+// none is.
+func portSet(ports []int) string {
+	var ok []string
+	for _, p := range ports {
+		if p > 0 && p <= 65535 {
+			ok = append(ok, strconv.Itoa(p))
+		}
+	}
+	switch len(ok) {
+	case 0:
+		return ""
+	case 1:
+		return ok[0]
+	}
+	return "{ " + strings.Join(ok, ", ") + " }"
 }
 
 // ensureIPForward enables IPv4 forwarding (needed to route between wg0 and the segment). Writes

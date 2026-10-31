@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"api/internal/domains"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -61,7 +62,7 @@ func (s *Service) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 	n.ID = id
 	if err := s.Reconcile(&n); err != nil {
 		// Roll back the DB row so a network that couldn't be brought up doesn't linger.
-		_ = s.deleteNetwork(id)
+		_, _ = s.deleteNetwork(id) // brand new: no devices, so no routes
 		router.JSONError(w, "network saved but could not be applied (rolled back): "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -121,12 +122,14 @@ func (s *Service) handleDeleteNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not remove interface config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := s.deleteNetwork(id); err != nil {
+	removed, err := s.deleteNetwork(id)
+	if err != nil {
 		router.JSONError(w, "could not delete network", http.StatusInternalServerError)
 		return
 	}
 	removeLeaseFile(n.Iface) // purge stale dnsmasq leases so a future net on this NIC starts clean
 	s.reapplyReachability()
+	removed.Apply()
 	router.JSON(w, map[string]any{"ok": true})
 }
 
@@ -201,8 +204,8 @@ func (s *Service) handleUpdateClient(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]any{"ok": true})
 }
 
-// handleGetClient returns one LAN device with its live state and the VPN clients allowed to
-// reach it. GET /api/dhcp/clients/{id}
+// handleGetClient returns one LAN device with its live state, the VPN clients allowed to reach it
+// and the domain routes to it. GET /api/dhcp/clients/{id}
 func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
 	if !ok {
@@ -222,7 +225,12 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not read access", http.StatusInternalServerError)
 		return
 	}
-	router.JSON(w, map[string]any{"client": c, "allowed": allowed})
+	routes, err := domains.LANDeviceRoutes(s.db, c.ID)
+	if err != nil {
+		router.JSONError(w, "could not read domain routes", http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, map[string]any{"client": c, "allowed": allowed, "routes": routes})
 }
 
 // handleBlockClient denies a device an address and drops its traffic by MAC (it also loses its
@@ -289,7 +297,8 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSetVPNAccess turns a device's VPN access on or off, with a step-up either way. On gives it a
-// VPN address (nobody can reach it until granted); off removes the address and every grant at once.
+// VPN address (nobody can reach it until granted); off removes the address, every grant and every
+// domain route to it at once.
 // PUT /api/dhcp/clients/{id}/vpn {"enabled":bool}
 func (s *Service) handleSetVPNAccess(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
@@ -313,6 +322,7 @@ func (s *Service) handleSetVPNAccess(w http.ResponseWriter, r *http.Request) {
 	if !router.StepUp(w, r) {
 		return
 	}
+	var removed domains.Removed
 	if req.Enabled {
 		if err := s.assignVPNIP(c.ID); err != nil {
 			if errors.Is(err, errNoVPNAddress) {
@@ -324,13 +334,15 @@ func (s *Service) handleSetVPNAccess(w http.ResponseWriter, r *http.Request) {
 		}
 		audit(r, "lan_device_vpn", "VPN access on for LAN device "+c.label())
 	} else {
-		if err := s.clearVPNAccess(c.ID); err != nil {
+		var err error
+		if removed, err = s.clearVPNAccess(c.ID); err != nil {
 			router.JSONError(w, "could not turn VPN access off", http.StatusInternalServerError)
 			return
 		}
-		audit(r, "lan_device_vpn", "VPN access off for LAN device "+c.label()+" (address and grants removed)")
+		audit(r, "lan_device_vpn", "VPN access off for LAN device "+c.label()+" (address and grants removed)"+routesNote(removed))
 	}
 	s.devicesChanged(c.NetworkID)
+	removed.Apply()
 	router.JSON(w, map[string]any{"ok": true})
 }
 
@@ -410,12 +422,14 @@ func (s *Service) handleDeleteClient(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := s.deleteClient(c.ID); err != nil {
+	removed, err := s.deleteClient(c.ID)
+	if err != nil {
 		router.JSONError(w, "could not forget device", http.StatusInternalServerError)
 		return
 	}
-	audit(r, "lan_device_forget", "Forgot LAN device "+c.label())
+	audit(r, "lan_device_forget", "Forgot LAN device "+c.label()+routesNote(removed))
 	s.devicesChanged(c.NetworkID) // drop its reservation, block entry and firewall gate
+	removed.Apply()
 	router.JSON(w, map[string]any{"ok": true})
 }
 
@@ -449,6 +463,14 @@ func (s *Service) devicesChanged(networkID int64) {
 		}
 	}
 	s.applyDevices(n)
+}
+
+// routesNote names the domain routes a change removed, for its audit message.
+func routesNote(removed domains.Removed) string {
+	if len(removed) == 0 {
+		return ""
+	}
+	return "; domain routes removed: " + strings.Join(removed.Domains(), ", ")
 }
 
 // label names a device in audit messages.

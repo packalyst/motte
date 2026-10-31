@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"api/internal/domains"
 )
 
 func scanNetwork(row interface{ Scan(...any) error }) (*Network, error) {
@@ -78,9 +80,16 @@ func (s *Service) updateNetwork(n *Network) error {
 	return err
 }
 
-func (s *Service) deleteNetwork(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM dhcp_networks WHERE id = ?`, id)
-	return err
+// deleteNetwork deletes a network with its devices (cascade) and the domain routes to them.
+func (s *Service) deleteNetwork(id int64) (domains.Removed, error) {
+	return s.inTx(func(tx *sql.Tx) (domains.Removed, error) {
+		removed, err := domains.DeleteLANNetworkRoutes(tx, id)
+		if err != nil {
+			return nil, err
+		}
+		_, err = tx.Exec(`DELETE FROM dhcp_networks WHERE id = ?`, id)
+		return removed, err
+	})
 }
 
 // --- DHCP clients (reservations), keyed by MAC ---
@@ -157,9 +166,16 @@ func (s *Service) setClientReservation(id int64, ip, name string) error {
 	return err
 }
 
-func (s *Service) deleteClient(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM dhcp_clients WHERE id = ?`, id)
-	return err
+// deleteClient forgets a device with its grants (cascade) and the domain routes to it.
+func (s *Service) deleteClient(id int64) (domains.Removed, error) {
+	return s.inTx(func(tx *sql.Tx) (domains.Removed, error) {
+		removed, err := domains.DeleteLANDeviceRoutes(tx, id)
+		if err != nil {
+			return nil, err
+		}
+		_, err = tx.Exec(`DELETE FROM dhcp_clients WHERE id = ?`, id)
+		return removed, err
+	})
 }
 
 // dnsmasqHosts returns what a network's dnsmasq config pins per MAC: reservations for approved
@@ -257,6 +273,29 @@ func (s *Service) networkGrants(networkID int64) (map[int64][]vpnGrant, error) {
 }
 
 // clientIPByID resolves a VPN client's IP for building the forward-chain allow rules.
+// networkRoutePorts maps each device of a network to the TCP ports of the enabled domain routes to
+// its current VPN address (a route left on an old address opens nothing).
+func (s *Service) networkRoutePorts(networkID int64) (map[int64][]int, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT c.id, r.target_port FROM domain_routes r
+		JOIN dhcp_clients c ON c.id = r.lan_device_id
+		WHERE c.network_id = ? AND r.enabled = 1 AND c.vpn_ip <> '' AND r.target_ip = c.vpn_ip
+		ORDER BY c.id, r.target_port`, networkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]int{}
+	for rows.Next() {
+		var id int64
+		var port int
+		if err := rows.Scan(&id, &port); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], port)
+	}
+	return out, rows.Err()
+}
+
 func (s *Service) clientIPByID(id int64) (string, error) {
 	var ip string
 	err := s.db.QueryRow(`SELECT ip FROM vpn_clients WHERE id = ?`, id).Scan(&ip)

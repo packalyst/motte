@@ -268,6 +268,7 @@ func createSchema(db *sql.DB) error {
 		cert_resolver TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		lan_device_id INTEGER REFERENCES dhcp_clients(id) ON DELETE CASCADE,
 		FOREIGN KEY (vpn_client_id) REFERENCES vpn_clients(id) ON DELETE SET NULL
 	);
 
@@ -605,7 +606,9 @@ func runMigrations(db *sql.DB) {
 	// LAN devices: per-device block and internet. Existing devices keep the internet access their
 	// network gave them (internet := nat_enabled), so the upgrade changes nobody's reachability.
 	// vpn_ip is the device's address inside the WireGuard range (set while its VPN access is on);
-	// bidirectional lets a granted device reach its VPN client too.
+	// bidirectional lets a granted device reach its VPN client too. A domain route to a LAN device
+	// names it (lan_device_id) so the firewall opens Traefik's way in and the route goes with the
+	// device's VPN access.
 	var dc int
 	for _, c := range []struct{ table, name, ddl, after string }{
 		{"dhcp_clients", "blocked", `ALTER TABLE dhcp_clients ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`, ""},
@@ -613,6 +616,7 @@ func runMigrations(db *sql.DB) {
 			`UPDATE dhcp_clients SET internet = COALESCE((SELECT nat_enabled FROM dhcp_networks n WHERE n.id = dhcp_clients.network_id), 0)`},
 		{"dhcp_clients", "vpn_ip", `ALTER TABLE dhcp_clients ADD COLUMN vpn_ip TEXT NOT NULL DEFAULT ''`, ""},
 		{"dhcp_client_acl", "bidirectional", `ALTER TABLE dhcp_client_acl ADD COLUMN bidirectional INTEGER NOT NULL DEFAULT 0`, ""},
+		{"domain_routes", "lan_device_id", `ALTER TABLE domain_routes ADD COLUMN lan_device_id INTEGER REFERENCES dhcp_clients(id) ON DELETE CASCADE`, ""},
 	} {
 		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.name).Scan(&dc); err == nil && dc == 0 {
 			if _, err := db.Exec(c.ddl); err == nil {

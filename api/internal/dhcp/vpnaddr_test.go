@@ -22,7 +22,7 @@ func TestReachabilityVPNAddress(t *testing.T) {
 		{IP: "10.20.20.53", MAC: "02:00:00:00:00:53", VPNIP: "10.8.128.3"},                                                      // nobody
 		{IP: "10.20.20.54", MAC: "02:00:00:00:00:54", Allowed: []vpnGrant{{IP: "10.8.0.2"}}},                                    // no VPN address
 	}}}
-	got := renderReachability(nets, pol, "eth0", testPrivateRanges)
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
 	for _, want := range []string{
 		`ip saddr 10.8.0.2 ip daddr 10.20.20.51 accept`,
 		`iifname { "wg0", "tailscale0" } ip daddr 10.8.128.1 dnat ip to 10.20.20.51`,
@@ -248,5 +248,149 @@ func TestVPNAccessSwitch(t *testing.T) {
 	_ = s.setClientBlocked(dev, true, false)
 	if code := vpn(true); code != http.StatusConflict {
 		t.Fatalf("switching a blocked device on: %d", code)
+	}
+}
+
+// A domain route lets Traefik, and only Traefik, reach the device on the route's ports through the
+// VPN address: from Traefik's own address on its own bridge, and the forward rule only takes what
+// came through that swap. Nothing opens when the origin is unknown, the port is invalid or the
+// device has no usable VPN address, and a route needs no grant.
+func TestReachabilityDomainRoutes(t *testing.T) {
+	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", Mode: "approve", Enabled: true}}
+	pol := map[int64]netPolicy{1: {Devices: []devicePolicy{
+		{IP: "10.20.20.51", MAC: "02:00:00:00:00:51", VPNIP: "10.8.128.1", Routes: []int{80, 443}}, // no grant: route only
+		{IP: "10.20.20.52", MAC: "02:00:00:00:00:52", VPNIP: "10.8.128.2", Routes: []int{0, 70000}},
+		{IP: "10.20.20.53", MAC: "02:00:00:00:00:53", Routes: []int{80}}, // no usable VPN address
+	}}}
+	origin := routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"}
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, origin)
+	for _, want := range []string{
+		`iifname "br-0123456789ab" ip saddr 172.18.0.2 ip daddr 10.8.128.1 tcp dport { 80, 443 } dnat ip to 10.20.20.51`,
+		`iifname "br-0123456789ab" ip saddr 172.18.0.2 ip daddr 10.20.20.51 tcp dport { 80, 443 } ct status dnat accept`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q:\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{
+		`iifname { "wg0", "tailscale0" } ip daddr 10.8.128.1`, // a route opens nothing to VPN clients
+		`10.8.128.2`,             // no valid port: nothing
+		`dnat ip to 10.20.20.53`, // no VPN address: nothing
+	} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("must not contain %q:\n%s", bad, got)
+		}
+	}
+	// The route rules sit above the network's default drop.
+	if strings.Index(got, "ct status dnat accept") > strings.Index(got, "ip daddr 10.20.20.0/24 drop") {
+		t.Fatalf("the route rule must come before the default drop:\n%s", got)
+	}
+	for _, o := range []routeOrigin{{}, {Iface: "br-0123456789ab"}, {IP: "172.18.0.2"}, {Iface: "bad iface", IP: "172.18.0.2"}, {Iface: "br-0123456789ab", IP: "not-an-ip"}} {
+		if out := renderReachability(nets, pol, "eth0", testPrivateRanges, o); strings.Contains(out, "tcp dport") {
+			t.Fatalf("origin %+v must open nothing:\n%s", o, out)
+		}
+	}
+}
+
+// Domain routes follow the device: the firewall opens only enabled routes to its current VPN
+// address, and turning VPN access off, forgetting the device or deleting its network removes them
+// in the same change as the address.
+func TestLANDeviceRoutesFollowDevice(t *testing.T) {
+	t.Setenv("PATH", "") // the handlers re-apply the network: never run iptables/ip on the test host
+	t.Setenv("WG_IP_RANGE", "10.8.0.0/16")
+	t.Setenv("WG_SERVER_IP", "10.8.0.1")
+	t.Setenv("TRAEFIK_CONFIG", t.TempDir()) // the route apply writes Traefik's config here
+	if _, err := database.Init(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := database.GetDB()
+	for _, q := range []string{`DELETE FROM domain_routes`, `DELETE FROM dhcp_client_acl`, `DELETE FROM dhcp_clients`, `DELETE FROM dhcp_networks`, `DELETE FROM vpn_virtual_ips`, `DELETE FROM vpn_clients`} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Service{db: db}
+	n := &Network{Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", PoolStart: "10.20.20.50",
+		PoolEnd: "10.20.20.200", LeaseSecs: 3600, Mode: "approve", Enabled: true}
+	var err error
+	if n.ID, err = s.createNetwork(n); err != nil {
+		t.Fatal(err)
+	}
+	devs := map[string]int64{}
+	for _, mac := range []string{"02:00:00:00:00:01", "02:00:00:00:00:02"} {
+		if err := s.upsertClient(n.ID, mac, "10.20.20.5"+mac[len(mac)-1:], "", true); err != nil {
+			t.Fatal(err)
+		}
+		var id int64
+		db.QueryRow(`SELECT id FROM dhcp_clients WHERE mac = ?`, mac).Scan(&id)
+		if err := s.assignVPNIP(id); err != nil {
+			t.Fatal(err)
+		}
+		devs[mac] = id
+	}
+	cam, nvr := devs["02:00:00:00:00:01"], devs["02:00:00:00:00:02"]
+	route := func(domain, ip string, port int, dev int64, enabled bool) {
+		if _, err := db.Exec(`INSERT INTO domain_routes (domain, target_ip, target_port, lan_device_id, enabled) VALUES (?,?,?,?,?)`,
+			domain, ip, port, dev, enabled); err != nil {
+			t.Fatal(err)
+		}
+	}
+	camIP, nvrIP := "", ""
+	db.QueryRow(`SELECT vpn_ip FROM dhcp_clients WHERE id = ?`, cam).Scan(&camIP)
+	db.QueryRow(`SELECT vpn_ip FROM dhcp_clients WHERE id = ?`, nvr).Scan(&nvrIP)
+	route("cam.example.test", camIP, 80, cam, true)
+	route("cam-admin.example.test", camIP, 443, cam, false)     // disabled: opens nothing
+	route("cam-old.example.test", "10.8.128.99", 81, cam, true) // not its VPN address: opens nothing
+	route("nvr.example.test", nvrIP, 8080, nvr, true)
+
+	pol, err := s.networkPolicy(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := map[string][]int{}
+	for _, d := range pol.Devices {
+		ports[d.IP] = d.Routes
+	}
+	if fmt.Sprint(ports["10.20.20.51"]) != "[80]" || fmt.Sprint(ports["10.20.20.52"]) != "[8080]" {
+		t.Fatalf("only enabled routes to the current VPN address open: %v", ports)
+	}
+
+	routesOf := func(dev int64) int {
+		var c int
+		db.QueryRow(`SELECT COUNT(*) FROM domain_routes WHERE lan_device_id = ?`, dev).Scan(&c)
+		return c
+	}
+	// VPN access off takes the device's routes with it, and nobody else's.
+	router.SetStepUpFunc(func(http.ResponseWriter, *http.Request) bool { return true })
+	t.Cleanup(func() { router.SetStepUpFunc(nil) })
+	rr := httptest.NewRecorder()
+	s.handleSetVPNAccess(rr, httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/dhcp/clients/%d/vpn", cam), strings.NewReader(`{"enabled":false}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("switching off: %d %s", rr.Code, rr.Body)
+	}
+	if routesOf(cam) != 0 || routesOf(nvr) != 1 {
+		t.Fatalf("off must remove the device's routes only: cam %d, nvr %d", routesOf(cam), routesOf(nvr))
+	}
+
+	// Forgetting a device removes its routes.
+	if _, err := s.deleteClient(nvr); err != nil || routesOf(nvr) != 0 {
+		t.Fatalf("forgetting the device must remove its routes: %d %v", routesOf(nvr), err)
+	}
+
+	// Deleting a network removes the routes to its devices.
+	if err := s.upsertClient(n.ID, "02:00:00:00:00:03", "10.20.20.53", "", true); err != nil {
+		t.Fatal(err)
+	}
+	var third int64
+	db.QueryRow(`SELECT id FROM dhcp_clients WHERE mac = '02:00:00:00:00:03'`).Scan(&third)
+	route("third.example.test", "10.8.128.50", 80, third, true)
+	removed, err := s.deleteNetwork(n.ID)
+	if err != nil || len(removed) != 1 || removed[0].Domain != "third.example.test" {
+		t.Fatalf("deleting the network must report its routes: %+v %v", removed, err)
+	}
+	var left int
+	db.QueryRow(`SELECT COUNT(*) FROM domain_routes`).Scan(&left)
+	if left != 0 {
+		t.Fatalf("routes left after the network went: %d", left)
 	}
 }

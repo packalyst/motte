@@ -64,10 +64,14 @@ func imageName() string {
 	return "motte-turbotunnels"
 }
 
+// containerSpec versions how the container itself is created; bump it when that changes so a
+// container made the old way shows as needing a restart. 2: no capabilities (CapDrop ALL).
+const containerSpec = "2"
+
 // configHash returns a stable short hash of the tunnel config as the container
-// sees it (the injected TUNNELS_JSON), used for drift detection.
+// sees it (the injected TUNNELS_JSON) and of its spec, used for drift detection.
 func configHash(tunnelsJSON string) string {
-	sum := sha256.Sum256([]byte(tunnelsJSON))
+	sum := sha256.Sum256([]byte(containerSpec + "\n" + tunnelsJSON))
 	return hex.EncodeToString(sum[:8])
 }
 
@@ -219,6 +223,10 @@ func createContainer(cfg Config) error {
 			"RestartPolicy": map[string]interface{}{"Name": "unless-stopped"},
 			"PortBindings":  bindings,
 			"LogConfig":     helper.DockerLogConfig(),
+			// The proxy runs unprivileged on high ports and needs no capability; without NET_RAW it
+			// also can't forge Traefik's address on vpn-network, which domain routes to LAN devices
+			// are let in from.
+			"CapDrop": []string{"ALL"},
 		},
 		"NetworkingConfig": map[string]interface{}{
 			"EndpointsConfig": map[string]interface{}{

@@ -300,3 +300,43 @@ func TestFleetCAWarning(t *testing.T) {
 		t.Error("warned without a fleet tier")
 	}
 }
+
+// A restore keeps the domain routes to LAN devices: reloading the devices wipes them first, and
+// that wipe cascades into the routes, so the routes must be restored after the devices.
+func TestImportKeepsLANDeviceRoutes(t *testing.T) {
+	t.Setenv("ENCRYPTION_SECRET", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	helper.InitEncryption()
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "t.db")+"?_foreign_keys=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE dhcp_networks (id INTEGER PRIMARY KEY, iface TEXT);
+		CREATE TABLE dhcp_clients (id INTEGER PRIMARY KEY, network_id INTEGER NOT NULL, mac TEXT,
+			FOREIGN KEY (network_id) REFERENCES dhcp_networks(id) ON DELETE CASCADE);
+		CREATE TABLE domain_routes (id INTEGER PRIMARY KEY, domain TEXT, target_ip TEXT, target_port INTEGER,
+			lan_device_id INTEGER REFERENCES dhcp_clients(id) ON DELETE CASCADE);
+		INSERT INTO dhcp_networks VALUES (1, 'ens19');
+		INSERT INTO dhcp_clients VALUES (1, 1, '02:00:00:00:00:01');
+		INSERT INTO domain_routes VALUES (1, 'cam.example.test', '10.8.128.1', 80, 1);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := Export(db, "correct horse battery", "test", false, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, doc, err := Open(blob, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Import(db, doc); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM domain_routes WHERE lan_device_id = 1`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("the route to the LAN device was lost in the restore: %d left", n)
+	}
+}
