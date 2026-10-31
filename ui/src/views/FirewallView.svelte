@@ -455,19 +455,21 @@
   // Delete all entries
   async function confirmDeleteAll() {
     const listName = viewAction === 'allow' ? 'allow' : 'deny'
+    const url = `/api/fw/entries/all?action=${viewAction}`
     const su = await stepUpConfirm({
       title: `Delete all ${listName} rules`,
       message: `This will permanently delete all ${blockedTotal} ${listName}-list rules.`,
       description: `All IPs, ranges, countries and ASNs in the ${listName} list will be removed. Ports and essential entries are not affected.`,
       warning: 'This action cannot be undone!',
       confirmText: 'Delete All',
-      variant: 'destructive'
+      variant: 'destructive',
+      action: { method: 'DELETE', url }
     })
-    if (!su?.confirmed || !su?.password) return
+    if (!su?.proof) return
 
     setConfirmLoading(true)
     try {
-      const result = await apiDelete(`/api/fw/entries/all?action=${viewAction}`, { currentPassword: su.password, totpCode: su.totp || '' })
+      const result = await apiDelete(url, su.proof)
       await loadBlocked()
       toast(`Deleted ${result.deleted} entries`, 'success')
     } catch (e) {

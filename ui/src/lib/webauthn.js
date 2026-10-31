@@ -64,18 +64,16 @@ export async function passkeyRegister(name, creds = {}) {
   return post('/api/auth/passkeys/register/finish?name=' + encodeURIComponent(name || 'Passkey'), body)
 }
 
-// passkeyLogin performs a passwordless (discoverable) login and returns the login response.
-export async function passkeyLogin() {
-  if (!passkeysSupported()) throw new Error('This browser or connection does not support passkeys (needs HTTPS).')
-  const data = await post('/api/auth/passkeys/login/begin')
-  const pk = data.publicKey
+// assert asks the browser to answer a passkey challenge (the server's publicKey options) and
+// returns the answer as the JSON the server verifies.
+async function assert(pk) {
   pk.challenge = b64urlToBuf(pk.challenge)
   if (pk.allowCredentials) {
     pk.allowCredentials = pk.allowCredentials.map((c) => ({ ...c, id: b64urlToBuf(c.id) }))
   }
   const assertion = await navigator.credentials.get({ publicKey: pk })
   if (!assertion) throw new Error('No passkey was used')
-  const body = {
+  return {
     id: assertion.id,
     rawId: bufToB64url(assertion.rawId),
     type: assertion.type,
@@ -87,5 +85,21 @@ export async function passkeyLogin() {
     },
     clientExtensionResults: assertion.getClientExtensionResults ? assertion.getClientExtensionResults() : {},
   }
+}
+
+// passkeyLogin performs a passwordless (discoverable) login and returns the login response.
+export async function passkeyLogin() {
+  if (!passkeysSupported()) throw new Error('This browser or connection does not support passkeys (needs HTTPS).')
+  const data = await post('/api/auth/passkeys/login/begin')
+  const body = await assert(data.publicKey)
   return post('/api/auth/passkeys/login/finish?challengeId=' + encodeURIComponent(data.challengeId), body)
+}
+
+// passkeyStepUp confirms one sensitive request ({ method, url }, exactly as it will be sent) with a
+// passkey instead of the password: the answer only works for that request, from this session,
+// once. Send it in the request body as { passkey: answer }.
+export async function passkeyStepUp(action) {
+  if (!passkeysSupported()) throw new Error('This browser or connection does not support passkeys (needs HTTPS).')
+  const data = await post('/api/auth/stepup/passkey', action)
+  return assert(data.publicKey)
 }

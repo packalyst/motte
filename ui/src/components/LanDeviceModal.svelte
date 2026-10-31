@@ -106,7 +106,7 @@
   }
   const saveReservation = () => act(() => apiPut(base(), { ip: resIP.trim(), name: resName.trim() }), 'Saved')
   // VPN access: on gives the device its VPN address, off removes it with every grant and domain
-  // route, each listed first. A password either way (the server checks it too).
+  // route, each listed first. A password or passkey either way (the server checks it too).
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
   function offSummary() {
     const gone = [allowed.length && plural(allowed.length, 'access rule'), routes.length && plural(routes.length, 'domain route')].filter(Boolean)
@@ -117,11 +117,13 @@
   }
   async function setVPN(on) {
     const name = device.name || device.mac
-    const su = await stepUpConfirm(on
+    const prompt = on
       ? { title: 'Turn on VPN access', message: `Give ${name} a VPN address?`, description: 'Nobody can reach it until you allow them below.', confirmText: 'Turn on' }
-      : { title: 'Turn off VPN access', message: `Remove ${name}'s VPN address?`, ...offSummary(), confirmText: 'Turn off', variant: 'destructive' })
-    if (!su?.confirmed || !su?.password) return
-    act(() => apiPut(base() + '/vpn', { enabled: on, currentPassword: su.password, totpCode: su.totp || '' }), on ? 'VPN access on' : 'VPN access off')
+      : { title: 'Turn off VPN access', message: `Remove ${name}'s VPN address?`, ...offSummary(), confirmText: 'Turn off', variant: 'destructive' }
+    const url = base() + '/vpn'
+    const su = await stepUpConfirm({ ...prompt, action: { method: 'PUT', url } })
+    if (!su?.proof) return
+    act(() => apiPut(url, { enabled: on, ...su.proof }), on ? 'VPN access on' : 'VPN access off')
   }
   const grantOf = (vpn) => allowed.find((g) => g.id === vpn.id)
   const grant = (vpn, bidirectional) => act(() => apiPost(base() + '/acl', { client_id: vpn.id, bidirectional }))

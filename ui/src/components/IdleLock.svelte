@@ -2,14 +2,15 @@
   // Idle lock: a client-side screen lock that arms only when the admin has set a positive
   // idle_lock_minutes (surfaced on the user via /api/auth/me). After that many minutes with no
   // user interaction it covers the app and requires re-authentication (password, plus a fresh
-  // 2FA code when the user has 2FA) via POST /api/auth/unlock. It is walk-up protection, not a
-  // server boundary — the session's absolute expiry remains the hard limit — and always offers a
-  // "Log out" escape so no one can get stuck.
+  // 2FA code when the user has 2FA, or their passkey) via POST /api/auth/unlock. The server holds
+  // the lock too (a locked session gets 423 everywhere else); the session's absolute expiry remains
+  // the hard limit, and a "Log out" escape means no one can get stuck.
   import { currentUser, apiPost, setGlobalLockHandler } from '../stores/app.js'
   import { connect as wsConnect, disconnect as wsDisconnect, stopReconnect as wsStopReconnect } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import StepUpFields from './StepUpFields.svelte'
+  import { passkeysSupported } from '$lib/webauthn.js'
 
   let { onLogout } = $props()
 
@@ -23,6 +24,9 @@
   const minutes = $derived($currentUser?.idleLockMinutes || 0)
   const needsTotp = $derived(!!$currentUser?.totpEnabled)
   const canSubmit = $derived(!!password && (!needsTotp || totp.length === 6))
+  // The unlock request, which a passkey answer is made for.
+  const UNLOCK = { method: 'POST', url: '/api/auth/unlock' }
+  const canPasskey = $derived(!!$currentUser?.hasPasskey && passkeysSupported())
 
   function bump() {
     // Only user interaction counts as activity; cheap timestamp, checked by the interval below.
@@ -49,12 +53,13 @@
     }
   }
 
-  async function unlock() {
-    if (!canSubmit || busy) return
+  // unlock with the password (+ code), or with a passkey answer (proof { passkey }).
+  async function unlock(proof = null) {
+    if ((!proof && !canSubmit) || busy) return
     error = ''
     busy = true
     try {
-      await apiPost('/api/auth/unlock', { currentPassword: password, totpCode: totp })
+      await apiPost(UNLOCK.url, proof || { currentPassword: password, totpCode: totp })
       password = ''
       totp = ''
       locked = false
@@ -120,7 +125,9 @@
         </div>
       </div>
 
-      <StepUpFields id="idle" label="Password" bind:password bind:totp {needsTotp} autofocus onsubmit={unlock} />
+      <!-- No automatic passkey prompt: the lock comes up while nobody is at the screen. -->
+      <StepUpFields id="idle" label="Password" bind:password bind:totp {needsTotp} autofocus onsubmit={() => unlock()}
+        passkey={canPasskey ? UNLOCK : null} autoPasskey={false} onpasskey={(answer) => unlock({ passkey: answer })} />
 
       {#if error}
         <p class="text-sm text-destructive">{error}</p>
@@ -128,7 +135,7 @@
 
       <div class="flex gap-2 pt-1">
         <Button onclick={onLogout} variant="secondary" class="flex-1">Log out</Button>
-        <Button onclick={unlock} variant="primary" class="flex-1" disabled={!canSubmit || busy}>
+        <Button onclick={() => unlock()} variant="primary" class="flex-1" disabled={!canSubmit || busy}>
           {#if busy}<Icon name="refresh" size={14} class="animate-spin mr-1" />{/if}
           Unlock
         </Button>

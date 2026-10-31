@@ -112,11 +112,13 @@
   }
 
   async function save() {
-    const su = await stepUpConfirm({ title: 'Save off-host backup config', description: 'This sets the passphrase + destination a scheduled full export uses. Re-authenticate to save.' })
-    if (!su?.confirmed) return
+    const url = '/api/backup/offhost/config'
+    const su = await stepUpConfirm({ title: 'Save off-host backup config', description: 'This sets the passphrase + destination a scheduled full export uses. Re-authenticate to save.',
+      action: { method: 'PUT', url } })
+    if (!su?.proof) return
     saving = true
     try {
-      const saved = await apiPut('/api/backup/offhost/config', { ...payload(), currentPassword: su.password, totpCode: su.totp })
+      const saved = await apiPut(url, { ...payload(), ...su.proof })
       hasStoredPass = isRedacted(saved.passphrase)
       passphrase = ''
       cfg.destinations = saved.destinations || []
@@ -140,11 +142,13 @@
   }
 
   async function runNow() {
-    const su = await stepUpConfirm({ title: 'Run off-host backup now', description: 'This exports decrypted secrets to the destination. Re-authenticate to run.' })
-    if (!su?.confirmed) return
+    const url = '/api/backup/offhost/run'
+    const su = await stepUpConfirm({ title: 'Run off-host backup now', description: 'This exports decrypted secrets to the destination. Re-authenticate to run.',
+      action: { method: 'POST', url } })
+    if (!su?.proof) return
     running = true
     try {
-      await apiPost('/api/backup/offhost/run', { currentPassword: su.password, totpCode: su.totp })
+      await apiPost(url, su.proof)
       toast('Backup started — this runs in the background', 'success')
       // Poll status a few times so the card reflects completion.
       for (let i = 0; i < 10; i++) {
@@ -172,18 +176,18 @@
     }
   }
 
+  const RESTORE_URL = '/api/backup/offhost/restore'
   async function restore(d, archive) {
     const su = await stepUpConfirm({
       title: 'Restore from backup',
       message: `Restore ${archive.name} from "${d.name}"? This REPLACES this panel's configuration (and admin users / fleet if the backup includes them), then re-applies firewall, WireGuard and ACL state. It cannot be undone.`,
       confirmText: 'Restore',
       variant: 'destructive',
+      action: { method: 'POST', url: RESTORE_URL },
     })
-    if (!su?.confirmed || !su?.password) return
+    if (!su?.proof) return
     try {
-      const res = await apiPost('/api/backup/offhost/restore', {
-        dest: d.id, name: archive.name, currentPassword: su.password, totpCode: su.totp || '',
-      })
+      const res = await apiPost(RESTORE_URL, { dest: d.id, name: archive.name, ...su.proof })
       toast('Restore applied' + (res.reconciled?.length ? ' — reconciled ' + res.reconciled.join(', ') : ''), 'success')
     } catch (e) {
       toast(e.message || 'Restore failed', 'error')

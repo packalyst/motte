@@ -37,7 +37,8 @@ type Principal struct {
 // refused with 423 until the session is unlocked.
 func lockAllowedPath(p string) bool {
 	switch p {
-	case "/api/auth/unlock", "/api/auth/lock", "/api/auth/logout", "/api/auth/me":
+	case "/api/auth/unlock", "/api/auth/lock", "/api/auth/logout", "/api/auth/me",
+		"/api/auth/stepup/passkey": // unlocking can be confirmed with a passkey
 		return true
 	}
 	return false

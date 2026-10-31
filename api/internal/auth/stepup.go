@@ -49,8 +49,42 @@ func (s *Service) VerifyStepUp(userID int64, password, totpCode string) error {
 // re-prompts in place instead of tripping the client's 401 auto-logout; the `totp` flag tells
 // the UI whether to render an authenticator-code field. While the password or 2FA code is locked
 // out after too many failures it writes a 429 instead (re-prompting can't help until it expires).
+// It takes the password only: for the checks about the password itself (changing it, 2FA, adding a
+// passkey). Everything else uses StepUpWith, which takes a passkey too.
 func (s *Service) StepUp(w http.ResponseWriter, callerID int64, password, totpCode string) bool {
-	err := s.VerifyStepUp(callerID, password, totpCode)
+	return s.answerStepUp(w, callerID, s.VerifyStepUp(callerID, password, totpCode), false)
+}
+
+// StepUpCreds is what a sensitive request carries to re-authenticate the caller: the current
+// password (+ a 2FA code when 2FA is on), or a passkey answer made for exactly that request.
+type StepUpCreds struct {
+	CurrentPassword string          `json:"currentPassword"`
+	TotpCode        string          `json:"totpCode"`
+	Passkey         json.RawMessage `json:"passkey,omitempty"`
+}
+
+// VerifyStepUpRequest re-authenticates userID for request r: by the passkey answer when one is
+// given (see verifyPasskeyStepUp; a failed one is audited), otherwise as VerifyStepUp.
+func (s *Service) VerifyStepUpRequest(r *http.Request, userID int64, c StepUpCreds) error {
+	if len(c.Passkey) == 0 {
+		return s.VerifyStepUp(userID, c.CurrentPassword, c.TotpCode)
+	}
+	if err := s.verifyPasskeyStepUp(r, userID, c.Passkey); err != nil {
+		auditStepUpPasskey(r, userID)
+		return err
+	}
+	return nil
+}
+
+// StepUpWith is StepUp for a request's creds, a passkey answer included.
+func (s *Service) StepUpWith(w http.ResponseWriter, r *http.Request, userID int64, c StepUpCreds) bool {
+	return s.answerStepUp(w, userID, s.VerifyStepUpRequest(r, userID, c), true)
+}
+
+// answerStepUp turns a step-up result into the response contract: true on success; otherwise a
+// 429 while locked out, else the 428 re-prompt (see StepUp), which says whether a passkey would
+// do (passkeyOK: this check takes one, and the user has one).
+func (s *Service) answerStepUp(w http.ResponseWriter, callerID int64, err error, passkeyOK bool) bool {
 	if err == nil {
 		return true
 	}
@@ -62,17 +96,12 @@ func (s *Service) StepUp(w http.ResponseWriter, callerID int64, password, totpCo
 		msg = "two-factor authentication code required"
 	}
 	router.JSONWithStatus(w, map[string]interface{}{
-		"error":  msg,
-		"stepup": true,
-		"totp":   s.TOTPEnabled(callerID),
+		"error":   msg,
+		"stepup":  true,
+		"totp":    s.TOTPEnabled(callerID),
+		"passkey": passkeyOK && s.HasPasskey(callerID),
 	}, http.StatusPreconditionRequired)
 	return false
-}
-
-// stepUpCreds is the re-auth envelope the UI sends in the body of a sensitive request.
-type stepUpCreds struct {
-	CurrentPassword string `json:"currentPassword"`
-	TotpCode        string `json:"totpCode"`
 }
 
 // StepUpRequest re-authenticates the caller of a session-authorized request for a sensitive
@@ -91,13 +120,13 @@ func (s *Service) StepUpRequest(w http.ResponseWriter, r *http.Request) bool {
 		}, http.StatusPreconditionRequired)
 		return false
 	}
-	var creds stepUpCreds
+	var creds StepUpCreds
 	if r.Body != nil {
 		// An absent/empty/garbled body leaves creds zero-valued, which stepUp turns into a 428
 		// prompt rather than an error.
 		_ = json.NewDecoder(r.Body).Decode(&creds)
 	}
-	return s.StepUp(w, p.UserID, creds.CurrentPassword, creds.TotpCode)
+	return s.StepUpWith(w, r, p.UserID, creds)
 }
 
 // TOTPEnabled reports whether the user has 2FA enabled. Used by handlers that surface to the UI

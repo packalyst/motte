@@ -323,6 +323,15 @@
           "min_role": "viewer"
         },
         {
+          "path": "/stepup/passkey",
+          "methods": [
+            "POST"
+          ],
+          "handler": "PasskeyStepUpBegin",
+          "description": "Start confirming one sensitive request of this session with a passkey",
+          "min_role": "viewer"
+        },
+        {
           "path": "/lock",
           "methods": [
             "POST"
