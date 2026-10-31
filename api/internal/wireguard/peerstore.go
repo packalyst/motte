@@ -304,7 +304,12 @@ func (ps *PeerStore) Delete(id string) {
 	var clientID int
 	err = db.QueryRow(`SELECT id FROM vpn_clients WHERE ip = ? AND type = 'wireguard'`, peer.IPAddress).Scan(&clientID)
 	if err == nil && clientID > 0 {
-		domains.DeleteClientRoutes(clientID)
+		// Keep the client row while its routes can't be removed: the next client sync finds it
+		// stale and tries again, instead of the routes outliving it.
+		if _, err := domains.DeleteClientRoutes(clientID); err != nil {
+			log.Printf("Warning: peer %s: domain routes not removed, kept for the next sync: %v", id, err)
+			return
+		}
 	}
 
 	_, err = db.Exec(`DELETE FROM vpn_clients WHERE ip = ? AND type = 'wireguard'`, peer.IPAddress)

@@ -1,6 +1,7 @@
 package domains
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,9 +13,11 @@ import (
 
 // A route whose target is a LAN device's VPN address is linked to that device, in the statement
 // that writes it; any other target is not, and retargeting a route re-links it. The list names the
-// device, and every change re-applies the firewall.
+// device, a VPN address nobody holds is flagged, and every change re-applies the firewall.
 func TestRouteLinksToLANDevice(t *testing.T) {
 	t.Setenv("TRAEFIK_CONFIG", t.TempDir()) // the route apply writes Traefik's config here
+	t.Setenv("WG_IP_RANGE", "10.8.0.0/16")
+	t.Setenv("WG_SERVER_IP", "10.8.0.1")
 	if _, err := database.Init(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +76,22 @@ func TestRouteLinksToLANDevice(t *testing.T) {
 		}
 	}
 	rr := call(s.handleList, http.MethodGet, "/api/domains", "")
-	if !strings.Contains(rr.Body.String(), `"lanDeviceName":"cam"`) {
+	var list struct {
+		Routes []DomainRoute `json:"routes"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	byDomain := map[string]DomainRoute{}
+	for _, r := range list.Routes {
+		byDomain[r.Domain] = r
+	}
+	if byDomain["cam.example.com"].LANDeviceName != "cam" {
 		t.Fatalf("the list must name the device: %s", rr.Body)
+	}
+	// A VPN address nobody holds is flagged; a held one isn't.
+	if byDomain["cam.example.com"].TargetUnheld || !byDomain["empty.example.com"].TargetUnheld || !byDomain["other.example.com"].TargetUnheld {
+		t.Fatalf("unheld flags wrong: %+v", list.Routes)
 	}
 
 	// Retargeting re-links: away from the device unlinks, onto it links.

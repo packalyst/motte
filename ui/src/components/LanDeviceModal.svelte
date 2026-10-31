@@ -43,9 +43,13 @@
   let resName = $state('')
   let resIP = $state('')
 
+  // Loads the open device; nothing once the window is closed (there is no device to load then).
   async function load() {
+    const id = deviceId
+    if (!id) return
     try {
-      const [d, v] = await Promise.all([apiGet(`/api/dhcp/clients/${deviceId}`), apiGet('/api/vpn/clients')])
+      const [d, v] = await Promise.all([apiGet(`/api/dhcp/clients/${id}`), apiGet('/api/vpn/clients')])
+      if (id !== deviceId) return // closed or switched to another device meanwhile
       device = d.client
       allowed = d.allowed || []
       routes = d.routes || []
@@ -53,6 +57,7 @@
       resName = device.name || ''
       resIP = device.ip || ''
     } catch (e) {
+      if (id !== deviceId) return
       toast('Could not load the device: ' + e.message, 'error')
       deviceId = null
     }

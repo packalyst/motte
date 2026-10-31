@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"api/internal/database"
 	"api/internal/helper"
@@ -36,9 +37,18 @@ func privateReachRanges() []string {
 // internet-out. Registered with the firewall's nftables service so it rebuilds on every apply.
 type ReachabilityTable struct {
 	db *database.DB
+
+	// What each device (by MAC) may do, as last applied and as just built: a device that lost any
+	// of it has its open connections cut once the new rules are in (ConntrackFlushTargets).
+	mu      sync.Mutex
+	applied map[string]deviceAccess
+	built   map[string]deviceAccess
 }
 
 func NewReachabilityTable(db *database.DB) *ReachabilityTable { return &ReachabilityTable{db: db} }
+
+// The firewall service cuts open connections through this once the new rules are in.
+var _ nftables.ConntrackFlusher = (*ReachabilityTable)(nil)
 
 func (t *ReachabilityTable) Name() string   { return "motte_dhcp_net" }
 func (t *ReachabilityTable) Family() string { return "inet" }
@@ -88,11 +98,96 @@ func (t *ReachabilityTable) Build() (string, error) {
 		}
 	}
 	wan, _ := defaultRouteInterface()
-	return renderReachability(nets, pol, wan, privateReachRanges(), traefikOrigin(pol)), nil
+	origin := traefikOrigin(pol)
+	t.mu.Lock()
+	t.built = accessOf(nets, pol, wan, origin)
+	t.mu.Unlock()
+	return renderReachability(nets, pol, wan, privateReachRanges(), origin), nil
 }
 
-// traefikOrigin resolves Traefik's origin when a domain route needs it; when it can't be, those
-// routes stay shut and the reason is logged.
+// deviceAccess is what one device may do, as the rules render it: its addresses, and each path
+// in or out (a granted VPN client, the way back to it, a Traefik route port, the internet).
+type deviceAccess struct {
+	IPs   []string
+	Paths map[string]bool
+}
+
+// accessOf lists, per device MAC, what the rules let it do (the same conditions the renderer uses).
+func accessOf(nets []Network, pol map[int64]netPolicy, wan string, origin routeOrigin) map[string]deviceAccess {
+	out := map[string]deviceAccess{}
+	routesOpen := validIface(origin.Iface) && net.ParseIP(origin.IP).To4() != nil
+	for i := range nets {
+		if !nets[i].enforced() {
+			continue
+		}
+		for _, d := range pol[nets[i].ID].Devices {
+			if net.ParseIP(d.IP) == nil || !validMAC(d.MAC) {
+				continue
+			}
+			a := deviceAccess{IPs: []string{d.IP}, Paths: map[string]bool{"ip " + d.IP: true}}
+			vpn := net.ParseIP(d.VPNIP).To4() != nil
+			if vpn {
+				a.IPs = append(a.IPs, d.VPNIP)
+				a.Paths["vpn "+d.VPNIP] = true
+			}
+			for _, g := range d.Allowed {
+				if net.ParseIP(g.IP) == nil {
+					continue
+				}
+				a.Paths["from "+g.IP] = true
+				if g.Both {
+					a.Paths["to "+g.IP] = true
+				}
+			}
+			if vpn && routesOpen {
+				for _, p := range d.Routes {
+					a.Paths["route "+strconv.Itoa(p)] = true
+				}
+			}
+			if d.Internet && validIface(wan) {
+				a.Paths["internet"] = true
+			}
+			out[d.MAC] = a
+		}
+	}
+	return out
+}
+
+// lostAccess returns the addresses of every device that could do something before that it no
+// longer can (or is gone), so their open connections can be cut.
+func lostAccess(before, after map[string]deviceAccess) []string {
+	var ips []string
+	for mac, b := range before {
+		a, ok := after[mac]
+		for path := range b.Paths {
+			if !ok || !a.Paths[path] {
+				ips = append(ips, b.IPs...)
+				break
+			}
+		}
+	}
+	return ips
+}
+
+// ConntrackFlushTargets runs once the rules just built are applied: it returns the addresses of
+// the devices that lost access, so the connections they had open are cut too instead of riding
+// the established-connection accept until they go idle. The first apply after start cuts nothing
+// (there is nothing to compare with).
+func (t *ReachabilityTable) ConntrackFlushTargets() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var ips []string
+	if t.applied != nil {
+		ips = lostAccess(t.applied, t.built)
+	}
+	t.applied = t.built
+	return ips
+}
+
+// traefikOrigin resolves Traefik's origin when a domain route needs it. The rules trust Traefik's
+// source address on its network, so they are only written while no other container there could
+// forge it (helper.ContainersAbleToForge); when that or the origin can't be established, every
+// route to a LAN device stays shut and the reason is logged.
 func traefikOrigin(pol map[int64]netPolicy) routeOrigin {
 	for _, p := range pol {
 		for _, d := range p.Devices {
@@ -102,6 +197,15 @@ func traefikOrigin(pol map[int64]netPolicy) routeOrigin {
 			iface, ip, err := helper.TraefikOrigin()
 			if err != nil {
 				log.Printf("dhcp: domain routes to LAN devices stay shut: %v", err)
+				return routeOrigin{}
+			}
+			forgers, err := helper.ContainersAbleToForge(ip)
+			if err != nil {
+				log.Printf("dhcp: domain routes to LAN devices stay shut: can't check the containers on %s: %v", helper.DockerNetwork, err)
+				return routeOrigin{}
+			}
+			if len(forgers) > 0 {
+				log.Printf("dhcp: domain routes to LAN devices stay shut: %s on %s could forge Traefik's address (drop NET_RAW, no NET_ADMIN or privileged)", strings.Join(forgers, ", "), helper.DockerNetwork)
 				return routeOrigin{}
 			}
 			return routeOrigin{Iface: iface, IP: ip.String()}
