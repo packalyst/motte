@@ -1248,6 +1248,14 @@
           "description": "Turn a LAN device's internet access on or off"
         },
         {
+          "path": "/clients/{id}/vpn",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "SetVPNAccess",
+          "description": "Turn a LAN device's VPN access on (gives it a VPN address) or off (removes the address and every grant); step-up"
+        },
+        {
           "path": "/clients/{id}/acl",
           "methods": [
             "POST"

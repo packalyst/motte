@@ -48,6 +48,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"BlockClient":     s.handleBlockClient,
 		"UnblockClient":   s.handleUnblockClient,
 		"SetInternet":     s.handleSetInternet,
+		"SetVPNAccess":    s.handleSetVPNAccess,
 		"AddDeviceACL":    s.handleAddDeviceACL,
 		"RemoveDeviceACL": s.handleRemoveDeviceACL,
 		"UpdateClient":    s.handleUpdateClient,

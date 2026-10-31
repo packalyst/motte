@@ -288,8 +288,54 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]any{"ok": true})
 }
 
+// handleSetVPNAccess turns a device's VPN access on or off, with a step-up either way. On gives it a
+// VPN address (nobody can reach it until granted); off removes the address and every grant at once.
+// PUT /api/dhcp/clients/{id}/vpn {"enabled":bool}
+func (s *Service) handleSetVPNAccess(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.clientFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !router.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	if req.Enabled == (c.VPNIP != "") {
+		router.JSON(w, map[string]any{"ok": true}) // already so: nothing to confirm
+		return
+	}
+	if req.Enabled && c.Blocked {
+		router.JSONError(w, "device is blocked — unblock it first", http.StatusConflict)
+		return
+	}
+	if !router.StepUp(w, r) {
+		return
+	}
+	if req.Enabled {
+		if err := s.assignVPNIP(c.ID); err != nil {
+			if errors.Is(err, errNoVPNAddress) {
+				router.JSONError(w, err.Error(), http.StatusConflict)
+			} else {
+				router.JSONError(w, "could not give the device a VPN address", http.StatusInternalServerError)
+			}
+			return
+		}
+		audit(r, "lan_device_vpn", "VPN access on for LAN device "+c.label())
+	} else {
+		if err := s.clearVPNAccess(c.ID); err != nil {
+			router.JSONError(w, "could not turn VPN access off", http.StatusInternalServerError)
+			return
+		}
+		audit(r, "lan_device_vpn", "VPN access off for LAN device "+c.label()+" (address and grants removed)")
+	}
+	s.devicesChanged(c.NetworkID)
+	router.JSON(w, map[string]any{"ok": true})
+}
+
 // handleAddDeviceACL lets a VPN client reach a device (bidirectional: and the device it), or changes
-// an existing grant's direction. The device gets its VPN address on its first grant.
+// an existing grant's direction. Only while the device's VPN access is on.
 // POST /api/dhcp/clients/{id}/acl {"client_id":n,"bidirectional":bool}
 func (s *Service) handleAddDeviceACL(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
@@ -308,16 +354,11 @@ func (s *Service) handleAddDeviceACL(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "unknown VPN client", http.StatusBadRequest)
 		return
 	}
-	if err := s.assignVPNIP(c.ID); err != nil {
-		if errors.Is(err, errNoVPNAddress) {
-			router.JSONError(w, err.Error(), http.StatusConflict)
-		} else {
-			router.JSONError(w, "could not give the device a VPN address", http.StatusInternalServerError)
-		}
-		return
-	}
-	if err := s.setDeviceACL(c.ID, req.ClientID, req.Bidirectional); err != nil {
+	if ok, err := s.setDeviceACL(c.ID, req.ClientID, req.Bidirectional); err != nil {
 		router.JSONError(w, "could not grant access", http.StatusInternalServerError)
+		return
+	} else if !ok {
+		router.JSONError(w, "turn on the device's VPN access first", http.StatusConflict)
 		return
 	}
 	way := "one-way"

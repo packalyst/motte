@@ -60,8 +60,14 @@ func TestNetworkPolicyFromDB(t *testing.T) {
 	_ = s.setClientApproved(cam, true)
 	_ = s.setClientApproved(outside, true)
 	_ = s.setClientBlocked(blocked, true, false)
-	if err := s.setDeviceACL(cam, vpnID, false); err != nil {
+	if ok, _ := s.setDeviceACL(cam, vpnID, false); ok {
+		t.Fatal("a grant must wait for the device's VPN access")
+	}
+	if _, err := db.Exec(`UPDATE dhcp_clients SET vpn_ip = '10.8.128.1' WHERE id = ?`, cam); err != nil {
 		t.Fatal(err)
+	}
+	if ok, err := s.setDeviceACL(cam, vpnID, false); !ok || err != nil {
+		t.Fatalf("grant with VPN access on: %v %v", ok, err)
 	}
 
 	p, err := s.networkPolicy(n)

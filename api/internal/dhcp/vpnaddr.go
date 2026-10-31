@@ -40,7 +40,7 @@ func (v vpnSpace) usable(ip string) bool {
 		ip != v.server && v.owners[ip] == database.VPNAddrLAN
 }
 
-// assignVPNIP gives a device its VPN address unless it has one. The write only lands while no
+// assignVPNIP gives a device its VPN address unless it has one (its VPN access switched on). The write only lands while no
 // VPN client or virtual IP holds the address, and the unique index keeps two devices apart, so a
 // race with another allocation retries on a fresh pick instead of sharing an address.
 func (s *Service) assignVPNIP(deviceID int64) error {
@@ -73,4 +73,21 @@ func (s *Service) assignVPNIP(deviceID int64) error {
 			lastErr = err // most likely another device took it first: pick again
 		}
 	}
+}
+
+// clearVPNAccess removes a device's VPN address and every grant in one transaction, so a grant can
+// never outlive the address it was given through.
+func (s *Service) clearVPNAccess(deviceID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM dhcp_client_acl WHERE device_id = ?`, deviceID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE dhcp_clients SET vpn_ip = '' WHERE id = ?`, deviceID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

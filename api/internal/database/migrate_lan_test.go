@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// An install from before LAN VPN addresses gets the new columns (existing grants one-way) and the
-// index that keeps two devices off one VPN address.
+// An install from before LAN VPN addresses gets the new columns and the index that keeps two devices
+// off one VPN address; its grants go, as no device has VPN access switched on yet.
 func TestMigrationAddsLANVPNAddress(t *testing.T) {
 	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "old.db"))
 	if err != nil {
@@ -30,8 +30,12 @@ func TestMigrationAddsLANVPNAddress(t *testing.T) {
 	if err := db.QueryRow(`SELECT vpn_ip FROM dhcp_clients WHERE id = 1`).Scan(&vpnIP); err != nil || vpnIP != "" {
 		t.Fatalf("vpn_ip must exist and start empty: %q %v", vpnIP, err)
 	}
-	if err := db.QueryRow(`SELECT bidirectional FROM dhcp_client_acl`).Scan(&both); err != nil || both != 0 {
-		t.Fatalf("existing grants must become one-way: %d %v", both, err)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('dhcp_client_acl') WHERE name = 'bidirectional'`).Scan(&both); err != nil || both != 1 {
+		t.Fatalf("bidirectional column missing: %v", err)
+	}
+	var grants int
+	if db.QueryRow(`SELECT COUNT(*) FROM dhcp_client_acl`).Scan(&grants); grants != 0 {
+		t.Fatalf("grants of devices without VPN access must go, %d left", grants)
 	}
 	if _, err := db.Exec(`UPDATE dhcp_clients SET vpn_ip = '10.8.128.3'`); err == nil {
 		t.Fatal("two devices must not share a VPN address")

@@ -1,10 +1,14 @@
 package dhcp
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"api/internal/database"
+	"api/internal/router"
 )
 
 // A granted device is reachable at its VPN address: what arrives there over a VPN interface is
@@ -112,10 +116,10 @@ func TestVPNAddressAssignment(t *testing.T) {
 	}
 
 	// Policy and Headscale policy: only the approved device, one-way, at its own address.
-	if err := s.setDeviceACL(cam, phone, false); err != nil {
+	if ok, err := s.setDeviceACL(cam, phone, false); !ok || err != nil {
 		t.Fatal(err)
 	}
-	if err := s.setDeviceACL(pending, phone, true); err != nil {
+	if ok, err := s.setDeviceACL(pending, phone, true); !ok || err != nil {
 		t.Fatal(err)
 	}
 	pol, err := s.networkPolicy(n)
@@ -126,7 +130,7 @@ func TestVPNAddressAssignment(t *testing.T) {
 	if err != nil || len(hs) != 1 || hs[0] != (HeadscaleGrant{ClientID: phone, VPNIP: "10.8.128.3"}) {
 		t.Fatalf("Headscale grants must mirror the firewall (approved device, one-way): %+v %v", hs, err)
 	}
-	if err := s.setDeviceACL(cam, phone, true); err != nil { // changing the direction updates the grant
+	if ok, err := s.setDeviceACL(cam, phone, true); !ok || err != nil { // changing the direction updates the grant
 		t.Fatal(err)
 	}
 	if hs, _ := HeadscaleGrants(db); len(hs) != 1 || !hs[0].Both {
@@ -147,5 +151,102 @@ func TestVPNAddressAssignment(t *testing.T) {
 	db.Exec(`UPDATE dhcp_clients SET vpn_ip = '' WHERE id = ?`, pending)
 	if err := s.assignVPNIP(pending); err != errNoVPNAddress {
 		t.Fatalf("no WireGuard range must refuse the address, got %v", err)
+	}
+}
+
+// VPN access is switched on and off with a step-up either way. On gives the device its VPN address;
+// off removes the address and every grant together; a grant needs VPN access on.
+func TestVPNAccessSwitch(t *testing.T) {
+	t.Setenv("PATH", "") // the handlers re-apply the network: never run iptables/ip on the test host
+	t.Setenv("WG_IP_RANGE", "10.8.0.0/16")
+	t.Setenv("WG_SERVER_IP", "10.8.0.1")
+	if _, err := database.Init(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := database.GetDB()
+	for _, q := range []string{`DELETE FROM dhcp_client_acl`, `DELETE FROM dhcp_clients`, `DELETE FROM dhcp_networks`, `DELETE FROM vpn_virtual_ips`, `DELETE FROM vpn_clients`} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Service{db: db}
+	n := &Network{Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", PoolStart: "10.20.20.50",
+		PoolEnd: "10.20.20.200", LeaseSecs: 3600, Mode: "approve", Enabled: true}
+	var err error
+	if n.ID, err = s.createNetwork(n); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.upsertClient(n.ID, "02:00:00:00:00:01", "10.20.20.51", "", true); err != nil {
+		t.Fatal(err)
+	}
+	var dev int64
+	db.QueryRow(`SELECT id FROM dhcp_clients`).Scan(&dev)
+	res, _ := db.Exec(`INSERT INTO vpn_clients (name, ip, type) VALUES ('laptop', '10.8.0.2', 'wireguard')`)
+	laptop, _ := res.LastInsertId()
+
+	stepUpOK := false
+	router.SetStepUpFunc(func(w http.ResponseWriter, _ *http.Request) bool {
+		if !stepUpOK {
+			w.WriteHeader(http.StatusPreconditionRequired)
+		}
+		return stepUpOK
+	})
+	t.Cleanup(func() { router.SetStepUpFunc(nil) })
+	call := func(h http.HandlerFunc, method, path, body string) int {
+		rr := httptest.NewRecorder()
+		h(rr, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return rr.Code
+	}
+	vpn := func(on bool) int {
+		return call(s.handleSetVPNAccess, http.MethodPut, fmt.Sprintf("/api/dhcp/clients/%d/vpn", dev), fmt.Sprintf(`{"enabled":%v}`, on))
+	}
+	grant := func() int {
+		return call(s.handleAddDeviceACL, http.MethodPost, fmt.Sprintf("/api/dhcp/clients/%d/acl", dev), fmt.Sprintf(`{"client_id":%d}`, laptop))
+	}
+	state := func() (ip string, grants int) {
+		db.QueryRow(`SELECT vpn_ip FROM dhcp_clients WHERE id = ?`, dev).Scan(&ip)
+		db.QueryRow(`SELECT COUNT(*) FROM dhcp_client_acl WHERE device_id = ?`, dev).Scan(&grants)
+		return
+	}
+
+	if code := grant(); code != http.StatusConflict {
+		t.Fatalf("a grant without VPN access: %d, want 409", code)
+	}
+	if code := vpn(true); code != http.StatusPreconditionRequired {
+		t.Fatalf("switching on without step-up: %d", code)
+	}
+	if ip, _ := state(); ip != "" {
+		t.Fatalf("no step-up, no address: got %q", ip)
+	}
+	stepUpOK = true
+	if code := vpn(true); code != http.StatusOK {
+		t.Fatalf("switching on: %d", code)
+	}
+	if code := grant(); code != http.StatusOK {
+		t.Fatalf("a grant with VPN access on: %d", code)
+	}
+	if ip, g := state(); ip == "" || g != 1 {
+		t.Fatalf("on: want an address and the grant, got %q, %d", ip, g)
+	}
+
+	stepUpOK = false
+	if code := vpn(false); code != http.StatusPreconditionRequired {
+		t.Fatalf("switching off without step-up: %d", code)
+	}
+	if ip, g := state(); ip == "" || g != 1 {
+		t.Fatalf("no step-up, nothing removed: got %q, %d", ip, g)
+	}
+	stepUpOK = true
+	if code := vpn(false); code != http.StatusOK {
+		t.Fatalf("switching off: %d", code)
+	}
+	if ip, g := state(); ip != "" || g != 0 {
+		t.Fatalf("off must remove the address and every grant, got %q, %d", ip, g)
+	}
+
+	// A blocked device can't be switched on.
+	_ = s.setClientBlocked(dev, true, false)
+	if code := vpn(true); code != http.StatusConflict {
+		t.Fatalf("switching a blocked device on: %d", code)
 	}
 }
