@@ -131,19 +131,20 @@
       (count > 0 ? `This also removes ${count} device${count > 1 ? 's' : ''} from the VPN. ` : '') + 'This action cannot be undone.'
 
     // One step-up for the whole delete: the server removes the user's devices, then the user.
+    const url = `/api/hs/users/${encodeURIComponent(user.name)}`
     const su = await stepUpConfirm({
       title: 'Delete User',
       message: `Delete ${user.name}?`,
       description,
       confirmText: 'Delete',
       variant: 'destructive',
+      action: { method: 'DELETE', url },
     })
-    if (!su?.confirmed || !su?.password) return
-    const body = { currentPassword: su.password, totpCode: su.totp || '' }
+    if (!su?.proof) return
 
     setConfirmLoading(true)
     try {
-      await apiDelete(`/api/hs/users/${encodeURIComponent(user.name)}`, body)
+      await apiDelete(url, su.proof)
       toast(count > 0 ? 'User and devices deleted' : 'User deleted', 'success')
       onchange?.()
     } catch (e) {

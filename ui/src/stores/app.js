@@ -215,14 +215,26 @@ export function confirm(options) {
   })
 }
 
+// The step-up lives here, nowhere else: screens never put a password or 2FA code into a request
+// themselves, they send the proof these helpers give them (the build refuses anything else, see
+// vite.config.js).
+
+// passwordProof is the step-up proof of a password (+ 2FA code) typed into a screen's own field.
+export function passwordProof(password, totp) {
+  return { currentPassword: password, totpCode: totp || '' }
+}
+
 // Step-up confirm for sensitive actions: prompts for the password and, when the current user has
-// 2FA enabled, also for a fresh authenticator code. Given options.action ({ method, url }: the one
-// request it confirms, exactly as it will be sent), a user with a passkey can confirm with it
-// instead. Resolves to { confirmed, password, totp, proof }: proof is what to put in that request's
-// body (the password and code, or the passkey answer), null when cancelled.
+// 2FA enabled, also for a fresh authenticator code. options.action ({ method, url }: the one
+// request it confirms, exactly as it will be sent) lets a user with a passkey confirm with it
+// instead; options.passwordOnly is for the checks about the credentials themselves (the server
+// takes no passkey there). One of the two is required, so no screen forgets the passkey.
+// Resolves to { confirmed, password, totp, proof }: proof is what to put in that request's body
+// (the password and code, or the passkey answer), null when cancelled.
 export function stepUpConfirm(options = {}) {
   const u = get(currentUser)
-  const { action, ...rest } = options
+  const { action, passwordOnly, ...rest } = options
+  if (!action === !passwordOnly) throw new Error('stepUpConfirm: give the request (action) or passwordOnly')
   return confirm({
     variant: 'primary',
     confirmText: 'Confirm',
@@ -247,7 +259,8 @@ export async function withStepUp(send, options = {}) {
     if (e?.status !== 428) throw e
     stepUp = e.stepUp
   }
-  const su = await stepUpConfirm({ ...options, action: stepUp?.passkey ? stepUp.action : undefined })
+  const action = stepUp?.passkey ? stepUp.action : undefined
+  const su = await stepUpConfirm({ ...options, action, passwordOnly: !action })
   if (!su?.proof) return STEPUP_CANCELLED
   return await send(su.proof)
 }
@@ -265,7 +278,7 @@ export function closeConfirmModal(confirmed, passkeyAnswer = null) {
         if (state.passwordPrompt) {
           out.proof = !confirmed ? null
             : passkeyAnswer ? { passkey: passkeyAnswer }
-            : state.passwordValue ? { currentPassword: state.passwordValue, totpCode: state.totpValue || '' } : null
+            : state.passwordValue ? passwordProof(state.passwordValue, state.totpValue) : null
         }
         state.resolve(out)
       } else {

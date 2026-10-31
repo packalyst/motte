@@ -37,11 +37,11 @@
   }
 
   async function register() {
-    const su = await stepUpConfirm({ title: 'Add passkey', description: 'Adding a passkey is a sensitive change. Re-authenticate to continue.' })
-    if (!su?.confirmed) return
+    const su = await stepUpConfirm({ title: 'Add passkey', description: 'Adding a passkey is a sensitive change. Re-authenticate to continue.', passwordOnly: true })
+    if (!su?.proof) return
     registering = true
     try {
-      await passkeyRegister(newName.trim() || 'Passkey', { currentPassword: su.password, totpCode: su.totp })
+      await passkeyRegister(newName.trim() || 'Passkey', su.proof)
       newName = ''
       toast('Passkey added', 'success')
       await load()

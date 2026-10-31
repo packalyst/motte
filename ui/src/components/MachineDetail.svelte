@@ -71,20 +71,23 @@
   const liveSessions = $derived($consoleSessions.filter((s) => s.machine_id === machine.id))
   const killSession = (s) => closeSession({ ...s, machine_id: machine.id }, machine.name)
 
+  // Turning the console on, or changing its recording while it's on, takes a step-up.
+  const CONSOLE_TOGGLE = { method: 'POST', url: '/api/fleet/console/toggle' }
+
   async function setConsole(enabled) {
-    let password = '', totp = ''
+    let proof = {}
     if (enabled) {
       const r = await stepUpConfirm({
         title: 'Enable console',
         description: `A remote interactive shell on ${machine.name} is powerful. Re-authenticate to enable it.`,
+        action: CONSOLE_TOGGLE,
       })
-      if (!r?.confirmed) return
-      password = r.password
-      totp = r.totp
+      if (!r?.proof) return
+      proof = r.proof
     } else if (!(await confirm({ title: 'Disable console', message: `Disable the console on ${machine.name}? Any live sessions are closed.`, variant: 'primary', confirmText: 'Disable' }))) {
       return
     }
-    await applyConsole(enabled, consoleRecord, password, totp, enabled ? 'Console enabled' : 'Console disabled')
+    await applyConsole(enabled, consoleRecord, proof, enabled ? 'Console enabled' : 'Console disabled')
   }
 
   // Recording policy (WebTerm model): Off, or Always — every session on this machine recorded, with
@@ -92,28 +95,25 @@
   // weakens the audit trail); it applies to sessions opened from now on.
   async function setRecording(next) {
     if (next === consoleRecord) return
-    let password = ''
-    let totp = ''
+    let proof = {}
     if (consoleEnabled) {
       const r = await stepUpConfirm({
         title: next ? 'Record all sessions' : 'Stop recording sessions',
         description: next
           ? `Every console session on ${machine.name} will be recorded from now on. Re-authenticate to confirm.`
           : `New console sessions on ${machine.name} will no longer be recorded. Re-authenticate to confirm.`,
+        action: CONSOLE_TOGGLE,
       })
-      if (!r?.confirmed) return
-      password = r.password
-      totp = r.totp
+      if (!r?.proof) return
+      proof = r.proof
     }
-    await applyConsole(consoleEnabled, next, password, totp, next ? 'Recording all sessions' : 'Recording off')
+    await applyConsole(consoleEnabled, next, proof, next ? 'Recording all sessions' : 'Recording off')
   }
 
-  async function applyConsole(enabled, record, password, totp, okMsg) {
+  async function applyConsole(enabled, record, proof, okMsg) {
     consoleBusy = true
     try {
-      const res = await apiPost('/api/fleet/console/toggle', {
-        machine_id: machine.id, enabled, record, currentPassword: password, totpCode: totp,
-      })
+      const res = await apiPost(CONSOLE_TOGGLE.url, { machine_id: machine.id, enabled, record, ...proof })
       consoleEnabled = res.enabled
       consoleRecord = res.record
       toast(okMsg, 'success')

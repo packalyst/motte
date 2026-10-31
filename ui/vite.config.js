@@ -3,6 +3,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
 import { visualizer } from 'rollup-plugin-visualizer'
 import path from 'path'
+import fs from 'fs'
 
 // PANEL_URL=https://panel.example.com npm run dev -- --port 5174 --host 127.0.0.1
 // runs the UI locally against a live panel: every /api request and the WebSocket go to that
@@ -24,6 +25,32 @@ const livePanelProxy = PANEL_URL && {
   }
 }
 
+// The step-up lives in src/stores/app.js only: no other file may put a password or 2FA code into a
+// request, or handle the step-up answer (428) itself — they send the proof stepUpConfirm /
+// withStepUp / passwordProof give them, so every screen offers the same checks and the passkey.
+// The sign-in page is the one exception: its password and code are the login, not a step-up.
+function stepUpOnePlace() {
+  const own = /currentPassword|totpCode|[!=]==\s*428/
+  const allowed = new Set(['src/stores/app.js', 'src/views/Login.svelte'])
+  return {
+    name: 'step-up-one-place',
+    buildStart() {
+      const bad = []
+      const walk = (dir) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, e.name)
+          if (e.isDirectory()) walk(p)
+          else if (/\.(js|svelte)$/.test(e.name) && !allowed.has(p.split(path.sep).join('/'))) {
+            fs.readFileSync(p, 'utf8').split('\n').forEach((line, i) => { if (own.test(line)) bad.push(`${p}:${i + 1}`) })
+          }
+        }
+      }
+      walk('src')
+      if (bad.length) this.error('a step-up of its own (use the helpers in src/stores/app.js):\n  ' + bad.join('\n  '))
+    }
+  }
+}
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -31,6 +58,7 @@ export default defineConfig({
     }
   },
   plugins: [
+    stepUpOnePlace(),
     svelte(),
     tailwindcss(),
     visualizer({ open: false, filename: 'dist/stats.html' })
