@@ -6,7 +6,7 @@
   import Input from './Input.svelte'
   import ContentBlock from './ContentBlock.svelte'
   import Badge from './Badge.svelte'
-  import { toast, apiGet, apiPut, apiPost } from '../stores/app.js'
+  import { toast, apiGet, apiPut, apiPost, stepUpConfirm } from '../stores/app.js'
   import { withTz } from '../lib/utils/format.js'
   import {
     platform,
@@ -35,6 +35,7 @@
     unsubscribeFromPush,
     getSubscriptions,
     deleteSubscription,
+    endpointHash,
     getCurrentSubscription,
     sendTestNotification,
     storeLocation,
@@ -44,7 +45,7 @@
   import { pwaSubscriptionsStore } from '../stores/websocket.js'
 
   let subscriptions = $state([])
-  let currentEndpoint = $state(null)
+  let currentHash = $state(null) // this device's endpoint fingerprint (see endpointHash)
   let loadingSubscriptions = $state(false)
   let togglingPush = $state(false)
   let revokingId = $state(null)
@@ -118,12 +119,12 @@
       subscriptions = $pwaSubscriptionsStore
 
       // Check if current device was removed from list
-      if (currentEndpoint) {
-        const stillExists = $pwaSubscriptionsStore.some(s => s.endpoint === currentEndpoint)
+      if (currentHash) {
+        const stillExists = $pwaSubscriptionsStore.some(s => s.endpointHash === currentHash)
         if (!stillExists) {
           // Current device was removed from server, update UI state
           pushSubscription.set(null)
-          currentEndpoint = null
+          currentHash = null
         }
       }
     }
@@ -161,7 +162,7 @@
     try {
       // Get current device's subscription endpoint
       const currentSub = await getCurrentSubscription()
-      currentEndpoint = currentSub?.endpoint || null
+      currentHash = currentSub?.endpoint ? await endpointHash(currentSub.endpoint) : null
 
       subscriptions = await getSubscriptions()
     } catch (e) {
@@ -171,10 +172,17 @@
     }
   }
 
-  async function revokeSubscription(id) {
+  // Removing another device stops its alerts: always confirmed with the password (the server checks
+  // it too). This device turns itself off with the switch above instead.
+  async function revokeSubscription(sub) {
+    const name = sub.deviceName || getDeviceInfo(sub.userAgent).type
+    const su = await stepUpConfirm({ title: 'Remove device', message: `Stop notifications to ${name}?`,
+      description: 'It no longer gets alerts until it turns notifications on again.', confirmText: 'Remove', variant: 'destructive' })
+    if (!su?.confirmed || !su?.password) return
+    const id = sub.id
     revokingId = id
     try {
-      await deleteSubscription(id)
+      await deleteSubscription(id, { currentPassword: su.password, totpCode: su.totp || '' })
       toast('Device revoked successfully', 'success')
       await loadSubscriptions()
     } catch (e) {
@@ -492,7 +500,7 @@
           {#each subscriptions as sub}
             {@const deviceInfo = getDeviceInfo(sub.userAgent)}
             {@const browser = getBrowser(sub.userAgent)}
-            {@const isCurrentDevice = currentEndpoint && sub.endpoint === currentEndpoint}
+            {@const isCurrentDevice = currentHash && sub.endpointHash === currentHash}
             <div class="flex items-center gap-3 p-2 bg-muted/30 rounded text-xs">
               <div class="flex-shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
                 <Icon name={deviceInfo.icon} size={16} class="text-muted-foreground" />
@@ -515,7 +523,8 @@
                 <Badge variant="success" size="xs">This device</Badge>
               {:else}
                 <Button
-                  onclick={() => revokeSubscription(sub.id)}
+                  onclick={() => revokeSubscription(sub)}
+                  aria-label="Remove {sub.deviceName || deviceInfo.type}"
                   loading={revokingId === sub.id}
                   variant="ghost"
                   size="xs"

@@ -1,6 +1,8 @@
 package pwa
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -15,15 +17,18 @@ import (
 
 const timeFormat = "2006-01-02T15:04:05Z"
 
-// safeSubscription is the public-safe representation of a subscription (no keys exposed)
+// safeSubscription is the public-safe representation of a subscription: no keys, and no endpoint.
+// Removing a device by its endpoint (POST /unsubscribe) needs no step-up, as only the device's own
+// browser holds it; listing it would let any session remove any device that way. The browser finds
+// its own row by EndpointHash (SHA-256 of the endpoint, hex) instead.
 type safeSubscription struct {
-	ID         int64  `json:"id"`
-	DeviceName string `json:"deviceName"`
-	Endpoint   string `json:"endpoint"`
-	UserAgent  string `json:"userAgent,omitempty"`
-	CreatedAt  string `json:"createdAt"`
-	LastUsedAt string `json:"lastUsedAt,omitempty"`
-	LoadError  string `json:"loadError,omitempty"`
+	ID           int64  `json:"id"`
+	DeviceName   string `json:"deviceName"`
+	EndpointHash string `json:"endpointHash"`
+	UserAgent    string `json:"userAgent,omitempty"`
+	CreatedAt    string `json:"createdAt"`
+	LastUsedAt   string `json:"lastUsedAt,omitempty"`
+	LoadError    string `json:"loadError,omitempty"`
 }
 
 // toSafeSubscriptions converts internal subscriptions to safe public format
@@ -31,18 +36,23 @@ func toSafeSubscriptions(subs []PushSubscription) []safeSubscription {
 	result := make([]safeSubscription, len(subs))
 	for i, sub := range subs {
 		result[i] = safeSubscription{
-			ID:         sub.ID,
-			DeviceName: sub.DeviceName,
-			Endpoint:   sub.Endpoint,
-			UserAgent:  sub.UserAgent,
-			CreatedAt:  sub.CreatedAt.Format(timeFormat),
-			LoadError:  sub.LoadError,
+			ID:           sub.ID,
+			DeviceName:   sub.DeviceName,
+			EndpointHash: endpointHash(sub.Endpoint),
+			UserAgent:    sub.UserAgent,
+			CreatedAt:    sub.CreatedAt.Format(timeFormat),
+			LoadError:    sub.LoadError,
 		}
 		if sub.LastUsedAt != nil {
 			result[i].LastUsedAt = sub.LastUsedAt.Format(timeFormat)
 		}
 	}
 	return result
+}
+
+func endpointHash(endpoint string) string {
+	sum := sha256.Sum256([]byte(endpoint))
+	return hex.EncodeToString(sum[:])
 }
 
 // Handlers returns the handler map for the router
@@ -99,7 +109,8 @@ func (s *Service) handleGetVAPIDKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetSubscriptions handles GET (list) and DELETE (revoke) for push subscriptions
+// handleGetSubscriptions handles GET (list) and DELETE (revoke another device, step-up) for push
+// subscriptions
 func (s *Service) handleGetSubscriptions(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserID(r)
 	if err != nil {
@@ -117,31 +128,40 @@ func (s *Service) handleGetSubscriptions(w http.ResponseWriter, r *http.Request)
 		router.JSON(w, toSafeSubscriptions(subs))
 
 	case http.MethodDelete:
-		idStr := r.URL.Query().Get("id")
-		if idStr == "" {
-			router.JSONError(w, "Subscription ID required", http.StatusBadRequest)
-			return
-		}
-
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			router.JSONError(w, "Invalid subscription ID", http.StatusBadRequest)
-			return
-		}
-
-		if err := s.DeleteSubscription(id, userID); err != nil {
-			router.JSONError(w, "Failed to delete subscription", http.StatusInternalServerError)
-			return
-		}
-
-		// Broadcast updated subscriptions to all user's clients
-		go s.broadcastSubscriptionsUpdate(userID)
-
-		router.JSON(w, map[string]bool{"success": true})
+		s.revokeSubscription(w, r, userID)
 
 	default:
 		router.JSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// revokeSubscription removes one of the user's other devices (DELETE ?id=), after a step-up: the
+// device stops getting alerts. A device removes itself with POST /unsubscribe and its own endpoint.
+func (s *Service) revokeSubscription(w http.ResponseWriter, r *http.Request, userID int64) {
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		router.JSONError(w, "Subscription ID required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		router.JSONError(w, "Invalid subscription ID", http.StatusBadRequest)
+		return
+	}
+	if !router.StepUp(w, r) {
+		return
+	}
+
+	if err := s.DeleteSubscription(id, userID); err != nil {
+		router.JSONError(w, "Failed to delete subscription", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast updated subscriptions to all user's clients
+	go s.broadcastSubscriptionsUpdate(userID)
+
+	router.JSON(w, map[string]bool{"success": true})
 }
 
 // handleSubscribe creates a new push subscription
