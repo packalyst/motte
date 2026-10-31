@@ -383,6 +383,10 @@ func main() {
 		domainsSvc := domains.New()
 		// Wire the L7 firewall-block toggle (hook avoids a domains -> settings import cycle).
 		domains.FWBlockEnabled = settings.GetTraefikFWBlock
+		// Routes to LAN devices open a firewall path for Traefik: rebuild it when routes change.
+		if nftSvc != nil {
+			domains.RoutesApplied = nftSvc.RequestApply
+		}
 		r.RegisterService("domains", domainsSvc.Handlers())
 
 		// Now that domains can regenerate routes, let the traefik toggle drive it, and

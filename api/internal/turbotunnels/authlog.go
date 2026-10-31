@@ -123,7 +123,7 @@ func insertFailLog(db *database.DB, srcIP, user string) {
 // aren't recorded as real proxy usage. HTTP probes are already excluded by the
 // X-TT-Test header; this covers SOCKS5, which has no such header.
 func isInternalSource(srcIP string) bool {
-	_, ipnet, err := net.ParseCIDR(helper.GetEnvOptional("DOCKER_SUBNET", "172.18.0.0/24"))
+	_, ipnet, err := net.ParseCIDR(helper.DockerSubnet())
 	if err != nil {
 		return false
 	}

@@ -37,6 +37,7 @@
   let tab = $state('overview')
   let device = $state(null)
   let allowed = $state([]) // grants: [{ id: VPN client id, bidirectional }]
+  let routes = $state([]) // domain routes to it: [{ domain, port, access_mode }]
   let vpnClients = $state([])
   let busy = $state(false)
   let resName = $state('')
@@ -47,6 +48,7 @@
       const [d, v] = await Promise.all([apiGet(`/api/dhcp/clients/${deviceId}`), apiGet('/api/vpn/clients')])
       device = d.client
       allowed = d.allowed || []
+      routes = d.routes || []
       vpnClients = Array.isArray(v) ? v : v.clients || []
       resName = device.name || ''
       resIP = device.ip || ''
@@ -98,13 +100,21 @@
     document.getElementById('lan-device-name')?.focus()
   }
   const saveReservation = () => act(() => apiPut(base(), { ip: resIP.trim(), name: resName.trim() }), 'Saved')
-  // VPN access: on gives the device its VPN address, off removes it with every grant. A password
-  // either way (the server checks it too).
+  // VPN access: on gives the device its VPN address, off removes it with every grant and domain
+  // route, each listed first. A password either way (the server checks it too).
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+  function offSummary() {
+    const gone = [allowed.length && plural(allowed.length, 'access rule'), routes.length && plural(routes.length, 'domain route')].filter(Boolean)
+    return {
+      description: gone.length ? `Its ${gone.join(' and ')} will be removed.` : 'Nobody can reach it over the VPN any more.',
+      details: routes.length ? routes.map((r) => ({ label: r.access_mode === 'public' ? 'Public route' : 'VPN route', value: `${r.domain} → :${r.port}` })) : null
+    }
+  }
   async function setVPN(on) {
     const name = device.name || device.mac
     const su = await stepUpConfirm(on
       ? { title: 'Turn on VPN access', message: `Give ${name} a VPN address?`, description: 'Nobody can reach it until you allow them below.', confirmText: 'Turn on' }
-      : { title: 'Turn off VPN access', message: `Remove ${name}'s VPN address?`, description: allowed.length ? `Its ${allowed.length} access rule${allowed.length === 1 ? '' : 's'} go with it.` : 'Nobody can reach it over the VPN any more.', confirmText: 'Turn off', variant: 'destructive' })
+      : { title: 'Turn off VPN access', message: `Remove ${name}'s VPN address?`, ...offSummary(), confirmText: 'Turn off', variant: 'destructive' })
     if (!su?.confirmed || !su?.password) return
     act(() => apiPut(base() + '/vpn', { enabled: on, currentPassword: su.password, totpCode: su.totp || '' }), on ? 'VPN access on' : 'VPN access off')
   }

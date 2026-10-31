@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"log"
 	"net"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -151,7 +150,7 @@ func privatePortRules(wanIface string) []string {
 		`iifname { "lo", "wg0", "tailscale0" } tcp dport @allowed_tcp_ports_private accept`,
 		`iifname { "lo", "wg0", "tailscale0" } udp dport @allowed_udp_ports_private accept`,
 	}
-	if p, isRange, err := helper.ParseIPv4(validCIDROr(os.Getenv("DOCKER_SUBNET"), "172.18.0.0/24")); err == nil && isRange {
+	if p, isRange, err := helper.ParseIPv4(helper.DockerSubnet()); err == nil && isRange {
 		rules = append(rules, "ip saddr "+p.String()+" tcp dport @allowed_tcp_ports_private accept") // Traefik → panel API
 	}
 	return rules

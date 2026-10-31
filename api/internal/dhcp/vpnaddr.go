@@ -1,10 +1,12 @@
 package dhcp
 
 import (
+	"database/sql"
 	"errors"
 	"net/netip"
 
 	"api/internal/database"
+	"api/internal/domains"
 	"api/internal/helper"
 )
 
@@ -75,19 +77,35 @@ func (s *Service) assignVPNIP(deviceID int64) error {
 	}
 }
 
-// clearVPNAccess removes a device's VPN address and every grant in one transaction, so a grant can
-// never outlive the address it was given through.
-func (s *Service) clearVPNAccess(deviceID int64) error {
+// clearVPNAccess removes a device's VPN address, every grant and every domain route to it in one
+// transaction, so neither can outlive the address it was given through. The returned routes still
+// have to be applied (Removed.Apply) once it has committed.
+func (s *Service) clearVPNAccess(deviceID int64) (domains.Removed, error) {
+	return s.inTx(func(tx *sql.Tx) (domains.Removed, error) {
+		removed, err := domains.DeleteLANDeviceRoutes(tx, deviceID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(`DELETE FROM dhcp_client_acl WHERE device_id = ?`, deviceID); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(`UPDATE dhcp_clients SET vpn_ip = '' WHERE id = ?`, deviceID); err != nil {
+			return nil, err
+		}
+		return removed, nil
+	})
+}
+
+// inTx runs fn in a transaction and commits it, returning the routes fn removed.
+func (s *Service) inTx(fn func(tx *sql.Tx) (domains.Removed, error)) (domains.Removed, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM dhcp_client_acl WHERE device_id = ?`, deviceID); err != nil {
-		return err
+	removed, err := fn(tx)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := tx.Exec(`UPDATE dhcp_clients SET vpn_ip = '' WHERE id = ?`, deviceID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return removed, tx.Commit()
 }

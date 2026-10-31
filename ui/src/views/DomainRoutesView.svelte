@@ -26,6 +26,7 @@
   const loader = useDataLoader([
     { fn: () => apiGet('/api/domains'), key: 'routes', extract: 'routes', isArray: true },
     { fn: () => apiGet('/api/vpn/clients'), key: 'clients', isArray: true },
+    { fn: () => apiGet('/api/clients').catch(() => ({ clients: [] })), key: 'allClients', extract: 'clients', isArray: true },
     { fn: () => apiGet('/api/traefik/overview'), key: 'traefik', default: {} },
     { fn: () => apiGet('/api/domains/certificates').catch(() => ({ certificates: [] })), key: 'certs', default: { certificates: [] } },
     { fn: () => apiGet('/api/traefik/resolvers').catch(() => ({ resolvers: [] })), key: 'resolvers', extract: 'resolvers', isArray: true },
@@ -34,6 +35,8 @@
 
   const routes = $derived(loader.data.routes || [])
   const vpnClients = $derived(loader.data.clients || [])
+  // LAN devices with VPN access on: a route reaches one through its VPN address
+  const lanDevices = $derived((loader.data.allClients || []).filter(c => c.kind === 'lan' && c.vpn_ip && !c.blocked))
   const certificates = $derived(loader.data.certs?.certificates || [])
   const certResolvers = $derived(loader.data.resolvers || [])
   const systemDomains = $derived(loader.data.systemDomains || [])
@@ -166,14 +169,17 @@
 
   // Filtered routes
   const filteredRoutes = $derived(
-    filterByFields(routes, ['domain', 'targetIp', 'description', 'vpnClientName'], searchQuery)
+    filterByFields(routes, ['domain', 'targetIp', 'description', 'vpnClientName', 'lanDeviceName'], searchQuery)
   )
 
-  // VPN client options for select
+  // Device options for select: VPN clients by id, LAN devices by key (their VPN address is the target)
   const clientOptions = $derived([
     { value: '', label: 'Manual IP' },
-    ...vpnClients.map(c => ({ value: c.id, label: `${c.name} (${c.ip})` }))
+    ...vpnClients.map(c => ({ value: c.id, label: `${c.name} (${c.ip})` })),
+    ...lanDevices.map(d => ({ value: d.key, label: `${d.name} (${d.vpn_ip}) · LAN` }))
   ])
+  // The selected device: the linked VPN client, else the LAN device whose VPN address is the target
+  const selectedDevice = $derived(formData.vpnClientId || lanDevices.find(d => d.vpn_ip === formData.targetIp)?.key || '')
 
   function resetForm() {
     formData = defaultRouteForm()
@@ -220,16 +226,13 @@
     }
   }
 
-  // When VPN client is selected, auto-fill the IP
+  // When a device is selected, auto-fill the IP (a LAN device's VPN address; the server links the route to it)
   function onClientChange(e) {
-    const clientId = e.target.value
-    formData.vpnClientId = clientId || null
-    if (clientId) {
-      const client = vpnClients.find(c => c.id == clientId)
-      if (client) {
-        formData.targetIp = client.ip
-      }
-    }
+    const value = e.target.value
+    const lan = lanDevices.find(d => d.key === value)
+    formData.vpnClientId = value && !lan ? value : null
+    const target = lan ? lan.vpn_ip : vpnClients.find(c => c.id == value)?.ip
+    if (target) formData.targetIp = target
   }
 
   async function submitForm() {
@@ -579,7 +582,7 @@
 
                 <!-- Device -->
                 <span class="text-xs text-muted-foreground hidden md:inline">
-                  {route.vpnClientName || '—'}
+                  {route.vpnClientName || route.lanDeviceName || '—'}
                 </span>
 
                 <!-- Options -->
@@ -691,8 +694,8 @@
     {/if}
 
     <Select
-      label="VPN Device (optional)"
-      value={formData.vpnClientId || ''}
+      label="Device (optional)"
+      value={selectedDevice}
       onchange={onClientChange}
     >
       {#each clientOptions as opt}

@@ -50,9 +50,11 @@ func ValidatePassphrase(p string) error {
 var (
 	coreTables = []string{
 		"vpn_clients", "vpn_acl_rules", "vpn_router_config", "vpn_virtual_ips", "vpn_virtual_ip_acl",
-		"firewall_entries", "jails", "domain_routes", "settings",
+		"firewall_entries", "jails", "settings",
 		// After the VPN tables: deleting a WireGuard peer cascades into the DHCP access rules.
-		"dhcp_networks", "dhcp_clients", "dhcp_client_acl", "backup_offhost_config",
+		"dhcp_networks", "dhcp_clients", "dhcp_client_acl",
+		// After the DHCP clients: wiping them cascades into the domain routes to LAN devices.
+		"domain_routes", "backup_offhost_config",
 	}
 	// Per-user rows; they only make sense with the users they belong to. Passkeys are left out:
 	// their credential IDs are binary, which the backup's JSON can't carry intact.

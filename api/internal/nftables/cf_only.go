@@ -168,9 +168,7 @@ func splitCIDRs(cidrs []string) (v4, v6 []string) {
 // fallback matching .env.example so a missing/garbled var can never drop a trusted source.
 func TrustedAdminSources() []string {
 	out := []string{"127.0.0.0/8"}
-	if c := validCIDROr(os.Getenv("DOCKER_SUBNET"), "172.18.0.0/24"); c != "" {
-		out = append(out, c)
-	}
+	out = append(out, helper.DockerSubnet())
 	if c := validCIDROr(os.Getenv("WG_IP_RANGE"), "10.8.0.0/16"); c != "" {
 		out = append(out, c)
 	}
