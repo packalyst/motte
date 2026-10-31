@@ -65,14 +65,13 @@
     return ''
   })
 
-  async function toggle(f, el) {
+  async function toggle(f, enabled) {
     busyUrl = f.url
     try {
-      await apiPut('/api/adguard/filtering', { action: 'toggle', url: f.url, name: f.name || source(f.url), enabled: el.checked })
-      filters = filters.map((x) => (x.url === f.url ? { ...x, enabled: el.checked } : x))
+      await apiPut('/api/adguard/filtering', { action: 'toggle', url: f.url, name: f.name || source(f.url), enabled })
+      filters = filters.map((x) => (x.url === f.url ? { ...x, enabled } : x))
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
-      el.checked = !el.checked // put the switch back
     } finally {
       busyUrl = ''
     }
@@ -195,7 +194,7 @@
               </td>
               <td class="data-table-cell-nowrap text-xs text-muted-foreground">{neverUpdated(f) ? '—' : timeAgo(f.last_updated)}</td>
               <td class="data-table-cell-nowrap stack-right">
-                <Checkbox variant="switch" checked={f.enabled} aria-label="{f.enabled ? 'Turn off' : 'Turn on'} {f.name}" onchange={(e) => toggle(f, e.target)} />
+                <Checkbox variant="switch" controlled checked={f.enabled} aria-label="{f.enabled ? 'Turn off' : 'Turn on'} {f.name}" onchange={() => toggle(f, !f.enabled)} />
               </td>
               <td class="data-table-cell-actions stack-end">
                 <Button variant="outline" size="xs" icon="trash" class="text-destructive hover:bg-destructive/10" tooltip="Remove list" aria-label="Remove {f.name}" onclick={() => remove(f)} />

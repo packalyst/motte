@@ -200,7 +200,7 @@
         {#if tabName === 'text'}
           <div class="flex-1 min-w-0 flex flex-col">
             <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10">
-              <input bind:value={query} placeholder="Search the history (command, output, error)…"
+              <input bind:value={query} autocomplete="off" placeholder="Search the history (command, output, error)…"
                 class="flex-1 bg-black/30 border border-white/10 rounded px-2 py-1 text-xs text-white outline-none focus:border-[#58a6ff]" />
               <span class="text-[11px] text-white/40 shrink-0">{query.trim() ? `${matches.length} matches` : `${textLines.length} lines`}</span>
             </div>

@@ -208,7 +208,7 @@
               <div class="text-sm font-medium text-foreground flex items-center gap-1.5"><Icon name={icon} size={15} />{title}</div>
               <p class="text-[11px] text-muted-foreground mt-0.5">{text}</p>
             </div>
-            <Checkbox variant="switch" checked={on} {disabled} {onchange} />
+            <Checkbox variant="switch" controlled checked={on} {disabled} {onchange} />
           </div>
         {/snippet}
         {@render accessSwitch(device.internet ? 'world' : 'world-off', 'Internet access',

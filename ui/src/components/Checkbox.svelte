@@ -13,6 +13,10 @@
     hint = undefined, // shown as a tooltip on the label instead of helperText under it
     icon = undefined,
     disabled = false,
+    // controlled: it only shows `checked`. A click is a request handed to onchange; the box changes
+    // when the parent's value does (the action went through), so a cancelled or failed one leaves it
+    // as it was.
+    controlled = false,
     indeterminate = false,
     class: className = '',
     children,
@@ -45,6 +49,11 @@
   const effectivePosition = $derived(labelPosition ?? (variant === 'switch' ? 'left' : 'right'));
 
   function handleChange(e) {
+    if (controlled) {
+      e.target.checked = checked;
+      onchange?.(e);
+      return;
+    }
     checked = e.target.checked;
     onchange?.(e);
   }

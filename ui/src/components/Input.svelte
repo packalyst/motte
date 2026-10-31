@@ -107,7 +107,7 @@
     {disabled}
     {readonly}
     {required}
-    {autocomplete}
+    autocomplete={autocomplete ?? (type === 'search' || prefixIcon === 'search' ? 'off' : undefined)}
     class={inputClass}
     data-kt-tooltip={showTooltip ? tooltip : undefined}
     {onkeydown}

@@ -22,16 +22,20 @@
     }
   })
 
+  // The select shows the saved lifetime again (a cancelled or failed change).
+  const reset = () => { if (cur) days = String(cur.days) }
+
   async function save() {
     saving = true
     try {
       const res = await withStepUp((extra) => apiPost('/api/fleet/cert-lifetime', { days: Number(days), ...extra }),
         { title: 'Change certificate lifetime', message: 'Confirm your password to change how long machine certificates last.', confirmText: 'Save' })
-      if (res === STEPUP_CANCELLED) return
+      if (res === STEPUP_CANCELLED) return reset()
       cur = res
       toast(`Machine certificates now last ${res.days} days`, 'success')
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
+      reset()
     } finally {
       saving = false
     }

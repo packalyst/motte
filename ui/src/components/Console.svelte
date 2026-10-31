@@ -822,7 +822,7 @@
 
   {#if searchVisible}
     <div class="flex items-center gap-2 px-3 py-1.5 bg-[#12161d] border-b border-white/10">
-      <input bind:value={searchQuery} onkeydown={(e) => e.key === 'Enter' && runSearch('next')} placeholder="Search scrollback…"
+      <input bind:value={searchQuery} autocomplete="off" onkeydown={(e) => e.key === 'Enter' && runSearch('next')} placeholder="Search scrollback…"
         class="flex-1 bg-black/30 border border-white/10 rounded px-2 py-1 text-xs text-white outline-none focus:border-[#58a6ff]" />
       <button onclick={() => runSearch('prev')} class="p-1 text-white/60 hover:text-white"><Icon name="chevron-up" size={14} /></button>
       <button onclick={() => runSearch('next')} class="p-1 text-white/60 hover:text-white"><Icon name="chevron-down" size={14} /></button>

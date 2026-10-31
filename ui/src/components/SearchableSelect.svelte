@@ -108,6 +108,7 @@
             bind:this={inputEl}
             bind:value={query}
             onkeydown={onKey}
+            autocomplete="off"
             placeholder="Search…"
             class="w-full bg-muted rounded px-2 py-1 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
           />

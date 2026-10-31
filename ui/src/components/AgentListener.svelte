@@ -70,13 +70,16 @@
     }
   }
 
+  // The switch and port show what is saved again (a cancelled or failed change).
+  const resetConfig = () => { if (ep) { cfgEnabled = ep.enabled; cfgPort = ep.port } }
+
   async function saveConfig() {
     savingCfg = true
     try {
       // Switching the listener off or moving it asks for the password (the server answers 428).
       const res = await withStepUp((extra) => apiPost('/api/fleet/config', { enabled: cfgEnabled, port: Number(cfgPort), ...extra }),
         { title: cfgEnabled ? 'Move the agent listener' : 'Switch the agent listener off', message: 'Confirm your password to change how the machines reach the panel.', confirmText: 'Save' })
-      if (res === STEPUP_CANCELLED) return
+      if (res === STEPUP_CANCELLED) return resetConfig()
       ep = { ...ep, ...res }
       if (res.migrating) {
         toast('New port sent to the agents — the old port stays open until they have all reconnected', 'success')
@@ -86,6 +89,7 @@
       await load()
     } catch (e) {
       toast('Failed: ' + e.message, 'error')
+      resetConfig()
     } finally {
       savingCfg = false
     }

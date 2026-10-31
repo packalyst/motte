@@ -309,7 +309,6 @@
   // another browser shows the change in progress too. No answer within TOOL_WAIT unlocks it.
   const TOOL_WAIT = 3 * 60 * 1000
   let toolPending = $state({}) // id -> { on, at, seq } (seq: the agent's finished-change count when sent)
-  let toolRev = $state(0) // re-renders the switches after a cancelled confirm
   let toolNow = $state(Date.now())
   $effect(() => {
     if (!Object.keys(toolPending).length) return
@@ -351,7 +350,6 @@
       done: () => `Turning ${on ? 'on' : 'off'} ${t.label}…`,
       after: () => { toolNow = Date.now(); toolPending = { ...toolPending, [t.id]: { on, at: toolNow, seq: report?.tools?.[t.id]?.seq ?? 0 } } },
     })
-    toolRev++ // a cancelled confirm leaves the switch where the real state is
   }
   const canMaintain = $derived(st.reachable && !scanning)
   const scanned = $derived(!!cves?.scanned_at || !!cves?.total || !!cveSummary?.unique_cves)
@@ -878,7 +876,7 @@
                 <div class="text-[11px] text-muted-foreground">A remote shell from the panel. Turning it on asks for your password again.</div>
               </div>
               {#if isAdmin}
-                <Checkbox variant="switch" checked={consoleEnabled} disabled={consoleBusy} onchange={() => setConsole(!consoleEnabled)} aria-label="Browser console" />
+                <Checkbox variant="switch" controlled checked={consoleEnabled} disabled={consoleBusy} onchange={() => setConsole(!consoleEnabled)} aria-label="Browser console" />
               {:else}
                 <Badge variant={consoleEnabled ? 'success' : 'muted'} size="sm">{consoleEnabled ? 'On' : 'Off'}</Badge>
               {/if}
@@ -907,10 +905,8 @@
                   <div class="text-[11px] text-muted-foreground">{t.desc}</div>
                 </div>
                 {#if isAdmin}
-                  {#key `${t.id}:${v.on}:${toolRev}`}
-                    <Checkbox variant="switch" checked={v.on} disabled={v.busy || !st.reachable || jobRunning || (t.id === 'trivy' && scanning)}
-                      onchange={() => setTool(t, !v.on)} aria-label={t.label} />
-                  {/key}
+                  <Checkbox variant="switch" controlled checked={v.on} disabled={v.busy || !st.reachable || jobRunning || (t.id === 'trivy' && scanning)}
+                    onchange={() => setTool(t, !v.on)} aria-label={t.label} />
                 {:else}
                   <Badge variant={v.on ? 'success' : 'muted'} size="sm">{v.busy ? '…' : v.on ? 'On' : 'Off'}</Badge>
                 {/if}

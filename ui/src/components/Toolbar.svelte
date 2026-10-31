@@ -19,6 +19,7 @@
         type="search"
         bind:value={search}
         {placeholder}
+        autocomplete="off"
         class="kt-input"
       />
     </div>

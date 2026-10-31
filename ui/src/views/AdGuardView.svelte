@@ -252,7 +252,7 @@
                       {#if p.aaaa}Drops <Explain term="AAAA" /> answers, so devices only get IPv4 addresses{:else}{p.desc}{/if}
                     </div>
                   </div>
-                  <Checkbox variant="switch" checked={!!p.on} onchange={() => p.toggle(!p.on)} aria-label={p.title} />
+                  <Checkbox variant="switch" controlled checked={!!p.on} onchange={() => p.toggle(!p.on)} aria-label={p.title} />
                 </div>
               {/each}
             </div>

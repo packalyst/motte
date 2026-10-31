@@ -125,9 +125,8 @@
         </div>
       </div>
 
-      <!-- No automatic passkey prompt: the lock comes up while nobody is at the screen. -->
       <StepUpFields id="idle" label="Password" bind:password bind:totp {needsTotp} autofocus onsubmit={() => unlock()}
-        passkey={canPasskey ? UNLOCK : null} autoPasskey={false} onpasskey={(answer) => unlock({ passkey: answer })} />
+        passkey={canPasskey ? UNLOCK : null} onpasskey={(answer) => unlock({ passkey: answer })} />
 
       {#if error}
         <p class="text-sm text-destructive">{error}</p>

@@ -882,8 +882,8 @@
                       <div class="border-t border-border bg-muted/20 px-3 py-2.5 space-y-2.5">
                         <!-- one switch per line: text on the left, switch on the right -->
                         <div class="space-y-2">
-                          <Checkbox variant="switch" label="Restrict to selected peers" checked={vip.restricted} onchange={() => toggleVipRestrict(vip)} />
-                          <Checkbox variant="switch" label="Quarantine" checked={vip.quarantine} onchange={() => toggleVipQuarantine(vip)} />
+                          <Checkbox variant="switch" controlled label="Restrict to selected peers" checked={vip.restricted} onchange={() => toggleVipRestrict(vip)} />
+                          <Checkbox variant="switch" controlled label="Quarantine" checked={vip.quarantine} onchange={() => toggleVipQuarantine(vip)} />
                         </div>
 
                         {#if vip.restricted}
@@ -897,7 +897,7 @@
                               <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                                 {#each vipPeerChoices as peer (peer.id)}
                                   <div class="flex items-center gap-2 text-sm p-1.5 rounded-lg border border-transparent hover:border-border hover:bg-muted/50 transition">
-                                    <Checkbox checked={(vip.allowedClientIds || []).includes(peer.id)} onchange={() => toggleVipPeer(vip, peer.id)} />
+                                    <Checkbox controlled checked={(vip.allowedClientIds || []).includes(peer.id)} onchange={() => toggleVipPeer(vip, peer.id)} />
                                     <span class="truncate">{peer.name}</span>
                                     <span class="text-xs text-muted-foreground font-mono ml-auto">{peer.ip}</span>
                                   </div>
