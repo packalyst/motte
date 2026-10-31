@@ -155,7 +155,7 @@ func (s *Service) handleUpdateUserRole(w http.ResponseWriter, r *http.Request) {
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.StepUpWith(w, r, caller.ID, req.StepUpCreds) {
+	if !s.RequireStepUp(w, r, caller.ID, req.StepUpCreds) {
 		return
 	}
 	if !ValidRole(req.Role) {
@@ -202,7 +202,7 @@ func (s *Service) handleUpdateUserScope(w http.ResponseWriter, r *http.Request) 
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.StepUpWith(w, r, caller.ID, req.StepUpCreds) {
+	if !s.RequireStepUp(w, r, caller.ID, req.StepUpCreds) {
 		return
 	}
 	if !ValidScopeKind(req.ScopeKind) {
@@ -244,7 +244,7 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.StepUpWith(w, r, caller.ID, req.StepUpCreds) {
+	if !s.RequireStepUp(w, r, caller.ID, req.StepUpCreds) {
 		return
 	}
 	target, err := s.getUser(req.UserID)

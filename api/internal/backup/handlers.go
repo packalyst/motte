@@ -13,27 +13,6 @@ import (
 	"api/internal/router"
 )
 
-// requireStepUp re-authenticates the caller (password + fresh TOTP when enabled) before a sensitive
-// backup action. The backup path is a second write-door into the identity store (export decrypts
-// every secret; import replaces the users table), so export+import demand step-up on top of their
-// owner-only gate. Returns the principal and true on success; else writes a 428 and returns false.
-func requireStepUp(w http.ResponseWriter, r *http.Request, creds auth.StepUpCreds) (*router.Principal, bool) {
-	p := router.CurrentUser(r)
-	if p == nil {
-		router.JSONError(w, "unauthorized", http.StatusUnauthorized)
-		return nil, false
-	}
-	a := auth.GetService()
-	if a == nil {
-		router.JSONError(w, "auth unavailable", http.StatusServiceUnavailable)
-		return nil, false
-	}
-	if !a.StepUpWith(w, r, p.UserID, creds) {
-		return nil, false
-	}
-	return p, true
-}
-
 // Deps are the host hooks the backup service needs, injected from main so this
 // package never imports the subsystems it reconciles (no import cycle).
 type Deps struct {
@@ -90,7 +69,7 @@ func (s *Service) handleExport(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if _, ok := requireStepUp(w, r, req.StepUpCreds); !ok {
+	if !auth.RequireStepUp(w, r, req.StepUpCreds) { // export decrypts every secret, import replaces the users table
 		return
 	}
 	if err := ValidatePassphrase(req.Passphrase); err != nil {
@@ -144,7 +123,7 @@ func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "confirmation required", http.StatusBadRequest)
 		return
 	}
-	if _, ok := requireStepUp(w, r, req.StepUpCreds); !ok {
+	if !auth.RequireStepUp(w, r, req.StepUpCreds) { // export decrypts every secret, import replaces the users table
 		return
 	}
 	hdr, doc, err := Open([]byte(req.Backup), req.Passphrase)

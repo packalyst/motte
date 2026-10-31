@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -267,9 +268,8 @@ func (s *Service) FinishCARotation(force bool) ([]MachineRef, error) {
 }
 
 type caStepRequest struct {
-	Force           bool   `json:"force"`
-	CurrentPassword string `json:"currentPassword"`
-	TotpCode        string `json:"totpCode"`
+	Force bool `json:"force"`
+	auth.StepUpCreds
 }
 
 // decodeCAStep reads a CA step's request and requires a fresh step-up (every time, like deleting a
@@ -280,8 +280,7 @@ func (s *Service) decodeCAStep(w http.ResponseWriter, r *http.Request) (caStepRe
 		router.JSONError(w, "invalid request", http.StatusBadRequest)
 		return req, false
 	}
-	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TotpCode); err != nil {
-		router.JSONError(w, err.Error(), status)
+	if !auth.RequireStepUp(w, r, req.StepUpCreds) {
 		return req, false
 	}
 	return req, true

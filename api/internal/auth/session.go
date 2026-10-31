@@ -15,9 +15,8 @@ import (
 
 // ChangePasswordRequest for password change
 type ChangePasswordRequest struct {
-	CurrentPassword string `json:"currentPassword"`
-	TotpCode        string `json:"totpCode"` // required when the user has 2FA on (step-up)
-	NewPassword     string `json:"newPassword"`
+	StepUpCreds        // the current password (+ the 2FA code when 2FA is on)
+	NewPassword string `json:"newPassword"`
 }
 
 // GetSessions returns all active sessions for a user
@@ -135,7 +134,7 @@ func (s *Service) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.StepUpWith(w, r, user.ID, req) {
+	if !s.RequireStepUp(w, r, user.ID, req) {
 		return
 	}
 	// Clear the server-side lock so subsequent requests are allowed again.
@@ -310,7 +309,7 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// 2FA is on, so a stolen session that knows the password still can't take the account over.
 	// A wrong credential is a 428 (429 when locked out), never a 401: the caller is still signed
 	// in, and the UI treats a 401 as "session ended" and logs out.
-	if !s.StepUp(w, user.ID, req.CurrentPassword, req.TotpCode) {
+	if !s.RequireStepUp(w, r, user.ID, req.StepUpCreds, PasswordOnly) {
 		return
 	}
 	if err := s.ChangePassword(user.ID, req.CurrentPassword, req.NewPassword); err != nil {

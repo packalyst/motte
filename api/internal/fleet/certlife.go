@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -47,9 +48,8 @@ func renewAllowed(c *x509.Certificate, now time.Time) bool {
 }
 
 type certLifetimeRequest struct {
-	Days            int    `json:"days"`
-	CurrentPassword string `json:"currentPassword"`
-	TotpCode        string `json:"totpCode"`
+	Days int `json:"days"`
+	auth.StepUpCreds
 }
 
 // handleCertLifetime: GET returns {"days", "choices"}; POST {"days"} sets it (admin, step-up). It
@@ -65,8 +65,7 @@ func (s *Service) handleCertLifetime(w http.ResponseWriter, r *http.Request) {
 			router.JSONError(w, "lifetime must be one of 30, 60, 90, 180 or 365 days", http.StatusBadRequest)
 			return
 		}
-		if status, err := s.verifyStepUp(r, "change the machine certificate lifetime", req.CurrentPassword, req.TotpCode); err != nil {
-			router.JSONError(w, err.Error(), status)
+		if !auth.RequireStepUp(w, r, req.StepUpCreds, fleetGrace) {
 			return
 		}
 		if old := s.certDays(); old != req.Days {

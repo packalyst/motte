@@ -31,7 +31,7 @@ func (s *Service) handleOffhostSaveConfig(w http.ResponseWriter, r *http.Request
 	}
 	// Owner + step-up: this config sets the passphrase, destination and include-users that a
 	// scheduled full export (decrypted secrets) will use.
-	if _, ok := requireStepUp(w, r, body.StepUpCreds); !ok {
+	if !auth.RequireStepUp(w, r, body.StepUpCreds) {
 		return
 	}
 	incoming := body.OffhostConfig
@@ -104,7 +104,7 @@ func (s *Service) handleOffhostRunNow(w http.ResponseWriter, r *http.Request) {
 		auth.StepUpCreds
 	}
 	_ = json.NewDecoder(r.Body).Decode(&creds)
-	if _, ok := requireStepUp(w, r, creds.StepUpCreds); !ok {
+	if !auth.RequireStepUp(w, r, creds.StepUpCreds) {
 		return
 	}
 	if s.Status().Running {
@@ -160,10 +160,10 @@ func (s *Service) handleOffhostRestore(w http.ResponseWriter, r *http.Request) {
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	p, ok := requireStepUp(w, r, req.StepUpCreds)
-	if !ok {
+	if !auth.RequireStepUp(w, r, req.StepUpCreds) {
 		return
 	}
+	p := router.CurrentUser(r) // set: RequireStepUp passed
 
 	reconciled, err := s.restoreFromOffhost(r.Context(), req.Dest, req.Name, req.Passphrase)
 	if err != nil {

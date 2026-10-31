@@ -292,24 +292,32 @@ again, on top of a valid session:
   `currentPassword` (verified via `VerifyPassword`), and is audit-logged
   (`events.Log` `auth/user_created`, `SeverityWarning`). *(No UI wired yet; the
   endpoint stays hardened for future multi-admin.)*
-- **`ChangePassword`** (`session.go`, `handleChangePassword`): a **step-up** action like
-  every other credential change — the current password, plus a current 2FA code when 2FA
-  is on (`StepUp`), so a stolen session that knows the password can't change it. On
-  success it **revokes every *other* session** for that user (a password change is often
-  a compromise response — a stolen token elsewhere must not survive it) and audit-logs
-  `auth/password_changed`.
-- **`VerifyPassword`** (`session.go:81-90`) is the shared step-up primitive.
-- **A passkey instead of the password** (`stepup_passkey.go`): every step-up that goes
-  through `StepUpWith` (`router.StepUp`, user management, backups, the idle-lock unlock)
-  also takes a passkey answer. `POST /api/auth/stepup/passkey {method, url}` makes a
-  challenge for **one user, one login session and one request** (method + URL with its
+- **One step-up** (`auth/stepup.go`, `RequireStepUp`): every sensitive action, in every
+  package, re-authenticates its caller here; handlers embed `auth.StepUpCreds` in their request
+  body and call `auth.RequireStepUp` (or `router.StepUp`, which reads them from the body). It
+  takes the current password plus a fresh 2FA code when 2FA is on, or a passkey answer (below),
+  applies the password/2FA lockout (429), answers a failure with the 428 re-prompt
+  `{error, stepup, totp, passkey}` (never 401) and audits it (`auth/stepup_failed`). A request
+  carrying no credentials at all (the UI's first try) is only answered: it counts no attempt.
+  `TestStepUpHasOneSource` fails the build if any package outside auth reads or checks a
+  password or 2FA code of its own. Options:
+  - `PasswordOnly`: changing the password, 2FA setup/removal, adding a passkey.
+  - `WithGrace(FleetGrace)` (fleet commands, the listener, enrollment tokens, the certificate
+    lifetime, opening a console): after a confirmation the same **login session** isn't asked
+    again for `ConsoleStepUpGrace`, sliding, at most `ConsoleStepUpGraceMax`. Deleting a machine
+    or a recording, the CA steps, re-enrolling and turning a console on always ask.
+- **`ChangePassword`** (`session.go`, `handleChangePassword`): a step-up (`PasswordOnly`), so a
+  stolen session that knows the password can't change it. On success it **revokes every
+  *other* session** for that user (a password change is often a compromise response — a
+  stolen token elsewhere must not survive it) and audit-logs `auth/password_changed`.
+- **A passkey instead of the password** (`stepup_passkey.go`): every step-up except the
+  `PasswordOnly` ones also takes a passkey answer. `POST /api/auth/stepup/passkey {method, url}`
+  makes a challenge for **one user, one login session and one request** (method + URL with its
   query), held in memory for `PasskeyChallengeTTL` and **used up when checked**, whatever
   the outcome. The answer must come from one of that user's own passkeys with the user
   **verified** (face, fingerprint or device PIN), so it is two factors and can't be
   phished or replayed onto another action. The 428 says `passkey:true` only where it is
-  accepted. Password-only by design: changing the password, 2FA setup/removal, adding a
-  passkey (`StepUp`). Fleet actions (own grace window, bulk commands) still take the
-  password.
+  accepted.
 
 ### 2FA / TOTP (`auth/totp.go`, verification in `auth.go`)
 

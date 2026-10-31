@@ -4,24 +4,27 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
+	"api/internal/events"
+	"api/internal/helper"
 	"api/internal/router"
 )
 
-// ErrStepUpTOTPRequired is returned by VerifyStepUp when the user has 2FA enabled but supplied
+// ErrStepUpTOTPRequired is returned by verifyStepUp when the user has 2FA enabled but supplied
 // no TOTP code. Callers surface it distinctly so the UI can prompt for the authenticator code
 // (rather than reporting a wrong password).
 var ErrStepUpTOTPRequired = errors.New("2fa code required")
 
-// VerifyStepUp re-authenticates a user for a sensitive, session-authorized action. It always
-// requires the current password — so a stolen session token alone is never sufficient — and,
-// when the user has TOTP 2FA enabled, additionally requires a fresh, non-replayed TOTP code.
+// verifyStepUp checks the password step-up of a user. It always requires the current password — so
+// a stolen session token alone is never sufficient — and, when the user has TOTP 2FA enabled,
+// additionally a fresh, non-replayed TOTP code.
 //
 // Fail-closed for 2FA users: a missing code returns ErrStepUpTOTPRequired and an invalid/replayed
 // code is rejected. Users WITHOUT 2FA are unaffected (password-only), so routing an action
 // through step-up never locks anyone out who hasn't opted into 2FA.
-func (s *Service) VerifyStepUp(userID int64, password, totpCode string) error {
+func (s *Service) verifyStepUp(userID int64, password, totpCode string) error {
 	// Password first (also upgrades a legacy hash on success).
 	if err := s.VerifyPassword(userID, password); err != nil {
 		return err
@@ -43,90 +46,144 @@ func (s *Service) VerifyStepUp(userID int64, password, totpCode string) error {
 	return verifyTOTP(userID, totpSecretEnc, totpCode)
 }
 
-// StepUp re-authenticates the caller for a sensitive action from the request-supplied password
-// and TOTP code. On success it returns true. On failure it writes a 428 (Precondition Required)
-// response — never 401 — carrying {error, stepup:true, totp:<bool>}, so a wrong credential
-// re-prompts in place instead of tripping the client's 401 auto-logout; the `totp` flag tells
-// the UI whether to render an authenticator-code field. While the password or 2FA code is locked
-// out after too many failures it writes a 429 instead (re-prompting can't help until it expires).
-// It takes the password only: for the checks about the password itself (changing it, 2FA, adding a
-// passkey). Everything else uses StepUpWith, which takes a passkey too.
-func (s *Service) StepUp(w http.ResponseWriter, callerID int64, password, totpCode string) bool {
-	return s.answerStepUp(w, callerID, s.VerifyStepUp(callerID, password, totpCode), false)
-}
-
 // StepUpCreds is what a sensitive request carries to re-authenticate the caller: the current
-// password (+ a 2FA code when 2FA is on), or a passkey answer made for exactly that request.
+// password (+ a 2FA code when 2FA is on), or a passkey answer made for exactly that request. Every
+// request body that takes a step-up embeds it.
 type StepUpCreds struct {
 	CurrentPassword string          `json:"currentPassword"`
 	TotpCode        string          `json:"totpCode"`
 	Passkey         json.RawMessage `json:"passkey,omitempty"`
 }
 
-// VerifyStepUpRequest re-authenticates userID for request r: by the passkey answer when one is
-// given (see verifyPasskeyStepUp; a failed one is audited), otherwise as VerifyStepUp.
-func (s *Service) VerifyStepUpRequest(r *http.Request, userID int64, c StepUpCreds) error {
-	if len(c.Passkey) == 0 {
-		return s.VerifyStepUp(userID, c.CurrentPassword, c.TotpCode)
-	}
-	if err := s.verifyPasskeyStepUp(r, userID, c.Passkey); err != nil {
-		auditStepUpPasskey(r, userID)
-		return err
-	}
-	return nil
+// StepUpOption adjusts what one step-up accepts.
+type StepUpOption func(*stepUpPolicy)
+
+type stepUpPolicy struct {
+	passwordOnly bool
+	grace        *GraceWindow
 }
 
-// StepUpWith is StepUp for a request's creds, a passkey answer included.
-func (s *Service) StepUpWith(w http.ResponseWriter, r *http.Request, userID int64, c StepUpCreds) bool {
-	return s.answerStepUp(w, userID, s.VerifyStepUpRequest(r, userID, c), true)
+// PasswordOnly takes the password (+ 2FA code) only, never a passkey: for the checks about the
+// credentials themselves (changing the password, 2FA, adding a passkey).
+func PasswordOnly(p *stepUpPolicy) { p.passwordOnly = true }
+
+// WithGrace passes without credentials while the session is inside g, and opens g on success.
+func WithGrace(g *GraceWindow) StepUpOption {
+	return func(p *stepUpPolicy) { p.grace = g }
 }
 
-// answerStepUp turns a step-up result into the response contract: true on success; otherwise a
-// 429 while locked out, else the 428 re-prompt (see StepUp), which says whether a passkey would
-// do (passkeyOK: this check takes one, and the user has one).
-func (s *Service) answerStepUp(w http.ResponseWriter, callerID int64, err error, passkeyOK bool) bool {
-	if err == nil {
+var errStepUpRequired = errors.New("step-up re-authentication required")
+
+// RequireStepUp is the panel's one step-up: every sensitive action re-authenticates its caller
+// here. It passes inside the option's grace window; otherwise it takes the passkey answer when one
+// is given (made for exactly this request and session, see verifyPasskeyStepUp; unless
+// PasswordOnly), else the current password plus a fresh 2FA code when 2FA is on. On success it
+// returns true (and opens the grace window, if any). On failure it returns false having answered:
+// 429 while the password or 2FA code is locked out (re-prompting can't help until it expires),
+// else 428 — never 401, which the UI treats as "signed out" — carrying {error, stepup: true,
+// totp, passkey}: whether to ask for a 2FA code, and whether a passkey works here. A failed try
+// is audited; a request without any credentials (the first try, before the UI asked) is only
+// answered: it counts no attempt.
+func (s *Service) RequireStepUp(w http.ResponseWriter, r *http.Request, userID int64, c StepUpCreds, opts ...StepUpOption) bool {
+	var pol stepUpPolicy
+	for _, o := range opts {
+		o(&pol)
+	}
+	if pol.passwordOnly {
+		c.Passkey = nil
+	}
+	if userID == 0 {
+		auditStepUp(r, userID, "no signed-in user")
+		writeStepUpRequired(w, errStepUpRequired.Error(), false, false)
+		return false
+	}
+	if pol.grace != nil && pol.grace.use(r) {
 		return true
 	}
-	if tooManyAttempts(w, err) { // locked out: re-prompting can't help until it expires
+	if c.CurrentPassword == "" && len(c.Passkey) == 0 {
+		s.writeStepUp(w, userID, errStepUpRequired, !pol.passwordOnly)
 		return false
+	}
+	var err error
+	if len(c.Passkey) > 0 {
+		err = s.verifyPasskeyStepUp(r, userID, c.Passkey)
+	} else {
+		err = s.verifyStepUp(userID, c.CurrentPassword, c.TotpCode)
+	}
+	if err != nil {
+		if !errors.Is(err, ErrStepUpTOTPRequired) { // the right password, the code still to come
+			how := "password"
+			if len(c.Passkey) > 0 {
+				how = "passkey"
+			}
+			auditStepUp(r, userID, how)
+		}
+		s.writeStepUp(w, userID, err, !pol.passwordOnly)
+		return false
+	}
+	if pol.grace != nil {
+		pol.grace.open(r)
+	}
+	return true
+}
+
+// RequireStepUp runs the step-up for the request's signed-in caller: for packages that decode the
+// credentials into their own request body. Fails closed (428) without a caller or auth service.
+func RequireStepUp(w http.ResponseWriter, r *http.Request, c StepUpCreds, opts ...StepUpOption) bool {
+	s, p := GetService(), router.CurrentUser(r)
+	if s == nil || p == nil {
+		auditStepUp(r, 0, "no signed-in user")
+		writeStepUpRequired(w, errStepUpRequired.Error(), false, false)
+		return false
+	}
+	return s.RequireStepUp(w, r, p.UserID, c, opts...)
+}
+
+// writeStepUp answers a failed step-up (see RequireStepUp).
+func (s *Service) writeStepUp(w http.ResponseWriter, userID int64, err error, passkeyOK bool) {
+	if tooManyAttempts(w, err) {
+		return
 	}
 	msg := err.Error()
 	if errors.Is(err, ErrStepUpTOTPRequired) {
 		msg = "two-factor authentication code required"
 	}
-	router.JSONWithStatus(w, map[string]interface{}{
-		"error":   msg,
-		"stepup":  true,
-		"totp":    s.TOTPEnabled(callerID),
-		"passkey": passkeyOK && s.HasPasskey(callerID),
-	}, http.StatusPreconditionRequired)
-	return false
+	writeStepUpRequired(w, msg, s.TOTPEnabled(userID), passkeyOK && s.HasPasskey(userID))
 }
 
-// StepUpRequest re-authenticates the caller of a session-authorized request for a sensitive
-// action. It reads {currentPassword, totpCode} from the JSON body and resolves the caller from the
-// router principal. On success it returns true; on ANY failure (no principal, or a bad/empty
-// credential) it writes the standard 428 step-up response — never 401 — and returns false, so the
-// UI prompts in place instead of logging out. Reusable by any package guarding a destructive
-// action: `if a := auth.GetService(); a != nil && !a.StepUpRequest(w, r) { return }`.
-func (s *Service) StepUpRequest(w http.ResponseWriter, r *http.Request) bool {
-	p := router.CurrentUser(r)
-	if p == nil || p.UserID == 0 {
-		router.JSONWithStatus(w, map[string]interface{}{
-			"error":  "step-up re-authentication required",
-			"stepup": true,
-			"totp":   false,
-		}, http.StatusPreconditionRequired)
-		return false
+func writeStepUpRequired(w http.ResponseWriter, msg string, totp, passkey bool) {
+	router.JSONWithStatus(w, map[string]any{
+		"error":   msg,
+		"stepup":  true,
+		"totp":    totp,
+		"passkey": passkey,
+	}, http.StatusPreconditionRequired)
+}
+
+// auditStepUp records a failed step-up: whose, which request, and with what.
+func auditStepUp(r *http.Request, userID int64, how string) {
+	actor := ""
+	if p := router.CurrentUser(r); p != nil {
+		actor = p.Username
 	}
+	events.Audit("auth", "stepup_failed", events.SeverityWarning, actor, helper.GetClientIP(r),
+		fmt.Sprintf("Step-up failed for user #%d on %s %s (%s)", userID, r.Method, r.URL.Path, how))
+}
+
+// StepUpRequest is RequireStepUp with the credentials read from the request's JSON body, for the
+// caller resolved from the router principal: registered as router.StepUp, so packages that can't
+// import auth gate their sensitive actions with it.
+func (s *Service) StepUpRequest(w http.ResponseWriter, r *http.Request) bool {
 	var creds StepUpCreds
 	if r.Body != nil {
-		// An absent/empty/garbled body leaves creds zero-valued, which stepUp turns into a 428
-		// prompt rather than an error.
+		// An absent/empty/garbled body leaves creds zero-valued: a 428 prompt, not an error.
 		_ = json.NewDecoder(r.Body).Decode(&creds)
 	}
-	return s.StepUpWith(w, r, p.UserID, creds)
+	var userID int64
+	if p := router.CurrentUser(r); p != nil {
+		userID = p.UserID
+	}
+	return s.RequireStepUp(w, r, userID, creds)
 }
 
 // TOTPEnabled reports whether the user has 2FA enabled. Used by handlers that surface to the UI

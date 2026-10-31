@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"api/internal/bounded"
-	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
 
@@ -139,10 +137,4 @@ func (s *Service) verifyPasskeyStepUp(r *http.Request, userID int64, answer json
 	}
 	s.touchCredential(cred)
 	return nil
-}
-
-// auditStepUpPasskey records a failed passkey step-up (a success is recorded by the action itself).
-func auditStepUpPasskey(r *http.Request, userID int64) {
-	events.Audit("auth", "stepup_passkey_failed", events.SeverityWarning, "", helper.GetClientIP(r),
-		"Passkey step-up failed for user #"+strconv.FormatInt(userID, 10))
 }

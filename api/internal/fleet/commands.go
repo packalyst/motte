@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -59,6 +58,11 @@ var confirmCommands = map[string]bool{
 	"set-tool":      true, // turning a security tool off removes that protection
 }
 
+// fleetGrace is the step-up option of the fleet actions that share auth.FleetGrace: one
+// confirmation covers that session's next ones for a while. Deleting a machine, its recordings, the
+// CA steps, re-enrolling and turning a console on always take a fresh one (no option).
+var fleetGrace = auth.WithGrace(auth.FleetGrace)
+
 // requiresStepUp reports whether ctype is a confirm-tier command.
 func requiresStepUp(ctype string) bool { return confirmCommands[ctype] }
 
@@ -110,49 +114,6 @@ func (s *Service) actingAdmin(r *http.Request) (string, int64) {
 	return "", 0
 }
 
-// verifyCommandStepUp performs step-up re-authentication ONCE for a confirm-tier command. It
-// returns (0, nil) when step-up passed or isn't required, else a 428 status + message to relay
-// (never 401, which the client treats as a session expiry). Factored out so a bulk run verifies
-// a single time — a replay-protected TOTP code cannot be reused once per host.
-func (s *Service) verifyCommandStepUp(r *http.Request, ctype, currentPassword, currentTOTP string) (int, error) {
-	if !requiresStepUp(ctype) {
-		return 0, nil
-	}
-	return s.verifyStepUp(r, ctype, currentPassword, currentTOTP)
-}
-
-// verifyStepUp requires a step-up for `what` (a command, or a sensitive part of one): passes
-// inside the fleet step-up grace window, else needs the operator's password (+ TOTP).
-func (s *Service) verifyStepUp(r *http.Request, what, currentPassword, currentTOTP string) (int, error) {
-	actor, userID := s.actingAdmin(r)
-	ip := helper.GetClientIP(r)
-	authSvc := auth.GetService()
-	if authSvc == nil || userID == 0 {
-		events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
-			fmt.Sprintf("Command %q denied: operator could not be verified for step-up", what))
-		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
-	}
-	// Inside the shared fleet step-up grace window (from a recent console open or command)? Pass
-	// without prompting, and slide the window — so administering a fleet isn't a password per action.
-	if useFleetGrace(r) {
-		return 0, nil
-	}
-	if currentPassword == "" {
-		// Benign first attempt — the UI hasn't prompted yet. Signal step-up, don't audit.
-		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
-	}
-	if err := authSvc.VerifyStepUp(userID, currentPassword, currentTOTP); err != nil {
-		if errors.Is(err, auth.ErrStepUpTOTPRequired) {
-			return http.StatusPreconditionRequired, fmt.Errorf("two-factor authentication code required")
-		}
-		events.Audit("fleet", "command_denied", events.SeverityWarning, actor, ip,
-			fmt.Sprintf("Command %q denied: step-up re-authentication failed", what))
-		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication failed")
-	}
-	openFleetGrace(r)
-	return 0, nil
-}
-
 // enqueueCore applies the per-machine scope check + online check + allowlist (block tier) + audit,
 // then enqueues. The online check keeps a person's command from waiting in the queue and running
 // whenever an offline machine reconnects; the panel's own messages (set-console, set-panel-port)
@@ -189,12 +150,17 @@ func (s *Service) enqueueCore(r *http.Request, machineID, ctype string, payload 
 }
 
 // enqueueGuarded applies the command guardrail (step-up for confirm-tier, then scope + allowlist +
-// audit) and enqueues for ONE machine. Returns the HTTP status the caller should send.
-func (s *Service) enqueueGuarded(r *http.Request, machineID, ctype, currentPassword, currentTOTP string, payload json.RawMessage) (string, int, error) {
-	if status, err := s.verifyCommandStepUp(r, ctype, currentPassword, currentTOTP); err != nil {
-		return "", status, err
+// audit) and enqueues for ONE machine. On failure it has answered and returns false.
+func (s *Service) enqueueGuarded(w http.ResponseWriter, r *http.Request, machineID, ctype string, creds auth.StepUpCreds, payload json.RawMessage) (string, bool) {
+	if requiresStepUp(ctype) && !auth.RequireStepUp(w, r, creds, fleetGrace) {
+		return "", false
 	}
-	return s.enqueueCore(r, machineID, ctype, payload)
+	id, status, err := s.enqueueCore(r, machineID, ctype, payload)
+	if err != nil {
+		router.JSONError(w, err.Error(), status)
+		return "", false
+	}
+	return id, true
 }
 
 // Command is one queued instruction for a machine.

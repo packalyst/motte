@@ -165,7 +165,8 @@ type scanExcludeChange struct{ added, removed []string }
 
 // guardScanExcludes covers the one sensitive part of a rescan: its folders to skip are saved on
 // the machine and apply to every later scan, so ADDING one hides that folder's findings for
-// good. That takes an admin and a step-up; removing folders (scanning more) or rescanning with
+// good. That takes an admin (checked here) and a step-up (the caller's, once anything is added:
+// see handleEnqueueCommand); removing folders (scanning more) or rescanning with
 // the same list stays an operator action. Callers check scope and the payload first, and audit
 // the change (auditScanExcludes) only once the command is queued.
 //
@@ -173,7 +174,7 @@ type scanExcludeChange struct{ added, removed []string }
 // know it: in its last report AND in the last rescan queued for it. The report alone can lag a
 // change by a few seconds (an operator could re-add a folder an admin just removed), and it comes
 // from the machine itself; a folder missing from either counts as added.
-func (s *Service) guardScanExcludes(r *http.Request, machineID string, payload json.RawMessage, pwd, totp string) (*scanExcludeChange, int, error) {
+func (s *Service) guardScanExcludes(r *http.Request, machineID string, payload json.RawMessage) (*scanExcludeChange, int, error) {
 	next, set, _ := parseScanExcludes(payload) // already validated by the caller
 	if !set {
 		return nil, 0, nil // the saved list stays as it is
@@ -196,9 +197,6 @@ func (s *Service) guardScanExcludes(r *http.Request, machineID string, payload j
 			events.Audit("fleet", "command_denied", events.SeverityWarning, actor, helper.GetClientIP(r),
 				fmt.Sprintf("Command \"rescan\" on %s denied: only an admin can add folders for scans to skip (%q)", machineID, ch.added))
 			return nil, http.StatusForbidden, errors.New("only an admin can add folders for scans to skip")
-		}
-		if status, err := s.verifyStepUp(r, "rescan (skip folders)", pwd, totp); err != nil {
-			return nil, status, err
 		}
 	}
 	return &ch, 0, nil

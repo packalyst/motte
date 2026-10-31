@@ -552,7 +552,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.StepUpWith(w, r, caller.ID, req.StepUpCreds) {
+	if !s.RequireStepUp(w, r, caller.ID, req.StepUpCreds) {
 		return
 	}
 

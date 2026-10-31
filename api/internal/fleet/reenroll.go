@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -37,10 +38,9 @@ func (s *Service) installCommand(token, extra string) string {
 }
 
 type reenrollRequest struct {
-	MachineID       string `json:"machine_id"`
-	PanelHost       string `json:"panel_host"`
-	CurrentPassword string `json:"currentPassword"`
-	TotpCode        string `json:"totpCode"`
+	MachineID string `json:"machine_id"`
+	PanelHost string `json:"panel_host"`
+	auth.StepUpCreds
 }
 
 // handleReenroll (POST /api/fleet/machine/reenroll {"machine_id"}, admin) mints the machine's
@@ -61,8 +61,7 @@ func (s *Service) handleReenroll(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "set a panel domain (SSL_DOMAIN) first: the installer downloads over its HTTPS", http.StatusConflict)
 		return
 	}
-	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TotpCode); err != nil {
-		router.JSONError(w, err.Error(), status)
+	if !auth.RequireStepUp(w, r, req.StepUpCreds) {
 		return
 	}
 	panelHost := strings.TrimSpace(req.PanelHost)

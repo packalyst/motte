@@ -571,10 +571,9 @@ func (s *Service) handleConsoleRecordingDelete(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req struct {
-		MachineID       string `json:"machine_id"`
-		Name            string `json:"name"`
-		CurrentPassword string `json:"currentPassword"`
-		TOTPCode        string `json:"totpCode"`
+		MachineID string `json:"machine_id"`
+		Name      string `json:"name"`
+		auth.StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -598,8 +597,7 @@ func (s *Service) handleConsoleRecordingDelete(w http.ResponseWriter, r *http.Re
 		router.JSONError(w, "recording not found", http.StatusNotFound)
 		return
 	}
-	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TOTPCode); err != nil {
-		router.JSONError(w, err.Error(), status)
+	if !auth.RequireStepUp(w, r, req.StepUpCreds) {
 		return
 	}
 	// Under the agent's lock, so a viewer can't reattach (reopening the file) between the live check

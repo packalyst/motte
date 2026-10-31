@@ -19,10 +19,10 @@ func TestVerifyStepUp(t *testing.T) {
 	id := u.ID
 
 	// No 2FA: correct password passes, wrong password fails, TOTP code is irrelevant.
-	if err := svc.VerifyStepUp(id, pw, ""); err != nil {
+	if err := svc.verifyStepUp(id, pw, ""); err != nil {
 		t.Errorf("no-2FA correct password: got %v, want nil", err)
 	}
-	if err := svc.VerifyStepUp(id, "wrong", ""); err == nil {
+	if err := svc.verifyStepUp(id, "wrong", ""); err == nil {
 		t.Error("no-2FA wrong password: got nil, want error")
 	}
 	if svc.TOTPEnabled(id) {
@@ -42,11 +42,11 @@ func TestVerifyStepUp(t *testing.T) {
 	}
 
 	// With 2FA on, a correct password but NO code must demand the code — not silently pass.
-	if err := svc.VerifyStepUp(id, pw, ""); !errors.Is(err, ErrStepUpTOTPRequired) {
+	if err := svc.verifyStepUp(id, pw, ""); !errors.Is(err, ErrStepUpTOTPRequired) {
 		t.Errorf("2FA, missing code: got %v, want ErrStepUpTOTPRequired", err)
 	}
 	// Password is still checked first: a wrong password fails as a password error, not a code prompt.
-	if err := svc.VerifyStepUp(id, "wrong", "123456"); err == nil || errors.Is(err, ErrStepUpTOTPRequired) {
+	if err := svc.verifyStepUp(id, "wrong", "123456"); err == nil || errors.Is(err, ErrStepUpTOTPRequired) {
 		t.Errorf("2FA, wrong password: got %v, want a password error", err)
 	}
 }

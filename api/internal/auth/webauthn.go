@@ -265,12 +265,9 @@ func (s *Service) handlePasskeyRegisterBegin(w http.ResponseWriter, r *http.Requ
 		router.JSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var creds struct {
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
-	}
+	var creds StepUpCreds
 	_ = json.NewDecoder(r.Body).Decode(&creds)
-	if !s.StepUp(w, u.ID, creds.CurrentPassword, creds.TotpCode) {
+	if !s.RequireStepUp(w, r, u.ID, creds, PasswordOnly) {
 		return
 	}
 	wa, _, err := s.newWebAuthn(r)

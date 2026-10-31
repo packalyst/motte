@@ -60,12 +60,9 @@ func (s *Service) handleSetup2FA(w http.ResponseWriter, r *http.Request) {
 
 	// Step-up (password) before provisioning 2FA: otherwise a stolen session could bind the
 	// attacker's authenticator and lock the real owner out (disable needs password+code).
-	var creds struct {
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
-	}
+	var creds StepUpCreds
 	_ = json.NewDecoder(r.Body).Decode(&creds)
-	if !s.StepUp(w, user.ID, creds.CurrentPassword, creds.TotpCode) {
+	if !s.RequireStepUp(w, r, user.ID, creds, PasswordOnly) {
 		return
 	}
 
@@ -214,7 +211,7 @@ func (s *Service) handleDisable2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	// Password and code go through step-up: both rate-limited, the code single-use, and a
 	// missing secret fails closed.
-	if !s.StepUp(w, user.ID, req.Password, req.Code) {
+	if !s.RequireStepUp(w, r, user.ID, StepUpCreds{CurrentPassword: req.Password, TotpCode: req.Code}, PasswordOnly) {
 		return
 	}
 

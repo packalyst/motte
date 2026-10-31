@@ -62,7 +62,7 @@ func TestAttemptLimiter(t *testing.T) {
 
 // TestPasswordRecheckLockout (B5): wrong passwords at step-up, unlock and password change lock the
 // user out, after which even the right password is refused without running Argon2id; other users
-// are unaffected, and StepUp answers 429 rather than re-prompting.
+// are unaffected, and the step-up answers 429 rather than re-prompting.
 func TestPasswordRecheckLockout(t *testing.T) {
 	svc := newTestService(t)
 	const pw = "StrongP@ss1"
@@ -92,7 +92,7 @@ func TestPasswordRecheckLockout(t *testing.T) {
 	if err := svc.VerifyPassword(u.ID, pw); !isTooMany(err) {
 		t.Fatalf("right password while locked out: got %v, want locked out", err)
 	}
-	if err := svc.VerifyStepUp(u.ID, pw, ""); !isTooMany(err) { // what change-password checks
+	if err := svc.verifyStepUp(u.ID, pw, ""); !isTooMany(err) { // what change-password checks
 		t.Fatalf("password change while locked out: got %v, want locked out", err)
 	}
 	if err := svc.VerifyPassword(other.ID, pw); err != nil {
@@ -100,11 +100,11 @@ func TestPasswordRecheckLockout(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	if svc.StepUp(rec, u.ID, pw, "") {
-		t.Fatal("StepUp passed while locked out")
+	if svc.RequireStepUp(rec, httptest.NewRequest(http.MethodPost, "/api/x", nil), u.ID, StepUpCreds{CurrentPassword: pw}) {
+		t.Fatal("the step-up passed while locked out")
 	}
 	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
-		t.Errorf("StepUp while locked out: status %d, Retry-After %q; want 429 with Retry-After", rec.Code, rec.Header().Get("Retry-After"))
+		t.Errorf("step-up while locked out: status %d, Retry-After %q; want 429 with Retry-After", rec.Code, rec.Header().Get("Retry-After"))
 	}
 }
 
