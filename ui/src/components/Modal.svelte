@@ -119,13 +119,16 @@
 
 <!-- The overlay is its own dimmed, blurred backdrop (see .kt-modal in app.css), not KTUI's separate
      one: that landed under an open modal, and lost track of itself on a quick reopen. A stacked modal
-     (zindex 100, above the default 90) so dims the modal under it too. -->
+     (zindex 100, above the default 90) so dims the modal under it too. Persistent turns off KTUI's
+     click-away, which runs for a modal without its backdrop: it took the click that closes a stacked
+     confirm for a click outside the modal under it. A click on the overlay closes it (onclick). -->
 <div
   bind:this={modalElement}
   class="kt-modal"
   data-kt-modal="true"
   data-kt-modal-backdrop="false"
   data-kt-modal-backdrop-static="true"
+  data-kt-modal-persistent="true"
   data-kt-modal-zindex={stacked ? '100' : '90'}
   role="presentation"
   onclick={(e) => { if (dismissible && e.target === modalElement) handleClose() }}
