@@ -9,7 +9,7 @@
   import { SearchAddon } from '@xterm/addon-search'
   import { WebLinksAddon } from '@xterm/addon-web-links'
   import '@xterm/xterm/css/xterm.css'
-  import { apiPost, stepUpConfirm, toast, confirm } from '../stores/app.js'
+  import { apiPost, stepUpConfirm, withStepUp, STEPUP_CANCELLED, toast, confirm } from '../stores/app.js'
   import { consoleSessions, sessionColor } from '../lib/consoleEvents.js'
   import { ConsoleSocket } from '../lib/console.js'
   import { keyboardAware } from '../lib/utils/viewport.js'
@@ -259,18 +259,16 @@
   }
 
   // ensureGrant mints (or reuses) a console grant for a specific machine. Normal grants need a
-  // step-up; the first call per machine prompts, later ones reuse the multi-use grant until rejected.
+  // step-up, asked only when the server wants one (outside the fleet grace window); later calls
+  // reuse the multi-use grant until rejected.
   async function ensureGrant(machine) {
     const have = grants.get(machine.id)
     if (have) return have
-    const r = await stepUpConfirm({
+    const res = await withStepUp((extra) => apiPost('/api/fleet/console/grant', { machine_id: machine.id, ...extra }), {
       title: 'Open console',
       description: `Re-authenticate to open an interactive console on "${machine.name || machine.id}".`,
     })
-    if (!r?.confirmed) throw new Error('cancelled')
-    const res = await apiPost('/api/fleet/console/grant', {
-      machine_id: machine.id, currentPassword: r.password, totpCode: r.totp,
-    })
+    if (res === STEPUP_CANCELLED) throw new Error('cancelled')
     grants.set(machine.id, res.grant)
     return res.grant
   }
@@ -568,11 +566,11 @@
     const tab = tabs.find((t) => t.id === activeId)
     if (!tab) return toast('Open a session first', 'error')
     try {
-      const r = await stepUpConfirm({ title: 'Share read-only console', description: 'Re-authenticate to create a view-only link.' })
-      if (!r?.confirmed) return
-      const res = await apiPost('/api/fleet/console/grant?readonly=true', {
-        machine_id: tab.machine.id, session: tab.id, currentPassword: r.password, totpCode: r.totp,
-      })
+      const url = '/api/fleet/console/grant?readonly=true'
+      const r = await stepUpConfirm({ title: 'Share read-only console', description: 'Re-authenticate to create a view-only link.',
+        action: { method: 'POST', url } })
+      if (!r?.proof) return
+      const res = await apiPost(url, { machine_id: tab.machine.id, session: tab.id, ...r.proof })
       // res.session is the owner's namespaced session the grant is bound to — the viewer must open that.
       const link = `${location.origin}/#fconsole=${encodeURIComponent(tab.machine.id)}|${encodeURIComponent(res.session)}|${encodeURIComponent(res.grant)}`
       await navigator.clipboard.writeText(link)

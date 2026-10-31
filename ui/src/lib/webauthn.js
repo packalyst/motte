@@ -38,10 +38,10 @@ export function passkeysSupported() {
 }
 
 // passkeyRegister adds a new passkey for the logged-in user, labelled `name`. Registration is
-// step-up-gated server-side, so `creds` ({currentPassword, totpCode}) must be supplied.
-export async function passkeyRegister(name, creds = {}) {
+// step-up-gated server-side (password only), so `proof` (stepUpConfirm's) must be supplied.
+export async function passkeyRegister(name, proof = {}) {
   if (!passkeysSupported()) throw new Error('This browser or connection does not support passkeys (needs HTTPS).')
-  const opts = await post('/api/auth/passkeys/register/begin', creds)
+  const opts = await post('/api/auth/passkeys/register/begin', proof)
   const pk = opts.publicKey
   pk.challenge = b64urlToBuf(pk.challenge)
   pk.user.id = b64urlToBuf(pk.user.id)

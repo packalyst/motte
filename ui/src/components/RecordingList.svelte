@@ -77,18 +77,18 @@
 
   // One prompt is both the confirmation and the re-authentication (the server asks every time — no
   // grace window for erasing a recording); the deletion itself is audited.
+  const DELETE_URL = '/api/fleet/console/recording/delete'
   async function remove(rec) {
     const r = await stepUpConfirm({
       title: 'Delete recording',
       message: `Delete ${rec.title} by ${rec.user} on ${rec.machine_name}?`,
       description: 'It is gone for good — copies of the file left anywhere become unreadable. The deletion is kept in the audit log. Re-authenticate to confirm.',
       confirmText: 'Delete', variant: 'destructive',
+      action: { method: 'POST', url: DELETE_URL },
     })
-    if (!r?.confirmed) return
+    if (!r?.proof) return
     try {
-      await apiPost('/api/fleet/console/recording/delete', {
-        machine_id: rec.machine_id, name: rec.name, currentPassword: r.password, totpCode: r.totp || '',
-      })
+      await apiPost(DELETE_URL, { machine_id: rec.machine_id, name: rec.name, ...r.proof })
       recordings = recordings.filter((x) => x.name !== rec.name)
       toast('Recording deleted', 'success')
     } catch (e) {

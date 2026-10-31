@@ -6,7 +6,7 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import { get } from 'svelte/store'
   import {
-    apiGet, apiPost, stepUpConfirm, currentView, previousView, consoleTarget, consoleReturn, currentUser, hasRole,
+    apiGet, apiPost, withStepUp, STEPUP_CANCELLED, currentView, previousView, consoleTarget, consoleReturn, currentUser, hasRole,
   } from '../stores/app.js'
   import { consoleSessions, openConsoleEvents } from '../lib/consoleEvents.js'
   import Console from '../components/Console.svelte'
@@ -45,17 +45,11 @@
   // never prompts per machine. Returns the {machineId: grant} map, or null if the user cancelled.
   async function bulkGrants(machineIds) {
     if (!machineIds.length) return {}
-    // Try silently first: the server honours a step-up grace window, so re-opening the console
+    // Tried silently first: the server honours a step-up grace window, so re-opening the console
     // within it needs no prompt. Only a 428 (grace lapsed) pops the re-auth dialog.
-    try {
-      const res = await apiPost('/api/fleet/console/grant-all', { machine_ids: machineIds })
-      return res?.grants || {}
-    } catch (e) {
-      if (e?.status !== 428) throw e
-    }
-    const r = await stepUpConfirm({ title: 'Open console', description: 'Re-authenticate to open your sessions.' })
-    if (!r?.confirmed) return null
-    const res = await apiPost('/api/fleet/console/grant-all', { machine_ids: machineIds, currentPassword: r.password, totpCode: r.totp })
+    const res = await withStepUp((extra) => apiPost('/api/fleet/console/grant-all', { machine_ids: machineIds, ...extra }),
+      { title: 'Open console', description: 'Re-authenticate to open your sessions.' })
+    if (res === STEPUP_CANCELLED) return null
     return res?.grants || {}
   }
 

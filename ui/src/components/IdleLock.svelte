@@ -5,7 +5,7 @@
   // 2FA code when the user has 2FA, or their passkey) via POST /api/auth/unlock. The server holds
   // the lock too (a locked session gets 423 everywhere else); the session's absolute expiry remains
   // the hard limit, and a "Log out" escape means no one can get stuck.
-  import { currentUser, apiPost, setGlobalLockHandler } from '../stores/app.js'
+  import { currentUser, apiPost, setGlobalLockHandler, passwordProof } from '../stores/app.js'
   import { connect as wsConnect, disconnect as wsDisconnect, stopReconnect as wsStopReconnect } from '../stores/websocket.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
@@ -59,7 +59,7 @@
     error = ''
     busy = true
     try {
-      await apiPost(UNLOCK.url, proof || { currentPassword: password, totpCode: totp })
+      await apiPost(UNLOCK.url, proof || passwordProof(password, totp))
       password = ''
       totp = ''
       locked = false

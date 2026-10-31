@@ -6,7 +6,6 @@
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
   import Input from './Input.svelte'
-  import StepUpFields from './StepUpFields.svelte'
 
   const me = $derived($currentUser) // current operator (for role-gated options)
   let users = $state([])
@@ -17,21 +16,14 @@
   let addUsername = $state('')
   let addPassword = $state('')
   let addRole = $state('viewer')
-  let addCurrentPw = $state('')
-  let addTotp = $state('')
   let addBusy = $state(false)
 
   // Scope editor
   let scopeUser = $state(null)
   let scopeKind = $state('all')
   let scopeValues = $state('')
-  let scopeCurrentPw = $state('')
-  let scopeTotp = $state('')
   let scopeBusy = $state(false)
 
-  // Whether the signed-in operator has 2FA — step-up then also needs a fresh authenticator code.
-  const needsTotp = $derived(!!$currentUser?.totpEnabled)
-  const totpOk = (v) => !needsTotp || v.length === 6
   const scopeKindOptions = [
     { value: 'all', label: 'All machines' },
     { value: 'tag', label: 'By tag' },
@@ -75,32 +67,29 @@
     }
   }
 
-  // Step-up: prompt for the operator's password (and 2FA code when enabled). Returns
-  // { password, totp } or null if cancelled.
-  async function stepUp(message) {
+  // Every change here is confirmed with a step-up of the request it makes (url): the step-up proof
+  // to send, or null if cancelled.
+  async function stepUp(message, url) {
     const r = await stepUpConfirm({
-      title: 'Confirm your password',
+      title: 'Confirm it\'s you',
       message,
       confirmText: 'Authorize',
       variant: 'destructive',
+      action: { method: 'POST', url },
     })
-    return r?.confirmed && r?.password ? { password: r.password, totp: r.totp || '' } : null
+    return r?.proof || null
   }
 
   async function addUser() {
-    if (!addUsername.trim() || !addPassword || !addCurrentPw || !totpOk(addTotp)) return
+    if (!addUsername.trim() || !addPassword) return
+    const proof = await stepUp(`Create the ${addRole} account "${addUsername.trim()}"?`, '/api/auth/users')
+    if (!proof) return
     addBusy = true
     try {
-      await apiPost('/api/auth/users', {
-        username: addUsername.trim(),
-        password: addPassword,
-        role: addRole,
-        currentPassword: addCurrentPw,
-        totpCode: addTotp,
-      })
+      await apiPost('/api/auth/users', { username: addUsername.trim(), password: addPassword, role: addRole, ...proof })
       toast(`User "${addUsername.trim()}" created`, 'success')
       showAdd = false
-      addUsername = addPassword = addCurrentPw = addTotp = ''
+      addUsername = addPassword = ''
       addRole = 'viewer'
       await load()
     } catch (e) {
@@ -112,10 +101,10 @@
 
   async function changeRole(u, role) {
     if (role === u.role) return
-    const su = await stepUp(`Change ${u.username}'s role from ${u.role} to ${role}?`)
-    if (!su) { await load(); return } // reload to reset the select if cancelled
+    const proof = await stepUp(`Change ${u.username}'s role from ${u.role} to ${role}?`, '/api/auth/users/role')
+    if (!proof) { await load(); return } // reload to reset the select if cancelled
     try {
-      await apiPost('/api/auth/users/role', { user_id: u.id, role, currentPassword: su.password, totpCode: su.totp })
+      await apiPost('/api/auth/users/role', { user_id: u.id, role, ...proof })
       toast(`${u.username} is now ${role}`, 'success')
       await load()
     } catch (e) {
@@ -128,20 +117,19 @@
     scopeUser = u
     scopeKind = u.scopeKind || 'all'
     scopeValues = u.scopeValues || ''
-    scopeCurrentPw = ''
-    scopeTotp = ''
   }
 
   async function saveScope() {
-    if (!scopeUser || !scopeCurrentPw || !totpOk(scopeTotp)) return
+    if (!scopeUser) return
+    const proof = await stepUp(`Change the fleet machine scope of ${scopeUser.username}?`, '/api/auth/users/scope')
+    if (!proof) return
     scopeBusy = true
     try {
       await apiPost('/api/auth/users/scope', {
         user_id: scopeUser.id,
         scope_kind: scopeKind,
         scope_values: scopeKind === 'all' ? '' : scopeValues.trim(),
-        currentPassword: scopeCurrentPw,
-        totpCode: scopeTotp,
+        ...proof,
       })
       toast(`Scope updated for ${scopeUser.username}`, 'success')
       scopeUser = null
@@ -154,10 +142,10 @@
   }
 
   async function removeUser(u) {
-    const su = await stepUp(`Delete the account "${u.username}" (${u.role})? This cannot be undone.`)
-    if (!su) return
+    const proof = await stepUp(`Delete the account "${u.username}" (${u.role})? This cannot be undone.`, '/api/auth/users/delete')
+    if (!proof) return
     try {
-      await apiPost('/api/auth/users/delete', { user_id: u.id, currentPassword: su.password, totpCode: su.totp })
+      await apiPost('/api/auth/users/delete', { user_id: u.id, ...proof })
       toast(`Deleted ${u.username}`, 'success')
       await load()
     } catch (e) {
@@ -248,13 +236,10 @@
       <Input id="tu-username" label="Username" prefixIcon="user" bind:value={addUsername} placeholder="at least 3 characters" autocomplete="off" />
       <Input id="tu-password" label="Password" type="password" prefixIcon="lock" bind:value={addPassword} placeholder="8+ chars, mixed case, number, symbol" autocomplete="new-password" />
       <Select id="tu-role" label="Role" bind:value={addRole} options={roleOptions} helperText={ROLE_DESC[addRole]} />
-      <div class="pt-3 border-t border-border">
-        <StepUpFields id="tu-stepup" label="Confirm with your password" bind:password={addCurrentPw} bind:totp={addTotp} {needsTotp} onsubmit={addUser} />
-      </div>
     </div>
     {#snippet footer()}
       <Button onclick={() => (showAdd = false)} variant="secondary" disabled={addBusy}>Cancel</Button>
-      <Button onclick={addUser} variant="primary" disabled={addBusy || !addUsername.trim() || !addPassword || !addCurrentPw || !totpOk(addTotp)}>
+      <Button onclick={addUser} variant="primary" disabled={addBusy || !addUsername.trim() || !addPassword}>
         {#if addBusy}<Icon name="refresh" size={14} class="animate-spin mr-1" />{/if}
         Create user
       </Button>
@@ -271,13 +256,10 @@
         <Input id="sc-values" label="{scopeKind === 'tag' ? 'Tags' : 'Machine IDs'} (comma-separated)" prefixIcon="filter"
           bind:value={scopeValues} placeholder={scopeKind === 'tag' ? 'prod, db' : 'id1, id2'} autocomplete="off" />
       {/if}
-      <div class="pt-3 border-t border-border">
-        <StepUpFields id="sc-stepup" label="Confirm with your password" bind:password={scopeCurrentPw} bind:totp={scopeTotp} {needsTotp} onsubmit={saveScope} />
-      </div>
     </div>
     {#snippet footer()}
       <Button onclick={() => (scopeUser = null)} variant="secondary" disabled={scopeBusy}>Cancel</Button>
-      <Button onclick={saveScope} variant="primary" disabled={scopeBusy || !scopeCurrentPw || !totpOk(scopeTotp) || (scopeKind !== 'all' && !scopeValues.trim())}>
+      <Button onclick={saveScope} variant="primary" disabled={scopeBusy || (scopeKind !== 'all' && !scopeValues.trim())}>
         {#if scopeBusy}<Icon name="refresh" size={14} class="animate-spin mr-1" />{/if}
         Save scope
       </Button>

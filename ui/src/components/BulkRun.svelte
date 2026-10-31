@@ -48,6 +48,7 @@
   const cmd = $derived(commandOptions.find((c) => c.value === command))
   const plural = (n) => `${n} machine${n === 1 ? '' : 's'}`
 
+  const BULK_URL = '/api/fleet/bulk-command'
   async function run() {
     const ids = [...selected]
     if (ids.length === 0) return toast('Select at least one machine', 'error')
@@ -56,14 +57,13 @@
       message: `This queues "${cmd.label}" on ${plural(ids.length)}. Re-enter your credentials to authorize it.`,
       confirmText: 'Run',
       variant: 'destructive',
+      action: { method: 'POST', url: BULK_URL },
     })
-    if (!su?.confirmed || !su?.password) return
+    if (!su?.proof) return
     running = true
     results = {}
     try {
-      const res = await apiPost('/api/fleet/bulk-command', {
-        machine_ids: ids, type: command, currentPassword: su.password, totpCode: su.totp || '',
-      })
+      const res = await apiPost(BULK_URL, { machine_ids: ids, type: command, ...su.proof })
       results = Object.fromEntries((res.results || []).map((r) => [r.machine_id, r]))
       toast(`Queued on ${res.queued}/${plural(res.total)}`, res.queued === res.total ? 'success' : 'warning')
     } catch (e) {
