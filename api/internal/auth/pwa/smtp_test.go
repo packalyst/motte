@@ -6,16 +6,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"api/internal/database"
 )
 
 // TestSTARTTLSNeverFallsBackToPlaintext: with STARTTLS chosen, a mail server that doesn't offer it
 // gets no message (before, the alert went out unencrypted).
 func TestSTARTTLSNeverFallsBackToPlaintext(t *testing.T) {
-	if _, err := database.Init(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

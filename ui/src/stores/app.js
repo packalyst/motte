@@ -1,4 +1,5 @@
 import { writable, get } from 'svelte/store'
+import { passkeysSupported } from '../lib/webauthn.js'
 
 // The signed-in user (null when logged out). Set by App.svelte; read by step-up helpers and the
 // idle lock so they know the caller's 2FA status and idle-lock policy without prop threading.
@@ -180,6 +181,7 @@ export const confirmModalStore = writable({
   passwordValue: '',
   totpPrompt: null,      // optional { label } — renders a 2FA code field (step-up when 2FA is on)
   totpValue: '',
+  passkey: null,         // optional { method, url } — offers "Use passkey" to confirm that request
   resolve: null
 })
 
@@ -207,43 +209,52 @@ export function confirm(options) {
       passwordValue: '',
       totpPrompt: options.totpPrompt || null,
       totpValue: '',
+      passkey: options.passkey || null,
       resolve
     })
   })
 }
 
-// Step-up confirm for sensitive actions: always prompts for the password and, when the current
-// user has 2FA enabled, also prompts for a fresh authenticator code. Resolves to
-// { confirmed, password, totp }. Callers send { currentPassword: r.password, totpCode: r.totp }.
+// Step-up confirm for sensitive actions: prompts for the password and, when the current user has
+// 2FA enabled, also for a fresh authenticator code. Given options.action ({ method, url }: the one
+// request it confirms, exactly as it will be sent), a user with a passkey can confirm with it
+// instead. Resolves to { confirmed, password, totp, proof }: proof is what to put in that request's
+// body (the password and code, or the passkey answer), null when cancelled.
 export function stepUpConfirm(options = {}) {
   const u = get(currentUser)
+  const { action, ...rest } = options
   return confirm({
     variant: 'primary',
     confirmText: 'Confirm',
-    ...options,
+    ...rest,
     passwordPrompt: options.passwordPrompt || { label: 'Your password' },
-    totpPrompt: u?.totpEnabled ? (options.totpPrompt || { label: 'Authenticator code' }) : null
+    totpPrompt: u?.totpEnabled ? (options.totpPrompt || { label: 'Authenticator code' }) : null,
+    passkey: action && u?.hasPasskey && passkeysSupported() ? action : null
   })
 }
 
-// withStepUp sends a request; a sensitive one the panel answers 428 until the user's current
-// password (+ TOTP) is supplied (unless a recent step-up still covers it), so it then prompts with
-// stepUpConfirm(options) and retries once. send(extra) gets {} first, then { currentPassword,
-// totpCode }. Resolves to send's result, or STEPUP_CANCELLED when the user closes the prompt.
+// withStepUp sends a request; a sensitive one the panel answers 428 until the user re-authenticates
+// (fleet actions honour a short grace window instead), so it then prompts with
+// stepUpConfirm(options) and retries once. send(extra) gets {} first, then the step-up proof.
+// The 428 names the request and whether the server takes a passkey for it, so the prompt offers
+// one only where it works. Resolves to send's result, or STEPUP_CANCELLED when the prompt is closed.
 export const STEPUP_CANCELLED = Symbol('step-up cancelled')
 export async function withStepUp(send, options = {}) {
+  let stepUp
   try {
     return await send({})
   } catch (e) {
     if (e?.status !== 428) throw e
+    stepUp = e.stepUp
   }
-  const su = await stepUpConfirm(options)
-  if (!su?.confirmed || !su?.password) return STEPUP_CANCELLED
-  return await send({ currentPassword: su.password, totpCode: su.totp || '' })
+  const su = await stepUpConfirm({ ...options, action: stepUp?.passkey ? stepUp.action : undefined })
+  if (!su?.proof) return STEPUP_CANCELLED
+  return await send(su.proof)
 }
 
-// Close confirm modal (called by ConfirmModal component)
-export function closeConfirmModal(confirmed) {
+// Close confirm modal (called by ConfirmModal component). passkeyAnswer: the step-up was confirmed
+// with a passkey instead of the password.
+export function closeConfirmModal(confirmed, passkeyAnswer = null) {
   confirmModalStore.update(state => {
     if (state.resolve) {
       if (state.checkbox || state.passwordPrompt || state.totpPrompt) {
@@ -251,6 +262,11 @@ export function closeConfirmModal(confirmed) {
         if (state.checkbox) out.checked = state.checkboxChecked
         if (state.passwordPrompt) out.password = state.passwordValue
         if (state.totpPrompt) out.totp = state.totpValue
+        if (state.passwordPrompt) {
+          out.proof = !confirmed ? null
+            : passkeyAnswer ? { passkey: passkeyAnswer }
+            : state.passwordValue ? { currentPassword: state.passwordValue, totpCode: state.totpValue || '' } : null
+        }
         state.resolve(out)
       } else {
         state.resolve(confirmed)
@@ -343,9 +359,15 @@ async function api(endpoint, options = {}) {
     throw err
   }
 
-  const error = errorText(await res.text().catch(() => ''))
-  const err = new Error(error || res.statusText)
+  const text = await res.text().catch(() => '')
+  const err = new Error(errorText(text) || res.statusText)
   err.status = res.status // let callers branch on it (e.g. 428 → step-up re-auth)
+  if (res.status === 428) {
+    // Which request needs the step-up, and whether the server takes a passkey for it.
+    let passkey = false
+    try { passkey = JSON.parse(text)?.passkey === true } catch { /* not JSON */ }
+    err.stepUp = { passkey, action: { method: (options.method || 'GET').toUpperCase(), url: endpoint } }
+  }
   throw err
 }
 

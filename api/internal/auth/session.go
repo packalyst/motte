@@ -131,14 +131,11 @@ func (s *Service) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "Invalid or expired session", http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
-	}
+	var req StepUpCreds
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.StepUp(w, user.ID, req.CurrentPassword, req.TotpCode) {
+	if !s.StepUpWith(w, r, user.ID, req) {
 		return
 	}
 	// Clear the server-side lock so subsequent requests are allowed again.

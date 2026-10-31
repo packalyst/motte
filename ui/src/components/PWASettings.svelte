@@ -35,6 +35,7 @@
     unsubscribeFromPush,
     getSubscriptions,
     deleteSubscription,
+    subscriptionURL,
     endpointHash,
     getCurrentSubscription,
     sendTestNotification,
@@ -176,13 +177,14 @@
   // it too). This device turns itself off with the switch above instead.
   async function revokeSubscription(sub) {
     const name = sub.deviceName || getDeviceInfo(sub.userAgent).type
-    const su = await stepUpConfirm({ title: 'Remove device', message: `Stop notifications to ${name}?`,
-      description: 'It no longer gets alerts until it turns notifications on again.', confirmText: 'Remove', variant: 'destructive' })
-    if (!su?.confirmed || !su?.password) return
     const id = sub.id
+    const su = await stepUpConfirm({ title: 'Remove device', message: `Stop notifications to ${name}?`,
+      description: 'It no longer gets alerts until it turns notifications on again.', confirmText: 'Remove', variant: 'destructive',
+      action: { method: 'DELETE', url: subscriptionURL(id) } })
+    if (!su?.proof) return
     revokingId = id
     try {
-      await deleteSubscription(id, { currentPassword: su.password, totpCode: su.totp || '' })
+      await deleteSubscription(id, su.proof)
       toast('Device revoked successfully', 'success')
       await loadSubscriptions()
     } catch (e) {

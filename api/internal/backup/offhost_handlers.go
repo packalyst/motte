@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -23,15 +24,14 @@ func (s *Service) handleOffhostGetConfig(w http.ResponseWriter, r *http.Request)
 func (s *Service) handleOffhostSaveConfig(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		OffhostConfig
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		auth.StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &body) {
 		return
 	}
 	// Owner + step-up: this config sets the passphrase, destination and include-users that a
 	// scheduled full export (decrypted secrets) will use.
-	if _, ok := requireStepUp(w, r, body.CurrentPassword, body.TotpCode); !ok {
+	if _, ok := requireStepUp(w, r, body.StepUpCreds); !ok {
 		return
 	}
 	incoming := body.OffhostConfig
@@ -101,11 +101,10 @@ func (s *Service) handleOffhostTest(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleOffhostRunNow(w http.ResponseWriter, r *http.Request) {
 	// Owner + step-up: a run is a full export of decrypted secrets to the destination.
 	var creds struct {
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		auth.StepUpCreds
 	}
 	_ = json.NewDecoder(r.Body).Decode(&creds)
-	if _, ok := requireStepUp(w, r, creds.CurrentPassword, creds.TotpCode); !ok {
+	if _, ok := requireStepUp(w, r, creds.StepUpCreds); !ok {
 		return
 	}
 	if s.Status().Running {
@@ -153,16 +152,15 @@ func (s *Service) handleOffhostStatus(w http.ResponseWriter, r *http.Request) {
 // state, so it requires step-up re-authentication.
 func (s *Service) handleOffhostRestore(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Dest            string `json:"dest"`
-		Name            string `json:"name"`
-		Passphrase      string `json:"passphrase"` // optional override of the stored passphrase
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		Dest       string `json:"dest"`
+		Name       string `json:"name"`
+		Passphrase string `json:"passphrase"` // optional override of the stored passphrase
+		auth.StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	p, ok := requireStepUp(w, r, req.CurrentPassword, req.TotpCode)
+	p, ok := requireStepUp(w, r, req.StepUpCreds)
 	if !ok {
 		return
 	}

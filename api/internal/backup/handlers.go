@@ -17,7 +17,7 @@ import (
 // backup action. The backup path is a second write-door into the identity store (export decrypts
 // every secret; import replaces the users table), so export+import demand step-up on top of their
 // owner-only gate. Returns the principal and true on success; else writes a 428 and returns false.
-func requireStepUp(w http.ResponseWriter, r *http.Request, currentPassword, totpCode string) (*router.Principal, bool) {
+func requireStepUp(w http.ResponseWriter, r *http.Request, creds auth.StepUpCreds) (*router.Principal, bool) {
 	p := router.CurrentUser(r)
 	if p == nil {
 		router.JSONError(w, "unauthorized", http.StatusUnauthorized)
@@ -28,7 +28,7 @@ func requireStepUp(w http.ResponseWriter, r *http.Request, currentPassword, totp
 		router.JSONError(w, "auth unavailable", http.StatusServiceUnavailable)
 		return nil, false
 	}
-	if !a.StepUp(w, p.UserID, currentPassword, totpCode) {
+	if !a.StepUpWith(w, r, p.UserID, creds) {
 		return nil, false
 	}
 	return p, true
@@ -81,17 +81,16 @@ func (s *Service) db() *sql.DB {
 // POST /api/backup/export  { passphrase, users, fleet }
 func (s *Service) handleExport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Passphrase      string `json:"passphrase"`
-		Users           bool   `json:"users"`
-		Fleet           bool   `json:"fleet"`
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		Passphrase string `json:"passphrase"`
+		Users      bool   `json:"users"`
+		Fleet      bool   `json:"fleet"`
+		auth.StepUpCreds
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		router.JSONError(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if _, ok := requireStepUp(w, r, req.CurrentPassword, req.TotpCode); !ok {
+	if _, ok := requireStepUp(w, r, req.StepUpCreds); !ok {
 		return
 	}
 	if err := ValidatePassphrase(req.Passphrase); err != nil {
@@ -145,7 +144,7 @@ func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "confirmation required", http.StatusBadRequest)
 		return
 	}
-	if _, ok := requireStepUp(w, r, req.CurrentPassword, req.TotpCode); !ok {
+	if _, ok := requireStepUp(w, r, req.StepUpCreds); !ok {
 		return
 	}
 	hdr, doc, err := Open([]byte(req.Backup), req.Passphrase)
@@ -196,11 +195,10 @@ func (s *Service) apply(doc *Document) ([]string, error) {
 }
 
 type fileReq struct {
-	Passphrase      string `json:"passphrase"`
-	Backup          string `json:"backup"`
-	Confirm         bool   `json:"confirm"`
-	CurrentPassword string `json:"currentPassword"`
-	TotpCode        string `json:"totpCode"`
+	Passphrase string `json:"passphrase"`
+	Backup     string `json:"backup"`
+	Confirm    bool   `json:"confirm"`
+	auth.StepUpCreds
 }
 
 func (s *Service) decodeFile(w http.ResponseWriter, r *http.Request) (fileReq, bool) {

@@ -925,11 +925,12 @@
   async function exportBackup() {
     if (bkPass.length < 16) return toast('Passphrase must be at least 16 characters', 'error')
     if (bkPass !== bkPass2) return toast('Passphrases do not match', 'error')
-    const su = await stepUpConfirm({ title: 'Export backup', description: 'A backup can contain decrypted secrets (incl. 2FA seeds). Re-authenticate to export.' })
-    if (!su?.confirmed) return
+    const su = await stepUpConfirm({ title: 'Export backup', description: 'A backup can contain decrypted secrets (incl. 2FA seeds). Re-authenticate to export.',
+      action: { method: 'POST', url: '/api/backup/export' } })
+    if (!su?.proof) return
     bkExporting = true
     try {
-      const { blob, filename } = await apiPostBlob('/api/backup/export', { passphrase: bkPass, users: bkUsers, fleet: bkFleet, currentPassword: su.password, totpCode: su.totp })
+      const { blob, filename } = await apiPostBlob('/api/backup/export', { passphrase: bkPass, users: bkUsers, fleet: bkFleet, ...su.proof })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -989,11 +990,12 @@
       alert: true,
     })
     if (!ok) return
-    const su = await stepUpConfirm({ title: 'Replace config from backup', description: 'Importing replaces admin users and panel config. Re-authenticate to apply.' })
-    if (!su?.confirmed) return
+    const su = await stepUpConfirm({ title: 'Replace config from backup', description: 'Importing replaces admin users and panel config. Re-authenticate to apply.',
+      action: { method: 'POST', url: '/api/backup/import' } })
+    if (!su?.proof) return
     impApplying = true
     try {
-      const res = await apiPost('/api/backup/import', { passphrase: impPass, backup: impFileText, confirm: true, currentPassword: su.password, totpCode: su.totp })
+      const res = await apiPost('/api/backup/import', { passphrase: impPass, backup: impFileText, confirm: true, ...su.proof })
       toast('Backup applied' + (res.reconciled?.length ? ' — reconciled ' + res.reconciled.join(', ') : ''), 'success')
       impPreview = null
       impFileText = ''

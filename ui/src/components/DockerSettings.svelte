@@ -89,10 +89,11 @@
 
   // Actions - the WebSocket pushes the new state when a container changes
   const DONE = { restart: 'restarted', stop: 'stopped', start: 'started' }
+  const containerURL = (name, verb) => `/api/docker/containers/${name}/${verb}`
   async function containerAction(name, verb, body) {
     actionInProgress = name + '-' + verb
     try {
-      await apiPost(`/api/docker/containers/${name}/${verb}`, body)
+      await apiPost(containerURL(name, verb), body)
       toast(`Container ${name} ${DONE[verb]}`, 'success')
     } catch (e) {
       toast(`Failed to ${verb} ${name}: ${e.message}`, 'error')
@@ -110,8 +111,8 @@
   async function stopContainer(name) {
     const su = await stepUpConfirm({ title: 'Stop container', message: `Stop ${name}?`,
       description: 'It stays offline until you start it again. Stopping the panel, Traefik or the VPN containers can cut off your own access.',
-      confirmText: 'Stop', variant: 'destructive' })
-    if (su?.confirmed && su.password) containerAction(name, 'stop', { currentPassword: su.password, totpCode: su.totp || '' })
+      confirmText: 'Stop', variant: 'destructive', action: { method: 'POST', url: containerURL(name, 'stop') } })
+    if (su?.proof) containerAction(name, 'stop', su.proof)
   }
 
   const startContainer = (name) => containerAction(name, 'start')

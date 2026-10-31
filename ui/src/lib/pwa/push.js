@@ -126,8 +126,11 @@ export async function getSubscriptions() {
  * @param {number} id - Subscription ID to delete
  * @returns {Promise<Object>} Result
  */
+// subscriptionURL is the request that removes a device (what a passkey step-up confirms).
+export const subscriptionURL = (id) => `${API_BASE}/subscriptions?id=${encodeURIComponent(id)}`
+
 export async function deleteSubscription(id, stepUp) {
-  return await apiDelete(`${API_BASE}/subscriptions?id=${id}`, stepUp)
+  return await apiDelete(subscriptionURL(id), stepUp)
 }
 
 /**

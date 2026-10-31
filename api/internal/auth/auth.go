@@ -122,6 +122,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 		"Enable2FA":             s.handleEnable2FA,
 		"Disable2FA":            s.handleDisable2FA,
 		"Unlock":                s.handleUnlock,
+		"PasskeyStepUpBegin":    s.handlePasskeyStepUpBegin,
 		"Lock":                  s.handleLock,
 		"PasskeyRegisterBegin":  s.handlePasskeyRegisterBegin,
 		"PasskeyRegisterFinish": s.handlePasskeyRegisterFinish,
@@ -505,16 +506,19 @@ func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Embed the user's fields and add session-policy hints the UI needs: whether to collect a
-	// 2FA code on step-up prompts, the idle-lock timeout (0 = disabled), and the display timezone.
+	// 2FA code on step-up prompts, whether to offer a passkey for them, the idle-lock timeout
+	// (0 = disabled), and the display timezone.
 	resp := struct {
 		*User
 		TOTPEnabled     bool   `json:"totpEnabled"`
+		HasPasskey      bool   `json:"hasPasskey"`
 		IdleLockMinutes int    `json:"idleLockMinutes"`
 		Locked          bool   `json:"locked"`
 		DisplayTimezone string `json:"displayTimezone"`
 	}{
 		User:            user,
 		TOTPEnabled:     s.TOTPEnabled(user.ID),
+		HasPasskey:      s.HasPasskey(user.ID),
 		IdleLockMinutes: settings.IdleLockMinutes(),
 		Locked:          s.IsSessionLocked(token),
 		DisplayTimezone: settings.DisplayTimezone(),
@@ -539,17 +543,16 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Username        string `json:"username"`
-		Password        string `json:"password"`
-		Role            string `json:"role"`
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+		StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
 
-	if !s.StepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
+	if !s.StepUpWith(w, r, caller.ID, req.StepUpCreds) {
 		return
 	}
 

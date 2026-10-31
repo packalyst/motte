@@ -299,6 +299,17 @@ again, on top of a valid session:
   a compromise response — a stolen token elsewhere must not survive it) and audit-logs
   `auth/password_changed`.
 - **`VerifyPassword`** (`session.go:81-90`) is the shared step-up primitive.
+- **A passkey instead of the password** (`stepup_passkey.go`): every step-up that goes
+  through `StepUpWith` (`router.StepUp`, user management, backups, the idle-lock unlock)
+  also takes a passkey answer. `POST /api/auth/stepup/passkey {method, url}` makes a
+  challenge for **one user, one login session and one request** (method + URL with its
+  query), held in memory for `PasskeyChallengeTTL` and **used up when checked**, whatever
+  the outcome. The answer must come from one of that user's own passkeys with the user
+  **verified** (face, fingerprint or device PIN), so it is two factors and can't be
+  phished or replayed onto another action. The 428 says `passkey:true` only where it is
+  accepted. Password-only by design: changing the password, 2FA setup/removal, adding a
+  passkey (`StepUp`). Fleet actions (own grace window, bulk commands) still take the
+  password.
 
 ### 2FA / TOTP (`auth/totp.go`, verification in `auth.go`)
 

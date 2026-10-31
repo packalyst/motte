@@ -13,9 +13,6 @@ import (
 
 // Removing another device's notifications takes a step-up: without one it stays.
 func TestRevokeOtherDeviceNeedsStepUp(t *testing.T) {
-	if _, err := database.Init(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
 	db, _ := database.GetDB()
 	if _, err := db.Exec(`DELETE FROM users_push_subscriptions; DELETE FROM users WHERE id = 7;
 		INSERT INTO users (id, username, password_hash) VALUES (7, 'u7', 'x');

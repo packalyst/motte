@@ -133,6 +133,7 @@
           <StepUpFields id="confirm-stepup" bind:password bind:totp needsTotp={!!$confirmModalStore.totpPrompt} autofocus
             label={$confirmModalStore.passwordPrompt.label || 'Confirm your password'}
             placeholder={$confirmModalStore.passwordPrompt.placeholder || 'Your password'}
+            passkey={$confirmModalStore.passkey} onpasskey={(answer) => closeConfirmModal(true, answer)}
             onsubmit={handleConfirm} />
         </div>
       {/if}

@@ -3,7 +3,7 @@
   // Additive: password + 2FA still work; a passkey is just a faster, phishing-resistant way in.
   // A modal opened from Profile → Security; `count` reports how many exist for that card.
   import { onMount } from 'svelte'
-  import { apiGet, apiDelete, toast, confirm, stepUpConfirm } from '../stores/app.js'
+  import { apiGet, apiDelete, toast, confirm, stepUpConfirm, currentUser } from '../stores/app.js'
   import { passkeyRegister, passkeysSupported } from '../lib/webauthn.js'
   import { formatDate } from '../lib/utils/format.js'
   import Icon from './Icon.svelte'
@@ -27,6 +27,8 @@
     try {
       passkeys = (await apiGet('/api/auth/passkeys')) || []
       count = passkeys.length
+      // Step-up prompts offer "Use passkey" from the first one added, without a reload.
+      currentUser.update((u) => (u ? { ...u, hasPasskey: count > 0 } : u))
     } catch (e) {
       toast(e.message || 'Could not load passkeys', 'error')
     } finally {

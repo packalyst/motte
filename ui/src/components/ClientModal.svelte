@@ -483,22 +483,20 @@
 
   async function deleteNode() {
     if (!selectedNode) return
-    // Destructive + irreversible → step-up re-auth (password, +2FA when enabled), verified server-side.
+    // Destructive + irreversible → step-up re-auth (password, +2FA when enabled, or a passkey),
+    // verified server-side.
+    const url = selectedNode._type === 'wireguard' ? `/api/wg/peers/${selectedNode._wgId}` : `/api/hs/nodes/${selectedNode.id}`
     const su = await stepUpConfirm({
       title: 'Delete node',
       message: `Delete ${selectedNode._displayName}? This cannot be undone.`,
       confirmText: 'Delete',
       variant: 'destructive',
+      action: { method: 'DELETE', url },
     })
-    if (!su?.confirmed || !su?.password) return
-    const body = { currentPassword: su.password, totpCode: su.totp || '' }
+    if (!su?.proof) return
     actionLoading = true
     try {
-      if (selectedNode._type === 'wireguard') {
-        await apiDelete(`/api/wg/peers/${selectedNode._wgId}`, body)
-      } else {
-        await apiDelete(`/api/hs/nodes/${selectedNode.id}`, body)
-      }
+      await apiDelete(url, su.proof)
       toast('Node deleted', 'success')
       closeModal()
       onchanged?.()

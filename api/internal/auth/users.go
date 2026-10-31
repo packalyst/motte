@@ -148,15 +148,14 @@ func (s *Service) handleUpdateUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		UserID          int64  `json:"user_id"`
-		Role            string `json:"role"`
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		UserID int64  `json:"user_id"`
+		Role   string `json:"role"`
+		StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.StepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
+	if !s.StepUpWith(w, r, caller.ID, req.StepUpCreds) {
 		return
 	}
 	if !ValidRole(req.Role) {
@@ -195,16 +194,15 @@ func (s *Service) handleUpdateUserScope(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		UserID          int64  `json:"user_id"`
-		ScopeKind       string `json:"scope_kind"`
-		ScopeValues     string `json:"scope_values"`
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		UserID      int64  `json:"user_id"`
+		ScopeKind   string `json:"scope_kind"`
+		ScopeValues string `json:"scope_values"`
+		StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.StepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
+	if !s.StepUpWith(w, r, caller.ID, req.StepUpCreds) {
 		return
 	}
 	if !ValidScopeKind(req.ScopeKind) {
@@ -240,14 +238,13 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		UserID          int64  `json:"user_id"`
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		UserID int64 `json:"user_id"`
+		StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if !s.StepUp(w, caller.ID, req.CurrentPassword, req.TotpCode) {
+	if !s.StepUpWith(w, r, caller.ID, req.StepUpCreds) {
 		return
 	}
 	target, err := s.getUser(req.UserID)
