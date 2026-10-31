@@ -927,7 +927,15 @@ func DecodeJSON(r *http.Request, v interface{}) error {
 // DecodeJSONOrError decodes JSON and sends error response if failed
 // Returns true if decode succeeded, false if error was sent
 func DecodeJSONOrError(w http.ResponseWriter, r *http.Request, v interface{}) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	// Keep the body readable afterwards: a handler that decodes first and asks for a step-up
+	// later (StepUp reads the password from the same body) must still find the password there.
+	body, err := io.ReadAll(r.Body) // bounded by bodySizeLimitMiddleware
+	if err != nil {
+		JSONError(w, "could not read the request", http.StatusBadRequest)
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err := json.Unmarshal(body, v); err != nil {
 		JSONError(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return false
 	}
