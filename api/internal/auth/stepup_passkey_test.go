@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -135,8 +136,13 @@ func TestPasskeyStepUp(t *testing.T) {
 		return rec.Code, out.PublicKey.Challenge
 	}
 	const action = "/api/dhcp/clients/5/vpn"
+	// verify runs the step-up of a request carrying the passkey answer; nil when it passed.
 	verify := func(token string, uid int64, method, url string, answer json.RawMessage) error {
-		return svc.VerifyStepUpRequest(req(method, url, token, "", uid), uid, StepUpCreds{Passkey: answer})
+		rec := httptest.NewRecorder()
+		if svc.RequireStepUp(rec, req(method, url, token, "", uid), uid, StepUpCreds{Passkey: answer}) {
+			return nil
+		}
+		return errors.New(rec.Body.String())
 	}
 
 	// The happy path, and the same answer can't be used twice.
@@ -191,17 +197,25 @@ func TestPasskeyStepUp(t *testing.T) {
 
 	// The 428 re-prompt tells the UI a passkey can be used.
 	rec := httptest.NewRecorder()
-	if svc.StepUpWith(rec, req("PUT", action, aliceTok, "", alice.ID), alice.ID, StepUpCreds{}) || rec.Code != http.StatusPreconditionRequired ||
+	if svc.RequireStepUp(rec, req("PUT", action, aliceTok, "", alice.ID), alice.ID, StepUpCreds{}) || rec.Code != http.StatusPreconditionRequired ||
 		!strings.Contains(rec.Body.String(), `"passkey":true`) {
 		t.Fatalf("428 must offer the passkey: %d %s", rec.Code, rec.Body)
 	}
-	// A password-only check (the password and 2FA settings) never offers the passkey.
+	// A password-only check (the password and 2FA settings) never offers the passkey, nor takes one.
 	rec = httptest.NewRecorder()
-	if svc.StepUp(rec, alice.ID, "", "") || !strings.Contains(rec.Body.String(), `"passkey":false`) {
+	if svc.RequireStepUp(rec, req("PUT", action, aliceTok, "", alice.ID), alice.ID, StepUpCreds{}, PasswordOnly) || !strings.Contains(rec.Body.String(), `"passkey":false`) {
 		t.Fatalf("a password-only 428 must not offer the passkey: %s", rec.Body)
 	}
+	_, ch = begin(aliceTok, alice.ID, "PUT", action)
+	if svc.RequireStepUp(httptest.NewRecorder(), req("PUT", action, aliceTok, "", alice.ID), alice.ID,
+		StepUpCreds{Passkey: aliceKey.answer(t, ch, true)}, PasswordOnly) {
+		t.Fatal("a password-only step-up took a passkey")
+	}
 	// The password path is unchanged.
-	if err := svc.VerifyStepUpRequest(req("PUT", action, aliceTok, "", alice.ID), alice.ID, StepUpCreds{CurrentPassword: pw}); err != nil {
-		t.Fatalf("password step-up: %v", err)
+	if err := verify(aliceTok, alice.ID, "PUT", action, nil); err == nil {
+		t.Fatal("no credentials must be refused")
+	}
+	if !svc.RequireStepUp(httptest.NewRecorder(), req("PUT", action, aliceTok, "", alice.ID), alice.ID, StepUpCreds{CurrentPassword: pw}) {
+		t.Fatal("password step-up refused")
 	}
 }

@@ -16,11 +16,9 @@ package fleet
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -38,107 +36,6 @@ import (
 
 	"github.com/gorilla/websocket"
 )
-
-// consoleStepUp re-authenticates the operator from body-supplied creds (mirrors the fleet command
-// guardrail; we cannot use router.StepUp here because it re-reads the request body we already
-// decoded). Returns (0, nil) on success, else a 428 status + message.
-func (s *Service) consoleStepUp(r *http.Request, currentPassword, currentTOTP string) (int, error) {
-	_, userID := s.actingAdmin(r)
-	authSvc := auth.GetService()
-	if authSvc == nil || userID == 0 || currentPassword == "" {
-		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
-	}
-	if err := authSvc.VerifyStepUp(userID, currentPassword, currentTOTP); err != nil {
-		if errors.Is(err, auth.ErrStepUpTOTPRequired) {
-			return http.StatusPreconditionRequired, fmt.Errorf("two-factor authentication code required")
-		}
-		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication failed")
-	}
-	return 0, nil
-}
-
-// helper.ConsoleStepUpGrace is how long a single successful fleet re-auth is honoured without prompting
-// again. One operator action that re-authenticates — opening a console OR running a confirm-tier
-// fleet command — opens the window; while it is open the same LOGIN SESSION isn't re-prompted for
-// either. The window belongs to that session, not the user: a password typed on one device doesn't
-// cover another, or a stolen session cookie. It slides on every pass, so continuous administration
-// isn't interrupted, but never past helper.ConsoleStepUpGraceMax after the password was typed. It only waives
-// the password RE-ENTRY: the operator role, machine scope and per-host enable flag are still checked
-// on every request, and an idle-locked session never reaches here (the request 423s in auth
-// middleware first), so grace can't bypass the lock. A console is already a root shell, so sharing
-// the window with lesser fleet commands adds no authority. Not used by the enable toggle, which is
-// rarer/higher-impact and always re-authenticates.
-
-type fleetGrace struct{ until, started time.Time }
-
-// stepUpGraceAt holds each login session's window (token hash → window), one per session that
-// typed its password; past helper.MaxConsoleGraceWindows new windows aren't opened (the password is
-// asked again).
-var stepUpGraceAt = bounded.New[string, fleetGrace](helper.MaxConsoleGraceWindows, bounded.Refuse)
-
-// graceKey identifies the caller's login session without keeping its token.
-func graceKey(r *http.Request) string {
-	tok := helper.SessionToken(r)
-	if tok == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(tok))
-	return hex.EncodeToString(sum[:])
-}
-
-// useFleetGrace reports whether the caller's session is inside its window, and slides it (never
-// past the cap).
-func useFleetGrace(r *http.Request) bool {
-	key := graceKey(r)
-	if key == "" {
-		return false
-	}
-	now := time.Now()
-	inside := false
-	stepUpGraceAt.Update(key, now, func(g *fleetGrace, found bool) time.Time {
-		if !found {
-			return now // no window: nothing to keep
-		}
-		inside = true
-		g.until = now.Add(helper.ConsoleStepUpGrace)
-		if limit := g.started.Add(helper.ConsoleStepUpGraceMax); g.until.After(limit) {
-			g.until = limit
-		}
-		return g.until
-	})
-	return inside
-}
-
-// openFleetGrace starts the caller's window after they typed their password.
-func openFleetGrace(r *http.Request) {
-	key := graceKey(r)
-	if key == "" {
-		return
-	}
-	now := time.Now()
-	stepUpGraceAt.Update(key, now, func(g *fleetGrace, _ bool) time.Time {
-		*g = fleetGrace{until: now.Add(helper.ConsoleStepUpGrace), started: now}
-		return g.until
-	})
-}
-
-// consoleStepUpGraced is consoleStepUp with the shared fleet grace window: within the window it
-// passes WITHOUT a password (and slides the window); otherwise it re-authenticates as usual and, on
-// success, opens the window. Used by the open-console grant endpoints.
-func (s *Service) consoleStepUpGraced(r *http.Request, currentPassword, currentTOTP string) (int, error) {
-	_, userID := s.actingAdmin(r)
-	if userID == 0 {
-		return http.StatusPreconditionRequired, fmt.Errorf("step-up re-authentication required")
-	}
-	if useFleetGrace(r) {
-		return 0, nil
-	}
-	if status, err := s.consoleStepUp(r, currentPassword, currentTOTP); err != nil {
-		return status, err
-	}
-	openFleetGrace(r)
-	return 0, nil
-}
 
 // consoleFrame mirrors the agent's wire protocol (JSON; binary is base64 in Data).
 type consoleFrame struct {
@@ -1055,10 +952,9 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 	p := router.CurrentUser(r)
 	readonly := r.URL.Query().Get("readonly") == "true"
 	var req struct {
-		MachineID       string `json:"machine_id"`
-		Session         string `json:"session"` // set when minting a read-only share grant for a live session
-		CurrentPassword string `json:"currentPassword"`
-		TOTPCode        string `json:"totpCode"`
+		MachineID string `json:"machine_id"`
+		Session   string `json:"session"` // set when minting a read-only share grant for a live session
+		auth.StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -1076,10 +972,9 @@ func (s *Service) handleConsoleGrant(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "console is not enabled for this machine", http.StatusForbidden)
 		return
 	}
-	// Step-up re-auth before handing out console access (honours the grace window — see
-	// consoleStepUpGraced — so an operator isn't re-prompted on every console open).
-	if status, err := s.consoleStepUpGraced(r, req.CurrentPassword, req.TOTPCode); err != nil {
-		router.JSONError(w, err.Error(), status)
+	// Step-up before handing out console access (inside the fleet grace window it passes, so an
+	// operator isn't re-prompted on every console open).
+	if !auth.RequireStepUp(w, r, req.StepUpCreds, fleetGrace) {
 		return
 	}
 	// A normal grant is multi-use within a short window so one step-up covers opening several
@@ -1137,9 +1032,8 @@ func grantAllTargets(ids []string) []string {
 func (s *Service) handleConsoleGrantAll(w http.ResponseWriter, r *http.Request) {
 	p := router.CurrentUser(r)
 	var req struct {
-		MachineIDs      []string `json:"machine_ids"`
-		CurrentPassword string   `json:"currentPassword"`
-		TOTPCode        string   `json:"totpCode"`
+		MachineIDs []string `json:"machine_ids"`
+		auth.StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -1150,8 +1044,7 @@ func (s *Service) handleConsoleGrantAll(w http.ResponseWriter, r *http.Request) 
 	}
 	// Step-up re-auth once, before handing out any console access (honours the grace window, so
 	// re-entering the console within it doesn't prompt again).
-	if status, err := s.consoleStepUpGraced(r, req.CurrentPassword, req.TOTPCode); err != nil {
-		router.JSONError(w, err.Error(), status)
+	if !auth.RequireStepUp(w, r, req.StepUpCreds, fleetGrace) {
 		return
 	}
 	ttl, uses := helper.ConsoleGrantTTL, helper.ConsoleGrantUses
@@ -1176,11 +1069,10 @@ func (s *Service) handleConsoleGrantAll(w http.ResponseWriter, r *http.Request) 
 func (s *Service) handleConsoleToggle(w http.ResponseWriter, r *http.Request) {
 	p := router.CurrentUser(r)
 	var req struct {
-		MachineID       string `json:"machine_id"`
-		Enabled         bool   `json:"enabled"`
-		Record          bool   `json:"record"`
-		CurrentPassword string `json:"currentPassword"`
-		TOTPCode        string `json:"totpCode"`
+		MachineID string `json:"machine_id"`
+		Enabled   bool   `json:"enabled"`
+		Record    bool   `json:"record"`
+		auth.StepUpCreds
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
@@ -1191,8 +1083,7 @@ func (s *Service) handleConsoleToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Enabled { // turning a remote shell ON is the sensitive direction
-		if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TOTPCode); err != nil {
-			router.JSONError(w, err.Error(), status)
+		if !auth.RequireStepUp(w, r, req.StepUpCreds) { // a fresh one, never the grace window
 			return
 		}
 	}

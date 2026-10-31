@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/auth"
 	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
@@ -68,9 +69,8 @@ func (s *Service) Handlers() router.ServiceHandlers {
 // POST /api/fleet/machine/delete  {"machine_id":"..."}
 func (s *Service) handleDeleteMachine(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineID       string `json:"machine_id"`
-		CurrentPassword string `json:"currentPassword"`
-		TotpCode        string `json:"totpCode"`
+		MachineID string `json:"machine_id"`
+		auth.StepUpCreds
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil || req.MachineID == "" {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
@@ -78,8 +78,7 @@ func (s *Service) handleDeleteMachine(w http.ResponseWriter, r *http.Request) {
 	}
 	// It deletes the machine's console recordings too (the audit trail of what was done on it):
 	// a fresh step-up every time, like deleting a recording.
-	if status, err := s.consoleStepUp(r, req.CurrentPassword, req.TotpCode); err != nil {
-		router.JSONError(w, err.Error(), status)
+	if !auth.RequireStepUp(w, r, req.StepUpCreds) {
 		return
 	}
 	if err := s.DeleteMachine(req.MachineID); err != nil {
@@ -133,9 +132,8 @@ func (s *Service) handlePushBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// sync-blocks is allow-tier (no step-up); route through the guardrail for audit coverage.
-	id, status, err := s.enqueueGuarded(r, req.MachineID, "sync-blocks", "", "", payload)
-	if err != nil {
-		router.JSONError(w, err.Error(), status)
+	id, ok := s.enqueueGuarded(w, r, req.MachineID, "sync-blocks", auth.StepUpCreds{}, payload)
+	if !ok {
 		return
 	}
 	router.JSON(w, map[string]any{"command_id": id, "count": count})
@@ -174,17 +172,15 @@ func (s *Service) userCommandPayload(ctype string, payload json.RawMessage) (jso
 // blocklist set (CrowdSec/manual bans are untouched). POST /api/fleet/clear-blocks {"machine_id"}
 func (s *Service) handleClearBlocks(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineID       string `json:"machine_id"`
-		CurrentPassword string `json:"currentPassword"` // step-up: clear-blocks is confirm-tier
-		TotpCode        string `json:"totpCode"`
+		MachineID        string `json:"machine_id"`
+		auth.StepUpCreds        // clear-blocks is confirm-tier
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil || req.MachineID == "" {
 		router.JSONError(w, "machine_id required", http.StatusBadRequest)
 		return
 	}
-	id, status, err := s.enqueueGuarded(r, req.MachineID, "clear-blocks", req.CurrentPassword, req.TotpCode, nil)
-	if err != nil {
-		router.JSONError(w, err.Error(), status)
+	id, ok := s.enqueueGuarded(w, r, req.MachineID, "clear-blocks", req.StepUpCreds, nil)
+	if !ok {
 		return
 	}
 	router.JSON(w, map[string]any{"command_id": id})
@@ -200,9 +196,8 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		Port    int  `json:"port"`
 		// FinishMigration closes the old port of a port change now, without waiting for the
 		// machines that haven't reconnected on the new one (they then need reinstalling).
-		FinishMigration bool   `json:"finish_migration"`
-		CurrentPassword string `json:"currentPassword"` // step-up for finish_migration
-		TotpCode        string `json:"totpCode"`
+		FinishMigration  bool `json:"finish_migration"`
+		auth.StepUpCreds      // finishing the migration, or switching the listener off or moving it
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
 		router.JSONError(w, "bad json", http.StatusBadRequest)
@@ -234,8 +229,7 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		if req.FinishMigration {
 			// It can cut machines off for good (they then need reinstalling): a step-up, like the other
 			// fleet actions (passes without a prompt inside the fleet step-up grace window).
-			if status, err := s.verifyStepUp(r, "close the old port", req.CurrentPassword, req.TotpCode); err != nil {
-				router.JSONError(w, err.Error(), status)
+			if !auth.RequireStepUp(w, r, req.StepUpCreds, fleetGrace) {
 				return
 			}
 			actor, _ := s.actingAdmin(r)
@@ -254,8 +248,7 @@ func (s *Service) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	// Switching the listener off, or moving it, cuts the machines off (a move until they reconnect):
 	// a step-up, like the other fleet actions (none inside the fleet step-up grace window).
 	if oldEnabled && (!req.Enabled || req.Port != oldPort) {
-		if status, err := s.verifyStepUp(r, "switch the agent listener off or move it", req.CurrentPassword, req.TotpCode); err != nil {
-			router.JSONError(w, err.Error(), status)
+		if !auth.RequireStepUp(w, r, req.StepUpCreds, fleetGrace) {
 			return
 		}
 	}
@@ -328,11 +321,10 @@ func boolStr(b bool) string {
 }
 
 type createTokenRequest struct {
-	Label           string `json:"label"`
-	TTLSeconds      int    `json:"ttl_seconds"`
-	PanelHost       string `json:"panel_host"`      // direct origin the agent dials for mTLS (IP the operator picked)
-	CurrentPassword string `json:"currentPassword"` // step-up
-	TotpCode        string `json:"totpCode"`
+	Label      string `json:"label"`
+	TTLSeconds int    `json:"ttl_seconds"`
+	PanelHost  string `json:"panel_host"` // direct origin the agent dials for mTLS (IP the operator picked)
+	auth.StepUpCreds
 }
 
 // handleEndpoints tells the UI the fleet state + the addresses agents can reach the
@@ -386,8 +378,7 @@ func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	var req createTokenRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req)
 	// A token lets whoever holds it enroll a machine into the fleet: step-up.
-	if status, err := s.verifyStepUp(r, "create an enrollment token", req.CurrentPassword, req.TotpCode); err != nil {
-		router.JSONError(w, err.Error(), status)
+	if !auth.RequireStepUp(w, r, req.StepUpCreds, fleetGrace) {
 		return
 	}
 	ttl := time.Duration(req.TTLSeconds) * time.Second
@@ -480,11 +471,10 @@ func (s *Service) handleCAInfo(w http.ResponseWriter, r *http.Request) {
 // POST /api/fleet/command  {"machine_id":"...","type":"block","payload":{"ip":"1.2.3.4"}}
 func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineID       string          `json:"machine_id"`
-		Type            string          `json:"type"`
-		Payload         json.RawMessage `json:"payload"`
-		CurrentPassword string          `json:"currentPassword"` // step-up, for confirm-tier commands
-		TotpCode        string          `json:"totpCode"`
+		MachineID        string          `json:"machine_id"`
+		Type             string          `json:"type"`
+		Payload          json.RawMessage `json:"payload"`
+		auth.StepUpCreds                 // for confirm-tier commands, and folders added for scans to skip
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		router.JSONError(w, "bad json", http.StatusBadRequest)
@@ -509,14 +499,16 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 	// on an offline machine may ask for a step-up before the request is refused as offline.
 	var excl *scanExcludeChange
 	if req.Type == "rescan" && s.machineAllowed(r, req.MachineID) && validateCommandPayload(req.Type, payload) == nil {
-		if excl, status, err = s.guardScanExcludes(r, req.MachineID, payload, req.CurrentPassword, req.TotpCode); err != nil {
+		if excl, status, err = s.guardScanExcludes(r, req.MachineID, payload); err != nil {
 			router.JSONError(w, err.Error(), status)
 			return
 		}
+		if excl != nil && len(excl.added) > 0 && !auth.RequireStepUp(w, r, req.StepUpCreds, fleetGrace) {
+			return
+		}
 	}
-	id, status, err := s.enqueueGuarded(r, req.MachineID, req.Type, req.CurrentPassword, req.TotpCode, payload)
-	if err != nil {
-		router.JSONError(w, err.Error(), status)
+	id, ok := s.enqueueGuarded(w, r, req.MachineID, req.Type, req.StepUpCreds, payload)
+	if !ok {
 		return
 	}
 	s.auditScanExcludes(r, req.MachineID, excl)
@@ -531,11 +523,10 @@ func (s *Service) handleEnqueueCommand(w http.ResponseWriter, r *http.Request) {
 // POST /api/fleet/bulk-command  {"machine_ids":["a","b"],"type":"apply-updates","payload":{},"currentPassword":"...","totpCode":"..."}
 func (s *Service) handleBulkCommand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MachineIDs      []string        `json:"machine_ids"`
-		Type            string          `json:"type"`
-		Payload         json.RawMessage `json:"payload"`
-		CurrentPassword string          `json:"currentPassword"`
-		TotpCode        string          `json:"totpCode"`
+		MachineIDs []string        `json:"machine_ids"`
+		Type       string          `json:"type"`
+		Payload    json.RawMessage `json:"payload"`
+		auth.StepUpCreds
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		router.JSONError(w, "bad json", http.StatusBadRequest)
@@ -565,8 +556,7 @@ func (s *Service) handleBulkCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Payload = payload
 	// Verify step-up once for the whole batch (428 → the UI prompts and retries).
-	if status, err := s.verifyCommandStepUp(r, req.Type, req.CurrentPassword, req.TotpCode); err != nil {
-		router.JSONError(w, err.Error(), status)
+	if requiresStepUp(req.Type) && !auth.RequireStepUp(w, r, req.StepUpCreds, fleetGrace) {
 		return
 	}
 

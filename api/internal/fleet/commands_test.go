@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"api/internal/auth"
 	"api/internal/router"
 )
 
@@ -89,20 +90,25 @@ func TestEnqueueGuardrail(t *testing.T) {
 		return r.WithContext(router.ContextWithPrincipal(r.Context(), &router.Principal{Role: "owner", Username: "owner1"}))
 	}
 
+	enqueue := func(ctype string, payload json.RawMessage) (string, bool, int) {
+		rec := httptest.NewRecorder()
+		id, ok := svc.enqueueGuarded(rec, req(), "m1", ctype, auth.StepUpCreds{}, payload)
+		return id, ok, rec.Code
+	}
+
 	// Allow-tier: enqueued directly.
-	id, status, err := svc.enqueueGuarded(req(), "m1", "block", "", "", json.RawMessage(`{"ip":"1.2.3.4"}`))
-	if err != nil || status != http.StatusOK || id == "" {
-		t.Fatalf("allow-tier block: id=%q status=%d err=%v, want ok", id, status, err)
+	if id, ok, code := enqueue("block", json.RawMessage(`{"ip":"1.2.3.4"}`)); !ok || id == "" {
+		t.Fatalf("allow-tier block: id=%q ok=%v status=%d, want ok", id, ok, code)
 	}
 
 	// Block-tier: not allowlisted → refused.
-	if _, status, err := svc.enqueueGuarded(req(), "m1", "rm-rf-slash", "", "", nil); err == nil || status != http.StatusBadRequest {
-		t.Fatalf("block-tier: status=%d err=%v, want 400 + error", status, err)
+	if _, ok, code := enqueue("rm-rf-slash", nil); ok || code != http.StatusBadRequest {
+		t.Fatalf("block-tier: ok=%v status=%d, want 400", ok, code)
 	}
 
 	// Confirm-tier without a verifiable operator → step-up required (428), not enqueued.
-	if _, status, err := svc.enqueueGuarded(req(), "m1", "restart", "", "", nil); err == nil || status != http.StatusPreconditionRequired {
-		t.Fatalf("confirm-tier: status=%d err=%v, want 428 + error", status, err)
+	if _, ok, code := enqueue("restart", nil); ok || code != http.StatusPreconditionRequired {
+		t.Fatalf("confirm-tier: ok=%v status=%d, want 428", ok, code)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"api/internal/auth"
 	"api/internal/router"
 )
 
@@ -107,8 +108,9 @@ func TestSetToolGuarded(t *testing.T) {
 	if !gatePanelInternalCommand(httptest.NewRecorder(), as("admin"), "set-tool") {
 		t.Fatal("admin blocked")
 	}
-	if _, status, err := svc.enqueueGuarded(as("owner"), "m1", "set-tool", "", "", json.RawMessage(`{"tool":"crowdsec","enabled":false}`)); err == nil || status != http.StatusPreconditionRequired {
-		t.Fatalf("no step-up: status %d err %v", status, err)
+	rec := httptest.NewRecorder()
+	if _, ok := svc.enqueueGuarded(rec, as("owner"), "m1", "set-tool", auth.StepUpCreds{}, json.RawMessage(`{"tool":"crowdsec","enabled":false}`)); ok || rec.Code != http.StatusPreconditionRequired {
+		t.Fatalf("no step-up: ok %v status %d", ok, rec.Code)
 	}
 	for _, p := range []string{`{"tool":"nmap","enabled":true}`, `{"tool":"crowdsec"}`, `{}`} {
 		if validateCommandPayload("set-tool", json.RawMessage(p)) == nil {
@@ -137,12 +139,23 @@ func TestScanExcludeAddsNeedAdminStepUp(t *testing.T) {
 		{"operator", `{"exclude":["/srv/cache"]}`, 0},                           // the same list
 		{"operator", `{"exclude":[]}`, 0},                                       // scanning more
 		{"operator", `{"exclude":["/srv/cache","/opt"]}`, http.StatusForbidden}, // hiding /opt
-		{"admin", `{"exclude":["/opt"]}`, http.StatusPreconditionRequired},      // admin, no step-up yet
+		{"admin", `{"exclude":["/opt"]}`, 0},                                    // admin: the caller's step-up next
 	} {
-		_, status, err := svc.guardScanExcludes(as(c.role), "m1", json.RawMessage(c.payload), "", "")
+		_, status, err := svc.guardScanExcludes(as(c.role), "m1", json.RawMessage(c.payload))
 		if status != c.want || (c.want == 0) != (err == nil) {
 			t.Errorf("%s %s: status %d err %v, want %d", c.role, c.payload, status, err, c.want)
 		}
+	}
+	// The admin's addition is a step-up at the endpoint: without one nothing is queued.
+	queued := func() (n int) {
+		svc.db.QueryRow(`SELECT COUNT(*) FROM fleet_commands WHERE machine_id = 'm1'`).Scan(&n)
+		return
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/fleet/command", strings.NewReader(`{"machine_id":"m1","type":"rescan","payload":{"exclude":["/opt"]}}`))
+	svc.handleEnqueueCommand(rec, r.WithContext(as("admin").Context()))
+	if rec.Code != http.StatusPreconditionRequired || queued() != 0 {
+		t.Fatalf("admin adding a folder without a step-up: status %d, %d queued; want 428, none", rec.Code, queued())
 	}
 
 	// An admin removes /srv/cache (queued); until the machine reports again its report still
@@ -153,7 +166,7 @@ func TestScanExcludeAddsNeedAdminStepUp(t *testing.T) {
 		time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Add(time.Second).Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
-	if _, status, _ := svc.guardScanExcludes(as("operator"), "m1", json.RawMessage(`{"exclude":["/srv/cache"]}`), "", ""); status != http.StatusForbidden {
+	if _, status, _ := svc.guardScanExcludes(as("operator"), "m1", json.RawMessage(`{"exclude":["/srv/cache"]}`)); status != http.StatusForbidden {
 		t.Fatalf("an operator re-added a folder an admin had just removed: status %d", status)
 	}
 }
