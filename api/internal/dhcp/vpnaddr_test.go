@@ -394,3 +394,62 @@ func TestLANDeviceRoutesFollowDevice(t *testing.T) {
 		t.Fatalf("routes left after the network went: %d", left)
 	}
 }
+
+// Taking access away cuts the device's open connections: after an apply, every device that lost
+// a path (a grant, the way back, a route port, the internet, its VPN address) or is gone has its
+// addresses handed to the conntrack flush; a device that only gained or kept access is left alone,
+// and the first apply after start cuts nothing.
+func TestReachabilityCutsLostAccess(t *testing.T) {
+	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", Mode: "approve", Enabled: true}}
+	origin := routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"}
+	dev := func(n int, d devicePolicy) devicePolicy {
+		d.IP, d.MAC = fmt.Sprintf("10.20.20.%d", 50+n), fmt.Sprintf("02:00:00:00:00:%02d", n)
+		return d
+	}
+	before := map[int64]netPolicy{1: {Devices: []devicePolicy{
+		dev(1, devicePolicy{VPNIP: "10.8.128.1", Allowed: []vpnGrant{{IP: "10.8.0.7"}}}),             // loses the grant
+		dev(2, devicePolicy{VPNIP: "10.8.128.2", Allowed: []vpnGrant{{IP: "10.8.0.7", Both: true}}}), // two-way → one-way
+		dev(3, devicePolicy{VPNIP: "10.8.128.3", Routes: []int{80, 443}}),                            // loses a route port
+		dev(4, devicePolicy{Internet: true}),                                                         // loses the internet
+		dev(5, devicePolicy{VPNIP: "10.8.128.5"}),                                                    // gone (blocked/forgotten)
+		dev(6, devicePolicy{VPNIP: "10.8.128.6", Allowed: []vpnGrant{{IP: "10.8.0.7"}}}),             // keeps everything
+		dev(7, devicePolicy{}), // only gains
+	}}}
+	after := map[int64]netPolicy{1: {Devices: []devicePolicy{
+		dev(1, devicePolicy{VPNIP: "10.8.128.1"}),
+		dev(2, devicePolicy{VPNIP: "10.8.128.2", Allowed: []vpnGrant{{IP: "10.8.0.7"}}}),
+		dev(3, devicePolicy{VPNIP: "10.8.128.3", Routes: []int{80}}),
+		dev(4, devicePolicy{}),
+		dev(6, devicePolicy{VPNIP: "10.8.128.6", Allowed: []vpnGrant{{IP: "10.8.0.7"}}}),
+		dev(7, devicePolicy{VPNIP: "10.8.128.7", Allowed: []vpnGrant{{IP: "10.8.0.7"}}, Internet: true}),
+	}}}
+	tbl := &ReachabilityTable{}
+	tbl.built = accessOf(nets, before, "eth0", origin)
+	if got := tbl.ConntrackFlushTargets(); len(got) != 0 {
+		t.Fatalf("the first apply must cut nothing: %v", got)
+	}
+	tbl.built = accessOf(nets, after, "eth0", origin)
+	got := map[string]bool{}
+	for _, ip := range tbl.ConntrackFlushTargets() {
+		got[ip] = true
+	}
+	for _, ip := range []string{"10.20.20.51", "10.8.128.1", "10.20.20.52", "10.8.128.2", "10.20.20.53", "10.8.128.3", "10.20.20.54", "10.20.20.55", "10.8.128.5"} {
+		if !got[ip] {
+			t.Errorf("%s lost access but its connections stay: %v", ip, got)
+		}
+	}
+	for _, ip := range []string{"10.20.20.56", "10.8.128.6", "10.20.20.57", "10.8.128.7"} {
+		if got[ip] {
+			t.Errorf("%s lost nothing but its connections are cut: %v", ip, got)
+		}
+	}
+	// Applied again unchanged: nothing more to cut.
+	if again := tbl.ConntrackFlushTargets(); len(again) != 0 {
+		t.Fatalf("an unchanged apply must cut nothing: %v", again)
+	}
+	// Traefik's origin going away closes every route: those devices lose access too.
+	tbl.built = accessOf(nets, after, "eth0", routeOrigin{})
+	if cut := tbl.ConntrackFlushTargets(); fmt.Sprint(cut) != "[10.20.20.53 10.8.128.3]" {
+		t.Fatalf("routes shut by a lost origin must cut the device: %v", cut)
+	}
+}

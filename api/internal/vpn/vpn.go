@@ -737,8 +737,12 @@ func (s *Service) SyncClients() (added int, removed int, err error) {
 	// (see staleClients: deleting a client also deletes its ACL rules, virtual IPs and keys).
 	for _, ip := range staleClients(typeOf, seen, listed) {
 		id := existing[ip]
-		// Delete domain routes for this client first
-		domains.DeleteClientRoutes(id)
+		// Delete domain routes for this client first; if they can't be, keep the client for the
+		// next sync rather than leave its routes behind.
+		if _, err := domains.DeleteClientRoutes(id); err != nil {
+			log.Printf("vpn: stale client %s kept: its domain routes could not be removed: %v", ip, err)
+			continue
+		}
 		// ACL rules are automatically deleted via ON DELETE CASCADE
 		if _, err := db.Exec(`DELETE FROM vpn_clients WHERE id = ?`, id); err == nil {
 			removed++

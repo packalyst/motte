@@ -70,7 +70,7 @@
 </script>
 
 {#if $confirmModalStore.open}
-  <Modal open={$confirmModalStore.open} title={$confirmModalStore.title} size="sm" onclose={handleCancel}>
+  <Modal open={$confirmModalStore.open} title={$confirmModalStore.title} size="sm" stacked onclose={handleCancel}>
     <div class="space-y-4">
       {#if $confirmModalStore.alert}
         <!-- Alert style layout -->

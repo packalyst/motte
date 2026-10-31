@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strings"
 	"time"
@@ -182,6 +183,7 @@ type DomainRoute struct {
 	VPNClientName  string                  `json:"vpnClientName,omitempty"`
 	LANDeviceID    *int64                  `json:"lanDeviceId,omitempty"`   // set when the target is a LAN device's VPN address
 	LANDeviceName  string                  `json:"lanDeviceName,omitempty"` // its name, or MAC when unnamed
+	TargetUnheld   bool                    `json:"targetUnheld,omitempty"`  // the target is a VPN address nobody holds: the route reaches nothing
 }
 
 // New creates a new domains service
@@ -358,16 +360,36 @@ func scanRoute(row interface{ Scan(...any) error }) (DomainRoute, error) {
 	return route, nil
 }
 
+// markUnheld flags the routes whose target is an address in the WireGuard range that no VPN
+// client, virtual IP or LAN device holds (e.g. one made before a device got that address, or left
+// after it lost it): such a route reaches nothing until it is pointed at a device. Best-effort.
+func markUnheld(db *database.DB, routes []DomainRoute) {
+	wg, isRange, err := helper.ParseIPv4(helper.GetEnvOptional("WG_IP_RANGE", ""))
+	if err != nil || !isRange {
+		return
+	}
+	owners, err := db.VPNAddressOwners()
+	if err != nil {
+		return
+	}
+	server := vpnDNSTarget()
+	for i := range routes {
+		ip, err := netip.ParseAddr(routes[i].TargetIP)
+		routes[i].TargetUnheld = err == nil && wg.Contains(ip) && ip != wg.Addr() &&
+			routes[i].TargetIP != server && owners[routes[i].TargetIP] == ""
+	}
+}
+
 func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	db, err := database.GetDB()
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
 	rows, err := db.Query(routeSelect + ` ORDER BY d.domain`)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -380,6 +402,7 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		}
 		routes = append(routes, route)
 	}
+	markUnheld(db, routes)
 
 	router.JSON(w, map[string]interface{}{
 		"routes": routes,
@@ -396,7 +419,7 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 
 	db, err := database.GetDB()
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -406,7 +429,7 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -478,7 +501,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	db, err := database.GetDB()
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -512,7 +535,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 			router.JSONError(w, "domain already exists", http.StatusConflict)
 			return
 		}
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -615,7 +638,7 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	db, err := database.GetDB()
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -762,7 +785,7 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			router.JSONError(w, "domain already exists", http.StatusConflict)
 			return
 		}
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -789,7 +812,7 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	db, err := database.GetDB()
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -814,7 +837,7 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 	// Step 2: Delete from database
 	result, err := db.Exec("DELETE FROM domain_routes WHERE id = ?", id)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -842,7 +865,7 @@ func (s *Service) handleToggle(w http.ResponseWriter, r *http.Request) {
 
 	db, err := database.GetDB()
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -852,7 +875,7 @@ func (s *Service) handleToggle(w http.ResponseWriter, r *http.Request) {
 		WHERE id = ?
 	`, id)
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 
@@ -883,15 +906,13 @@ func (s *Service) handleToggle(w http.ResponseWriter, r *http.Request) {
 // handleGetCertificates returns SSL certificate information from acme.json
 func (s *Service) handleGetCertificates(w http.ResponseWriter, r *http.Request) {
 	certs, err := traefik.GetCertificates()
-	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
-		return
+	var pending []traefik.CertificateInfo
+	if err == nil {
+		pending, err = traefik.GetPendingSSLDomains() // also the pending/error domains
 	}
-
-	// Also get pending/error domains
-	pending, err := traefik.GetPendingSSLDomains()
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("domains: certificates: %v", err)
+		router.JSONError(w, "could not read certificates", http.StatusInternalServerError)
 		return
 	}
 
@@ -907,7 +928,7 @@ func (s *Service) handleGetCertificates(w http.ResponseWriter, r *http.Request) 
 func (s *Service) handleGetSystemDomain(w http.ResponseWriter, r *http.Request) {
 	db, err := database.GetDB()
 	if err != nil {
-		router.JSONError(w, err.Error(), http.StatusInternalServerError)
+		router.DBError(w, err)
 		return
 	}
 

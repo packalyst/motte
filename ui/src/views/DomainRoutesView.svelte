@@ -240,6 +240,15 @@
       toast('Domain, IP, and Port are required', 'error')
       return
     }
+    // A public route to a LAN device puts that device on the internet: say so before saving.
+    const lan = formData.accessMode === 'public' && lanDevices.find(d => d.vpn_ip === formData.targetIp)
+    if (lan && !(await confirm({
+      title: 'Public route to a LAN device',
+      message: `Expose ${lan.name} to the internet?`,
+      description: `Anyone can reach ${formData.domain} → port ${formData.targetPort} on this device through Traefik. Use VPN access to keep it private.`,
+      confirmText: 'Make it public',
+      variant: 'warning'
+    }))) return
     const payload = buildRoutePayload(formData)
     const isCreate = formModalMode === 'create'
     try {
@@ -534,6 +543,11 @@
             <Button variant="outline" size="xs" icon="trash" class="text-destructive hover:bg-destructive/10" tooltip="Delete" aria-label={`Delete ${route.domain}`} onclick={() => confirmDelete(route)} />
           </div>
         {/snippet}
+        {#snippet unheldBadge(route)}
+          {#if route.targetUnheld}
+            <Badge variant="warning" size="sm" title="No device or client holds this VPN address, so the route reaches nothing. Edit it and pick a device.">No device</Badge>
+          {/if}
+        {/snippet}
         {#each filteredRoutes as route}
           <div class="bg-card border border-border rounded-lg px-4 py-3 hover:border-primary/30 transition-colors">
             <div class="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4">
@@ -556,6 +570,7 @@
                   <Badge variant={route.enabled ? 'success' : 'muted'} size="sm">
                     {route.enabled ? 'Enabled' : 'Disabled'}
                   </Badge>
+                  {@render unheldBadge(route)}
                   {#if getCertForDomain(route.domain)}
                     {@const cert = getCertForDomain(route.domain)}
                     <Badge variant={cert.status === 'error' ? 'destructive' : cert.status === 'pending' ? 'warning' : cert.status === 'valid' ? 'success' : 'destructive'} size="sm">
@@ -584,6 +599,7 @@
                 <span class="text-xs text-muted-foreground hidden md:inline">
                   {route.vpnClientName || route.lanDeviceName || '—'}
                 </span>
+                {@render unheldBadge(route)}
 
                 <!-- Options -->
                 <div class="hidden md:flex items-center gap-1">

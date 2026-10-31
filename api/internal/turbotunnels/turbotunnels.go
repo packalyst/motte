@@ -230,7 +230,7 @@ func createContainer(cfg Config) error {
 		},
 		"NetworkingConfig": map[string]interface{}{
 			"EndpointsConfig": map[string]interface{}{
-				"vpn-network": map[string]interface{}{
+				helper.DockerNetwork: map[string]interface{}{
 					"IPAMConfig": map[string]interface{}{
 						"IPv4Address": helper.GetEnvOptional("TURBOTUNNELS_CONTAINER_IP", "172.18.0.5"),
 					},
