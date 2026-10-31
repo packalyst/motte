@@ -604,8 +604,8 @@ func createSchema(db *sql.DB) error {
 func runMigrations(db *sql.DB) {
 	// LAN devices: per-device block and internet. Existing devices keep the internet access their
 	// network gave them (internet := nat_enabled), so the upgrade changes nobody's reachability.
-	// vpn_ip is the device's address inside the WireGuard range; bidirectional lets a granted
-	// device reach its VPN client too (existing grants become one-way: the narrower access).
+	// vpn_ip is the device's address inside the WireGuard range (set while its VPN access is on);
+	// bidirectional lets a granted device reach its VPN client too.
 	var dc int
 	for _, c := range []struct{ table, name, ddl, after string }{
 		{"dhcp_clients", "blocked", `ALTER TABLE dhcp_clients ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`, ""},
@@ -626,6 +626,13 @@ func runMigrations(db *sql.DB) {
 	// Two LAN devices can never hold the same VPN address (ALTER TABLE can't add UNIQUE).
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_dhcp_clients_vpn_ip ON dhcp_clients(vpn_ip) WHERE vpn_ip <> ''`); err != nil {
 		log.Printf("Migration: dhcp_clients vpn_ip index: %v", err)
+	}
+	// A grant lives only while its device's VPN access is on (it has a VPN address). Grants made
+	// before VPN access existed are dropped: the admin switches it on where it's wanted.
+	if res, err := db.Exec(`DELETE FROM dhcp_client_acl WHERE device_id IN (SELECT id FROM dhcp_clients WHERE vpn_ip = '')`); err != nil {
+		log.Printf("Migration: drop grants without VPN access: %v", err)
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("Migration: dropped %d LAN grant(s) of devices without VPN access", n)
 	}
 	// "Who can reach" moved from whole networks to single devices. Old network-wide grants are
 	// deliberately NOT carried over: every device starts unreachable until access is granted.

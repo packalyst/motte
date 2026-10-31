@@ -203,12 +203,19 @@ func (s *Service) listDeviceACL(deviceID int64) ([]Grant, error) {
 	return out, rows.Err()
 }
 
-// setDeviceACL grants a VPN client access to a device, or changes the grant's direction.
-func (s *Service) setDeviceACL(deviceID, clientID int64, bidirectional bool) error {
-	_, err := s.db.Exec(`INSERT INTO dhcp_client_acl (device_id, source_client_id, bidirectional) VALUES (?,?,?)
+// setDeviceACL grants a VPN client access to a device, or changes the grant's direction. It lands
+// only while the device's VPN access is on (in the same statement, so a switch-off racing it can't
+// leave a grant behind); ok is false when it's off.
+func (s *Service) setDeviceACL(deviceID, clientID int64, bidirectional bool) (ok bool, err error) {
+	res, err := s.db.Exec(`INSERT INTO dhcp_client_acl (device_id, source_client_id, bidirectional)
+		SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM dhcp_clients WHERE id = ? AND vpn_ip <> '')
 		ON CONFLICT(device_id, source_client_id) DO UPDATE SET bidirectional = excluded.bidirectional`,
-		deviceID, clientID, b2i(bidirectional))
-	return err
+		deviceID, clientID, b2i(bidirectional), deviceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (s *Service) removeDeviceACL(deviceID, clientID int64) error {

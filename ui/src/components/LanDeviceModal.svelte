@@ -6,7 +6,7 @@
    * onchanged() lets the parent refresh. Access starts empty: nobody reaches a device until granted.
    */
   import { tick } from 'svelte'
-  import { apiGet, apiPost, apiPut, apiDelete, currentUser, hasRole, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiPost, apiPut, apiDelete, currentUser, hasRole, toast, confirm, stepUpConfirm } from '../stores/app.js'
   import { timeAgo } from '$lib/utils/format.js'
   import { approveDevice, blockDevice, unblockDevice, setDeviceInternet } from '$lib/lan.js'
   import { fmtUptime } from '$lib/fleet.js'
@@ -98,6 +98,16 @@
     document.getElementById('lan-device-name')?.focus()
   }
   const saveReservation = () => act(() => apiPut(base(), { ip: resIP.trim(), name: resName.trim() }), 'Saved')
+  // VPN access: on gives the device its VPN address, off removes it with every grant. A password
+  // either way (the server checks it too).
+  async function setVPN(on) {
+    const name = device.name || device.mac
+    const su = await stepUpConfirm(on
+      ? { title: 'Turn on VPN access', message: `Give ${name} a VPN address?`, description: 'Nobody can reach it until you allow them below.', confirmText: 'Turn on' }
+      : { title: 'Turn off VPN access', message: `Remove ${name}'s VPN address?`, description: allowed.length ? `Its ${allowed.length} access rule${allowed.length === 1 ? '' : 's'} go with it.` : 'Nobody can reach it over the VPN any more.', confirmText: 'Turn off', variant: 'destructive' })
+    if (!su?.confirmed || !su?.password) return
+    act(() => apiPut(base() + '/vpn', { enabled: on, currentPassword: su.password, totpCode: su.totp || '' }), on ? 'VPN access on' : 'VPN access off')
+  }
   const grantOf = (vpn) => allowed.find((g) => g.id === vpn.id)
   const grant = (vpn, bidirectional) => act(() => apiPost(base() + '/acl', { client_id: vpn.id, bidirectional }))
   function toggleAccess(vpn) {
@@ -155,7 +165,7 @@
       {#if tab === 'overview'}
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <ContentBlock variant="data" size="sm" solid light label="LAN IP" value={device.ip || '—'} copyable={!!device.ip} mono />
-          <ContentBlock variant="data" size="sm" solid light label="VPN IP" value={device.vpn_ip || 'On first access'} copyable={!!device.vpn_ip} mono={!!device.vpn_ip} />
+          <ContentBlock variant="data" size="sm" solid light label="VPN IP" value={device.vpn_ip || 'Off'} copyable={!!device.vpn_ip} mono={!!device.vpn_ip} />
           <ContentBlock variant="data" size="sm" solid light label="MAC address" value={device.mac} copyable mono />
           <ContentBlock variant="data" size="sm" solid light label="Network" value={network || '—'} />
           <ContentBlock variant="data" size="sm" solid light label="Lease" value={leaseLeft ? fmtUptime(leaseLeft) + ' left' : device.online ? 'Static' : 'None'} rightIcon="clock" />
@@ -175,38 +185,46 @@
         {/if}
 
       {:else if tab === 'access'}
-        <div class="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
-          <div class="min-w-0">
-            <div class="text-sm font-medium text-foreground flex items-center gap-1.5"><Icon name={device.internet ? 'world' : 'world-off'} size={15} />Internet access</div>
-            <p class="text-[11px] text-muted-foreground mt-0.5">Lets the device reach the public internet. Private and VPN networks stay off-limits either way.</p>
-          </div>
-          <Checkbox variant="switch" checked={device.internet} disabled={!isAdmin || busy || device.blocked} onchange={() => setInternet(!device.internet)} />
-        </div>
-
-        <div>
-          <div class="flex items-center justify-between mb-2">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground">VPN clients that can reach this device</div>
-            <span class="text-[10px] text-muted-foreground">{allowed.length} allowed</span>
-          </div>
-          {#if !device.approved || device.blocked}
-            <p class="text-xs text-muted-foreground">{device.blocked ? 'Blocked devices' : 'Devices waiting for approval'} can't be reached by anyone.</p>
-          {/if}
-          {#if !vpnClients.length}
-            <p class="text-sm text-muted-foreground">No VPN clients yet.</p>
-          {:else}
-            <div class="border border-border rounded-lg max-h-60 overflow-y-auto">
-              {#each vpnClients as vc (vc.id)}
-                {@const g = grantOf(vc)}
-                <AccessRow name={vc.name} ip={vc.ip} type={vc.type} checked={!!g} both={!!g?.bidirectional}
-                  disabled={!isAdmin || busy} bothTitle="Let this device also reach {vc.name}"
-                  ontoggle={() => toggleAccess(vc)} onboth={() => grant(vc, !g.bidirectional)} />
-              {/each}
+        {#snippet accessSwitch(icon, title, text, on, disabled, onchange)}
+          <div class="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
+            <div class="min-w-0">
+              <div class="text-sm font-medium text-foreground flex items-center gap-1.5"><Icon name={icon} size={15} />{title}</div>
+              <p class="text-[11px] text-muted-foreground mt-0.5">{text}</p>
             </div>
-          {/if}
-          <p class="text-[11px] text-muted-foreground mt-2">
-            Nobody can reach a device until you allow them. Allowed clients reach it at its VPN IP{device.vpn_ip ? ` (${device.vpn_ip})` : ''}; use "Bi" to let the device reach them too.
-          </p>
-        </div>
+            <Checkbox variant="switch" checked={on} {disabled} {onchange} />
+          </div>
+        {/snippet}
+        {@render accessSwitch(device.internet ? 'world' : 'world-off', 'Internet access',
+          'Lets the device reach the public internet. Private and VPN networks stay off-limits either way.',
+          device.internet, !isAdmin || busy || device.blocked, () => setInternet(!device.internet))}
+        {@render accessSwitch('shield-lock', 'VPN access',
+          device.vpn_ip ? `VPN clients you allow below reach it at ${device.vpn_ip}.` : 'Gives the device an address VPN clients can reach, once you allow them.',
+          !!device.vpn_ip, !isAdmin || busy || (device.blocked && !device.vpn_ip), () => setVPN(!device.vpn_ip))}
+
+        {#if device.vpn_ip}
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground">VPN clients that can reach this device</div>
+              <span class="text-[10px] text-muted-foreground">{allowed.length} allowed</span>
+            </div>
+            {#if !device.approved || device.blocked}
+              <p class="text-xs text-muted-foreground">{device.blocked ? 'Blocked devices' : 'Devices waiting for approval'} can't be reached by anyone.</p>
+            {/if}
+            {#if !vpnClients.length}
+              <p class="text-sm text-muted-foreground">No VPN clients yet.</p>
+            {:else}
+              <div class="border border-border rounded-lg max-h-60 overflow-y-auto">
+                {#each vpnClients as vc (vc.id)}
+                  {@const g = grantOf(vc)}
+                  <AccessRow name={vc.name} ip={vc.ip} type={vc.type} checked={!!g} both={!!g?.bidirectional}
+                    disabled={!isAdmin || busy} bothTitle="Let this device also reach {vc.name}"
+                    ontoggle={() => toggleAccess(vc)} onboth={() => grant(vc, !g.bidirectional)} />
+                {/each}
+              </div>
+            {/if}
+            <p class="text-[11px] text-muted-foreground mt-2">Nobody can reach the device until you allow them. Use "Bi" to let the device reach them too.</p>
+          </div>
+        {/if}
 
       {:else if tab === 'adblock'}
         {#if device.blocked || !device.approved}
