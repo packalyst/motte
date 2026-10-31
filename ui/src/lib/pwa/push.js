@@ -126,8 +126,20 @@ export async function getSubscriptions() {
  * @param {number} id - Subscription ID to delete
  * @returns {Promise<Object>} Result
  */
-export async function deleteSubscription(id) {
-  return await apiDelete(`${API_BASE}/subscriptions?id=${id}`)
+export async function deleteSubscription(id, stepUp) {
+  return await apiDelete(`${API_BASE}/subscriptions?id=${id}`, stepUp)
+}
+
+/**
+ * The fingerprint the server lists a device by (SHA-256 of its push endpoint, hex): the list never
+ * carries endpoints, so this is how a browser finds its own row. Push only exists on secure pages,
+ * where crypto.subtle is always there.
+ * @param {string} endpoint
+ * @returns {Promise<string>}
+ */
+export async function endpointHash(endpoint) {
+  const sum = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint))
+  return [...new Uint8Array(sum)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 /**
