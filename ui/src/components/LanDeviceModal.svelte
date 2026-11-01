@@ -10,7 +10,7 @@
   import { tick } from 'svelte'
   import { apiGet, apiPost, apiPut, apiDelete, currentUser, hasRole, toast, confirm, stepUpConfirm, STEPUP_CANCELLED } from '../stores/app.js'
   import { timeAgo } from '$lib/utils/format.js'
-  import { approveDevice, blockDevice, unblockDevice, setDeviceInternet } from '$lib/lan.js'
+  import { approveDevice, blockDevice, unblockDevice, setDeviceInternet, egressMissing, egressConflict, servicesLabel } from '$lib/lan.js'
   import { fmtUptime } from '$lib/fleet.js'
   import Icon from './Icon.svelte'
   import Badge from './Badge.svelte'
@@ -53,6 +53,8 @@
   let servicesInfo = $state(null) // the service catalog and default: { catalog, default }
   let netServices = $state('') // the network's list ('' = the default)
   let servicesChoice = $state('') // the device's list as being edited ('' = the network's)
+  let inbound = $state([]) // what the internet may open to it, as saved: [{ entry, sources }]
+  let inboundChoice = $state([]) // the same, as being edited
 
   // Loads the open device; nothing once the window is closed (there is no device to load then).
   async function load() {
@@ -73,6 +75,8 @@
       servicesInfo = d.services || null
       netServices = d.network_services || ''
       servicesChoice = device.services || ''
+      inbound = d.inbound || []
+      inboundChoice = structuredClone(inbound)
     } catch (e) {
       if (id !== deviceId) return
       toast('Could not load the device: ' + e.message, 'error')
@@ -117,8 +121,36 @@
   const block = () => act(() => blockDevice(device.id), 'Blocked')
   const unblock = () => act(() => unblockDevice(device.id), 'Unblocked')
   const setInternet = (on) => act(() => setDeviceInternet(device.id, on), on ? 'Internet on' : 'Internet off')
-  const setEgress = () => act(() => setDeviceInternet(device.id, true, { egress_ip: egressChoice }), 'Internet address changed')
-  const saveServices = () => act(() => setDeviceInternet(device.id, true, { services: servicesChoice }), 'Allowed services saved')
+  // Incoming belongs to the address: moving the device deletes it, so that is confirmed first.
+  async function setEgress() {
+    if (inbound.length) {
+      const ok = await confirm({
+        title: 'Change internet address',
+        message: `Move ${device.name || device.mac} to another address?`,
+        description: 'Its incoming rules belong to the current address and will be deleted. Open connections in are cut.',
+        details: inbound.map((e) => ({ label: inLabel(e.entry), value: inFrom(e) })),
+        confirmText: 'Move and delete', variant: 'destructive',
+      })
+      if (!ok) { egressChoice = device.egress_ip || ''; return }
+    }
+    act(() => setDeviceInternet(device.id, true, { egress_ip: egressChoice }), 'Internet address changed')
+  }
+  // Incoming only on an address the device owns, still on the server and held by nobody else.
+  const ownAddress = $derived(!!device?.egress_ip && device.egress_ip !== 'main' &&
+    !egressMissing(egressAddrs, device.egress_ip) && !egressConflict(egressAddrs, device.egress_ip))
+  const inLabel = (t) => servicesLabel(t, servicesInfo?.catalog)
+  const inFrom = (e) => (e.sources.length === 1 && e.sources[0] === 'any' ? 'anyone' : e.sources.join(', '))
+  const servicesDirty = $derived(servicesChoice !== (device?.services || ''))
+  const inboundDirty = $derived(JSON.stringify(inboundChoice) !== JSON.stringify(inbound))
+  const inboundIncomplete = $derived(inboundChoice.some((e) => !e.sources.length))
+  function undoAccess() {
+    servicesChoice = device.services || ''
+    inboundChoice = structuredClone(inbound)
+  }
+  const saveAccess = () => act(() => setDeviceInternet(device.id, true, {
+    ...(servicesDirty ? { services: servicesChoice } : {}),
+    ...(inboundDirty ? { inbound: inboundChoice } : {}),
+  }), 'Saved')
   // The header's name opens the Name field below (the one place a device is renamed).
   async function editName() {
     tab = 'overview'
@@ -237,15 +269,19 @@
           device.internet, !isAdmin || busy || device.blocked, () => setInternet(!device.internet))}
         {#if device.internet}
           <div class="space-y-4 rounded-lg border border-border bg-muted/30 p-3">
-            <EgressSelect bind:value={egressChoice} addrs={egressAddrs} inherit={netEgress} disabled={!isAdmin || busy} onchange={setEgress} />
-            <ServicesPicker bind:value={servicesChoice} info={servicesInfo} inherit={netServices} disabled={!isAdmin || busy} />
-            {#if servicesChoice !== (device.services || '')}
-              <div class="flex justify-end gap-2 border-t border-border pt-3">
-                <Button variant="secondary" size="sm" disabled={busy} onclick={() => { servicesChoice = device.services || '' }}>Undo</Button>
-                <Button size="sm" icon="device-floppy" loading={busy} onclick={saveServices}>Save allowed services</Button>
+            <EgressSelect bind:value={egressChoice} addrs={egressAddrs} inherit={netEgress} self={device.id} disabled={!isAdmin || busy} onchange={setEgress} />
+            <ServicesPicker bind:value={servicesChoice} bind:inbound={inboundChoice} inboundAllowed={ownAddress}
+                            info={servicesInfo} inherit={netServices} disabled={!isAdmin || busy} />
+            {#if servicesDirty || inboundDirty}
+              <div class="flex items-center justify-end gap-2 border-t border-border pt-3">
+                {#if inboundIncomplete}<span class="me-auto text-[11px] text-warning">Every incoming port needs its sources.</span>{/if}
+                <Button variant="secondary" size="sm" disabled={busy} onclick={undoAccess}>Undo</Button>
+                <Button size="sm" icon="device-floppy" loading={busy} disabled={inboundIncomplete} onclick={saveAccess}>Save</Button>
               </div>
             {/if}
           </div>
+        {:else if inbound.length}
+          <p class="text-[11px] text-muted-foreground">Incoming is paused while internet is off: {inbound.map((e) => `${inLabel(e.entry)} from ${inFrom(e)}`).join('; ')}. It comes back when internet is switched on.</p>
         {/if}
 
       {:else if tab === 'vpn'}

@@ -156,13 +156,6 @@ func (s *Service) setClientBlocked(id int64, blocked, approved bool) error {
 	return err
 }
 
-// setClientInternet sets a device's internet switch, the address it leaves from and what it may
-// reach.
-func (s *Service) setClientInternet(id int64, on bool, egress, services string) error {
-	_, err := s.db.Exec(`UPDATE dhcp_clients SET internet=?, egress_ip=?, services=? WHERE id=?`, b2i(on), egress, services, id)
-	return err
-}
-
 func (s *Service) setClientReservation(id int64, ip, name string) error {
 	_, err := s.db.Exec(`UPDATE dhcp_clients SET ip=?, name=? WHERE id=?`, ip, name, id)
 	return err

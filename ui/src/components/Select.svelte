@@ -56,7 +56,7 @@
   >
     {#if options.length > 0}
       {#each options as opt}
-        <option value={opt.value}>{opt.label}</option>
+        <option value={opt.value} disabled={opt.disabled}>{opt.label}</option>
       {/each}
     {:else}
       {@render children?.()}

@@ -88,7 +88,7 @@ func (s *Service) Reconcile(n *Network) error {
 // punch-through (open only while a device has internet) and the reachability rules.
 func (s *Service) applyDevices(n *Network) {
 	p, err := s.networkPolicy(n)
-	syncSegmentForward(n, err == nil && p.hasInternet())
+	syncSegmentForward(n, err == nil && p.hasInternet(), err == nil && p.hasInbound())
 	s.reapplyReachability()
 }
 
@@ -178,12 +178,11 @@ func (s *Service) handleListInterfaces(w http.ResponseWriter, r *http.Request) {
 			Conflict: netplanConflict(in.Name),
 		})
 	}
-	addrs, _ := loadEgressAddrs() // none offered when the host can't be read
 	router.JSON(w, map[string]any{
 		"interfaces":  out,
 		"wan":         wan,
 		"suggestions": suggestSubnets(nets, 6),
-		"egress":      addrs, // the internet addresses a network's devices may leave from
+		"egress":      s.egressOffer(), // the internet addresses, and who holds each
 		"services":    servicesInfo(),
 	})
 }

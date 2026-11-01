@@ -74,7 +74,10 @@ type devicePolicy struct {
 	Internet bool       // may route out the WAN
 	Egress   string     // the internet address it leaves from; "" = the server's main address
 	Out      outPorts   // what it may reach on the internet (services.go)
-	Routes   []int      // TCP ports of the enabled domain routes to its VPN address (Traefik's way in)
+	// In is what the internet may open to it on its own dedicated address (inbound.go); only set
+	// when it has internet through an address it owns.
+	In     []inboundRule
+	Routes []int // TCP ports of the enabled domain routes to its VPN address (Traefik's way in)
 }
 
 // internetVia reports whether the device goes out to the internet, and the address it leaves
@@ -207,6 +210,14 @@ func accessOf(nets []Network, pol map[int64]netPolicy, wan string, origin routeO
 					a.Paths[p] = true // so does a service taken away
 				}
 			}
+			if via, ok := d.inboundVia(); ok && validIface(wan) {
+				// Connections in were opened to the dedicated address, so that is what cuts them.
+				a.IPs = append(a.IPs, via)
+				a.Paths["in via "+via] = true
+				for _, p := range inboundPaths(d.In) {
+					a.Paths[p] = true
+				}
+			}
 			out[d.MAC] = a
 		}
 	}
@@ -330,7 +341,15 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 	if err != nil {
 		return p, nil // an invalid network renders nothing (renderReachability skips it too)
 	}
-	var egress egressResolver
+	claims, err := s.loadEgressClaims()
+	if err != nil {
+		return p, err
+	}
+	egress := egressResolver{claims: claims}
+	inbound, err := s.networkInbound(n.ID)
+	if err != nil {
+		return p, err
+	}
 	for i := range clients {
 		c := &clients[i]
 		if c.Blocked {
@@ -346,6 +365,10 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 		if d.Internet {
 			d.Egress, d.Internet = egress.resolve(n, c)
 			d.Out = portsOf(effectiveServices(n, c))
+			// Incoming only through the address the device itself owns, never one it inherits.
+			if own := dedicatedIP(c.Egress); d.Internet && own != "" && d.Egress == own {
+				d.In = inboundRules(inbound[c.ID])
+			}
 		}
 		if space.usable(c.VPNIP) {
 			d.VPNIP, d.Routes = c.VPNIP, routes[c.ID]
@@ -414,10 +437,27 @@ func (p netPolicy) hasInternet() bool {
 	return false
 }
 
+// hasInbound reports whether any of the network's devices takes connections in from the internet.
+func (p netPolicy) hasInbound() bool {
+	for _, d := range p.Devices {
+		if _, ok := d.inboundVia(); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// inboundVia returns the dedicated address the device takes connections in on, and whether it
+// takes any: only with internet through an extra address and at least one way in.
+func (d devicePolicy) inboundVia() (string, bool) {
+	via, ok := d.internetVia()
+	return via, ok && via != "" && len(d.In) > 0
+}
+
 // renderReachability builds the nft script (pure: no DB, no host calls) so it can be unit-tested
 // and syntax-checked with `nft -c`. Every IP/CIDR/MAC/iface is validated before emission.
 func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, privateRanges []string, traefik routeOrigin) string {
-	var blk, fwd, in, dnat, nat strings.Builder
+	var blk, fwd, in, dnat, nat, dedIn, inDnat strings.Builder
 	for i := range nets {
 		n := &nets[i]
 		if !n.enforced() {
@@ -516,6 +556,7 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr @private_ranges ip daddr != %s drop\n", n.CIDR, n.CIDR)
 			}
 			for _, d := range devices {
+				writeInbound(&dedIn, &inDnat, &fwd, d, n.Iface, wan)
 				via, ok := d.internetVia()
 				if !ok || !d.Out.any() {
 					continue // no way out at all: no NAT either
@@ -551,7 +592,15 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 	sb.WriteString(nftables.BuildSet("dedicated_addrs", "ipv4_addr", nil, dedicated))
 	sb.WriteString("    chain dedicated_in {\n")
 	sb.WriteString("        type filter hook prerouting priority -150; policy accept;\n")
+	sb.WriteString(dedIn.String()) // the ways in a device owns on its address, above the drop
 	sb.WriteString("        ip daddr @dedicated_addrs ct state != { established, related } drop\n")
+	sb.WriteString("    }\n")
+	// inbound_dnat hands those ways in to their device. It runs before Docker's port forwarding
+	// (dstnat, -100), and a connection is translated by the first chain that does, so a published
+	// container port can never take a connection meant for a device.
+	sb.WriteString("    chain inbound_dnat {\n")
+	sb.WriteString("        type nat hook prerouting priority -110; policy accept;\n")
+	sb.WriteString(inDnat.String())
 	sb.WriteString("    }\n")
 	sb.WriteString("    chain forward {\n")
 	sb.WriteString("        type filter hook forward priority 10; policy accept;\n")
@@ -575,6 +624,44 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 	sb.WriteString("    }\n")
 	sb.WriteString("}\n")
 	return sb.String()
+}
+
+// writeInbound writes a device's ways in: on its dedicated address, from the WAN only, for its
+// ports and sources. Three rules each, all keyed on the same match: the exception above the
+// dedicated address's drop, the hand-over to the device (same port), and the forward accept for
+// exactly what came through that hand-over. Every value is re-validated before it is written.
+func writeInbound(dedIn, inDnat, fwd *strings.Builder, d devicePolicy, seg, wan string) {
+	via, ok := d.inboundVia()
+	if !ok || !validIface(wan) || !validIface(seg) || net.ParseIP(via).To4() == nil || net.ParseIP(d.IP).To4() == nil {
+		return
+	}
+	for _, r := range d.In {
+		src := ""
+		if r.Sources != nil {
+			var valid []string
+			for _, s := range r.Sources {
+				if _, n, err := net.ParseCIDR(s); err == nil && n.IP.To4() != nil {
+					valid = append(valid, n.String())
+				}
+			}
+			if len(valid) == 0 {
+				continue // sources named but none valid: nobody, never anyone
+			}
+			src = " ip saddr { " + strings.Join(valid, ", ") + " }"
+		}
+		for _, pp := range []struct {
+			proto string
+			ports []int
+		}{{"tcp", r.TCP}, {"udp", r.UDP}} {
+			ports := portSet(pp.ports)
+			if ports == "" {
+				continue
+			}
+			fmt.Fprintf(dedIn, "        iifname %q ip daddr %s%s %s dport %s accept\n", wan, via, src, pp.proto, ports)
+			fmt.Fprintf(inDnat, "        iifname %q ip daddr %s%s %s dport %s dnat ip to %s\n", wan, via, src, pp.proto, ports, d.IP)
+			fmt.Fprintf(fwd, "        iifname %q oifname %q ip daddr %s%s %s dport %s ct status dnat ct original ip daddr %s accept\n", wan, seg, d.IP, src, pp.proto, ports, via)
+		}
+	}
 }
 
 // writeInternetOut emits a device's way out to the internet: only its listed ports, or every

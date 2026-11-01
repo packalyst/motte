@@ -388,6 +388,16 @@ func createSchema(db *sql.DB) error {
 		FOREIGN KEY (network_id) REFERENCES dhcp_networks(id) ON DELETE CASCADE
 	);
 
+	-- What the internet may open to a LAN device, on its own dedicated address (default: nothing).
+	-- entry is a catalog service or tcp:N / udp:N; sources is "any" or a comma list of CIDRs.
+	CREATE TABLE IF NOT EXISTS dhcp_inbound (
+		client_id INTEGER NOT NULL,
+		entry TEXT NOT NULL,
+		sources TEXT NOT NULL,
+		PRIMARY KEY (client_id, entry),
+		FOREIGN KEY (client_id) REFERENCES dhcp_clients(id) ON DELETE CASCADE
+	);
+
 	-- Which VPN clients may reach a LAN device (default-deny: empty = nobody); bidirectional lets
 	-- the device reach them too. Enforced in the nft forward chain, never the advisory Headscale ACL.
 	CREATE TABLE IF NOT EXISTS dhcp_client_acl (

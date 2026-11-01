@@ -54,7 +54,9 @@ func (s *Service) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if n.Egress, err = checkEgress(n.Egress, false); err != nil {
+	egressMu.Lock() // held until the choice is saved, so no other save takes the address meanwhile
+	defer egressMu.Unlock()
+	if n.Egress, err = s.checkEgress(n.Egress, 0); err != nil {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -109,8 +111,10 @@ func (s *Service) handleUpdateNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	// The address is checked only when it changes: one that left the server must not stop the
 	// network's other settings from being saved (its devices are already without internet).
+	egressMu.Lock() // held until the choice is saved, so no other save takes the address meanwhile
+	defer egressMu.Unlock()
 	if n.Egress != existing.Egress {
-		if n.Egress, err = checkEgress(n.Egress, false); err != nil {
+		if n.Egress, err = s.checkEgress(n.Egress, 0); err != nil {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -263,9 +267,13 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not read domain routes", http.StatusInternalServerError)
 		return
 	}
-	addrs, _ := loadEgressAddrs() // none offered when the host can't be read
-	router.JSON(w, map[string]any{"client": c, "allowed": allowed, "routes": routes,
-		"egress": addrs, "network_egress": netEgress, "services": servicesInfo(), "network_services": netServices})
+	inbound, err := s.listInbound(c.ID)
+	if err != nil {
+		router.JSONError(w, "could not read incoming rules", http.StatusInternalServerError)
+		return
+	}
+	router.JSON(w, map[string]any{"client": c, "allowed": allowed, "routes": routes, "inbound": inbound,
+		"egress": s.egressOffer(), "network_egress": netEgress, "services": servicesInfo(), "network_services": netServices})
 }
 
 // handleBlockClient denies a device an address and drops its traffic by MAC (it also loses its
@@ -309,7 +317,10 @@ func (s *Service) handleUnblockClient(w http.ResponseWriter, r *http.Request) {
 // leaves from (egress_ip) and what it may reach out there (services, "" = its network's); either
 // left out stays as it is. A step-up is due whenever its access grows while on: switching on,
 // another address, or a service it didn't have. Off, or taking a service away, needs none.
-// PUT /api/dhcp/clients/{id}/internet {"enabled":bool,"egress_ip"?:string,"services"?:string}
+// PUT /api/dhcp/clients/{id}/internet
+// {"enabled":bool,"egress_ip"?:string,"services"?:string,"inbound"?:[{"entry","sources":[...]}]}
+// Incoming (inbound.go) needs the device's own dedicated address; moving it to another address
+// deletes its incoming list in the same save.
 func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
 	if !ok {
@@ -321,17 +332,26 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Enabled  bool    `json:"enabled"`
-		Egress   *string `json:"egress_ip"`
-		Services *string `json:"services"`
+		Enabled  bool            `json:"enabled"`
+		Egress   *string         `json:"egress_ip"`
+		Services *string         `json:"services"`
+		Inbound  *[]inboundEntry `json:"inbound"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
+	egressMu.Lock() // held until the choice is saved, so no other save takes the address meanwhile
+	defer egressMu.Unlock()
 	egress, services := c.Egress, c.Services
 	if req.Egress != nil && *req.Egress != c.Egress {
-		if egress, err = checkEgress(*req.Egress, true); err != nil {
+		if egress, err = s.checkEgress(*req.Egress, c.ID); err != nil {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if req.Enabled && !c.Internet {
+		// Back on with the address it already has: it must still be one the device may hold.
+		if err := s.checkOwnEgress(c); err != nil {
+			router.JSONError(w, err.Error()+"; pick another address", http.StatusConflict)
 			return
 		}
 	}
@@ -341,16 +361,47 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.Enabled == c.Internet && egress == c.Egress && services == c.Services {
+	curIn, err := s.listInbound(c.ID)
+	if err != nil {
+		router.JSONError(w, "could not read incoming rules", http.StatusInternalServerError)
+		return
+	}
+	inbound := curIn
+	moved := egress != c.Egress
+	switch {
+	case req.Inbound != nil && moved && len(*req.Inbound) > 0:
+		router.JSONError(w, "incoming rules belong to an address: change the address first, then add them", http.StatusBadRequest)
+		return
+	case req.Inbound != nil:
+		if inbound, err = normalizeInbound(*req.Inbound); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case moved:
+		inbound = nil // they go with the address they were on
+	}
+	if len(inbound) > 0 {
+		// Only on the device's own dedicated address, still one it may hold.
+		if dedicatedIP(egress) == "" {
+			router.JSONError(w, "incoming needs this device's own dedicated address", http.StatusConflict)
+			return
+		}
+		if err := s.checkOwnEgress(&Client{ID: c.ID, Egress: egress}); err != nil {
+			router.JSONError(w, err.Error(), http.StatusConflict)
+			return
+		}
+	}
+	inChanged := inboundLabel(inbound) != inboundLabel(curIn)
+	if req.Enabled == c.Internet && !moved && services == c.Services && !inChanged {
 		router.JSON(w, map[string]any{"ok": true}) // already so: nothing to confirm
 		return
 	}
 	after := effectiveServices(n, &Client{Services: services})
-	grows := req.Enabled && (!c.Internet || egress != c.Egress || widens(effectiveServices(n, c), after))
+	grows := req.Enabled && (!c.Internet || moved || widens(effectiveServices(n, c), after) || widensInbound(curIn, inbound))
 	if grows && !router.StepUp(w, r) {
 		return
 	}
-	if err := s.setClientInternet(c.ID, req.Enabled, egress, services); err != nil {
+	if err := s.saveInternet(c.ID, req.Enabled, egress, services, inbound); err != nil {
 		router.JSONError(w, "could not save", http.StatusInternalServerError)
 		return
 	}
@@ -359,6 +410,13 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 		state = "on via " + egressLabel(egress, "the network's default address") + ", to: " + servicesLabel(after)
 	}
 	audit(r, "lan_device_internet", "Internet "+state+" for LAN device "+c.label())
+	if inChanged {
+		msg := "Incoming to LAN device " + c.label() + ": " + inboundLabel(inbound)
+		if moved && req.Inbound == nil {
+			msg = "Incoming to LAN device " + c.label() + " removed with its address: was " + inboundLabel(curIn)
+		}
+		audit(r, "lan_device_inbound", msg)
+	}
 	s.devicesChanged(c.NetworkID)
 	router.JSON(w, map[string]any{"ok": true})
 }

@@ -38,30 +38,120 @@ func TestEgressAddrs(t *testing.T) {
 	if e.Main != "198.51.100.1" || strings.Join(e.Extras, ",") != "203.0.113.10,203.0.113.11" {
 		t.Fatalf("got %+v", e)
 	}
+	s := egressTestService(t)
 	for _, c := range []struct {
-		v         string
-		allowMain bool
-		want      string
-		ok        bool
+		v     string
+		devID int64 // 0: a network choosing
+		want  string
+		ok    bool
 	}{
-		{"", false, "", true},
-		{" 203.0.113.10 ", false, "203.0.113.10", true},
-		{"main", true, "main", true},
-		{"main", false, "", false},         // a network has no "main" choice: "" is the main address
-		{"198.51.100.1", false, "", false}, // the server's own address
-		{"198.51.100.2", true, "", false},  // the panel's address
-		{"10.0.0.5", true, "", false},      // private
-		{"203.0.113.99", true, "", false},  // not on the server
-		{"203.0.113.10; drop", true, "", false},
+		{"", 0, "", true},
+		{" 203.0.113.10 ", 0, "203.0.113.10", true},
+		{"main", 7, "main", true},
+		{"main", 0, "", false},         // a network has no "main" choice: "" is the main address
+		{"198.51.100.1", 0, "", false}, // the server's own address
+		{"198.51.100.2", 7, "", false}, // the panel's address
+		{"10.0.0.5", 7, "", false},     // private
+		{"203.0.113.99", 7, "", false}, // not on the server
+		{"203.0.113.10; drop", 7, "", false},
 	} {
-		got, err := checkEgress(c.v, c.allowMain)
+		got, err := s.checkEgress(c.v, c.devID)
 		if (err == nil) != c.ok || (c.ok && got != c.want) {
-			t.Errorf("checkEgress(%q, %v) = %q, %v", c.v, c.allowMain, got, err)
+			t.Errorf("checkEgress(%q, %d) = %q, %v", c.v, c.devID, got, err)
 		}
 	}
 	stubWAN(t, true)
-	if _, err := checkEgress("203.0.113.10", true); err == nil {
+	if _, err := s.checkEgress("203.0.113.10", 7); err == nil {
 		t.Fatal("an extra address must be refused when the server can't be read")
+	}
+}
+
+// egressTestService is a Service over a fresh database with no networks or devices.
+func egressTestService(t *testing.T) *Service {
+	t.Helper()
+	if _, err := database.Init(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := database.GetDB()
+	for _, q := range []string{`DELETE FROM dhcp_clients`, `DELETE FROM dhcp_networks`} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &Service{db: db}
+}
+
+// An extra address is either shared (networks' default) or dedicated (one device), never both,
+// and never dedicated to two devices: the save that would do so is refused, and stored data that
+// does anyway leaves everyone on that address without internet.
+func TestEgressRoles(t *testing.T) {
+	stubWAN(t, false)
+	s := egressTestService(t)
+	net1 := &Network{Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", PoolStart: "10.20.20.50",
+		PoolEnd: "10.20.20.200", LeaseSecs: 3600, Mode: "auto", Enabled: true, Egress: "203.0.113.10"}
+	var err error
+	if net1.ID, err = s.createNetwork(net1); err != nil {
+		t.Fatal(err)
+	}
+	for i, mac := range []string{"02:00:00:00:00:01", "02:00:00:00:00:02"} {
+		if err := s.upsertClient(net1.ID, mac, fmt.Sprintf("10.20.20.%d", 51+i), "", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var a, b int64
+	s.db.QueryRow(`SELECT id FROM dhcp_clients WHERE mac = '02:00:00:00:00:01'`).Scan(&a)
+	s.db.QueryRow(`SELECT id FROM dhcp_clients WHERE mac = '02:00:00:00:00:02'`).Scan(&b)
+
+	// .10 is shared by ens19: no device may own it; a second network may share it.
+	if _, err := s.checkEgress("203.0.113.10", a); err == nil || !strings.Contains(err.Error(), "shared by network ens19") {
+		t.Fatalf("a shared address must not be dedicated: %v", err)
+	}
+	if _, err := s.checkEgress("203.0.113.10", 0); err != nil {
+		t.Fatalf("networks may share an address: %v", err)
+	}
+	// .11 is free: device a takes it; then nobody else may, device or network; a may keep it.
+	if _, err := s.checkEgress("203.0.113.11", a); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.saveInternet(a, true, "203.0.113.11", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.checkEgress("203.0.113.11", b); err == nil || !strings.Contains(err.Error(), "dedicated to") {
+		t.Fatalf("a dedicated address must not go to a second device: %v", err)
+	}
+	if _, err := s.checkEgress("203.0.113.11", 0); err == nil {
+		t.Fatal("a dedicated address must not be shared by a network")
+	}
+	if _, err := s.checkEgress("203.0.113.11", a); err != nil {
+		t.Fatalf("the owner may keep its address: %v", err)
+	}
+	// What the UI is offered names who holds each address.
+	off := s.egressOffer()
+	if fmt.Sprint(off.Use["203.0.113.10"].Networks) != "[ens19]" || len(off.Use["203.0.113.11"].Devices) != 1 || off.Use["203.0.113.11"].Devices[0].ID != a {
+		t.Fatalf("offer: %+v", off.Use)
+	}
+
+	// Stored data that breaks the rules (written around the checks): both devices on .11 are down,
+	// and so is a device inheriting a shared address someone also owns.
+	s.db.Exec(`UPDATE dhcp_clients SET internet = 1, egress_ip = '203.0.113.11' WHERE id = ?`, b)
+	claims, _ := s.loadEgressClaims()
+	r := egressResolver{claims: claims}
+	for _, id := range []int64{a, b} {
+		if _, ok := r.resolve(net1, &Client{ID: id, Egress: "203.0.113.11"}); ok {
+			t.Fatalf("device %d on a doubly held address must have no internet", id)
+		}
+	}
+	if err := s.checkOwnEgress(&Client{ID: b, Egress: "203.0.113.11"}); err == nil {
+		t.Fatal("turning internet back on must re-check the stored address")
+	}
+	s.db.Exec(`UPDATE dhcp_clients SET egress_ip = '203.0.113.10' WHERE id = ?`, b) // owns ens19's shared one
+	claims, _ = s.loadEgressClaims()
+	r = egressResolver{claims: claims}
+	if _, ok := r.resolve(net1, &Client{ID: a}); ok {
+		t.Fatal("a device inheriting an address that is also dedicated must have no internet")
+	}
+	if got, ok := r.resolve(net1, &Client{ID: a, Egress: "203.0.113.11"}); !ok || got != "203.0.113.11" {
+		t.Fatalf("a device alone on its address keeps it: %q %v", got, ok)
 	}
 }
 

@@ -29,18 +29,38 @@ export function servicesLabel(list, catalog = []) {
 }
 
 // egressOptions lists the internet addresses a choice can take, from the server's offer
-// ({ main, extras }). For a device, inherit is its network's default ("" = the main address) and
-// the list starts with "Network default"; for a network it is undefined. A saved address the
-// server no longer has stays listed, marked, so the choice shows what is stored.
-export function egressOptions(addrs, current, inherit) {
+// ({ main, extras, use }). An extra address is shared (networks' default) or dedicated (one
+// device), never both: one held the other way, or by another device, is listed but can't be
+// picked (the server refuses it too). For a device, self is its id and inherit its network's
+// default ("" = the main address), and the list starts with "Network default"; for a network, self
+// is its interface and inherit is undefined. A saved address the server no longer has stays
+// listed, marked, so the choice shows what is stored.
+export function egressOptions(addrs, current, inherit, self) {
   const main = addrs?.main ? `Server's main address (${addrs.main})` : "Server's main address"
-  const extras = addrs?.extras || []
-  const opts = inherit === undefined
-    ? [{ value: '', label: main }]
-    : [{ value: '', label: `Network default (${inherit || addrs?.main || 'main address'})` }, { value: 'main', label: main }]
-  for (const ip of extras) opts.push({ value: ip, label: `${ip} — dedicated` })
+  const forDevice = inherit !== undefined
+  const opts = forDevice
+    ? [{ value: '', label: `Network default (${inherit || addrs?.main || 'main address'})` }, { value: 'main', label: main }]
+    : [{ value: '', label: main }]
+  for (const ip of addrs?.extras || []) {
+    const use = addrs?.use?.[ip] || {}
+    const others = (use.devices || []).filter((d) => !forDevice || d.id !== self)
+    const sharers = (use.networks || []).filter((n) => forDevice || n !== self)
+    let label = forDevice ? `${ip} — dedicated to this device` : `${ip} — shared`
+    let disabled = false
+    if (others.length) { label = `${ip} — dedicated to ${others.map((d) => d.name).join(', ')}`; disabled = true }
+    else if (forDevice && sharers.length) { label = `${ip} — shared by network ${sharers.join(', ')}`; disabled = true }
+    else if (sharers.length) label = `${ip} — shared, also by ${sharers.join(', ')}`
+    opts.push({ value: ip, label, disabled: disabled && ip !== current })
+  }
   if (egressMissing(addrs, current)) opts.push({ value: current, label: `${current} — not on this server` })
   return opts
+}
+
+// egressConflict: a saved extra address held by more than one device, or both shared and
+// dedicated: everyone on it is without internet until one moves.
+export function egressConflict(addrs, v) {
+  const use = addrs?.use?.[v]
+  return !!use && ((use.devices || []).length > 1 || ((use.devices || []).length > 0 && (use.networks || []).length > 0))
 }
 
 // egressMissing: a saved extra address the server doesn't have (its devices have no internet).

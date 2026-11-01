@@ -330,7 +330,8 @@ func TestReachabilityNftSyntax(t *testing.T) {
 		1: {Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", VPNIP: "10.8.128.5",
 			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true, Out: portsOf("all,web"), Routes: []int{80, 443}},
 			{IP: "10.20.20.56", MAC: "02:00:00:00:00:56", VPNIP: "10.8.128.6", Routes: []int{8080}},
-			{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: true, Egress: "203.0.113.10", Out: portsOf("web,time,smtp,udp:5000")}},
+			{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: true, Egress: "203.0.113.10", Out: portsOf("web,time,smtp,udp:5000"),
+				In: inboundRules([]inboundEntry{{Entry: "ssh", Sources: []string{"198.51.100.0/24", "203.0.113.7/32"}}, {Entry: "web", Sources: []string{"any"}}, {Entry: "udp:5000", Sources: []string{"any"}}})}},
 			Blocked: []string{"02:00:00:00:00:09"}, Dedicated: []string{"203.0.113.10", "203.0.113.11"}},
 		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20"}}},
 	}

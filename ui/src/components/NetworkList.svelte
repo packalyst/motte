@@ -388,7 +388,7 @@
         <Checkbox variant="switch" bind:checked={form.nat_enabled}
                   label="On for new devices"
                   hint="The starting value of each new device's internet switch. Off = new devices are fully isolated." />
-        <EgressSelect bind:value={form.egress_ip} addrs={egressAddrs} />
+        <EgressSelect bind:value={form.egress_ip} addrs={egressAddrs} self={editing?.iface} />
         <ServicesPicker bind:value={form.services} info={servicesInfo} />
       </div>
     </section>

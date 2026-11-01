@@ -48,7 +48,7 @@ func TestReachabilityVPNAddress(t *testing.T) {
 	}
 	// Every swap is scoped to the VPN interfaces: the VPN address never answers from the WAN or LAN.
 	for _, line := range strings.Split(got, "\n") {
-		if strings.Contains(line, "dnat") && !strings.Contains(line, `iifname { "wg0", "tailscale0" }`) {
+		if strings.Contains(line, "dnat ip to") && !strings.Contains(line, `iifname { "wg0", "tailscale0" }`) {
 			t.Fatalf("an address swap not scoped to the VPN interfaces: %q", line)
 		}
 	}
