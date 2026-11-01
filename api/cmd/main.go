@@ -294,6 +294,7 @@ func main() {
 			// Re-apply live state (interface, dnsmasq, FORWARD punch-through, reachability) on boot:
 			// a plain restart otherwise leaves Docker's flushed FORWARD chain dropping segment traffic.
 			go dhcpSvc.ReconcileAll()
+			dhcpSvc.RegisterPresence() // which LAN devices are really online, once a minute
 			log.Println("DHCP service registered")
 		}
 	}

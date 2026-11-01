@@ -398,6 +398,13 @@ func createSchema(db *sql.DB) error {
 		FOREIGN KEY (client_id) REFERENCES dhcp_clients(id) ON DELETE CASCADE
 	);
 
+	-- LAN devices forgotten while dnsmasq still holds their lease: kept out of the device list until
+	-- that lease is renewed (the device came back) or runs out (lease_expiry, unix; 0 = never).
+	CREATE TABLE IF NOT EXISTS dhcp_forgotten (
+		mac TEXT PRIMARY KEY,
+		lease_expiry INTEGER NOT NULL
+	);
+
 	-- Which VPN clients may reach a LAN device (default-deny: empty = nobody); bidirectional lets
 	-- the device reach them too. Enforced in the nft forward chain, never the advisory Headscale ACL.
 	CREATE TABLE IF NOT EXISTS dhcp_client_acl (

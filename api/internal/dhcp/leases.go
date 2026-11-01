@@ -10,7 +10,7 @@ import (
 
 // apiLeaseDir is the api's mount of the shared lease volume (dnsmasq writes leases there at
 // /var/lib/misc). One file per network keeps parsing simple and per-network.
-const apiLeaseDir = "/dhcp-leases"
+var apiLeaseDir = "/dhcp-leases" // a variable so tests can point it at a temp dir
 
 func apiLeasePath(iface string) string { return apiLeaseDir + "/motte-" + iface + ".leases" }
 
@@ -62,11 +62,20 @@ func parseLeases(iface string) []lease {
 	return out
 }
 
-// syncLeases records every MAC currently seen on a network into dhcp_clients (auto-approved when
-// the network is in "auto" mode), so devices appear in the UI. Called before listing.
+// syncLeases records every MAC holding a lease on a network into dhcp_clients (auto-approved when
+// the network is in "auto" mode), so devices appear in the UI. Called before listing. A device
+// forgotten while its lease still runs stays out until that lease is renewed (it really came back)
+// or runs out.
 func (s *Service) syncLeases(n *Network) {
 	auto := n.Mode == "auto"
+	forgotten := s.forgottenLeases()
 	for _, l := range parseLeases(n.Iface) {
+		if exp, ok := forgotten[l.MAC]; ok {
+			if exp == l.Expiry {
+				continue
+			}
+			_, _ = s.db.Exec(`DELETE FROM dhcp_forgotten WHERE mac = ?`, l.MAC)
+		}
 		_ = s.upsertClient(n.ID, l.MAC, l.IP, l.Name, auto)
 	}
 }
@@ -91,8 +100,9 @@ func sanitizeLeaseName(s string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// clientsWithLive returns the network's known clients (from the DB) with Online set from the live
-// lease file (present and unexpired).
+// clientsWithLive returns the network's known clients (from the DB) with Online set: an unexpired
+// lease, and seen on the LAN lately (presence.go). While presence isn't known (the routine paused,
+// or the neighbour table unreadable), the lease alone counts, as before.
 func (s *Service) clientsWithLive(n *Network) ([]Client, error) {
 	s.syncLeases(n)
 	clients, err := s.listClients(n.ID)
@@ -106,8 +116,12 @@ func (s *Service) clientsWithLive(n *Network) ([]Client, error) {
 			active[l.MAC] = l.Expiry
 		}
 	}
+	known := presenceKnown()
 	for i := range clients {
 		clients[i].LeaseExpires, clients[i].Online = active[strings.ToLower(clients[i].MAC)]
+		if known && !seenRecently(clients[i].LastSeen) {
+			clients[i].Online = false
+		}
 	}
 	return clients, nil
 }

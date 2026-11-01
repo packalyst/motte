@@ -138,7 +138,6 @@ func (s *Service) upsertClient(networkID int64, mac, ip, name string, autoApprov
 		VALUES (?,?,?,?,?,?, COALESCE((SELECT nat_enabled FROM dhcp_networks WHERE id = ?), 0))
 		ON CONFLICT(mac) DO UPDATE SET
 			ip=excluded.ip,
-			last_seen=excluded.last_seen,
 			name=CASE WHEN dhcp_clients.name IS NULL OR dhcp_clients.name='' THEN excluded.name ELSE dhcp_clients.name END`,
 		networkID, mac, ip, name, b2i(autoApprove), time.Now().UTC().Format(time.RFC3339), networkID)
 	return err

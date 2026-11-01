@@ -529,15 +529,17 @@ func (s *Service) handleRemoveDeviceACL(w http.ResponseWriter, r *http.Request) 
 	router.JSON(w, map[string]any{"ok": true})
 }
 
-// handleDeleteClient forgets a device — only while it's offline: a connected device still holds a
-// lease and would come straight back as a new device (block it instead).
+// handleDeleteClient forgets a device — only while it's offline (presence.go): a connected device
+// would come straight back as a new device (block it instead). One that is gone but still holds a
+// lease stays forgotten until that lease is renewed or runs out.
 // DELETE /api/dhcp/clients/{id}
 func (s *Service) handleDeleteClient(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
 	if !ok {
 		return
 	}
-	if n, err := s.getNetwork(c.NetworkID); err == nil {
+	n, err := s.getNetwork(c.NetworkID)
+	if err == nil {
 		if live, err := s.clientsWithLive(n); err == nil {
 			for _, l := range live {
 				if l.ID == c.ID && l.Online {
@@ -546,6 +548,8 @@ func (s *Service) handleDeleteClient(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// Offline but still holding a lease: keep the lease file from bringing it straight back.
+		s.rememberForgotten(n, c.MAC)
 	}
 	removed, err := s.deleteClient(c.ID)
 	if err != nil {
