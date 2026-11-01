@@ -8,9 +8,9 @@ import (
 func TestWhoHost(t *testing.T) {
 	cases := map[string]string{
 		"alice    pts/0        2026-08-18 12:19 (198.51.100.7)": "198.51.100.7",
-		"root     pts/2        2026-08-18 09:00 (10.0.0.5)":    "10.0.0.5",
-		"alice    tty1         2026-08-18 08:00":               "", // local console, no host
-		"alice    pts/3        2026-08-18 08:00 (:0)":          "", // X display, not a remote
+		"root     pts/2        2026-08-18 09:00 (10.0.0.5)":     "10.0.0.5",
+		"alice    tty1         2026-08-18 08:00":                "", // local console, no host
+		"alice    pts/3        2026-08-18 08:00 (:0)":           "", // X display, not a remote
 	}
 	for line, want := range cases {
 		if got := whoHost(line); got != want {
@@ -92,7 +92,7 @@ func TestIsPublicRemote(t *testing.T) {
 		"169.254.1.1":           false,
 		"100.64.0.7":            false, // Tailscale/Headscale overlay
 		"240.0.0.1":             false, // reserved
-		"198.51.100.7":           true,
+		"198.51.100.7":          true,
 		"[2001:db8::1]":         true,
 		"localhost":             false, // loopback name
 		"box.localhost":         false, // loopback name
