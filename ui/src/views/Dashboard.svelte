@@ -197,9 +197,12 @@
   }
 
   function navigate(id, isChild = false) {
-    // Skip if already on this page
+    // Already on this page: start it fresh, closing whatever it has open (a machine, a section in
+    // the address), so the menu item always takes you to the page itself.
     if ($currentView === id) {
       sidebarOpen = false
+      if (window.location.hash) history.replaceState(history.state, '', window.location.pathname)
+      reloadCurrentView()
       return
     }
     currentView.set(id)
