@@ -120,7 +120,8 @@
   const approve = () => act(() => approveDevice(device.id), 'Approved')
   const block = () => act(() => blockDevice(device.id), 'Blocked')
   const unblock = () => act(() => unblockDevice(device.id), 'Unblocked')
-  const setInternet = (on) => act(() => setDeviceInternet(device.id, on), on ? 'Internet on' : 'Internet off')
+  // Switching on also opens the incoming list kept while it was off: the confirmation names it.
+  const setInternet = (on) => act(() => setDeviceInternet(device.id, on, {}, on ? opensIn(inbound) : {}), on ? 'Internet on' : 'Internet off')
   // Incoming belongs to the address: moving the device deletes it, so that is confirmed first.
   async function setEgress() {
     if (inbound.length) {
@@ -150,7 +151,11 @@
   const saveAccess = () => act(() => setDeviceInternet(device.id, true, {
     ...(servicesDirty ? { services: servicesChoice } : {}),
     ...(inboundDirty ? { inbound: inboundChoice } : {}),
-  }), 'Saved')
+  }, inboundDirty ? opensIn(inboundChoice) : {}), 'Saved')
+  // What a confirmation lists when incoming opens: every way in, and from whom.
+  const opensIn = (list) => (list.length
+    ? { description: 'These ways in open from the internet:', details: list.map((e) => ({ label: inLabel(e.entry), value: inFrom(e) })) }
+    : {})
   // The header's name opens the Name field below (the one place a device is renamed).
   async function editName() {
     tab = 'overview'

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"api/internal/router"
@@ -208,6 +209,10 @@ func TestInboundSave(t *testing.T) {
 	if code := set(`{"enabled":true,"inbound":[{"entry":"ssh","sources":["any"]}]}`); code != http.StatusPreconditionRequired {
 		t.Fatalf("widening to anyone without step-up: %d", code)
 	}
+	// Opening incoming while internet is off still needs a step-up (it goes live when switched on).
+	if code := set(`{"enabled":false,"inbound":[{"entry":"ssh","sources":["198.51.100.7"]},{"entry":"web","sources":["any"]}]}`); code != http.StatusPreconditionRequired || list() != "SSH from 198.51.100.7/32" {
+		t.Fatalf("widening while off without step-up: %d %q", code, list())
+	}
 	// Off: kept, but nothing comes in. On again: step-up, and it is back.
 	if code := set(`{"enabled":false}`); code != http.StatusOK || list() == "nothing" || policyIn() != 0 {
 		t.Fatalf("off: %d %q in=%d", code, list(), policyIn())
@@ -218,6 +223,27 @@ func TestInboundSave(t *testing.T) {
 	stepUpOK = true
 	if code := set(`{"enabled":true}`); code != http.StatusOK || policyIn() != 1 {
 		t.Fatalf("on again: %d in=%d", code, policyIn())
+	}
+	// Its address leaves the server: switching off and narrowing still go through; switching back
+	// on is refused until another address is picked.
+	stubWAN(t, true)
+	if code := set(`{"enabled":true,"inbound":[]}`); code != http.StatusOK || list() != "nothing" {
+		t.Fatalf("narrowing on a missing address: %d %q", code, list())
+	}
+	stubWAN(t, false)
+	if code := set(`{"enabled":true,` + ssh + `}`); code != http.StatusOK {
+		t.Fatal(code)
+	}
+	stubWAN(t, true)
+	if code := set(`{"enabled":false}`); code != http.StatusOK {
+		t.Fatalf("switching off on a missing address: %d", code)
+	}
+	if code := set(`{"enabled":true}`); code != http.StatusConflict {
+		t.Fatalf("switching on with a missing address: %d", code)
+	}
+	stubWAN(t, false)
+	if code := set(`{"enabled":true}`); code != http.StatusOK {
+		t.Fatal(code)
 	}
 	// Moving the device deletes its list with the address.
 	if code := set(`{"enabled":true,"egress_ip":"main"}`); code != http.StatusOK || list() != "nothing" {
@@ -249,5 +275,51 @@ func TestSegmentInboundForward(t *testing.T) {
 	}
 	if strings.Join(back, " ") != "-i eth0 -o ens19 -m conntrack --ctstate ESTABLISHED,RELATED" {
 		t.Fatalf("back: %v", back)
+	}
+}
+
+// Saves racing each other never leave an address held twice: each works on the device as it is
+// once it holds the lock, so a services-only save can't write back an address another save moved.
+func TestConcurrentSavesKeepAddressesSingle(t *testing.T) {
+	t.Setenv("PATH", "")
+	stubWAN(t, false)
+	s := egressTestService(t)
+	n := &Network{Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", PoolStart: "10.20.20.50",
+		PoolEnd: "10.20.20.200", LeaseSecs: 3600, Mode: "auto", Enabled: true}
+	var err error
+	if n.ID, err = s.createNetwork(n); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]int64, 2)
+	for i, mac := range []string{"02:00:00:00:00:01", "02:00:00:00:00:02"} {
+		if err := s.upsertClient(n.ID, mac, fmt.Sprintf("10.20.20.%d", 51+i), "", true); err != nil {
+			t.Fatal(err)
+		}
+		s.db.QueryRow(`SELECT id FROM dhcp_clients WHERE mac = ?`, mac).Scan(&ids[i])
+	}
+	router.SetStepUpFunc(func(http.ResponseWriter, *http.Request) bool { return true })
+	t.Cleanup(func() { router.SetStepUpFunc(nil) })
+	set := func(id int64, body string) {
+		rr := httptest.NewRecorder()
+		s.handleSetInternet(rr, httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/dhcp/clients/%d/internet", id), strings.NewReader(body)))
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(4)
+		go func() { defer wg.Done(); set(ids[0], `{"enabled":true,"egress_ip":"203.0.113.10"}`) }()
+		go func() { defer wg.Done(); set(ids[0], `{"enabled":true,"egress_ip":"main"}`) }()
+		go func() { defer wg.Done(); set(ids[1], `{"enabled":true,"egress_ip":"203.0.113.10"}`) }()
+		go func() {
+			defer wg.Done()
+			set(ids[0], fmt.Sprintf(`{"enabled":true,"services":"web%s"}`, map[bool]string{true: ",time"}[i%2 == 0]))
+		}()
+	}
+	wg.Wait()
+	claims, err := s.loadEgressClaims()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.conflict("203.0.113.10") {
+		t.Fatalf("an address ended up held twice: %+v", claims["203.0.113.10"])
 	}
 }

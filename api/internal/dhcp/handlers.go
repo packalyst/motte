@@ -113,6 +113,11 @@ func (s *Service) handleUpdateNetwork(w http.ResponseWriter, r *http.Request) {
 	// network's other settings from being saved (its devices are already without internet).
 	egressMu.Lock() // held until the choice is saved, so no other save takes the address meanwhile
 	defer egressMu.Unlock()
+	// Compare with the network as it is now: a save that finished meanwhile counts.
+	if existing, err = s.getNetwork(id); err != nil {
+		router.JSONError(w, "network not found", http.StatusNotFound)
+		return
+	}
 	if n.Egress != existing.Egress {
 		if n.Egress, err = s.checkEgress(n.Egress, 0); err != nil {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)
@@ -342,6 +347,16 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 	}
 	egressMu.Lock() // held until the choice is saved, so no other save takes the address meanwhile
 	defer egressMu.Unlock()
+	// Work on the device and its network as they are now: a save that finished meanwhile (an
+	// address move, say) must not be undone by writing back what was read before it.
+	if c, err = s.getClient(c.ID); err != nil {
+		router.JSONError(w, "device not found", http.StatusNotFound)
+		return
+	}
+	if n, err = s.getNetwork(c.NetworkID); err != nil {
+		router.JSONError(w, "network not found", http.StatusNotFound)
+		return
+	}
 	egress, services := c.Egress, c.Services
 	if req.Egress != nil && *req.Egress != c.Egress {
 		if egress, err = s.checkEgress(*req.Egress, c.ID); err != nil {
@@ -380,8 +395,10 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 	case moved:
 		inbound = nil // they go with the address they were on
 	}
-	if len(inbound) > 0 {
-		// Only on the device's own dedicated address, still one it may hold.
+	// Only on the device's own dedicated address, still one it may hold: checked when this save
+	// turns internet on or opens more. Switching off or narrowing always goes through, whatever
+	// state the address is in (a device on a missing or contested address is closed anyway).
+	if len(inbound) > 0 && ((req.Enabled && !c.Internet) || widensInbound(curIn, inbound)) {
 		if dedicatedIP(egress) == "" {
 			router.JSONError(w, "incoming needs this device's own dedicated address", http.StatusConflict)
 			return
@@ -397,7 +414,9 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after := effectiveServices(n, &Client{Services: services})
-	grows := req.Enabled && (!c.Internet || moved || widens(effectiveServices(n, c), after) || widensInbound(curIn, inbound))
+	// Opening or widening incoming needs a step-up even while internet is off: the list goes live
+	// when it is switched on, and that must not be its first approval.
+	grows := (req.Enabled && (!c.Internet || moved || widens(effectiveServices(n, c), after))) || widensInbound(curIn, inbound)
 	if grows && !router.StepUp(w, r) {
 		return
 	}
@@ -408,6 +427,9 @@ func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 	state := "off"
 	if req.Enabled {
 		state = "on via " + egressLabel(egress, "the network's default address") + ", to: " + servicesLabel(after)
+		if len(inbound) > 0 {
+			state += "; incoming: " + inboundLabel(inbound) // what goes live with it
+		}
 	}
 	audit(r, "lan_device_internet", "Internet "+state+" for LAN device "+c.label())
 	if inChanged {

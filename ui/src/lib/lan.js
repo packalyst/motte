@@ -9,12 +9,13 @@ export const blockDevice = (id) => apiPost(base(id) + '/block')
 export const unblockDevice = (id) => apiPost(base(id) + '/unblock')
 
 // setDeviceInternet turns a device's internet on or off; change may also set its internet address
-// (egress_ip) or what it may reach (services). Whenever that gives it more, the server asks for a
-// password or passkey first; off, or taking a service away, doesn't. Resolves to STEPUP_CANCELLED
-// when the prompt is closed.
-export const setDeviceInternet = (id, on, change = {}) => withStepUp(
+// (egress_ip), what it may reach (services) or what may come in (inbound). Whenever that gives it
+// more, the server asks for a password or passkey first; off, or taking something away, doesn't.
+// prompt adds to that confirmation (e.g. details listing what will open). Resolves to
+// STEPUP_CANCELLED when the prompt is closed.
+export const setDeviceInternet = (id, on, change = {}, prompt = {}) => withStepUp(
   (extra) => apiPut(base(id) + '/internet', { enabled: on, ...change, ...extra }),
-  { title: 'Internet access', message: "Confirm to change this device's internet access.", confirmText: 'Confirm' }
+  { title: 'Internet access', message: "Confirm to change this device's internet access.", confirmText: 'Confirm', ...prompt }
 )
 
 // Services: what a device may reach on the internet, as a list "web,time,tcp:8883" (the catalog
