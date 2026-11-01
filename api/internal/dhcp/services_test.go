@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Lists are validated and kept in one order; port 25 only through Direct mail; anything unknown
@@ -13,7 +14,8 @@ func TestNormalizeServices(t *testing.T) {
 		{"", ""},
 		{" time , WEB,web ", "web,time"},
 		{"udp:5000,tcp:8883,ssh,tcp:443", "ssh,tcp:443,tcp:8883,udp:5000"},
-		{"smtp,all", "all,smtp"},
+		{"all,smtp", "smtp,all"},
+		{"all,web,tcp:8883", "web,all"}, // custom ports mean nothing under "all"
 	} {
 		if got, err := normalizeServices(c.in); err != nil || got != c.want {
 			t.Errorf("normalizeServices(%q) = %q, %v; want %q", c.in, got, err, c.want)
@@ -30,6 +32,18 @@ func TestNormalizeServices(t *testing.T) {
 	}
 	if _, err := normalizeServices(strings.Join(many, ",")); err == nil {
 		t.Error("an over-long list passed")
+	}
+	if _, err := normalizeServices(strings.Join(many[:maxServiceEntries], ",")); err != nil {
+		t.Errorf("a list at the limit was refused: %v", err)
+	}
+	// A huge list is refused at once, without reading every entry (it used to take minutes).
+	huge := strings.Repeat("tcp:1,", 200000)
+	start := time.Now()
+	if _, err := normalizeServices(huge); err == nil {
+		t.Error("a huge list passed")
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Errorf("refusing a huge list took %v", d)
 	}
 }
 
@@ -58,9 +72,14 @@ func TestWidens(t *testing.T) {
 		{"web", "tcp:443", false},
 		{"web", "tcp:8443", true},
 		{"web", "all", true},
-		{"all", "web,ssh", false},
+		{"all", "web,ssh", true},          // "all" alone keeps every service shut, web and ssh too
+		{"all,web,ssh", "web,ssh", false}, // the services stay, every other port goes
 		{"all", "all,smtp", true},
+		{"all", "all,dns", true},
+		{"web", "dns", true},
 		{"all,smtp", "all", false},
+		{"all", "tcp:8883", false}, // 8883 was open as one of the other ports
+		{"all", "tcp:443", true},   // 443 belongs to Web, which "all" alone keeps shut
 		{"web", "smtp", true},
 	} {
 		if got := widens(c.old, c.new); got != c.want {
@@ -69,8 +88,8 @@ func TestWidens(t *testing.T) {
 	}
 }
 
-// Only the listed ports go out; "everything" still keeps direct mail shut unless it is allowed;
-// a device with nothing listed gets no way out.
+// Only the listed ports go out; "all" opens every port except the services not ticked (direct
+// mail included); a device with nothing listed gets no way out.
 func TestReachabilityServices(t *testing.T) {
 	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Enabled: true}}
 	dev := func(ip, mac, list string) devicePolicy {
@@ -79,7 +98,7 @@ func TestReachabilityServices(t *testing.T) {
 	pol := map[int64]netPolicy{1: {Devices: []devicePolicy{
 		dev("10.20.20.51", "02:00:00:00:00:51", "web,time"),
 		dev("10.20.20.52", "02:00:00:00:00:52", "all"),
-		dev("10.20.20.53", "02:00:00:00:00:53", "all,smtp"),
+		dev("10.20.20.53", "02:00:00:00:00:53", "all,smtp,web"),
 		dev("10.20.20.54", "02:00:00:00:00:54", "ssh,smtp,tcp:8883,udp:5000"),
 		dev("10.20.20.55", "02:00:00:00:00:55", "nonsense"),
 	}}}
@@ -90,8 +109,11 @@ func TestReachabilityServices(t *testing.T) {
 	for _, want := range []string{
 		from("10.20.20.51", "02:00:00:00:00:51") + ` tcp dport { 80, 443 } accept`,
 		from("10.20.20.51", "02:00:00:00:00:51") + ` udp dport { 123, 443 } accept`,
-		from("10.20.20.52", "02:00:00:00:00:52") + ` tcp dport 25 drop`,
+		from("10.20.20.52", "02:00:00:00:00:52") + ` tcp dport { 22, 25, 53, 80, 443, 465, 587, 853, 993, 995 } drop`,
+		from("10.20.20.52", "02:00:00:00:00:52") + ` udp dport { 53, 123, 443, 853 } drop`,
 		from("10.20.20.52", "02:00:00:00:00:52") + ` accept`,
+		from("10.20.20.53", "02:00:00:00:00:53") + ` tcp dport { 22, 53, 465, 587, 853, 993, 995 } drop`,
+		from("10.20.20.53", "02:00:00:00:00:53") + ` udp dport { 53, 123, 853 } drop`,
 		from("10.20.20.53", "02:00:00:00:00:53") + ` accept`,
 		from("10.20.20.54", "02:00:00:00:00:54") + ` tcp dport { 22, 25, 8883 } accept`,
 		from("10.20.20.54", "02:00:00:00:00:54") + ` udp dport 5000 accept`,
@@ -100,7 +122,7 @@ func TestReachabilityServices(t *testing.T) {
 			t.Fatalf("missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, from("10.20.20.53", "02:00:00:00:00:53")+` tcp dport 25 drop`) {
+	if strings.Contains(got, from("10.20.20.53", "02:00:00:00:00:53")+` tcp dport { 22, 25,`) {
 		t.Fatalf("direct mail allowed, yet dropped:\n%s", got)
 	}
 	if strings.Contains(got, "saddr 10.20.20.55 oifname") || strings.Contains(got, "nonsense") {
@@ -109,9 +131,16 @@ func TestReachabilityServices(t *testing.T) {
 	if strings.Contains(got, from("10.20.20.51", "02:00:00:00:00:51")+" accept") {
 		t.Fatalf("a device with services must not get every port:\n%s", got)
 	}
-	// The 25 drop comes before the everything-accept.
-	if strings.Index(got, from("10.20.20.52", "02:00:00:00:00:52")+` tcp dport 25 drop`) > strings.Index(got, from("10.20.20.52", "02:00:00:00:00:52")+` accept`) {
-		t.Fatalf("port 25 must be dropped before the accept:\n%s", got)
+	// The guarded ports are dropped before the every-port accept.
+	if strings.Index(got, from("10.20.20.52", "02:00:00:00:00:52")+` tcp dport {`) > strings.Index(got, from("10.20.20.52", "02:00:00:00:00:52")+` accept`) {
+		t.Fatalf("guarded ports must be dropped before the accept:\n%s", got)
+	}
+	// Under "all", taking a service away guards its ports again and cuts the open connections.
+	pol[1].Devices[2] = dev("10.20.20.53", "02:00:00:00:00:53", "all,web,smtp")
+	allBefore := accessOf(nets, pol, "eth0", routeOrigin{})
+	pol[1].Devices[2] = dev("10.20.20.53", "02:00:00:00:00:53", "all,smtp")
+	if lost := lostAccess(allBefore, accessOf(nets, pol, "eth0", routeOrigin{})); !strings.Contains(strings.Join(lost, ","), "10.20.20.53") {
+		t.Fatalf("guarding a service again must cut the device's connections: %v", lost)
 	}
 	// Taking a service away cuts the device's open connections.
 	before := accessOf(nets, pol, "eth0", routeOrigin{})

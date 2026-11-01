@@ -90,6 +90,8 @@ func TestIsPublicRemote(t *testing.T) {
 		"10.0.0.5":              false,
 		"192.168.1.10":          false,
 		"169.254.1.1":           false,
+		"100.64.0.7":            false, // Tailscale/Headscale overlay
+		"240.0.0.1":             false, // reserved
 		"198.51.100.7":           true,
 		"[2001:db8::1]":         true,
 		"localhost":             false, // loopback name

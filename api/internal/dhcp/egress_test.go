@@ -294,3 +294,62 @@ func TestInternetSwitchStepUp(t *testing.T) {
 		t.Fatalf("off keeps the chosen address for next time: %v %q", on, eg)
 	}
 }
+
+// An address that becomes dedicated has every connection to it cut once its drop is in, so nothing
+// that was connected before stays connected; one that stays dedicated is left alone. The first
+// apply after start cuts every dedicated address (only the devices' own connections belong on
+// one, and those are not matched by it).
+func TestDedicatedCutsConnections(t *testing.T) {
+	pol := func(addrs ...string) map[int64]netPolicy {
+		return map[int64]netPolicy{1: {Dedicated: addrs}, 2: {Dedicated: addrs}}
+	}
+	tbl := &ReachabilityTable{}
+	tbl.builtDedicated = dedicatedAddrs(pol("203.0.113.20"))
+	if got := tbl.ConntrackFlushTargets(); fmt.Sprint(got) != "[203.0.113.20]" {
+		t.Fatalf("first apply must cut the dedicated address: %v", got)
+	}
+	tbl.builtDedicated = dedicatedAddrs(pol("203.0.113.20"))
+	if got := tbl.ConntrackFlushTargets(); len(got) != 0 {
+		t.Fatalf("an address that stays dedicated must not be cut again: %v", got)
+	}
+	tbl.builtDedicated = dedicatedAddrs(pol("203.0.113.21", "203.0.113.20", "not-an-ip"))
+	if got := tbl.ConntrackFlushTargets(); fmt.Sprint(got) != "[203.0.113.21]" {
+		t.Fatalf("a newly dedicated address must be cut, once: %v", got)
+	}
+}
+
+// A network's creation and every settings change are audited, each change as "was → now"; a
+// save that changes nothing records nothing.
+func TestAuditNetwork(t *testing.T) {
+	if _, err := database.Init(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := database.GetDB()
+	db.Exec(`DELETE FROM events`)
+	r := httptest.NewRequest(http.MethodPut, "/api/dhcp/networks/1", nil)
+	old := &Network{Iface: "ens19", CIDR: "10.20.20.0/24", Mode: "auto", Enabled: true, LeaseSecs: 3600}
+	auditNetwork(r, old, nil)
+	n := *old
+	n.Mode, n.Enabled, n.NATEnabled = "approve", false, true
+	auditNetwork(r, &n, old)
+	auditNetwork(r, &n, &n) // unchanged
+	rows, err := db.Query(`SELECT message FROM events WHERE subsystem = 'dhcp' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var m string
+		rows.Scan(&m)
+		got = append(got, m)
+	}
+	want := []string{
+		"Created network ens19 (10.20.20.0/24, mode auto, enabled)",
+		"Network ens19 changed: enabled yes → no, mode auto → approve",
+		"Internet on for new devices of network ens19",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("audit:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

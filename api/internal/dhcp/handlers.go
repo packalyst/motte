@@ -71,13 +71,13 @@ func (s *Service) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.ID = id
-	auditNetworkInternet(r, &n, nil)
 	if err := s.Reconcile(&n); err != nil {
 		// Roll back the DB row so a network that couldn't be brought up doesn't linger.
 		_, _ = s.deleteNetwork(id) // brand new: no devices, so no routes
 		router.JSONError(w, "network saved but could not be applied (rolled back): "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	auditNetwork(r, &n, nil)
 	router.JSON(w, map[string]any{"network": n})
 }
 
@@ -128,7 +128,7 @@ func (s *Service) handleUpdateNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not save network", http.StatusInternalServerError)
 		return
 	}
-	auditNetworkInternet(r, &n, existing)
+	auditNetwork(r, &n, existing)
 	if err := s.Reconcile(&n); err != nil {
 		router.JSONError(w, "saved but could not apply: "+err.Error(), http.StatusBadRequest)
 		return
@@ -157,6 +157,7 @@ func (s *Service) handleDeleteNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not delete network", http.StatusInternalServerError)
 		return
 	}
+	audit(r, "lan_network", "Deleted network "+n.Iface+" ("+n.CIDR+")"+routesNote(removed))
 	removeLeaseFile(n.Iface) // purge stale dnsmasq leases so a future net on this NIC starts clean
 	s.reapplyReachability()
 	removed.Apply()
@@ -550,11 +551,32 @@ func egressLabel(v, def string) string {
 	return v
 }
 
-// auditNetworkInternet records a network's internet changes: its new devices getting internet,
-// the address its devices leave from, and what they may reach. old is nil for a new network.
-func auditNetworkInternet(r *http.Request, n, old *Network) {
-	if n.NATEnabled && (old == nil || !old.NATEnabled) {
-		audit(r, "lan_network_internet", "Internet on for new devices of network "+n.Iface)
+// auditNetwork records a network being created (old nil) or changed: its settings, each change
+// as "was → now", and its internet defaults (new devices getting internet, the address its
+// devices leave from, what they may reach).
+func auditNetwork(r *http.Request, n, old *Network) {
+	if old == nil {
+		audit(r, "lan_network", "Created network "+n.Iface+" ("+n.CIDR+", mode "+n.Mode+", "+onOff(n.Enabled, "enabled", "disabled")+")")
+	} else {
+		var changed []string
+		diff := func(what, was, now string) {
+			if was != now {
+				changed = append(changed, what+" "+was+" → "+now)
+			}
+		}
+		diff("enabled", onOff(old.Enabled, "yes", "no"), onOff(n.Enabled, "yes", "no"))
+		diff("mode", old.Mode, n.Mode)
+		diff("subnet", old.CIDR, n.CIDR)
+		diff("gateway", old.GatewayIP, n.GatewayIP)
+		diff("pool", old.PoolStart+"-"+old.PoolEnd, n.PoolStart+"-"+n.PoolEnd)
+		diff("lease", strconv.Itoa(old.LeaseSecs)+"s", strconv.Itoa(n.LeaseSecs)+"s")
+		diff("domain", old.Domain, n.Domain)
+		if len(changed) > 0 {
+			audit(r, "lan_network", "Network "+n.Iface+" changed: "+strings.Join(changed, ", "))
+		}
+	}
+	if (old == nil && n.NATEnabled) || (old != nil && n.NATEnabled != old.NATEnabled) {
+		audit(r, "lan_network_internet", "Internet "+onOff(n.NATEnabled, "on", "off")+" for new devices of network "+n.Iface)
 	}
 	if (old == nil && n.Egress != "") || (old != nil && n.Egress != old.Egress) {
 		audit(r, "lan_network_internet", "Network "+n.Iface+" devices go out via "+egressLabel(n.Egress, "the server's main address"))
@@ -562,6 +584,13 @@ func auditNetworkInternet(r *http.Request, n, old *Network) {
 	if (old == nil && n.Services != "") || (old != nil && n.Services != old.Services) {
 		audit(r, "lan_network_internet", "Network "+n.Iface+" devices may reach: "+servicesLabel(effectiveServices(n, nil)))
 	}
+}
+
+func onOff(b bool, on, off string) string {
+	if b {
+		return on
+	}
+	return off
 }
 
 // label names a device in audit messages.

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -543,7 +544,7 @@ func isPublicRemote(ipStr string) bool {
 		host := strings.ToLower(strings.TrimSuffix(ipStr, "."))
 		return host != "localhost" && !strings.HasSuffix(host, ".localhost")
 	}
-	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast()
+	return !helper.IsNonPublicIP(ip)
 }
 
 // closedRootAlarms returns remote root logins that are NOT currently connected — a root SSH

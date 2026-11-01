@@ -7,9 +7,12 @@ import (
 	"strings"
 )
 
-// What a LAN device with internet may reach out there. Nothing is allowed unless it is listed: a
-// device gets the default services, and an admin opens more per network (its devices' default)
-// or per device. This catalog is the one place services are named; the UI reads it from the API.
+// What a LAN device with internet may reach out there, in one of two modes:
+//   - only the listed services and custom ports (the default: web and time);
+//   - "all": every port except those of the catalog services left out — a service is then a
+//     guarded port group that stays shut until it is ticked (direct mail and outside DNS included).
+// An admin sets it per network (its devices' default) or per device. This catalog is the one
+// place services are named; the UI reads it from the API.
 
 // service is a named set of destination ports a device may use on the internet.
 type service struct {
@@ -20,18 +23,19 @@ type service struct {
 	Note string `json:"note,omitempty"`
 }
 
-const (
-	svcAll  = "all"  // every port, except direct mail unless svcSMTP is given too
-	svcSMTP = "smtp" // direct mail (TCP 25): only for a real mail server
-)
+// svcAll switches a list to "every port except the services not in it".
+const svcAll = "all"
 
 var serviceCatalog = []service{
 	{ID: "web", Name: "Web", TCP: []int{80, 443}, UDP: []int{443}},
 	{ID: "time", Name: "Time", UDP: []int{123}},
 	{ID: "email", Name: "Email", TCP: []int{587, 465, 993, 995}, Note: "sending through a provider and reading mail"},
 	{ID: "ssh", Name: "SSH", TCP: []int{22}},
-	{ID: svcAll, Name: "Everything", Note: "every port except direct mail"},
-	{ID: svcSMTP, Name: "Direct mail", TCP: []int{25}, Note: "only for a mail server"},
+	// Outside DNS: plain (53), over TLS (TCP 853) and over QUIC (UDP 853). Shut, a device's lookups
+	// can only go to the gateway (AdGuard); DNS over HTTPS rides on 443 and no port can tell it apart.
+	{ID: "dns", Name: "Outside DNS", TCP: []int{53, 853}, UDP: []int{53, 853}, Note: "other DNS servers, skipping ad blocking"},
+	{ID: "smtp", Name: "Direct mail", TCP: []int{25}, Note: "only for a mail server"},
+	{ID: svcAll, Name: "All other ports", Note: "every port except the services not ticked"},
 }
 
 // defaultServices is what a device gets when neither it nor its network says otherwise.
@@ -56,8 +60,13 @@ func servicesInfo() map[string]any {
 
 // normalizeServices validates a stored or submitted list ("web,time,tcp:8883") and returns it in
 // a stable order; "" stays "" (inherit). Custom ports are "tcp:N" or "udp:N", 1-65535; port 25
-// only through the Direct mail service, so opening it is always a deliberate choice.
+// only through the Direct mail service, so opening it is always a deliberate choice. With "all",
+// custom ports mean nothing (every port not guarded by a service is open) and are dropped.
+// An over-long list is refused before any entry is read, so its size costs nothing.
 func normalizeServices(v string) (string, error) {
+	if strings.Count(v, ",") >= maxServiceEntries {
+		return "", fmt.Errorf("too many services (at most %d)", maxServiceEntries)
+	}
 	var ids, ports []string
 	for _, tok := range strings.Split(v, ",") {
 		tok = strings.ToLower(strings.TrimSpace(tok))
@@ -80,8 +89,8 @@ func normalizeServices(v string) (string, error) {
 		}
 		ports = append(ports, tok)
 	}
-	if len(ids)+len(ports) > maxServiceEntries {
-		return "", fmt.Errorf("too many services (at most %d)", maxServiceEntries)
+	if slices.Contains(ids, svcAll) {
+		ports = nil
 	}
 	slices.SortFunc(ids, func(a, b string) int { return catalogIndex(a) - catalogIndex(b) })
 	slices.SortFunc(ports, func(a, b string) int {
@@ -124,47 +133,79 @@ func effectiveServices(n *Network, c *Client) string {
 	return strings.Join(defaultServices, ",")
 }
 
-// outPorts is what a list lets a device reach: all ports (with or without direct mail), or the
-// listed TCP and UDP ports. Anything unrecognized grants nothing.
+// outPorts is what a list lets a device reach. Without All: only TCP and UDP. With All: every
+// port except BlockTCP and BlockUDP, the ports of the services left out (TCP and UDP then hold
+// the ticked services' ports). Anything unrecognized grants nothing.
 type outPorts struct {
-	All, SMTP bool
-	TCP, UDP  []int
+	All                bool
+	TCP, UDP           []int
+	BlockTCP, BlockUDP []int
+}
+
+func addPorts(to *[]int, ports ...int) {
+	for _, p := range ports {
+		if p > 0 && p <= 65535 && !slices.Contains(*to, p) {
+			*to = append(*to, p)
+		}
+	}
 }
 
 func portsOf(list string) outPorts {
 	var o outPorts
-	add := func(to *[]int, ports ...int) {
-		for _, p := range ports {
-			if p > 0 && p <= 65535 && !slices.Contains(*to, p) {
-				*to = append(*to, p)
-			}
-		}
-	}
+	picked := map[string]bool{}
 	for _, tok := range strings.Split(list, ",") {
 		tok = strings.ToLower(strings.TrimSpace(tok))
-		switch tok {
-		case svcAll:
+		if tok == svcAll {
 			o.All = true
 			continue
-		case svcSMTP:
-			o.SMTP = true
 		}
 		if s, ok := catalogService(tok); ok {
-			add(&o.TCP, s.TCP...)
-			add(&o.UDP, s.UDP...)
+			picked[tok] = true
+			addPorts(&o.TCP, s.TCP...)
+			addPorts(&o.UDP, s.UDP...)
 			continue
 		}
 		if proto, port, ok := customPort(tok); ok && !(proto == "tcp" && port == 25) {
 			if proto == "tcp" {
-				add(&o.TCP, port)
+				addPorts(&o.TCP, port)
 			} else {
-				add(&o.UDP, port)
+				addPorts(&o.UDP, port)
 			}
 		}
 	}
-	slices.Sort(o.TCP)
-	slices.Sort(o.UDP)
+	if o.All {
+		for _, s := range serviceCatalog {
+			if picked[s.ID] {
+				continue
+			}
+			for _, p := range s.TCP {
+				if !slices.Contains(o.TCP, p) {
+					addPorts(&o.BlockTCP, p)
+				}
+			}
+			for _, p := range s.UDP {
+				if !slices.Contains(o.UDP, p) {
+					addPorts(&o.BlockUDP, p)
+				}
+			}
+		}
+	}
+	for _, l := range [][]int{o.TCP, o.UDP, o.BlockTCP, o.BlockUDP} {
+		slices.Sort(l)
+	}
 	return o
+}
+
+// opens reports whether the list lets a device reach port p over proto ("tcp" or "udp").
+func (o outPorts) opens(proto string, p int) bool {
+	allowed, blocked := o.TCP, o.BlockTCP
+	if proto == "udp" {
+		allowed, blocked = o.UDP, o.BlockUDP
+	}
+	if o.All {
+		return !slices.Contains(blocked, p)
+	}
+	return slices.Contains(allowed, p)
 }
 
 // any reports whether the list opens anything at all.
@@ -175,9 +216,6 @@ func (o outPorts) paths() []string {
 	var p []string
 	if o.All {
 		p = append(p, "out all")
-	}
-	if o.SMTP {
-		p = append(p, "out smtp")
 	}
 	for _, n := range o.TCP {
 		p = append(p, "out tcp "+strconv.Itoa(n))
@@ -191,22 +229,30 @@ func (o outPorts) paths() []string {
 // widens reports whether going from old to new opens anything old didn't (a step-up is due).
 func widens(old, new string) bool {
 	o, n := portsOf(old), portsOf(new)
-	if n.SMTP && !o.SMTP {
-		return true
-	}
-	if o.All {
+	if n.All {
+		if !o.All {
+			return true
+		}
+		// Both open every port but some: new opens more if it guards fewer of old's.
+		for _, p := range o.BlockTCP {
+			if n.opens("tcp", p) {
+				return true
+			}
+		}
+		for _, p := range o.BlockUDP {
+			if n.opens("udp", p) {
+				return true
+			}
+		}
 		return false
 	}
-	if n.All {
-		return true
-	}
 	for _, p := range n.TCP {
-		if !slices.Contains(o.TCP, p) {
+		if !o.opens("tcp", p) {
 			return true
 		}
 	}
 	for _, p := range n.UDP {
-		if !slices.Contains(o.UDP, p) {
+		if !o.opens("udp", p) {
 			return true
 		}
 	}

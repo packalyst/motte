@@ -17,12 +17,13 @@ import (
 )
 
 // privateReachRanges returns the destinations the segment must not reach when internet-out is on:
-// RFC1918 plus the live VPN/overlay ranges (same env the VPN ACL reads, so it tracks the real
+// every non-public block (helper.NonPublicRanges: LANs, the overlay, link-local and the cloud
+// metadata address, loopback, multicast, reserved) plus the live VPN/overlay ranges (same env the VPN ACL reads, so it tracks the real
 // deployment instead of hardcoding). They form the private_ranges set, so the segment's NAT path
 // reaches the PUBLIC internet only — never other internal/VPN networks. Invalid/empty env values
 // are skipped.
 func privateReachRanges() []string {
-	ranges := helper.RFC1918Ranges()
+	ranges := helper.NonPublicRanges()
 	for _, r := range []string{
 		helper.GetEnvOptional("WG_IP_RANGE", ""),
 		helper.GetEnvOptional("HEADSCALE_IP_RANGE", ""),
@@ -41,10 +42,14 @@ type ReachabilityTable struct {
 	db *database.DB
 
 	// What each device (by MAC) may do, as last applied and as just built: a device that lost any
-	// of it has its open connections cut once the new rules are in (ConntrackFlushTargets).
-	mu      sync.Mutex
-	applied map[string]deviceAccess
-	built   map[string]deviceAccess
+	// of it has its open connections cut once the new rules are in (ConntrackFlushTargets). The
+	// same for the dedicated addresses: one that just became dedicated has every connection to
+	// and from it cut.
+	mu               sync.Mutex
+	applied          map[string]deviceAccess
+	built            map[string]deviceAccess
+	appliedDedicated []string
+	builtDedicated   []string
 }
 
 func NewReachabilityTable(db *database.DB) *ReachabilityTable { return &ReachabilityTable{db: db} }
@@ -123,6 +128,7 @@ func (t *ReachabilityTable) Build() (string, error) {
 	origin := traefikOrigin(pol)
 	t.mu.Lock()
 	t.built = accessOf(nets, pol, wan, origin)
+	t.builtDedicated = dedicatedAddrs(pol)
 	t.mu.Unlock()
 	return renderReachability(nets, pol, wan, privateReachRanges(), origin), nil
 }
@@ -225,8 +231,11 @@ func lostAccess(before, after map[string]deviceAccess) []string {
 
 // ConntrackFlushTargets runs once the rules just built are applied: it returns the addresses of
 // the devices that lost access, so the connections they had open are cut too instead of riding
-// the established-connection accept until they go idle. The first apply after start cuts nothing
-// (there is nothing to compare with).
+// the established-connection accept until they go idle, and every address that just became
+// dedicated, so nothing that was connected to it before stays connected. The first apply after
+// start cuts no device (there is nothing to compare with) but every dedicated address: what
+// is legitimately on one is the devices' own connections, which start from the devices and so
+// are not matched by the address.
 func (t *ReachabilityTable) ConntrackFlushTargets() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -234,8 +243,28 @@ func (t *ReachabilityTable) ConntrackFlushTargets() []string {
 	if t.applied != nil {
 		ips = lostAccess(t.applied, t.built)
 	}
-	t.applied = t.built
+	for _, a := range t.builtDedicated {
+		if !slices.Contains(t.appliedDedicated, a) {
+			ips = append(ips, a)
+		}
+	}
+	t.applied, t.appliedDedicated = t.built, t.builtDedicated
 	return ips
+}
+
+// dedicatedAddrs is every extra internet address any network or device names, enforced or not,
+// once each and sorted: the dedicated_addrs set.
+func dedicatedAddrs(pol map[int64]netPolicy) []string {
+	var out []string
+	for _, p := range pol {
+		for _, a := range p.Dedicated {
+			if ip := dedicatedIP(a); ip != "" && !slices.Contains(out, ip) {
+				out = append(out, ip)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // traefikOrigin resolves Traefik's origin when a domain route needs it. The rules trust Traefik's
@@ -397,6 +426,12 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 		p := pol[n.ID]
 		fmt.Fprintf(&fwd, "        # network %s (%s, %s)\n", n.Iface, n.CIDR, n.Mode)
 
+		// IPv4 only: every rule below matches IPv4 addresses, so routed IPv6 to or from the segment
+		// would pass them all (grants, the internet switch, the services). It is dropped outright,
+		// above the established/related accept so an open IPv6 connection is cut as well.
+		fmt.Fprintf(&blk, "        iifname %q meta nfproto ipv6 drop\n", n.Iface)
+		fmt.Fprintf(&blk, "        oifname %q meta nfproto ipv6 drop\n", n.Iface)
+
 		// Blocked devices: dropped by MAC — routed traffic and traffic to the box itself (DNS, the
 		// panel) — so a static IP can't get around it, and a later device that inherits the old
 		// address isn't caught by it. These go above the established/related accept, so blocking
@@ -500,21 +535,12 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 		fmt.Fprintf(&fwd, "        ip saddr %s drop\n\n", n.CIDR)
 	}
 
-	// Every extra internet address any network or device names, enforced or not.
-	var dedicated []string
-	for _, p := range pol {
-		for _, a := range p.Dedicated {
-			if ip := dedicatedIP(a); ip != "" && !slices.Contains(dedicated, ip) {
-				dedicated = append(dedicated, ip)
-			}
-		}
-	}
-	sort.Strings(dedicated)
+	dedicated := dedicatedAddrs(pol)
 
 	var sb strings.Builder
 	sb.WriteString("table inet motte_dhcp_net {\n")
-	// private_ranges: destinations a segment must never reach via internet-out (RFC1918 + the live
-	// VPN/overlay ranges). Interval+auto-merge so overlapping CIDRs collapse cleanly.
+	// private_ranges: destinations a segment must never reach via internet-out (every non-public
+	// block + the live VPN/overlay ranges). Interval+auto-merge so overlapping CIDRs collapse cleanly.
 	sb.WriteString(nftables.BuildSet("private_ranges", "ipv4_addr", []string{"interval", "auto-merge"}, privateRanges))
 	// dedicated_addrs: the extra internet addresses. Nothing may open a connection to them — no
 	// service on the box, no Docker-published port, not even ping; only the devices' own
@@ -551,14 +577,17 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 	return sb.String()
 }
 
-// writeInternetOut emits a device's way out to the internet: only its services' ports, or every
-// port except direct mail (unless that is allowed too). Anything else falls to the network's
-// closing drop.
+// writeInternetOut emits a device's way out to the internet: only its listed ports, or every
+// port except those of the services it wasn't given (dropped first). Anything else falls to the
+// network's closing drop.
 func writeInternetOut(b *strings.Builder, from, wan string, o outPorts) {
 	out := fmt.Sprintf("%s oifname %q", from, wan)
 	if o.All {
-		if !o.SMTP {
-			fmt.Fprintf(b, "        %s tcp dport 25 drop\n", out)
+		if ports := portSet(o.BlockTCP); ports != "" {
+			fmt.Fprintf(b, "        %s tcp dport %s drop\n", out, ports)
+		}
+		if ports := portSet(o.BlockUDP); ports != "" {
+			fmt.Fprintf(b, "        %s udp dport %s drop\n", out, ports)
 		}
 		fmt.Fprintf(b, "        %s accept\n", out)
 		return

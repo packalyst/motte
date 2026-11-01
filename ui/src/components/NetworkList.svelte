@@ -375,14 +375,25 @@
               ]} />
     </div>
 
-    <div class="flex flex-col gap-2 pt-1">
-      <Checkbox variant="switch" bind:checked={form.nat_enabled}
-                label="Internet access for new devices"
-                hint="The starting value of each new device's internet switch — change it per device on the Clients page. Off = new devices are fully isolated." />
-      <EgressSelect bind:value={form.egress_ip} addrs={egressAddrs} />
-      <ServicesPicker bind:value={form.services} info={servicesInfo} />
-      <Checkbox variant="switch" bind:checked={form.enabled} label="Enabled" />
-    </div>
+    <!-- Internet: defaults for this network's devices; each device can change them -->
+    <section class="rounded-lg border border-border">
+      <header class="flex items-center gap-2 border-b border-border px-3 py-2">
+        <Icon name="world" size={15} class="text-muted-foreground" />
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-foreground">Internet</div>
+          <p class="text-[11px] text-muted-foreground">Defaults for this network's devices. Each device can change them in its own window.</p>
+        </div>
+      </header>
+      <div class="flex flex-col gap-4 p-3">
+        <Checkbox variant="switch" bind:checked={form.nat_enabled}
+                  label="On for new devices"
+                  hint="The starting value of each new device's internet switch. Off = new devices are fully isolated." />
+        <EgressSelect bind:value={form.egress_ip} addrs={egressAddrs} />
+        <ServicesPicker bind:value={form.services} info={servicesInfo} />
+      </div>
+    </section>
+
+    <Checkbox variant="switch" bind:checked={form.enabled} label="Enabled" />
   </div>
 
   {#snippet footer()}

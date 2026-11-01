@@ -3,6 +3,7 @@ package dhcp
 import (
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -184,21 +185,21 @@ func TestReachabilityPerDevice(t *testing.T) {
 	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Mode: "approve", Enabled: true}}
 	pol := map[int64]netPolicy{1: {
 		Devices: []devicePolicy{
-			{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}}, Internet: true, Out: outPorts{All: true}}, // camera: one client both ways, internet
+			{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}}, Internet: true, Out: portsOf("all")}, // camera: one client both ways, internet
 			{IP: "10.20.20.66", MAC: "02:00:00:00:00:66"}, // printer: nobody, no internet
 		},
 		Blocked: []string{"02:00:00:00:00:09"},
 	}}
 	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
 	for _, want := range []string{
-		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`,                                                       // granted client → that device
-		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 ip daddr 10.8.0.2 accept`,         // and back, from its MAC only
-		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 oifname "eth0" tcp dport 25 drop`, // everything but direct mail
-		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 oifname "eth0" accept`,            // its internet, from its MAC only
-		`ip saddr 10.20.20.0/24 ip daddr @private_ranges ip daddr != 10.20.20.0/24 drop`,                      // leak guard
-		`ip saddr 10.20.20.55 oifname "eth0" masquerade`,                                                      // NAT for that device only
-		`iifname "ens19" ether saddr 02:00:00:00:00:09 drop`,                                                  // blocked by MAC
-		`ip daddr 10.20.20.0/24 drop`,                                                                         // default-deny
+		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`,                                                                                                     // granted client → that device
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 ip daddr 10.8.0.2 accept`,                                                       // and back, from its MAC only
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 oifname "eth0" tcp dport { 22, 25, 53, 80, 443, 465, 587, 853, 993, 995 } drop`, // every port but the services
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 oifname "eth0" accept`,                                                          // its internet, from its MAC only
+		`ip saddr 10.20.20.0/24 ip daddr @private_ranges ip daddr != 10.20.20.0/24 drop`,                                                                    // leak guard
+		`ip saddr 10.20.20.55 oifname "eth0" masquerade`,                                                                                                    // NAT for that device only
+		`iifname "ens19" ether saddr 02:00:00:00:00:09 drop`,                                                                                                // blocked by MAC
+		`ip daddr 10.20.20.0/24 drop`, // default-deny
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q:\n%s", want, got)
@@ -250,7 +251,7 @@ func TestReachabilityPerDevice(t *testing.T) {
 	// No device with internet → no WAN path or NAT at all.
 	pol[1] = netPolicy{Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2"}}}}}
 	none := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
-	if strings.Contains(none, "oifname") {
+	if strings.Contains(none, `oifname "eth0"`) {
 		t.Fatalf("no device has internet, so nothing may route out:\n%s", none)
 	}
 
@@ -327,13 +328,22 @@ func TestReachabilityNftSyntax(t *testing.T) {
 	}
 	pol := map[int64]netPolicy{
 		1: {Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", VPNIP: "10.8.128.5",
-			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true, Out: outPorts{All: true}, Routes: []int{80, 443}},
+			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true, Out: portsOf("all,web"), Routes: []int{80, 443}},
 			{IP: "10.20.20.56", MAC: "02:00:00:00:00:56", VPNIP: "10.8.128.6", Routes: []int{8080}},
 			{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: true, Egress: "203.0.113.10", Out: portsOf("web,time,smtp,udp:5000")}},
 			Blocked: []string{"02:00:00:00:00:09"}, Dedicated: []string{"203.0.113.10", "203.0.113.11"}},
 		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20"}}},
 	}
-	script := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"})
+	t.Setenv("WG_IP_RANGE", "10.8.0.0/16")
+	t.Setenv("HEADSCALE_IP_RANGE", "100.64.0.0/10")
+	ranges := privateReachRanges() // the real list, so nft checks the set as it ships
+	// The leak guard covers every non-public block, the cloud metadata address included.
+	for _, want := range []string{"169.254.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "240.0.0.0/4", "10.8.0.0/16"} {
+		if !slices.Contains(ranges, want) {
+			t.Fatalf("leak guard misses %s: %v", want, ranges)
+		}
+	}
+	script := renderReachability(nets, pol, "eth0", ranges, routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"})
 
 	// Disabled network must not appear; NAT-off network must not get a masquerade. Check the
 	// disabled net's specific /24 (not the bare prefix — 172.16.0.0/12 is in the private_ranges set).
@@ -375,5 +385,25 @@ func TestSanitizeLeaseName(t *testing.T) {
 		if got := sanitizeLeaseName(in); got != want {
 			t.Errorf("sanitizeLeaseName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Routed IPv6 to or from a segment is dropped (every other rule matches IPv4 only), above the
+// established accept so open IPv6 connections are cut too; a disabled network gets nothing.
+func TestReachabilityDropsIPv6(t *testing.T) {
+	nets := []Network{
+		{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Enabled: true},
+		{ID: 2, Iface: "ens21", CIDR: "10.30.30.0/24", GatewayIP: "10.30.30.1", Enabled: false},
+	}
+	got := renderReachability(nets, map[int64]netPolicy{}, "eth0", testPrivateRanges, routeOrigin{})
+	est := strings.Index(got, "ct state established,related accept")
+	for _, want := range []string{`iifname "ens19" meta nfproto ipv6 drop`, `oifname "ens19" meta nfproto ipv6 drop`} {
+		i := strings.Index(got, want)
+		if i < 0 || i > est {
+			t.Fatalf("missing %q above the established accept:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `"ens21" meta nfproto ipv6`) {
+		t.Fatalf("a disabled network must get no rules:\n%s", got)
 	}
 }

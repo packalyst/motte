@@ -3,6 +3,7 @@ package helper
 import (
 	"net"
 	"net/netip"
+	"slices"
 	"testing"
 )
 
@@ -74,9 +75,23 @@ func TestWithinRFC1918(t *testing.T) {
 			t.Errorf("%s is not inside RFC1918", c)
 		}
 	}
-	r := RFC1918Ranges()
-	if len(r) != 3 || r[0] != "10.0.0.0/8" || r[1] != "172.16.0.0/12" || r[2] != "192.168.0.0/16" {
-		t.Errorf("RFC1918Ranges() = %v", r)
+}
+
+// TestNonPublicRanges: the list rule builders get is the one IsNonPublicIP decides with.
+func TestNonPublicRanges(t *testing.T) {
+	r := NonPublicRanges()
+	for _, want := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8", "0.0.0.0/8", "224.0.0.0/4", "240.0.0.0/4"} {
+		if !slices.Contains(r, want) {
+			t.Errorf("NonPublicRanges() = %v, missing %s", r, want)
+		}
+	}
+	for _, ip := range []string{"169.254.169.254", "255.255.255.255", "240.0.0.1", "100.64.0.1"} {
+		if !IsNonPublicIP(net.ParseIP(ip)) {
+			t.Errorf("%s must be non-public", ip)
+		}
+	}
+	if IsNonPublicIP(net.ParseIP("203.0.113.10")) {
+		t.Error("203.0.113.10 is public")
 	}
 }
 

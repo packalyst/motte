@@ -1,7 +1,9 @@
 <script>
   /**
-   * LanDeviceModal — one LAN device: Overview (its LAN and VPN addresses, name and reserved IP), Access
-   * (which VPN clients may reach it, one-way or both ways, its internet switch), Ad blocking (admins) and Actions (approve, block/unblock, forget). Open it by setting
+   * LanDeviceModal — one LAN device: Overview (its LAN and VPN addresses, name and reserved IP),
+   * Internet (its internet switch, address and allowed services), VPN (its VPN address and which VPN
+   * clients may reach it, one-way or both ways), Ad blocking (admins) and Actions (approve,
+   * block/unblock, forget). Open it by setting
    * `deviceId`; closing sets it back to null. Every change is admin-only and audited on the server;
    * onchanged() lets the parent refresh. Access starts empty: nobody reaches a device until granted.
    */
@@ -30,7 +32,8 @@
   // Ad blocking is admin-only (it shows browsing history).
   const TABS = $derived([
     { id: 'overview', label: 'Overview' },
-    { id: 'access', label: 'Access' },
+    { id: 'internet', label: 'Internet' },
+    { id: 'vpn', label: 'VPN' },
     ...(isAdmin ? [{ id: 'adblock', label: 'Ad blocking' }] : []),
     { id: 'actions', label: 'Actions' },
   ])
@@ -197,6 +200,15 @@
   {#if device}
     <Tabs tabs={TABS} bind:activeTab={tab} size="xs" background class="px-4" />
     <div class="p-4 max-h-[60vh] overflow-y-auto space-y-4">
+      {#snippet accessSwitch(icon, title, text, on, disabled, onchange)}
+        <div class="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
+          <div class="min-w-0">
+            <div class="text-sm font-medium text-foreground flex items-center gap-1.5"><Icon name={icon} size={15} />{title}</div>
+            <p class="text-[11px] text-muted-foreground mt-0.5">{text}</p>
+          </div>
+          <Checkbox variant="switch" controlled checked={on} {disabled} {onchange} />
+        </div>
+      {/snippet}
       {#if tab === 'overview'}
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <ContentBlock variant="data" size="sm" solid light label="LAN IP" value={device.ip || '—'} copyable={!!device.ip} mono />
@@ -219,29 +231,24 @@
           </div>
         {/if}
 
-      {:else if tab === 'access'}
-        {#snippet accessSwitch(icon, title, text, on, disabled, onchange)}
-          <div class="flex items-start justify-between gap-3 rounded-lg border border-border p-3">
-            <div class="min-w-0">
-              <div class="text-sm font-medium text-foreground flex items-center gap-1.5"><Icon name={icon} size={15} />{title}</div>
-              <p class="text-[11px] text-muted-foreground mt-0.5">{text}</p>
-            </div>
-            <Checkbox variant="switch" controlled checked={on} {disabled} {onchange} />
-          </div>
-        {/snippet}
+      {:else if tab === 'internet'}
         {@render accessSwitch(device.internet ? 'world' : 'world-off', 'Internet access',
           'Lets the device reach the public internet. Private and VPN networks stay off-limits either way.',
           device.internet, !isAdmin || busy || device.blocked, () => setInternet(!device.internet))}
         {#if device.internet}
-          <EgressSelect bind:value={egressChoice} addrs={egressAddrs} inherit={netEgress} disabled={!isAdmin || busy} onchange={setEgress} />
-          <ServicesPicker bind:value={servicesChoice} info={servicesInfo} inherit={netServices} disabled={!isAdmin || busy} />
-          {#if servicesChoice !== (device.services || '')}
-            <div class="flex justify-end gap-2">
-              <Button variant="secondary" size="sm" disabled={busy} onclick={() => { servicesChoice = device.services || '' }}>Undo</Button>
-              <Button size="sm" icon="device-floppy" loading={busy} onclick={saveServices}>Save allowed services</Button>
-            </div>
-          {/if}
+          <div class="space-y-4 rounded-lg border border-border bg-muted/30 p-3">
+            <EgressSelect bind:value={egressChoice} addrs={egressAddrs} inherit={netEgress} disabled={!isAdmin || busy} onchange={setEgress} />
+            <ServicesPicker bind:value={servicesChoice} info={servicesInfo} inherit={netServices} disabled={!isAdmin || busy} />
+            {#if servicesChoice !== (device.services || '')}
+              <div class="flex justify-end gap-2 border-t border-border pt-3">
+                <Button variant="secondary" size="sm" disabled={busy} onclick={() => { servicesChoice = device.services || '' }}>Undo</Button>
+                <Button size="sm" icon="device-floppy" loading={busy} onclick={saveServices}>Save allowed services</Button>
+              </div>
+            {/if}
+          </div>
         {/if}
+
+      {:else if tab === 'vpn'}
         {@render accessSwitch('shield-lock', 'VPN access',
           device.vpn_ip ? `VPN clients you allow below reach it at ${device.vpn_ip}.` : 'Gives the device an address VPN clients can reach, once you allow them.',
           !!device.vpn_ip, !isAdmin || busy || (device.blocked && !device.vpn_ip), () => setVPN(!device.vpn_ip))}

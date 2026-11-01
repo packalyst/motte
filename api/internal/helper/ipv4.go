@@ -15,9 +15,10 @@ import (
 var rfc1918 = mustPrefixes("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 
 // nonPublicV4 is every IPv4 block that is not a public unicast address: RFC1918, loopback,
-// link-local, multicast, CGNAT (100.64.0.0/10 — the Tailscale/Headscale overlay) and 0.0.0.0/8.
+// link-local (cloud metadata), multicast, reserved and broadcast (240.0.0.0/4), CGNAT
+// (100.64.0.0/10 — the Tailscale/Headscale overlay) and 0.0.0.0/8.
 var nonPublicV4 = append(mustPrefixes(
-	"0.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4",
+	"0.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
 ), rfc1918...)
 
 func mustPrefixes(cidrs ...string) []netip.Prefix {
@@ -90,10 +91,11 @@ func WithinRFC1918(p netip.Prefix) bool {
 	return false
 }
 
-// RFC1918Ranges returns the RFC1918 blocks as CIDR strings (a fresh slice, safe to append to).
-func RFC1918Ranges() []string {
-	out := make([]string, len(rfc1918))
-	for i, n := range rfc1918 {
+// NonPublicRanges returns every non-public IPv4 block (nonPublicV4) as CIDR strings (a fresh
+// slice, safe to append to), for rule builders that need the list itself.
+func NonPublicRanges() []string {
+	out := make([]string, len(nonPublicV4))
+	for i, n := range nonPublicV4 {
 		out[i] = n.String()
 	}
 	return out
