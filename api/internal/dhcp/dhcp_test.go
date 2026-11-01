@@ -184,20 +184,21 @@ func TestReachabilityPerDevice(t *testing.T) {
 	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Mode: "approve", Enabled: true}}
 	pol := map[int64]netPolicy{1: {
 		Devices: []devicePolicy{
-			{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}}, Internet: true}, // camera: one client both ways, internet
-			{IP: "10.20.20.66", MAC: "02:00:00:00:00:66"},                                                                    // printer: nobody, no internet
+			{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}}, Internet: true, Out: outPorts{All: true}}, // camera: one client both ways, internet
+			{IP: "10.20.20.66", MAC: "02:00:00:00:00:66"}, // printer: nobody, no internet
 		},
 		Blocked: []string{"02:00:00:00:00:09"},
 	}}
 	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
 	for _, want := range []string{
-		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`,                                               // granted client → that device
-		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 ip daddr 10.8.0.2 accept`, // and back, from its MAC only
-		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 oifname "eth0" accept`,    // its internet, from its MAC only
-		`ip saddr 10.20.20.0/24 ip daddr @private_ranges ip daddr != 10.20.20.0/24 drop`,              // leak guard
-		`ip saddr 10.20.20.0/24 oifname "eth0" masquerade`,                                            // NAT for the segment
-		`iifname "ens19" ether saddr 02:00:00:00:00:09 drop`,                                          // blocked by MAC
-		`ip daddr 10.20.20.0/24 drop`,                                                                 // default-deny
+		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`,                                                       // granted client → that device
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 ip daddr 10.8.0.2 accept`,         // and back, from its MAC only
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 oifname "eth0" tcp dport 25 drop`, // everything but direct mail
+		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 oifname "eth0" accept`,            // its internet, from its MAC only
+		`ip saddr 10.20.20.0/24 ip daddr @private_ranges ip daddr != 10.20.20.0/24 drop`,                      // leak guard
+		`ip saddr 10.20.20.55 oifname "eth0" masquerade`,                                                      // NAT for that device only
+		`iifname "ens19" ether saddr 02:00:00:00:00:09 drop`,                                                  // blocked by MAC
+		`ip daddr 10.20.20.0/24 drop`,                                                                         // default-deny
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q:\n%s", want, got)
@@ -326,9 +327,10 @@ func TestReachabilityNftSyntax(t *testing.T) {
 	}
 	pol := map[int64]netPolicy{
 		1: {Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", VPNIP: "10.8.128.5",
-			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true, Routes: []int{80, 443}},
-			{IP: "10.20.20.56", MAC: "02:00:00:00:00:56", VPNIP: "10.8.128.6", Routes: []int{8080}}},
-			Blocked: []string{"02:00:00:00:00:09"}},
+			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true, Out: outPorts{All: true}, Routes: []int{80, 443}},
+			{IP: "10.20.20.56", MAC: "02:00:00:00:00:56", VPNIP: "10.8.128.6", Routes: []int{8080}},
+			{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: true, Egress: "203.0.113.10", Out: portsOf("web,time,smtp,udp:5000")}},
+			Blocked: []string{"02:00:00:00:00:09"}, Dedicated: []string{"203.0.113.10", "203.0.113.11"}},
 		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20"}}},
 	}
 	script := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"})

@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +67,23 @@ type devicePolicy struct {
 	VPNIP    string     // its VPN address, swapped for IP on the box; empty when it has no usable one
 	Allowed  []vpnGrant // VPN clients that may reach it (and, Both, it them)
 	Internet bool       // may route out the WAN
+	Egress   string     // the internet address it leaves from; "" = the server's main address
+	Out      outPorts   // what it may reach on the internet (services.go)
 	Routes   []int      // TCP ports of the enabled domain routes to its VPN address (Traefik's way in)
+}
+
+// internetVia reports whether the device goes out to the internet, and the address it leaves
+// from ("" = masqueraded to the main address). A set but invalid address keeps it in: it never
+// falls back to the main address.
+func (d devicePolicy) internetVia() (string, bool) {
+	if !d.Internet {
+		return "", false
+	}
+	if d.Egress == "" {
+		return "", true
+	}
+	ip := dedicatedIP(d.Egress)
+	return ip, ip != ""
 }
 
 // routeOrigin is where Traefik's traffic enters the host (helper.TraefikOrigin): domain routes to
@@ -81,6 +99,9 @@ type routeOrigin struct {
 type netPolicy struct {
 	Devices []devicePolicy
 	Blocked []string // MACs dropped outright, whatever IP they use
+	// Dedicated lists every extra internet address the network or one of its devices names: no
+	// connection may come in to them, whether or not a device is using one right now.
+	Dedicated []string
 }
 
 func (t *ReachabilityTable) Build() (string, error) {
@@ -97,12 +118,42 @@ func (t *ReachabilityTable) Build() (string, error) {
 			return "", err // fail the build rather than apply a partial (more open) policy
 		}
 	}
+	keepServerAddressesOpen(pol)
 	wan, _ := defaultRouteInterface()
 	origin := traefikOrigin(pol)
 	t.mu.Lock()
 	t.built = accessOf(nets, pol, wan, origin)
 	t.mu.Unlock()
 	return renderReachability(nets, pol, wan, privateReachRanges(), origin), nil
+}
+
+// keepServerAddressesOpen takes the server's own addresses out of every Dedicated list: the panel
+// address (SERVER_IP) and the address the server sends from right now. A dedicated address that
+// later became one of them (the host's addresses changed) is then simply not closed, instead of
+// cutting the panel, the VPN and SSH off. The host is only read when an address is dedicated.
+func keepServerAddressesOpen(pol map[int64]netPolicy) {
+	open := map[string]bool{}
+	for id, p := range pol {
+		if len(p.Dedicated) == 0 {
+			continue
+		}
+		if len(open) == 0 {
+			open[helper.GetEnvOptional("SERVER_IP", "")] = true
+			if e, err := loadEgressAddrs(); err == nil {
+				open[e.Main] = true
+			}
+		}
+		kept := p.Dedicated[:0]
+		for _, a := range p.Dedicated {
+			if open[a] {
+				log.Printf("dhcp: %s is the server's own address now; it is not closed as an internet address", a)
+				continue
+			}
+			kept = append(kept, a)
+		}
+		p.Dedicated = kept
+		pol[id] = p
+	}
 }
 
 // deviceAccess is what one device may do, as the rules render it: its addresses, and each path
@@ -144,8 +195,11 @@ func accessOf(nets []Network, pol map[int64]netPolicy, wan string, origin routeO
 					a.Paths["route "+strconv.Itoa(p)] = true
 				}
 			}
-			if d.Internet && validIface(wan) {
-				a.Paths["internet"] = true
+			if via, ok := d.internetVia(); ok && d.Out.any() && validIface(wan) {
+				a.Paths["internet "+via] = true // a new address cuts the connections on the old one
+				for _, p := range d.Out.paths() {
+					a.Paths[p] = true // so does a service taken away
+				}
 			}
 			out[d.MAC] = a
 		}
@@ -235,11 +289,21 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 	if err != nil {
 		return p, err
 	}
+	if ip := dedicatedIP(n.Egress); ip != "" {
+		p.Dedicated = append(p.Dedicated, ip)
+	}
+	for _, c := range clients {
+		if ip := dedicatedIP(c.Egress); ip != "" {
+			p.Dedicated = append(p.Dedicated, ip)
+		}
+	}
 	_, cnet, err := net.ParseCIDR(n.CIDR)
 	if err != nil {
 		return p, nil // an invalid network renders nothing (renderReachability skips it too)
 	}
-	for _, c := range clients {
+	var egress egressResolver
+	for i := range clients {
+		c := &clients[i]
 		if c.Blocked {
 			p.Blocked = append(p.Blocked, strings.ToLower(c.MAC))
 			continue
@@ -250,6 +314,10 @@ func (s *Service) networkPolicy(n *Network) (netPolicy, error) {
 			continue
 		}
 		d := devicePolicy{IP: ip.String(), MAC: mac, Allowed: acl[c.ID], Internet: c.Internet}
+		if d.Internet {
+			d.Egress, d.Internet = egress.resolve(n, c)
+			d.Out = portsOf(effectiveServices(n, c))
+		}
 		if space.usable(c.VPNIP) {
 			d.VPNIP, d.Routes = c.VPNIP, routes[c.ID]
 		} else if c.VPNIP != "" {
@@ -402,8 +470,8 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 		}
 		fmt.Fprintf(&in, "        iifname %q drop\n", n.Iface)
 
-		// Internet-out, per device: only devices with it on reach the PUBLIC internet; the segment is
-		// masqueraded once any of them is.
+		// Internet-out, per device: only devices with it on reach the PUBLIC internet, each leaving
+		// from its internet address (masqueraded to the main one, or SNAT to an extra one).
 		if p.hasInternet() && validIface(wan) {
 			// Leak guard: refuse the segment → private/VPN ranges BEFORE the WAN accept, so a
 			// destination that merely routes via the WAN NIC (e.g. a datacenter 10.0.0.0/8) is
@@ -413,11 +481,17 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 				fmt.Fprintf(&fwd, "        ip saddr %s ip daddr @private_ranges ip daddr != %s drop\n", n.CIDR, n.CIDR)
 			}
 			for _, d := range devices {
-				if d.Internet {
-					fmt.Fprintf(&fwd, "        %s oifname %q accept\n", from(d), wan)
+				via, ok := d.internetVia()
+				if !ok || !d.Out.any() {
+					continue // no way out at all: no NAT either
+				}
+				writeInternetOut(&fwd, from(d), wan, d.Out)
+				if via == "" {
+					fmt.Fprintf(&nat, "        ip saddr %s oifname %q masquerade\n", d.IP, wan)
+				} else {
+					fmt.Fprintf(&nat, "        ip saddr %s oifname %q snat ip to %s\n", d.IP, wan, via)
 				}
 			}
-			fmt.Fprintf(&nat, "        ip saddr %s oifname %q masquerade\n", n.CIDR, wan)
 		}
 
 		// Default-deny: nothing else reaches the segment, and the segment initiates nothing
@@ -426,11 +500,33 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 		fmt.Fprintf(&fwd, "        ip saddr %s drop\n\n", n.CIDR)
 	}
 
+	// Every extra internet address any network or device names, enforced or not.
+	var dedicated []string
+	for _, p := range pol {
+		for _, a := range p.Dedicated {
+			if ip := dedicatedIP(a); ip != "" && !slices.Contains(dedicated, ip) {
+				dedicated = append(dedicated, ip)
+			}
+		}
+	}
+	sort.Strings(dedicated)
+
 	var sb strings.Builder
 	sb.WriteString("table inet motte_dhcp_net {\n")
 	// private_ranges: destinations a segment must never reach via internet-out (RFC1918 + the live
 	// VPN/overlay ranges). Interval+auto-merge so overlapping CIDRs collapse cleanly.
 	sb.WriteString(nftables.BuildSet("private_ranges", "ipv4_addr", []string{"interval", "auto-merge"}, privateRanges))
+	// dedicated_addrs: the extra internet addresses. Nothing may open a connection to them — no
+	// service on the box, no Docker-published port, not even ping; only the devices' own
+	// connections and their replies (and related ICMP errors) pass. Priority -150 runs after
+	// conntrack (-200) has classified the packet and before Docker's port forwarding (dstnat,
+	// -100), so a published container port can't answer on them either. A service opened on one
+	// later goes above the drop, as an accept for exactly that port and those sources.
+	sb.WriteString(nftables.BuildSet("dedicated_addrs", "ipv4_addr", nil, dedicated))
+	sb.WriteString("    chain dedicated_in {\n")
+	sb.WriteString("        type filter hook prerouting priority -150; policy accept;\n")
+	sb.WriteString("        ip daddr @dedicated_addrs ct state != { established, related } drop\n")
+	sb.WriteString("    }\n")
 	sb.WriteString("    chain forward {\n")
 	sb.WriteString("        type filter hook forward priority 10; policy accept;\n")
 	sb.WriteString(blk.String())
@@ -455,7 +551,27 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 	return sb.String()
 }
 
-// portSet renders TCP ports as an nft port or anonymous set, keeping only valid ports; "" when
+// writeInternetOut emits a device's way out to the internet: only its services' ports, or every
+// port except direct mail (unless that is allowed too). Anything else falls to the network's
+// closing drop.
+func writeInternetOut(b *strings.Builder, from, wan string, o outPorts) {
+	out := fmt.Sprintf("%s oifname %q", from, wan)
+	if o.All {
+		if !o.SMTP {
+			fmt.Fprintf(b, "        %s tcp dport 25 drop\n", out)
+		}
+		fmt.Fprintf(b, "        %s accept\n", out)
+		return
+	}
+	if ports := portSet(o.TCP); ports != "" {
+		fmt.Fprintf(b, "        %s tcp dport %s accept\n", out, ports)
+	}
+	if ports := portSet(o.UDP); ports != "" {
+		fmt.Fprintf(b, "        %s udp dport %s accept\n", out, ports)
+	}
+}
+
+// portSet renders ports as an nft port or anonymous set, keeping only valid ports; "" when
 // none is.
 func portSet(ports []int) string {
 	var ok []string

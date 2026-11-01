@@ -178,10 +178,13 @@ func (s *Service) handleListInterfaces(w http.ResponseWriter, r *http.Request) {
 			Conflict: netplanConflict(in.Name),
 		})
 	}
+	addrs, _ := loadEgressAddrs() // none offered when the host can't be read
 	router.JSON(w, map[string]any{
 		"interfaces":  out,
 		"wan":         wan,
 		"suggestions": suggestSubnets(nets, 6),
+		"egress":      addrs, // the internet addresses a network's devices may leave from
+		"services":    servicesInfo(),
 	})
 }
 

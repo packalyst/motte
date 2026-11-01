@@ -20,6 +20,12 @@ type Network struct {
 	Mode       string `json:"mode"`        // "auto" | "approve"
 	NATEnabled bool   `json:"nat_enabled"` // internet-out masquerade (off by default)
 	Enabled    bool   `json:"enabled"`
+	// Egress is the internet address its devices leave from by default: "" = the server's main
+	// address, else an extra one (see egress.go).
+	Egress string `json:"egress_ip"`
+	// Services is what its devices may reach on the internet by default: "" = the catalog's
+	// default, else a list (see services.go).
+	Services string `json:"services"`
 }
 
 // Client is a DHCP lease/reservation, keyed by MAC.
@@ -34,7 +40,13 @@ type Client struct {
 	Internet  bool   `json:"internet"` // may route out the WAN; seeded from the network's nat_enabled
 	// VPNIP is the device's address inside the WireGuard range, given on its first grant: VPN
 	// clients reach it there and the box swaps it for IP. Empty until then.
-	VPNIP    string `json:"vpn_ip,omitempty"`
+	VPNIP string `json:"vpn_ip,omitempty"`
+	// Egress is the internet address it leaves from: "" = its network's default, egressMain = the
+	// server's main address, else an extra one (see egress.go).
+	Egress string `json:"egress_ip"`
+	// Services is what it may reach on the internet: "" = its network's, else a list (see
+	// services.go).
+	Services string `json:"services"`
 	LastSeen string `json:"last_seen,omitempty"`
 	// Online and LeaseExpires are derived at read time from the live dnsmasq lease file, not
 	// stored. LeaseExpires is the active lease's end (unix seconds); 0 = none or never expires.

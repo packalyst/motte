@@ -410,7 +410,7 @@ func TestReachabilityCutsLostAccess(t *testing.T) {
 		dev(1, devicePolicy{VPNIP: "10.8.128.1", Allowed: []vpnGrant{{IP: "10.8.0.7"}}}),             // loses the grant
 		dev(2, devicePolicy{VPNIP: "10.8.128.2", Allowed: []vpnGrant{{IP: "10.8.0.7", Both: true}}}), // two-way → one-way
 		dev(3, devicePolicy{VPNIP: "10.8.128.3", Routes: []int{80, 443}}),                            // loses a route port
-		dev(4, devicePolicy{Internet: true}),                                                         // loses the internet
+		dev(4, devicePolicy{Internet: true, Out: portsOf("web")}),                                    // loses the internet
 		dev(5, devicePolicy{VPNIP: "10.8.128.5"}),                                                    // gone (blocked/forgotten)
 		dev(6, devicePolicy{VPNIP: "10.8.128.6", Allowed: []vpnGrant{{IP: "10.8.0.7"}}}),             // keeps everything
 		dev(7, devicePolicy{}), // only gains

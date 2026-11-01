@@ -13,7 +13,7 @@ func scanNetwork(row interface{ Scan(...any) error }) (*Network, error) {
 	var n Network
 	var nat, enabled int
 	if err := row.Scan(&n.ID, &n.Iface, &n.CIDR, &n.GatewayIP, &n.PoolStart, &n.PoolEnd,
-		&n.LeaseSecs, &n.Domain, &n.Mode, &nat, &enabled); err != nil {
+		&n.LeaseSecs, &n.Domain, &n.Mode, &nat, &enabled, &n.Egress, &n.Services); err != nil {
 		return nil, err
 	}
 	n.NATEnabled = nat == 1
@@ -21,7 +21,7 @@ func scanNetwork(row interface{ Scan(...any) error }) (*Network, error) {
 	return &n, nil
 }
 
-const networkCols = `id, iface, cidr, gateway_ip, pool_start, pool_end, lease_secs, domain, mode, nat_enabled, enabled`
+const networkCols = `id, iface, cidr, gateway_ip, pool_start, pool_end, lease_secs, domain, mode, nat_enabled, enabled, egress_ip, services`
 
 func (s *Service) listNetworks() ([]Network, error) {
 	rows, err := s.db.Query(`SELECT ` + networkCols + ` FROM dhcp_networks ORDER BY iface`)
@@ -61,10 +61,10 @@ func (s *Service) otherNetworks(excludeID int64) ([]Network, error) {
 
 func (s *Service) createNetwork(n *Network) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO dhcp_networks
-		(iface, cidr, gateway_ip, pool_start, pool_end, lease_secs, domain, mode, nat_enabled, enabled)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		(iface, cidr, gateway_ip, pool_start, pool_end, lease_secs, domain, mode, nat_enabled, enabled, egress_ip, services)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		n.Iface, n.CIDR, n.GatewayIP, n.PoolStart, n.PoolEnd, n.LeaseSecs, n.Domain, n.Mode,
-		b2i(n.NATEnabled), b2i(n.Enabled))
+		b2i(n.NATEnabled), b2i(n.Enabled), n.Egress, n.Services)
 	if err != nil {
 		return 0, err
 	}
@@ -74,9 +74,9 @@ func (s *Service) createNetwork(n *Network) (int64, error) {
 func (s *Service) updateNetwork(n *Network) error {
 	_, err := s.db.Exec(`UPDATE dhcp_networks SET
 		cidr=?, gateway_ip=?, pool_start=?, pool_end=?, lease_secs=?, domain=?, mode=?,
-		nat_enabled=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		nat_enabled=?, enabled=?, egress_ip=?, services=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		n.CIDR, n.GatewayIP, n.PoolStart, n.PoolEnd, n.LeaseSecs, n.Domain, n.Mode,
-		b2i(n.NATEnabled), b2i(n.Enabled), n.ID)
+		b2i(n.NATEnabled), b2i(n.Enabled), n.Egress, n.Services, n.ID)
 	return err
 }
 
@@ -94,12 +94,12 @@ func (s *Service) deleteNetwork(id int64) (domains.Removed, error) {
 
 // --- DHCP clients (reservations), keyed by MAC ---
 
-const clientCols = `id, network_id, mac, ip, name, approved, blocked, internet, vpn_ip, COALESCE(last_seen,'')`
+const clientCols = `id, network_id, mac, ip, name, approved, blocked, internet, vpn_ip, egress_ip, services, COALESCE(last_seen,'')`
 
 func scanClient(row interface{ Scan(...any) error }) (*Client, error) {
 	var c Client
 	var approved, blocked, internet int
-	if err := row.Scan(&c.ID, &c.NetworkID, &c.MAC, &c.IP, &c.Name, &approved, &blocked, &internet, &c.VPNIP, &c.LastSeen); err != nil {
+	if err := row.Scan(&c.ID, &c.NetworkID, &c.MAC, &c.IP, &c.Name, &approved, &blocked, &internet, &c.VPNIP, &c.Egress, &c.Services, &c.LastSeen); err != nil {
 		return nil, err
 	}
 	c.Approved, c.Blocked, c.Internet = approved == 1, blocked == 1, internet == 1
@@ -156,8 +156,10 @@ func (s *Service) setClientBlocked(id int64, blocked, approved bool) error {
 	return err
 }
 
-func (s *Service) setClientInternet(id int64, on bool) error {
-	_, err := s.db.Exec(`UPDATE dhcp_clients SET internet=? WHERE id=?`, b2i(on), id)
+// setClientInternet sets a device's internet switch, the address it leaves from and what it may
+// reach.
+func (s *Service) setClientInternet(id int64, on bool, egress, services string) error {
+	_, err := s.db.Exec(`UPDATE dhcp_clients SET internet=?, egress_ip=?, services=? WHERE id=?`, b2i(on), egress, services, id)
 	return err
 }
 

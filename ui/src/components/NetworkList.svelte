@@ -4,7 +4,7 @@
    * edit, delete (Settings → Networks). Their devices are on the Clients page.
    */
   import { onMount } from 'svelte'
-  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import Modal from './Modal.svelte'
@@ -13,12 +13,17 @@
   import Checkbox from './Checkbox.svelte'
   import EmptyState from './EmptyState.svelte'
   import Badge from './Badge.svelte'
+  import EgressSelect from './EgressSelect.svelte'
+  import ServicesPicker from './ServicesPicker.svelte'
+  import { egressMissing } from '$lib/lan.js'
   import { clientsList, openClients } from '$lib/clients.js'
 
   let networks = $state([])
   let interfaces = $state([])
   let suggestions = $state([]) // safe CIDR candidates from the backend
   let wan = $state('')
+  let egressAddrs = $state(null) // the server's internet addresses: { main, extras }
+  let servicesInfo = $state(null) // the service catalog and default: { catalog, default }
 
   // Add/edit network modal.
   let formOpen = $state(false)
@@ -30,7 +35,7 @@
 
   function blankForm() {
     return { iface: '', cidr: '', gateway_ip: '', pool_start: '', pool_end: '',
-             lease_secs: 43200, domain: 'lan', mode: 'approve', nat_enabled: false, enabled: true }
+             lease_secs: 43200, domain: 'lan', mode: 'approve', nat_enabled: false, enabled: true, egress_ip: '', services: '' }
   }
 
   async function load() {
@@ -40,6 +45,8 @@
       interfaces = ifc.interfaces || []
       suggestions = ifc.suggestions || []
       wan = ifc.wan || ''
+      egressAddrs = ifc.egress || null
+      servicesInfo = ifc.services || null
     } catch (e) {
       toast('Failed to load networks: ' + e.message, 'error')
     }
@@ -138,12 +145,17 @@
   }
 
 
+  // Giving new devices internet, or changing the address the network's devices leave from, asks for
+  // a password or passkey (the server decides; other changes save straight away).
   async function saveForm() {
     saving = true
     const body = { ...form, lease_secs: Number(form.lease_secs) }
     try {
-      if (editing) await apiPut(`/api/dhcp/networks/${editing.id}`, body)
-      else await apiPost('/api/dhcp/networks', body)
+      const res = await withStepUp((extra) => editing
+        ? apiPut(`/api/dhcp/networks/${editing.id}`, { ...body, ...extra })
+        : apiPost('/api/dhcp/networks', { ...body, ...extra }),
+        { title: 'Network internet access', message: "Confirm to change this network's internet access.", confirmText: 'Save' })
+      if (res === STEPUP_CANCELLED) return
       toast('Network saved', 'success')
       formOpen = false
       await load()
@@ -277,7 +289,8 @@
           <dl class="grid grid-cols-2 gap-px border-y border-border bg-border mt-3 sm:grid-cols-4">
             {#each [
               { k: 'New devices', v: net.mode === 'approve' ? 'Wait for approval' : 'Join automatically', tone: net.mode === 'approve' ? 'text-warning' : '' },
-              { k: 'Internet', v: net.nat_enabled ? 'On for new devices' : 'Off (isolated)', tone: net.nat_enabled ? 'text-info' : '' },
+              { k: 'Internet', v: (net.nat_enabled ? 'On for new devices' : 'Off (isolated)') + (net.egress_ip ? ` · via ${net.egress_ip}` : ''),
+                tone: egressMissing(egressAddrs, net.egress_ip) ? 'text-warning' : net.nat_enabled ? 'text-info' : '' },
               { k: 'Lease', v: leaseLabel(net.lease_secs) },
               { k: 'Domain', v: net.domain ? `.${net.domain}` : '—', mono: true },
             ] as f (f.k)}
@@ -366,6 +379,8 @@
       <Checkbox variant="switch" bind:checked={form.nat_enabled}
                 label="Internet access for new devices"
                 hint="The starting value of each new device's internet switch — change it per device on the Clients page. Off = new devices are fully isolated." />
+      <EgressSelect bind:value={form.egress_ip} addrs={egressAddrs} />
+      <ServicesPicker bind:value={form.services} info={servicesInfo} />
       <Checkbox variant="switch" bind:checked={form.enabled} label="Enabled" />
     </div>
   </div>

@@ -6,7 +6,7 @@
    * onchanged() lets the parent refresh. Access starts empty: nobody reaches a device until granted.
    */
   import { tick } from 'svelte'
-  import { apiGet, apiPost, apiPut, apiDelete, currentUser, hasRole, toast, confirm, stepUpConfirm } from '../stores/app.js'
+  import { apiGet, apiPost, apiPut, apiDelete, currentUser, hasRole, toast, confirm, stepUpConfirm, STEPUP_CANCELLED } from '../stores/app.js'
   import { timeAgo } from '$lib/utils/format.js'
   import { approveDevice, blockDevice, unblockDevice, setDeviceInternet } from '$lib/lan.js'
   import { fmtUptime } from '$lib/fleet.js'
@@ -21,6 +21,8 @@
   import ContentBlock from './ContentBlock.svelte'
   import OptionCard from './OptionCard.svelte'
   import AdBlockPanel from './AdBlockPanel.svelte'
+  import EgressSelect from './EgressSelect.svelte'
+  import ServicesPicker from './ServicesPicker.svelte'
 
   let { deviceId = $bindable(null), network = '', onchanged = undefined } = $props()
 
@@ -42,6 +44,12 @@
   let busy = $state(false)
   let resName = $state('')
   let resIP = $state('')
+  let egressAddrs = $state(null) // the server's internet addresses: { main, extras }
+  let netEgress = $state('') // the network's default internet address ('' = the main one)
+  let egressChoice = $state('') // the device's, as the select shows it
+  let servicesInfo = $state(null) // the service catalog and default: { catalog, default }
+  let netServices = $state('') // the network's list ('' = the default)
+  let servicesChoice = $state('') // the device's list as being edited ('' = the network's)
 
   // Loads the open device; nothing once the window is closed (there is no device to load then).
   async function load() {
@@ -56,6 +64,12 @@
       vpnClients = Array.isArray(v) ? v : v.clients || []
       resName = device.name || ''
       resIP = device.ip || ''
+      egressAddrs = d.egress || null
+      netEgress = d.network_egress || ''
+      egressChoice = device.egress_ip || ''
+      servicesInfo = d.services || null
+      netServices = d.network_services || ''
+      servicesChoice = device.services || ''
     } catch (e) {
       if (id !== deviceId) return
       toast('Could not load the device: ' + e.message, 'error')
@@ -78,16 +92,18 @@
     if (!open) { deviceId = null; loadedId = null }
   })
 
-  // Run a change, then reload the device and tell the parent.
+  // Run a change, then reload the device and tell the parent. A cancelled step-up only reloads, so
+  // the switches and the address show the saved state again.
   async function act(fn, done) {
     busy = true
     try {
-      await fn()
+      if (await fn() === STEPUP_CANCELLED) return await load()
       if (done) toast(done, 'success')
       await load()
       onchanged?.()
     } catch (e) {
       toast(e.message, 'error')
+      await load()
     } finally {
       busy = false
     }
@@ -98,6 +114,8 @@
   const block = () => act(() => blockDevice(device.id), 'Blocked')
   const unblock = () => act(() => unblockDevice(device.id), 'Unblocked')
   const setInternet = (on) => act(() => setDeviceInternet(device.id, on), on ? 'Internet on' : 'Internet off')
+  const setEgress = () => act(() => setDeviceInternet(device.id, true, { egress_ip: egressChoice }), 'Internet address changed')
+  const saveServices = () => act(() => setDeviceInternet(device.id, true, { services: servicesChoice }), 'Allowed services saved')
   // The header's name opens the Name field below (the one place a device is renamed).
   async function editName() {
     tab = 'overview'
@@ -214,6 +232,16 @@
         {@render accessSwitch(device.internet ? 'world' : 'world-off', 'Internet access',
           'Lets the device reach the public internet. Private and VPN networks stay off-limits either way.',
           device.internet, !isAdmin || busy || device.blocked, () => setInternet(!device.internet))}
+        {#if device.internet}
+          <EgressSelect bind:value={egressChoice} addrs={egressAddrs} inherit={netEgress} disabled={!isAdmin || busy} onchange={setEgress} />
+          <ServicesPicker bind:value={servicesChoice} info={servicesInfo} inherit={netServices} disabled={!isAdmin || busy} />
+          {#if servicesChoice !== (device.services || '')}
+            <div class="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" disabled={busy} onclick={() => { servicesChoice = device.services || '' }}>Undo</Button>
+              <Button size="sm" icon="device-floppy" loading={busy} onclick={saveServices}>Save allowed services</Button>
+            </div>
+          {/if}
+        {/if}
         {@render accessSwitch('shield-lock', 'VPN access',
           device.vpn_ip ? `VPN clients you allow below reach it at ${device.vpn_ip}.` : 'Gives the device an address VPN clients can reach, once you allow them.',
           !!device.vpn_ip, !isAdmin || busy || (device.blocked && !device.vpn_ip), () => setVPN(!device.vpn_ip))}

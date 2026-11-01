@@ -361,6 +361,8 @@ func createSchema(db *sql.DB) error {
 		mode TEXT NOT NULL DEFAULT 'approve' CHECK(mode IN ('auto','approve')),
 		nat_enabled INTEGER NOT NULL DEFAULT 0,
 		enabled INTEGER NOT NULL DEFAULT 1,
+		egress_ip TEXT NOT NULL DEFAULT '',
+		services TEXT NOT NULL DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -379,6 +381,8 @@ func createSchema(db *sql.DB) error {
 		blocked INTEGER NOT NULL DEFAULT 0,
 		internet INTEGER NOT NULL DEFAULT 0,
 		vpn_ip TEXT NOT NULL DEFAULT '',
+		egress_ip TEXT NOT NULL DEFAULT '',
+		services TEXT NOT NULL DEFAULT '',
 		last_seen DATETIME,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (network_id) REFERENCES dhcp_networks(id) ON DELETE CASCADE
@@ -606,15 +610,21 @@ func runMigrations(db *sql.DB) {
 	// LAN devices: per-device block and internet. Existing devices keep the internet access their
 	// network gave them (internet := nat_enabled), so the upgrade changes nobody's reachability.
 	// vpn_ip is the device's address inside the WireGuard range (set while its VPN access is on);
-	// bidirectional lets a granted device reach its VPN client too. A domain route to a LAN device
-	// names it (lan_device_id) so the firewall opens Traefik's way in and the route goes with the
-	// device's VPN access.
+	// bidirectional lets a granted device reach its VPN client too. egress_ip is the internet
+	// address a network's devices (or one device) leave from; '' keeps the server's main address.
+	// services is what they may reach on the internet; '' inherits (the default: web and time).
+	// A domain route to a LAN device names it (lan_device_id) so the firewall opens Traefik's way
+	// in and the route goes with the device's VPN access.
 	var dc int
 	for _, c := range []struct{ table, name, ddl, after string }{
 		{"dhcp_clients", "blocked", `ALTER TABLE dhcp_clients ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`, ""},
 		{"dhcp_clients", "internet", `ALTER TABLE dhcp_clients ADD COLUMN internet INTEGER NOT NULL DEFAULT 0`,
 			`UPDATE dhcp_clients SET internet = COALESCE((SELECT nat_enabled FROM dhcp_networks n WHERE n.id = dhcp_clients.network_id), 0)`},
 		{"dhcp_clients", "vpn_ip", `ALTER TABLE dhcp_clients ADD COLUMN vpn_ip TEXT NOT NULL DEFAULT ''`, ""},
+		{"dhcp_clients", "egress_ip", `ALTER TABLE dhcp_clients ADD COLUMN egress_ip TEXT NOT NULL DEFAULT ''`, ""},
+		{"dhcp_networks", "egress_ip", `ALTER TABLE dhcp_networks ADD COLUMN egress_ip TEXT NOT NULL DEFAULT ''`, ""},
+		{"dhcp_clients", "services", `ALTER TABLE dhcp_clients ADD COLUMN services TEXT NOT NULL DEFAULT ''`, ""},
+		{"dhcp_networks", "services", `ALTER TABLE dhcp_networks ADD COLUMN services TEXT NOT NULL DEFAULT ''`, ""},
 		{"dhcp_client_acl", "bidirectional", `ALTER TABLE dhcp_client_acl ADD COLUMN bidirectional INTEGER NOT NULL DEFAULT 0`, ""},
 		{"domain_routes", "lan_device_id", `ALTER TABLE domain_routes ADD COLUMN lan_device_id INTEGER REFERENCES dhcp_clients(id) ON DELETE CASCADE`, ""},
 	} {

@@ -54,12 +54,24 @@ func (s *Service) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if n.Egress, err = checkEgress(n.Egress, false); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if n.Services, err = normalizeServices(n.Services); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if (n.NATEnabled || n.Egress != "" || widens(effectiveServices(nil, nil), effectiveServices(&n, nil))) && !router.StepUp(w, r) {
+		return
+	}
 	id, err := s.createNetwork(&n)
 	if err != nil {
 		router.JSONError(w, "could not save network: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	n.ID = id
+	auditNetworkInternet(r, &n, nil)
 	if err := s.Reconcile(&n); err != nil {
 		// Roll back the DB row so a network that couldn't be brought up doesn't linger.
 		_, _ = s.deleteNetwork(id) // brand new: no devices, so no routes
@@ -95,10 +107,28 @@ func (s *Service) handleUpdateNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The address is checked only when it changes: one that left the server must not stop the
+	// network's other settings from being saved (its devices are already without internet).
+	if n.Egress != existing.Egress {
+		if n.Egress, err = checkEgress(n.Egress, false); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if n.Services, err = normalizeServices(n.Services); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	grows := (n.NATEnabled && !existing.NATEnabled) || n.Egress != existing.Egress ||
+		widens(effectiveServices(existing, nil), effectiveServices(&n, nil))
+	if grows && !router.StepUp(w, r) {
+		return
+	}
 	if err := s.updateNetwork(&n); err != nil {
 		router.JSONError(w, "could not save network", http.StatusInternalServerError)
 		return
 	}
+	auditNetworkInternet(r, &n, existing)
 	if err := s.Reconcile(&n); err != nil {
 		router.JSONError(w, "saved but could not apply: "+err.Error(), http.StatusBadRequest)
 		return
@@ -211,7 +241,9 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	netEgress, netServices := "", ""
 	if n, err := s.getNetwork(c.NetworkID); err == nil {
+		netEgress, netServices = n.Egress, n.Services
 		if live, err := s.clientsWithLive(n); err == nil {
 			for i := range live {
 				if live[i].ID == c.ID {
@@ -230,7 +262,9 @@ func (s *Service) handleGetClient(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "could not read domain routes", http.StatusInternalServerError)
 		return
 	}
-	router.JSON(w, map[string]any{"client": c, "allowed": allowed, "routes": routes})
+	addrs, _ := loadEgressAddrs() // none offered when the host can't be read
+	router.JSON(w, map[string]any{"client": c, "allowed": allowed, "routes": routes,
+		"egress": addrs, "network_egress": netEgress, "services": servicesInfo(), "network_services": netServices})
 }
 
 // handleBlockClient denies a device an address and drops its traffic by MAC (it also loses its
@@ -270,26 +304,58 @@ func (s *Service) handleUnblockClient(w http.ResponseWriter, r *http.Request) {
 	router.JSON(w, map[string]any{"ok": true})
 }
 
-// handleSetInternet turns a device's internet access on or off.
-// PUT /api/dhcp/clients/{id}/internet {"enabled":bool}
+// handleSetInternet turns a device's internet access on or off, and sets the internet address it
+// leaves from (egress_ip) and what it may reach out there (services, "" = its network's); either
+// left out stays as it is. A step-up is due whenever its access grows while on: switching on,
+// another address, or a service it didn't have. Off, or taking a service away, needs none.
+// PUT /api/dhcp/clients/{id}/internet {"enabled":bool,"egress_ip"?:string,"services"?:string}
 func (s *Service) handleSetInternet(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.clientFromPath(w, r)
 	if !ok {
 		return
 	}
+	n, err := s.getNetwork(c.NetworkID)
+	if err != nil {
+		router.JSONError(w, "network not found", http.StatusNotFound)
+		return
+	}
 	var req struct {
-		Enabled bool `json:"enabled"`
+		Enabled  bool    `json:"enabled"`
+		Egress   *string `json:"egress_ip"`
+		Services *string `json:"services"`
 	}
 	if !router.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	if err := s.setClientInternet(c.ID, req.Enabled); err != nil {
+	egress, services := c.Egress, c.Services
+	if req.Egress != nil && *req.Egress != c.Egress {
+		if egress, err = checkEgress(*req.Egress, true); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.Services != nil && *req.Services != c.Services {
+		if services, err = normalizeServices(*req.Services); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.Enabled == c.Internet && egress == c.Egress && services == c.Services {
+		router.JSON(w, map[string]any{"ok": true}) // already so: nothing to confirm
+		return
+	}
+	after := effectiveServices(n, &Client{Services: services})
+	grows := req.Enabled && (!c.Internet || egress != c.Egress || widens(effectiveServices(n, c), after))
+	if grows && !router.StepUp(w, r) {
+		return
+	}
+	if err := s.setClientInternet(c.ID, req.Enabled, egress, services); err != nil {
 		router.JSONError(w, "could not save", http.StatusInternalServerError)
 		return
 	}
 	state := "off"
 	if req.Enabled {
-		state = "on"
+		state = "on via " + egressLabel(egress, "the network's default address") + ", to: " + servicesLabel(after)
 	}
 	audit(r, "lan_device_internet", "Internet "+state+" for LAN device "+c.label())
 	s.devicesChanged(c.NetworkID)
@@ -471,6 +537,31 @@ func routesNote(removed domains.Removed) string {
 		return ""
 	}
 	return "; domain routes removed: " + strings.Join(removed.Domains(), ", ")
+}
+
+// egressLabel names an internet address in audit messages; def names the "" choice.
+func egressLabel(v, def string) string {
+	switch v {
+	case "":
+		return def
+	case egressMain:
+		return "the server's main address"
+	}
+	return v
+}
+
+// auditNetworkInternet records a network's internet changes: its new devices getting internet,
+// the address its devices leave from, and what they may reach. old is nil for a new network.
+func auditNetworkInternet(r *http.Request, n, old *Network) {
+	if n.NATEnabled && (old == nil || !old.NATEnabled) {
+		audit(r, "lan_network_internet", "Internet on for new devices of network "+n.Iface)
+	}
+	if (old == nil && n.Egress != "") || (old != nil && n.Egress != old.Egress) {
+		audit(r, "lan_network_internet", "Network "+n.Iface+" devices go out via "+egressLabel(n.Egress, "the server's main address"))
+	}
+	if (old == nil && n.Services != "") || (old != nil && n.Services != old.Services) {
+		audit(r, "lan_network_internet", "Network "+n.Iface+" devices may reach: "+servicesLabel(effectiveServices(n, nil)))
+	}
 }
 
 // label names a device in audit messages.

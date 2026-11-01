@@ -235,6 +235,18 @@ Rule emission order (top = evaluated first):
 
 See [data-model.md](data-model.md) for the `vpn_clients` / `vpn_acl_rules` / `vpn_virtual_ips` schemas and the [Virtual IPs feature design] for the product intent (expose a LAN device over WG).
 
+### 7.1 LAN devices' internet: what they reach, and the address they use (`motte_dhcp_net`)
+
+A LAN device with internet on reaches the **public** internet only (the `private_ranges` drop comes first), and only that device: the WAN accept matches its MAC and IP together. Nothing from the internet can open a connection to it — there is no port forward to a LAN device, only replies to its own connections come back.
+
+**Allowed services — nothing goes out unless listed.** The service catalog (`api/internal/dhcp/services.go`, the one place services are named; the UI reads it from the API) maps names to ports: Web (TCP 80/443, UDP 443), Time (UDP 123), Email (TCP 587/465/993/995), SSH (TCP 22), Everything (every port except 25), Direct mail (TCP 25). A device with internet gets the default — **Web and Time** — unless its network (`dhcp_networks.services`) or the device (`dhcp_clients.services`) lists others, plus custom `tcp:N` / `udp:N` ports. Port 25 opens only through Direct mail, even under Everything. Each device's WAN accept carries its own ports; anything else falls to the network's closing drop. Since outside DNS (port 53) isn't in the default, plain DNS goes through the gateway (AdGuard). Opening more needs a step-up; taking a service away doesn't, and cuts the device's open connections.
+
+Its traffic leaves from an **internet address**: the server's main address (masquerade), or an extra public IPv4 on the WAN interface (`snat ip to`). A network sets the default (`dhcp_networks.egress_ip`, `''` = main); a device may override it (`dhcp_clients.egress_ip`: `''` = the network's, `main` = the main address, or an extra one). The panel offers only extra public addresses on the WAN interface — never the address the server sends from, never `SERVER_IP` — and choosing one, like turning a device's internet on or giving a network's new devices internet, needs a step-up.
+
+- **A dedicated address accepts nothing.** Every extra address a network or device names is in the `dedicated_addrs` set; the `dedicated_in` chain (prerouting, priority −150: after conntrack, before Docker's port forwarding) drops anything to it that isn't an established or related connection. No service on the box, no published container port and no ping answers on it. A service opened on one later goes above that drop, for exactly its port and sources.
+- **Fail closed.** A device whose address is no longer on the server gets no internet; it never falls back to the main address. The server's own addresses are never put in the set, even if a stored choice names one later.
+- **Changing it cuts open connections**, like any other lost access (conntrack), so nothing keeps the old address.
+
 ---
 
 ## 8. L7 — the Traefik "sentinel" plugin

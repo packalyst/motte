@@ -7,7 +7,7 @@
    * their full detail page right here (#m=<id>, #cves=<id>). Networks are managed in Settings.
    */
   import { onMount, onDestroy, untrack } from 'svelte'
-  import { apiGet, apiDelete, openView, currentUser, hasRole, hashParam, toast } from '../stores/app.js'
+  import { apiGet, apiDelete, openView, currentUser, hasRole, hashParam, toast, STEPUP_CANCELLED } from '../stores/app.js'
   import { loadState, saveState, copyWithToast } from '../stores/helpers.js'
   import { KINDS, isKind, clientsList, watchClients, reloadClients, clientsFilter } from '$lib/clients.js'
   import Icon from '../components/Icon.svelte'
@@ -157,7 +157,7 @@
   async function lanAction(c, fn, done) {
     busyKey = c.key
     try {
-      await fn(c.open.lan)
+      if (await fn(c.open.lan) === STEPUP_CANCELLED) return
       toast(`${c.name} ${done}`, 'success')
       await load()
     } catch (e) {
@@ -464,7 +464,7 @@
                   <Button variant="primary" size="xs" icon="check" loading={busyKey === c.key} onclick={() => approve(c)}>Approve</Button>
                 {:else}
                   <span class="text-[11px] text-muted-foreground">Internet</span>
-                  <Checkbox variant="switch" aria-label="Internet access for {c.name}" checked={c.internet} disabled={busyKey === c.key}
+                  <Checkbox variant="switch" controlled aria-label="Internet access for {c.name}" checked={c.internet} disabled={busyKey === c.key}
                     onchange={() => lanAction(c, (id) => setDeviceInternet(id, !c.internet), c.internet ? 'internet off' : 'internet on')} />
                 {/if}
               </div>
