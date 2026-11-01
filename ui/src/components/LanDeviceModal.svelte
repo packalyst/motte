@@ -76,7 +76,7 @@
       netServices = d.network_services || ''
       servicesChoice = device.services || ''
       inbound = d.inbound || []
-      inboundChoice = structuredClone(inbound)
+      inboundChoice = $state.snapshot(inbound)
     } catch (e) {
       if (id !== deviceId) return
       toast('Could not load the device: ' + e.message, 'error')
@@ -146,7 +146,7 @@
   const inboundIncomplete = $derived(inboundChoice.some((e) => !e.sources.length))
   function undoAccess() {
     servicesChoice = device.services || ''
-    inboundChoice = structuredClone(inbound)
+    inboundChoice = $state.snapshot(inbound)
   }
   const saveAccess = () => act(() => setDeviceInternet(device.id, true, {
     ...(servicesDirty ? { services: servicesChoice } : {}),
