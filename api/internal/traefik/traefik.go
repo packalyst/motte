@@ -5,14 +5,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -329,6 +332,15 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "Invalid IP allowlist: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The dashboard's listen address comes from the environment; a missing or broken one refuses
+	// the change before anything is written, never a guessed address.
+	dashAddr := ""
+	if config.DashboardEnabled != nil && s.staticPath != "" {
+		if dashAddr, err = dashboardAddress(*config.DashboardEnabled); err != nil {
+			router.JSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	// A new trusted network widens who counts as inside (past VPN-only, Cloudflare-only and the
 	// port-80 gate), and switching the dashboard on publishes it on every interface: step-up
 	// re-auth. Removing a network, switching the dashboard off or the rate limits need none.
@@ -379,24 +391,10 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		if staticData, err := os.ReadFile(s.staticPath); err == nil {
 			staticContent := string(staticData)
 
-			// Determine dashboard address based on enabled state
-			port := os.Getenv("TRAEFIK_PORT")
-			containerIP := os.Getenv("TRAEFIK_CONTAINER_IP")
-			if containerIP == "" {
-				containerIP = "172.18.0.2" // fallback
-			}
-
-			var address string
-			if *config.DashboardEnabled {
-				address = ":" + port // public
-			} else {
-				address = containerIP + ":" + port // internal only
-			}
-
 			// Update dashboard enabled and address using proper YAML parsing
 			newStaticContent, err := helper.UpdateYAMLPaths(staticContent, []helper.YAMLUpdate{
 				{Path: "api.dashboard", Value: *config.DashboardEnabled},
-				{Path: "entryPoints.traefik.address", Value: address},
+				{Path: "entryPoints.traefik.address", Value: dashAddr},
 			})
 			if err != nil {
 				log.Printf("Warning: some static config updates failed: %v", err)
@@ -417,6 +415,24 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		"status":          "updated",
 		"restartRequired": restartRequired,
 	})
+}
+
+// dashboardAddress is where Traefik's dashboard listens: every interface when public, else only
+// Traefik's own container address (TRAEFIK_CONTAINER_IP). Both come from the environment; a
+// missing or invalid value is an error.
+func dashboardAddress(public bool) (string, error) {
+	port, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TRAEFIK_PORT")))
+	if err != nil || port < 1 || port > 65535 {
+		return "", errors.New("TRAEFIK_PORT in .env is missing or invalid")
+	}
+	if public {
+		return ":" + strconv.Itoa(port), nil
+	}
+	ip, err := netip.ParseAddr(strings.TrimSpace(os.Getenv("TRAEFIK_CONTAINER_IP")))
+	if err != nil || !ip.Is4() || ip.IsUnspecified() {
+		return "", errors.New("TRAEFIK_CONTAINER_IP in .env is missing or invalid")
+	}
+	return netip.AddrPortFrom(ip, uint16(port)).String(), nil
 }
 
 // getNestedInt extracts an int from a nested map path, returns defaultVal if not found
