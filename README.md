@@ -24,21 +24,53 @@ WireGuard and Headscale (Tailscale-compatible) VPNs, AdGuard Home DNS, a Traefik
 an nftables firewall that is the single gate for all traffic, and a signed agent that watches,
 protects and opens a browser shell on every machine in your fleet.
 
+<p align="center">
+  <img src="docs/screenshots/overview.png" alt="The Motte overview: security status, clients online and what needs attention" width="900">
+</p>
+
 - **Contents:** [Features](#features) · [Quick start](#quick-start) · [Configuration](#configuration) · [Security](#security) · [Architecture](#architecture) · [Documentation](#documentation) · [Development](#development) · [License](#license)
 
 ## Features
+
+### One client list
+
+WireGuard peers, Tailscale nodes, fleet machines and LAN devices live in one list, with search,
+filters and what needs attention. Open any client to manage it.
+
+<p align="center">
+  <img src="docs/screenshots/clients.png" alt="All clients in one list: WireGuard peers, Tailscale nodes, machines and LAN devices" width="900">
+</p>
 
 ### Networks and VPN
 
 | | |
 |---|---|
-| **WireGuard + Headscale** | Manage WireGuard peers (with QR codes) and Headscale nodes from one client list; route between the two networks. |
+| **WireGuard + Headscale** | Manage WireGuard peers (with QR codes) and Headscale nodes from one client list; route between the two networks. One Headscale page holds nodes, routes, users and keys. |
 | **Access rules** | VPN-to-VPN and per-client rules enforced in nftables, not only advisory ACLs. |
 | **Virtual IPs** | Give a single LAN device (a camera, a printer) its own VPN address and decide who can reach it. |
-| **Private LANs** | The panel can be the DHCP gateway for a private network on a spare interface (dnsmasq). |
-| **DNS** | AdGuard Home with query logs, filtering per client and rewrites for VPN host names. |
-| **Domains** | Publish internal services on your own domains through Traefik: VPN-only or public, with TLS. |
+| **DNS** | AdGuard Home with query logs, filtering per client, block rules, blocklists and rewrites for VPN host names. |
+| **Domains** | Publish internal services, and LAN devices, on your own domains through Traefik: VPN-only or public, with TLS. |
 | **Tunnels** | Authenticated HTTP/SOCKS5 forward proxies, direct or through a VPN node, with IP rotation and webhooks. |
+
+### LAN devices
+
+The panel can be the gateway and DHCP server for private networks on spare interfaces (dnsmasq).
+Every device starts closed: it gets an address and DNS, and nothing else until you allow it.
+
+| | |
+|---|---|
+| **Approve and block** | New devices wait for approval (or are approved automatically, per network); a blocked MAC gets no address and no traffic. |
+| **Really online** | A device shows online only while it answers on the LAN (checked every minute), not just while it holds a lease; a gone machine can be forgotten right away. |
+| **VPN access** | Switch a device's VPN address on and choose which VPN clients may reach it, one way or both ways. Domain routes reach it only through Traefik. |
+| **Internet, per device** | Off by default. When on, only the services you tick go out (web and time by default), or every port except the ones you leave unticked. Outside DNS stays closed, so lookups go through AdGuard. |
+| **Its own public address** | Extra public IPs on the server can be shared by a network or dedicated to one device. A dedicated address takes nothing in unless you open it; if it leaves the server, the device has no internet instead of falling back. |
+| **Incoming** | Open a service or port to a device on its dedicated address, only from the sources you list (or anyone, on purpose). Off with its internet, gone when the address changes. |
+| **Ad blocking** | Per-device DNS filtering through AdGuard. |
+| **Guarded** | Opening anything asks for your password or passkey; narrowing never does and cuts open connections at once. Private networks, the VPN, the cloud metadata address and IPv6 stay out of reach. |
+
+<p align="center">
+  <img src="docs/screenshots/lan-device.png" alt="A LAN device's Internet tab: its dedicated address and which services go out and come in" width="900">
+</p>
 
 ### Firewall and threat protection
 
@@ -48,6 +80,7 @@ protects and opens a browser shell on every machine in your fleet.
 | **Blocking** | Manual and automatic IP blocks, fail2ban-style jails that escalate to whole ranges, blocklist imports. |
 | **Geo-blocking** | Block or allow by country (MaxMind, IP2Location or IPdeny), with automatic database updates. |
 | **Panel lockdown** | Once a domain is set, close direct-IP access so the API is reachable only through the domain, localhost and the VPN. |
+| **HTTPS only** | Plain HTTP redirects to HTTPS; Let's Encrypt still renews behind Cloudflare-only. |
 
 ### Fleet
 
@@ -59,6 +92,11 @@ protects and opens a browser shell on every machine in your fleet.
 | **Maintenance** | Apply updates, fix broken packages and update the kernel as live jobs; dry-run mode until you switch it on. |
 | **Local veto** | Root on a server can switch the console, self-update or maintenance off for that machine, whatever the panel says. |
 | **Self-update** | One click; the agent checks the release signature itself before it swaps. |
+| **Certificates** | Each machine's certificate renews by itself before it expires; machines can be re-enrolled, and the fleet CA can be replaced without cutting any machine off. |
+
+<p align="center">
+  <img src="docs/screenshots/machine-security.png" alt="A fleet machine's Security tab: vulnerability scans over time" width="900">
+</p>
 
 ### Browser console
 
@@ -69,7 +107,7 @@ protects and opens a browser shell on every machine in your fleet.
 | **Built-in tools** | File manager (upload, download, edit), git status, Docker, diagnostics, snippets and a command history. |
 | **Recording and sharing** | Optional encrypted session recordings with a player, and read-only share links. |
 | **Phone ready** | Its own iPhone-style keyboard and a row of terminal keys (esc, tab, ctrl, alt, arrows). |
-| **Gated** | Off by default per machine, admin to switch on, re-authentication before opening a console, every session audited. |
+| **Gated** | Off by default per machine, admin to switch on, re-authentication before opening a console, limits per user, per machine and per shared session, every session audited. |
 
 ### Monitoring
 
@@ -78,7 +116,8 @@ protects and opens a browser shell on every machine in your fleet.
 | **Analytics** | Inbound, DNS, outbound and firewall logs in one place: top talkers, a world map, charts from an hour to all time. |
 | **Live stats** | CPU, memory, disk and network for the panel host and every machine, with history. |
 | **Alerts** | Thresholds on CPU, memory and disk, delivered by push notification, webhook or email. |
-| **Host security** | Listening ports, certificate expiry and recent package changes on the panel server. |
+| **Host security** | Listening ports, logins and recent package changes on the panel server. |
+| **Certificates** | Every certificate the panel depends on in one place (websites, the agent listener, the fleet CA, machines), with expiry warnings. |
 | **Routines** | Every background job visible, with last and next run, pause and run-now. |
 
 ### Operations
@@ -87,7 +126,12 @@ protects and opens a browser shell on every machine in your fleet.
 |---|---|
 | **Backups** | Passphrase-sealed export of the whole configuration and a one-step import onto a new host; scheduled off-host copies to S3 or SFTP. |
 | **Updates** | The panel tells you when a new version is out; `motte update` pulls and rebuilds. Optional image pinning and verification. |
-| **App** | Installable on phone and desktop (PWA) with push notifications. |
+| **App** | Installable on phone and desktop (PWA) with push notifications, and laid out for phones too. |
+
+<p align="center">
+  <img src="docs/screenshots/dns.png" alt="AdGuard DNS: protections and blocked services" width="680">
+  <img src="docs/screenshots/mobile.png" alt="The client list on a phone" width="200">
+</p>
 
 ## Quick start
 
@@ -161,8 +205,8 @@ everything but Traefik, localhost and the VPN.
 
 Motte holds the keys to your network, so it is built to fail closed:
 
-- **The firewall is the gate.** nftables decides what reaches what; access rules elsewhere are advisory.
-- **Accounts:** owner, admin, operator and viewer roles with per-machine scopes; TOTP and passkeys; re-authentication before sensitive actions; optional idle lock.
+- **The firewall is the gate.** nftables decides what reaches what; access rules elsewhere are advisory. LAN devices start with nothing allowed, in or out.
+- **Accounts:** owner, admin, operator and viewer roles with per-machine scopes; TOTP and passkeys; re-authentication (password or passkey) before sensitive actions; optional idle lock.
 - **Sessions** live in an HttpOnly, SameSite=Strict cookie with CSRF checks and a strict Content Security Policy.
 - **Secrets at rest** are encrypted with AES-256-GCM, with a key-rotation command; backups are sealed with Argon2id.
 - **Docker access** goes through a filtering proxy that only the panel can reach (a root-only socket).
