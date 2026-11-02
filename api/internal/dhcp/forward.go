@@ -61,13 +61,8 @@ func segmentWANRules(seg, wan string) (out, back, in []string) {
 // syncSegmentForward brings the Docker FORWARD punch-through in line with a network's current
 // state: open the scoped segment↔WAN path only when the network is enabled AND at least one of its
 // devices has internet access (which device may actually use it is decided in the nft
-// reachability chain), close it otherwise. It also clears the broad `-i/-o <iface>` rules an
-// earlier version added, so an upgrade tightens an already-running network without a manual cleanup.
+// reachability chain), close it otherwise.
 func syncSegmentForward(n *Network, internet, inbound bool) {
-	// Migration: drop the first implementation's broad rules if present.
-	delForward("-i", n.Iface)
-	delForward("-o", n.Iface)
-
 	wan, _ := defaultRouteInterface()
 	out, back, in := segmentWANRules(n.Iface, wan)
 
@@ -87,14 +82,12 @@ func syncSegmentForward(n *Network, internet, inbound bool) {
 	delForward(in...)
 }
 
-// removeSegmentForward tears down every FORWARD accept we might have added for a segment NIC — the
-// broad legacy rules and the scoped WAN-path rules — used when a network is disabled or deleted.
+// removeSegmentForward tears down the FORWARD accepts we add for a segment NIC (its WAN path), used
+// when a network is disabled or deleted.
 func removeSegmentForward(iface string) {
 	if !validIface(iface) {
 		return
 	}
-	delForward("-i", iface)
-	delForward("-o", iface)
 	if wan, _ := defaultRouteInterface(); validIface(wan) {
 		out, back, in := segmentWANRules(iface, wan)
 		delForward(out...)
