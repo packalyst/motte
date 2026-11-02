@@ -236,6 +236,50 @@ flowchart TB
     agents["fleet agents (motte-agent)"] -->|"mTLS :9443"| fleetl
 ```
 
+### How traffic is checked
+
+Every packet meets the kernel firewall first. The panel writes four nftables tables, each with one
+job, and rebuilds them from the database whenever something changes. A packet has to pass **every**
+table on its way: an `accept` only ends that one table's check, a `drop` ends it for good. So each
+table only has to say what it forbids, and none can open what another closes.
+
+```mermaid
+flowchart LR
+    inet(["Internet"])
+    peer(["VPN peer<br/>WireGuard or Headscale"])
+    dev(["LAN device<br/>on a managed network"])
+
+    subgraph box["Panel server"]
+        direction TB
+        nft{{"nftables<br/>motte_cf_only · motte_firewall<br/>motte_vpn_acl · motte_dhcp_net"}}
+        traefik["Traefik + sentinel<br/>VPN-only pages, blocklist, port-80 gate"]
+        api["Panel API<br/>private port: VPN and Traefik only"]
+        ports["Ports you opened<br/>public or VPN-only"]
+    end
+
+    inet --> nft
+    peer --> nft
+    dev --> nft
+    nft -->|"80 / 443"| traefik --> api
+    nft --> ports
+    nft -->|"routed, only when allowed"| out(["Another peer · a LAN device · the internet"])
+```
+
+| From → to | By default |
+|---|---|
+| Internet → the server | Only ports you opened as public. With Cloudflare-only on, 443 answers Cloudflare alone. |
+| Internet → the panel API | Never. It is always a private port. |
+| VPN peer → the server | Public and VPN-only ports. An isolated peer reaches nothing. |
+| VPN peer → another peer | Nothing, until a rule or an "allow all" policy says so. |
+| VPN peer → a LAN device | Nothing, until the device grants that peer access. |
+| LAN device → the server | DHCP and DNS only; an approved device also reaches the public ports. |
+| LAN device → the internet | Nothing, until internet is switched on for it, and then only its chosen services. |
+| Internet → a LAN device | Nothing, except the ways in you list on its own dedicated address. |
+| The server, or anything it routes → a blocked address | Dropped. |
+
+The full map, with every table, chain and rule order, is in
+[the firewall reference](docs/reference/networking-firewall.md#0-the-firewall-at-a-glance).
+
 ### Enrollment &amp; mTLS trust
 
 A one-time token becomes a long-lived mutual-TLS identity. The agent generates its **own** keypair locally, pins the panel's **CA fingerprint** (no trust-on-first-use), and enrolls; the panel redeems the single-use token and signs a 90-day client cert. Every later call is gated at the TLS handshake against an enrolled, non-revoked machine.

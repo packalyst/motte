@@ -10,6 +10,175 @@ Related: [architecture.md](architecture.md) · [backend.md](backend.md) · [secu
 
 ---
 
+## 0. The firewall at a glance
+
+### 0.1 Who writes what
+
+| Table | Written by | Job |
+|---|---|---|
+| `motte_cf_only` | `api/internal/nftables/cf_only.go` | With Cloudflare-only on: HTTPS (443) only from Cloudflare and the trusted local/VPN sources. Off: an empty table. |
+| `motte_firewall` | `api/internal/nftables/firewall.go` | The main gate: open ports (public and private), allow and block lists (IP, range, country, ASN), outbound blocks, per-peer "no internet", IPv6 drops. |
+| `motte_vpn_acl` | `api/internal/nftables/vpn_acl.go` | VPN peers: isolation, peer-to-peer rules, virtual IPs. Default deny between peers. |
+| `motte_dhcp_net` | `api/internal/dhcp/reachability.go` | Managed LANs: what each device may reach and who may reach it, its internet and the address it leaves from, ways in from the internet, the VPN-address swap, LAN DNS to AdGuard. |
+| `motte_agent` | `agent/enforce.go` (on each fleet machine, not the panel) | The machine's own bans: manual, CrowdSec and the panel's blocklist. |
+
+Next to these, two things use `iptables` (it writes into the same kernel ruleset, in Docker's
+`ip filter` / `ip nat` tables):
+
+- **WireGuard** (`api/internal/wireguard/interface.go`): masquerade for the VPN range, and
+  `FORWARD -i/-o wg0 accept`, so VPN traffic gets past Docker's `FORWARD` drop.
+- **Managed LANs** (`api/internal/dhcp/forward.go`): the LAN-to-WAN path through Docker's
+  `FORWARD` drop, only while a device on that LAN has internet: out, replies back, and the
+  connections `inbound_dnat` handed in.
+
+Docker itself adds its own chains (published ports, its bridges), and the Headscale router container
+adds its `ts-*` chains.
+
+### 0.2 The one rule that makes it work
+
+A packet passes through **every** base chain registered at a hook, in priority order (lower runs
+first). An `accept` ends only the chain it is in; the next chain still runs. A `drop` is final. So
+no table can open what another closes, and each table only has to state what it forbids.
+
+### 0.3 The path of a packet
+
+Priorities are the chain hook priorities, the order the kernel runs them in.
+
+```mermaid
+flowchart TB
+    nic(["Packet arrives<br/>WAN · wg0 / tailscale0 · LAN NIC · Docker bridge"])
+
+    subgraph pre["PREROUTING"]
+        direction TB
+        p1["-150 · motte_dhcp_net dedicated_in<br/>nothing new reaches a dedicated address, except its listed ways in"]
+        p2["-110 · motte_dhcp_net inbound_dnat<br/>those ways in are handed to their device"]
+        p3["-100 · Docker: published ports to their containers<br/>-100 · motte_dhcp_net prerouting: VPN address to device, domain routes from Traefik, LAN DNS to AdGuard"]
+        p1 --> p2 --> p3
+    end
+
+    route{"Addressed to<br/>the server?"}
+
+    subgraph inp["INPUT: to the server"]
+        direction TB
+        i1["-10 · motte_cf_only<br/>443 only from Cloudflare + trusted (when on)"]
+        i2["0 · motte_firewall · policy DROP<br/>see 0.4"]
+        i3["0 · motte_vpn_acl<br/>isolated peers dropped"]
+        i4["10 · motte_dhcp_net<br/>LAN devices: DHCP and DNS; the rest only when approved"]
+        i1 --> i2 --> i3 --> i4
+    end
+
+    subgraph fwd["FORWARD: through the server"]
+        direction TB
+        f1["-10 · motte_cf_only<br/>published 443 only from Cloudflare + trusted (when on)"]
+        f2["-1 · motte_firewall<br/>MSS clamp, allow and block lists, blocked destinations, no-internet peers"]
+        f3["0 · motte_vpn_acl<br/>peer to peer: default deny"]
+        f4["0 · Docker FORWARD · policy DROP<br/>plus the accepts for wg0 and LAN-to-WAN"]
+        f5["10 · motte_dhcp_net<br/>LAN: grants, domain routes, internet-out, default deny"]
+        f1 --> f2 --> f3 --> f4 --> f5
+    end
+
+    local(["A service on the server<br/>Traefik, WireGuard, SSH, DNS ..."])
+
+    subgraph outp["OUTPUT: from the server"]
+        o1["0 · motte_firewall<br/>blocked destinations dropped"]
+    end
+
+    subgraph post["POSTROUTING"]
+        s1["100 · Docker and WireGuard masquerade<br/>100 · motte_dhcp_net: a LAN device leaves from its address, a two-way grant from its VPN address"]
+    end
+
+    wire(["Leaves on its interface"])
+
+    nic --> pre --> route
+    route -->|yes| inp --> local
+    route -->|no| fwd --> post --> wire
+    local --> outp --> post
+```
+
+### 0.4 The main input chain, rule by rule
+
+`motte_firewall` input, top to bottom. The first rule that matches decides for this chain; the other
+tables still run after it (0.2).
+
+```mermaid
+flowchart TB
+    a["Reply to a connection already open?"] -->|yes| ok(["accept"])
+    a -->|no| b["Loopback?"]
+    b -->|yes| ok
+    b -->|no| c["DHCP or DNS on a managed LAN NIC?"]
+    c -->|yes| ok
+    c -->|no| d["IPv6 from the WAN or from public IPv6 space?"]
+    d -->|yes| no(["drop"])
+    d -->|no| e["On the allow list: IP or range?"]
+    e -->|yes| ok
+    e -->|no| f["Blocked: IP, range, or a country / ASN not exempted by an allow?"]
+    f -->|yes| no
+    f -->|no| g["Ping?"]
+    g -->|yes| ok
+    g -->|no| h["A public port?"]
+    h -->|yes| ok
+    h -->|no| i["A private port, from loopback, the VPN or the panel's Docker network?"]
+    i -->|yes| ok
+    i -->|no| j(["log FIREWALL_DROP, drop"])
+```
+
+A country or ASN on the allow list only lifts the country / ASN blocks; the source still needs an
+open port. Only an allowed IP or range gets every port.
+
+### 0.5 Three journeys
+
+**A visitor opens the panel's web page.** PREROUTING: Docker hands 443 to Traefik's container. FORWARD:
+`motte_cf_only` lets 443 through only from Cloudflare (when on), `motte_firewall` drops blocked
+sources, Docker accepts its own published port. Traefik then applies the sentinel middleware (VPN-only
+pages, blocklist, the port-80 gate) and passes `/api/` to the panel API on its private port, which
+the kernel lets in only from the server itself, the panel's Docker network and the VPN.
+
+**A VPN peer opens a LAN device's camera.** The peer connects to the device's VPN address over `wg0`.
+PREROUTING: `motte_dhcp_net` swaps the VPN address for the device's LAN address (only for traffic
+arriving on a VPN interface). FORWARD: `motte_firewall` drops blocked sources, `motte_vpn_acl` drops
+an isolated peer, `motte_dhcp_net` accepts only if the device granted this peer, matched on the
+device's IP and MAC. Anything else to the LAN hits that network's closing drop.
+
+**A LAN device goes to the internet.** FORWARD: `motte_dhcp_net` drops a spoofed source or a blocked
+MAC first, refuses private and VPN destinations, then accepts only the device's chosen services
+(Web and Time by default, once internet is switched on). Docker's `FORWARD` lets the LAN-to-WAN path
+through only while some device there has internet. POSTROUTING: the device leaves from the main
+address (masquerade) or from its own dedicated address (SNAT).
+
+### 0.6 How a change reaches the kernel
+
+```mermaid
+sequenceDiagram
+    participant src as Admin · jail · geo updater · Cloudflare list
+    participant db as Database
+    participant svc as nftables service
+    participant k as Kernel
+    src->>db: save the change
+    src->>svc: RequestApply
+    Note over svc: waits 500 ms so a burst becomes one apply
+    loop each table, in a fixed order
+        svc->>db: build the table from the current data
+        svc->>k: nft -c (check only)
+        svc->>k: nft -f: delete and recreate the table in one transaction
+    end
+    svc->>k: conntrack -D for anyone who just lost access
+    svc-->>src: firewall:applied (or firewall:error, old rules stay)
+```
+
+Nothing is edited in place: each table is rebuilt from the database and swapped in whole, so the
+kernel always holds what the database says. If a check fails, that table and the ones after it keep
+their old rules, and the error is shown.
+
+### 0.7 On each fleet machine
+
+The agent keeps its own table, `motte_agent`, with an `input` and a `forward` chain at priority -10
+(before Docker's rules): replies to connections the machine opened pass first (its channel to the
+panel among them), then anything from a banned address is dropped, new and open connections alike.
+Bans come from three sets: manual bans and CrowdSec (IPv4 and IPv6), and the panel's blocklist. The
+agent checks once a minute that the table is still there and rebuilds it if not.
+
+---
+
 ## 1. The nftables model
 
 ### 1.1 Four separate registered tables
@@ -20,10 +189,10 @@ Rather than one monolithic table, the panel registers **four independent `inet` 
 |---|---|---|---|---|---|
 | `motte_cf_only` | `api/internal/nftables/cf_only.go` | Restrict HTTPS (443) to Cloudflare edge (+ trusted) when `web_cloudflare_only=on`; port 80 is gated in Traefik (§5.3) | `input` **and** `forward` **priority -10** | `accept` | drop-subset-terminal |
 | `motte_firewall` | `api/internal/nftables/firewall.go` | Main firewall: port allow-list, IP/range/country/ASN block+allow, per-peer WAN block, IPv6 drop, MSS clamp | `input` **priority 0**, `forward` **-1**, `output` **0** | `input`: **drop**; `forward`/`output`: **accept** | default-drop (input) / default-accept + explicit drops (forward, output) |
-| `motte_vpn_acl` | `api/internal/nftables/vpn_acl.go` | Peer-to-peer isolation, per-peer ACL rules, virtual-IP gating | `forward` **priority 0** | `accept` | default-deny backstop drops |
-| `motte_dhcp_net` | `api/internal/dhcp/reachability.go` | Managed private-network reachability: which VPN clients may reach which LAN device (one-way, or two-way so the device reaches them too), plus optional internet egress. Approved devices are matched by IP + MAC; to the box itself a LAN device gets only DHCP and DNS until approved. **DNS**: devices are told to use their gateway (DHCP option 6), but AdGuard answers only on loopback and the box's WireGuard address (`WG_SERVER_IP`), so `prerouting` hands port 53 sent to an enabled network's gateway, from that network's interface only, to AdGuard there (`dnat`); AdGuard still sees each device's own address. **Anti-spoofing**: whatever arrives on a segment must come from its own range (the box also takes `0.0.0.0`, a new device's DHCP request); anything else is dropped above the established accept, since every other rule keys on that range. A granted device is reachable at its **VPN address** (inside the WireGuard range, so no client config changes): `prerouting` swaps it for the real address only for traffic arriving on `wg0`/`tailscale0`; a two-way grant's own connections leave from it (`postrouting` snat). A **domain route** to a device lets Traefik in, and only Traefik: from its own address on its own Docker bridge, to the VPN address on the routes' ports, and the forward rule takes only that swapped traffic (`ct status dnat`). Turning the device's VPN access off, forgetting it or deleting its network removes its routes. Routes stay shut while any other container on `vpn-network` could forge Traefik's address (keeps NET_RAW, has NET_ADMIN or is privileged). After each apply, a device that lost any access has its open connections cut (conntrack), so revoking takes effect at once | `forward` + `input` (filter) + `prerouting` + `postrouting` (nat) | `accept` | default-deny reachability; internet-egress **masquerade off by default** |
+| `motte_vpn_acl` | `api/internal/nftables/vpn_acl.go` | Peer-to-peer isolation, per-peer ACL rules, virtual-IP gating; isolated (`block_all`) peers dropped on the way to the server too | `input` **and** `forward` **priority 0** | `accept` | default-deny backstop drops |
+| `motte_dhcp_net` | `api/internal/dhcp/reachability.go` | Managed private-network reachability: which VPN clients may reach which LAN device (one-way, or two-way so the device reaches them too), plus optional internet egress. Approved devices are matched by IP + MAC; to the box itself a LAN device gets only DHCP and DNS until approved. **DNS**: devices are told to use their gateway (DHCP option 6), but AdGuard answers only on loopback and the box's WireGuard address (`WG_SERVER_IP`), so `prerouting` hands port 53 sent to an enabled network's gateway, from that network's interface only, to AdGuard there (`dnat`); AdGuard still sees each device's own address. **Anti-spoofing**: whatever arrives on a segment must come from its own range (the box also takes `0.0.0.0`, a new device's DHCP request); anything else is dropped above the established accept, since every other rule keys on that range. A granted device is reachable at its **VPN address** (inside the WireGuard range, so no client config changes): `prerouting` swaps it for the real address only for traffic arriving on `wg0`/`tailscale0`; a two-way grant's own connections leave from it (`postrouting` snat). A **domain route** to a device lets Traefik in, and only Traefik: from its own address on its own Docker bridge, to the VPN address on the routes' ports, and the forward rule takes only that swapped traffic (`ct status dnat`). Turning the device's VPN access off, forgetting it or deleting its network removes its routes. Routes stay shut while any other container on `vpn-network` could forge Traefik's address (keeps NET_RAW, has NET_ADMIN or is privileged). After each apply, a device that lost any access has its open connections cut (conntrack), so revoking takes effect at once | `dedicated_in` (filter prerouting **-150**), `inbound_dnat` (nat prerouting **-110**), `prerouting` (nat **dstnat**), `forward` + `input` (filter **10**), `postrouting` (nat **100**) | `accept` | default-deny reachability; internet-egress **masquerade off by default** |
 
-The **struct `Priority()`** value (cf_only=6, firewall=10, vpn_acl=20; `service.go` sorts by it) only orders the *emission* of tables into the combined apply loop. What actually orders **kernel evaluation** is the **chain hook priority** in each `type … hook … priority N` line. Lower = earlier. So the toggle table sits at `-10` (before the main firewall's `input` at `0`); the vpn_acl `forward` chain sits at `0` (after the main firewall's `forward` at `-1`).
+The **struct `Priority()`** value (cf_only=6, firewall=10, dhcp_net=15, vpn_acl=20; `service.go` sorts by it) only orders the *emission* of tables into the combined apply loop. What actually orders **kernel evaluation** is the **chain hook priority** in each `type … hook … priority N` line. Lower = earlier. So the toggle table sits at `-10` (before the main firewall's `input` at `0`); the vpn_acl `forward` chain sits at `0` (after the main firewall's `forward` at `-1`).
 
 **How they compose — why drop-subset, not accept:** `accept` in a base chain is **not terminal across tables** — another table's chain at the same hook still runs and can drop. A `drop` **is** terminal. So the toggle table never tries to "accept" the web ports (that couldn't override the main firewall anyway); it only **adds a `drop` for the untrusted subset**, which wins, and leaves trusted traffic to be accepted by the main firewall's normal port allow-list.
 
@@ -52,7 +221,7 @@ Registration (`api/cmd/main.go:188-195`): `firewall` table is registered from `f
 - **Reload** (`ApplyScript`, line 167): write the script to a temp file via `os.CreateTemp`, then `nft -f <file>`. `nft` parses the entire file and applies it as one transaction — either the whole table swaps in, or nothing changes and an error is returned. (The individual tables themselves also emit an idempotent `table …\ndelete table …\n\n` preamble — see cf_only/vpn_acl — so a re-apply is always clean.)
 - **Debounce** (`RequestApply`, line 79): callers request an apply; a 500 ms `AfterFunc` timer coalesces bursts (e.g. many blocks landing at once) into one reload, broadcasting `firewall:pending` → `firewall:applying` → `firewall:applied`/`firewall:error` over the `general_info` WebSocket channel.
 
-> **Note on `nft -c`:** the codebase does not run a separate `nft -c` (check-only) pre-flight pass in `ApplyScript`; the safety model is instead **input validation at every set/rule boundary** (§1.2) plus the atomic single-transaction `nft -f` (a bad script fails as a whole and leaves the previous ruleset intact). The tests do dump-and-lint the generated scripts (`dump_for_lint_test.go`, `firewall_asn_test.go`, `cf_only_test.go`). *(If you were told the runtime shells out to `nft -c` — it does not in this tree; the equivalent guarantee comes from boundary validation + atomic apply. Flagging as a divergence from the brief.)*
+> **`nft -c` before every apply:** `ApplyScript` first checks each table's script with `nft -c -f` and applies it with `nft -f` only when the check passes, so a malformed script never reaches the kernel; the boundary validation (§1.2) keeps bad values out in the first place. The tests also check the generated scripts with a real `nft -c`.
 
 ---
 
@@ -74,6 +243,7 @@ Built by `buildScript` (`firewall.go:391`). All are `ipv4_addr` except the two p
 | `allowed_countries` | ipv4_addr (interval) | geolocation allowed countries | **exemption only** from geo/ASN drops (not an all-port accept) |
 | `allowed_asn` | ipv4_addr (interval) | geolocation allowed ASNs | same exemption |
 | `allowed_tcp_ports` / `allowed_udp_ports` | inet_service | `firewall_entries` type=port, action=allow, protocol | input `tcp/udp dport … accept` |
+| `allowed_tcp_ports_private` / `allowed_udp_ports_private` | inet_service | ports scoped private (the panel API port always) | input `tcp/udp dport … accept`, from `lo`, the VPN and the panel's Docker network only |
 | `no_internet_peers` | ipv4_addr | `vpn_clients` where `block_internet=1` | forward `saddr … oifname WAN drop` |
 
 ### 2.2 Chains
@@ -81,13 +251,15 @@ Built by `buildScript` (`firewall.go:391`). All are `ipv4_addr` except the two p
 **`input` (priority 0, policy drop)** — traffic *to* the server, matched by source:
 1. `ct state established,related accept` — replies always flow (incl. ICMP PMTUD errors).
 2. `iif lo accept` — loopback.
+   - **Managed LANs** (`segmentInputRules`): `iifname "<lan>" udp dport 67 accept` and DNS (53, TCP and UDP) on each enabled network's NIC only, never the WAN. What else a LAN device may reach on the server is decided in `motte_dhcp_net` input (§7.1).
 3. **External IPv6 drop.** The WAN NIC is auto-detected (`detectWANInterface`, `firewall.go:47`, reads `ip -4 route show default` every render so cable/wifi swaps self-heal). If found: `meta nfproto ipv6 iifname "<wan>" drop`, then `ip6 nexthdr icmpv6 accept` (keeps internal neighbour discovery). If **not** found → **fail closed**: accept only ND ICMPv6 types, then `meta nfproto ipv6 drop`. Why: the block/country sets are `ipv4_addr`, and the port rules are protocol-agnostic, so an unfiltered IPv6 packet to an open port would otherwise be accepted.
 4. **`allowAndSaddrDropRules()`** (shared with forward, `firewall.go:376`, so the two chains can't drift):
    - `ip saddr @allowed_ips accept` / `@allowed_ranges accept` — explicit trusted hosts, **full accept before any drop**.
    - `ip saddr @blocked_ips counter drop`, `@blocked_ranges counter drop`.
    - `ip saddr @blocked_countries ip saddr != @allowed_countries ip saddr != @allowed_asn counter drop` (and the `@blocked_asn` twin). A country/ASN **allow** only *exempts* its sources from the geo/ASN drop — it is deliberately **not** an all-port accept (that would expose SSH/admin to a whole country); the traffic still has to pass the port allow-list. Specific IP/range blocks still win.
 5. `ip protocol icmp accept` — **after** the drops, so a blocked source gets no ping reply at all.
-6. `tcp dport @allowed_tcp_ports accept` / `udp dport @allowed_udp_ports accept`.
+6. `tcp dport @allowed_tcp_ports accept` / `udp dport @allowed_udp_ports accept` — public ports, every interface.
+   - **Private ports** (`privatePortRules`): `@allowed_tcp_ports_private` / `@allowed_udp_ports_private` only from `lo`, `wg0`, `tailscale0`, and TCP from the panel's Docker network on its own bridge (Traefik to the panel API). An allow-list of interfaces: a managed LAN or a NIC added later gets no private port.
 7. `limit rate 5/minute log prefix "FIREWALL_DROP: " drop` — log (rate-limited) then drop everything else. This log line is what the **`portscan` jail** parses (§4).
 
 **`forward` (priority -1, policy accept)** — routed VPN traffic:
