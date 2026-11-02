@@ -2,12 +2,12 @@ package wireguard
 
 import (
 	"net/http"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -39,7 +39,7 @@ type Session struct {
 // rx, tx, keepalive.
 func (s *Service) getWgLive() map[string]liveStat {
 	live := make(map[string]liveStat)
-	out, err := exec.Command("wg", "show", s.config.Interface, "dump").Output()
+	out, err := helper.Command("wg", "show", s.config.Interface, "dump").Output()
 	if err != nil {
 		return live
 	}

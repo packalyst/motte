@@ -5,13 +5,13 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"api/internal/database"
+	"api/internal/helper"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -77,10 +77,10 @@ func (s *Service) initWireGuard() error {
 		log.Printf("Warning: WireGuard kernel module not loaded on host. Load it with: sudo modprobe wireguard")
 	}
 
-	cmd := exec.Command("ip", "link", "show", s.config.Interface)
+	cmd := helper.Command("ip", "link", "show", s.config.Interface)
 	if err := cmd.Run(); err != nil {
 		log.Printf("Creating WireGuard interface %s", s.config.Interface)
-		if err := exec.Command("ip", "link", "add", "dev", s.config.Interface, "type", "wireguard").Run(); err != nil {
+		if err := helper.Command("ip", "link", "add", "dev", s.config.Interface, "type", "wireguard").Run(); err != nil {
 			return fmt.Errorf("failed to create interface: %v", err)
 		}
 	}
@@ -89,7 +89,7 @@ func (s *Service) initWireGuard() error {
 		return err
 	}
 
-	if err := exec.Command("ip", "addr", "flush", "dev", s.config.Interface).Run(); err != nil {
+	if err := helper.Command("ip", "addr", "flush", "dev", s.config.Interface).Run(); err != nil {
 		log.Printf("Warning: failed to flush addresses: %v", err)
 	}
 	// Extract netmask from IPRange env var (e.g., "100.65.0.0/16" -> "/16")
@@ -99,11 +99,11 @@ func (s *Service) initWireGuard() error {
 	}
 	ones, _ := ipNet.Mask.Size()
 	serverIPWithMask := fmt.Sprintf("%s/%d", s.config.ServerIP, ones)
-	if err := exec.Command("ip", "addr", "add", serverIPWithMask, "dev", s.config.Interface).Run(); err != nil {
+	if err := helper.Command("ip", "addr", "add", serverIPWithMask, "dev", s.config.Interface).Run(); err != nil {
 		return fmt.Errorf("failed to set IP: %v", err)
 	}
 
-	if err := exec.Command("ip", "link", "set", "up", "dev", s.config.Interface).Run(); err != nil {
+	if err := helper.Command("ip", "link", "set", "up", "dev", s.config.Interface).Run(); err != nil {
 		return fmt.Errorf("failed to bring up interface: %v", err)
 	}
 
@@ -124,9 +124,9 @@ func (s *Service) setupNAT() error {
 	}
 
 	// MASQUERADE
-	checkCmd := exec.Command("iptables", "-t", "nat", "-C", "POSTROUTING", "-s", s.config.IPRange, "-o", outIface, "-j", "MASQUERADE")
+	checkCmd := helper.Command("iptables", "-t", "nat", "-C", "POSTROUTING", "-s", s.config.IPRange, "-o", outIface, "-j", "MASQUERADE")
 	if checkCmd.Run() != nil {
-		if err := exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-s", s.config.IPRange, "-o", outIface, "-j", "MASQUERADE").Run(); err != nil {
+		if err := helper.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-s", s.config.IPRange, "-o", outIface, "-j", "MASQUERADE").Run(); err != nil {
 			log.Printf("Warning: failed to add NAT MASQUERADE rule: %v", err)
 		} else {
 			log.Printf("Added NAT MASQUERADE rule for %s via %s", s.config.IPRange, outIface)
@@ -134,16 +134,16 @@ func (s *Service) setupNAT() error {
 	}
 
 	// FORWARD rules
-	checkCmd = exec.Command("iptables", "-C", "FORWARD", "-i", s.config.Interface, "-j", "ACCEPT")
+	checkCmd = helper.Command("iptables", "-C", "FORWARD", "-i", s.config.Interface, "-j", "ACCEPT")
 	if checkCmd.Run() != nil {
-		if err := exec.Command("iptables", "-A", "FORWARD", "-i", s.config.Interface, "-j", "ACCEPT").Run(); err != nil {
+		if err := helper.Command("iptables", "-A", "FORWARD", "-i", s.config.Interface, "-j", "ACCEPT").Run(); err != nil {
 			log.Printf("Warning: failed to add FORWARD rule (in): %v", err)
 		}
 	}
 
-	checkCmd = exec.Command("iptables", "-C", "FORWARD", "-o", s.config.Interface, "-j", "ACCEPT")
+	checkCmd = helper.Command("iptables", "-C", "FORWARD", "-o", s.config.Interface, "-j", "ACCEPT")
 	if checkCmd.Run() != nil {
-		if err := exec.Command("iptables", "-A", "FORWARD", "-o", s.config.Interface, "-j", "ACCEPT").Run(); err != nil {
+		if err := helper.Command("iptables", "-A", "FORWARD", "-o", s.config.Interface, "-j", "ACCEPT").Run(); err != nil {
 			log.Printf("Warning: failed to add FORWARD rule (out): %v", err)
 		}
 	}
@@ -153,7 +153,7 @@ func (s *Service) setupNAT() error {
 
 func (s *Service) getDefaultInterface() string {
 	// Parse ip route output directly without shell pipeline
-	out, err := exec.Command("ip", "route", "show", "default").Output()
+	out, err := helper.Command("ip", "route", "show", "default").Output()
 	if err != nil {
 		return ""
 	}
@@ -236,16 +236,16 @@ ListenPort = %d
 	currentPeers := s.getCurrentPeers()
 	for _, pubKey := range currentPeers {
 		if !enabledPeers[pubKey] {
-			exec.Command("wg", "set", s.config.Interface, "peer", pubKey, "remove").Run()
+			helper.Command("wg", "set", s.config.Interface, "peer", pubKey, "remove").Run()
 		}
 	}
 
-	return exec.Command("wg", "syncconf", s.config.Interface, confPath).Run()
+	return helper.Command("wg", "syncconf", s.config.Interface, confPath).Run()
 }
 
 func (s *Service) getCurrentPeers() []string {
 	var peers []string
-	out, err := exec.Command("wg", "show", s.config.Interface, "peers").Output()
+	out, err := helper.Command("wg", "show", s.config.Interface, "peers").Output()
 	if err != nil {
 		return peers
 	}
@@ -260,7 +260,7 @@ func (s *Service) getCurrentPeers() []string {
 
 func (s *Service) getWgStatus() map[string]time.Time {
 	status := make(map[string]time.Time)
-	out, err := exec.Command("wg", "show", s.config.Interface, "dump").Output()
+	out, err := helper.Command("wg", "show", s.config.Interface, "dump").Output()
 	if err != nil {
 		return status
 	}

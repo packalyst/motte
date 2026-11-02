@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -197,7 +196,7 @@ func dnsmasqTest(content string) error {
 	if err := os.WriteFile(base, []byte(dnsmasqBaseGlobals+"conf-dir="+dir+",motte-*.conf\n"), 0o600); err != nil {
 		return err
 	}
-	out, err := exec.Command("dnsmasq", "--test", "--conf-file="+base).CombinedOutput()
+	out, err := helper.Command("dnsmasq", "--test", "--conf-file="+base).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}

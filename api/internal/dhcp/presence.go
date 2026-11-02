@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os/exec"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"api/internal/helper"
 	"api/internal/routines"
 )
 
@@ -36,7 +36,7 @@ const (
 // Stand-ins for tests: reading the neighbour table, nudging an address and the settle wait.
 var (
 	readNeighbors = func(iface string) (string, error) {
-		out, err := exec.Command("ip", "-4", "neigh", "show", "dev", iface).Output()
+		out, err := helper.Command("ip", "-4", "neigh", "show", "dev", iface).Output()
 		return string(out), err
 	}
 	nudgeAddress = func(ip string) {

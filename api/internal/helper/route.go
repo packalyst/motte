@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"net"
-	"os/exec"
 	"strings"
 )
 
@@ -14,7 +13,7 @@ type defaultRoute struct{ dev, via, src string }
 
 // readDefaultRoute parses `ip -4 route show default`.
 func readDefaultRoute() (defaultRoute, error) {
-	out, err := exec.Command("ip", "-4", "route", "show", "default").Output()
+	out, err := Command("ip", "-4", "route", "show", "default").Output()
 	if err != nil {
 		return defaultRoute{}, err
 	}
@@ -64,7 +63,7 @@ func WANAddresses() (iface, hostSrc string, addrs []string, err error) {
 		if net.ParseIP(r.via).To4() == nil {
 			return "", "", nil, fmt.Errorf("the default route has no gateway, so the server's own address can't be told")
 		}
-		out, err := exec.Command("ip", "-4", "route", "get", r.via).Output()
+		out, err := Command("ip", "-4", "route", "get", r.via).Output()
 		if err != nil {
 			return "", "", nil, err
 		}
@@ -73,7 +72,7 @@ func WANAddresses() (iface, hostSrc string, addrs []string, err error) {
 	if net.ParseIP(hostSrc).To4() == nil {
 		return "", "", nil, fmt.Errorf("could not tell which address the server sends from")
 	}
-	out, err := exec.Command("ip", "-4", "-o", "addr", "show", "dev", r.dev).Output()
+	out, err := Command("ip", "-4", "-o", "addr", "show", "dev", r.dev).Output()
 	if err != nil {
 		return "", "", nil, err
 	}

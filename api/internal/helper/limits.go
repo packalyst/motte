@@ -111,3 +111,9 @@ const (
 	ConntrackFlowForget      = 30 * time.Minute // a flow not seen this long is forgotten (its close was missed)
 	ConntrackDefaultMaxFlows = 262144           // flows tracked when the kernel's own limit can't be read
 )
+
+// System commands the API runs (helper.Command).
+const (
+	ExecTimeout   = 2 * time.Minute  // a command still running after this is killed and returns an error
+	ExecWaitDelay = 10 * time.Second // after the kill, output pipes a leftover child holds are closed after this
+)

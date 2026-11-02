@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -125,9 +124,9 @@ func (s *Service) handleForgetSudoFailure(w http.ResponseWriter, r *http.Request
 // runWho returns the raw `who` output lines from the host (via nsenter, since the
 // api container must see the host's sessions, not its own). Empty on failure.
 func runWho() []string {
-	out, err := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "who").Output()
+	out, err := helper.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "who").Output()
 	if err != nil {
-		if out, err = exec.Command("who").Output(); err != nil {
+		if out, err = helper.Command("who").Output(); err != nil {
 			return nil
 		}
 	}
@@ -202,7 +201,7 @@ var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`)
 // and returns stdout. Mirrors runWho's host-visibility approach.
 func runNsenter(args ...string) (string, error) {
 	base := []string{"-t", "1", "-m", "-u", "-i", "-n", "-p", "--"}
-	out, err := exec.Command("nsenter", append(base, args...)...).Output()
+	out, err := helper.Command("nsenter", append(base, args...)...).Output()
 	return string(out), err
 }
 
@@ -377,7 +376,7 @@ var reProc = regexp.MustCompile(`\(\("([^"]+)",pid=(\d+)`)
 // snapshot, not a baseline, so we report destinations (and their process), not
 // verdicts — a reverse shell / beacon shows up here.
 func phoneHome() phoneBlock {
-	out, err := exec.Command("ss", "-tunHp", "state", "established").Output()
+	out, err := helper.Command("ss", "-tunHp", "state", "established").Output()
 	if err != nil {
 		return phoneBlock{Destinations: []destRow{}}
 	}
@@ -467,7 +466,7 @@ func hostOwnIPs() map[string]bool {
 // phoneHome can tell inbound connections from outbound ones.
 func listeningPortSet() map[int]bool {
 	set := map[int]bool{}
-	out, err := exec.Command("ss", "-tlnH").Output()
+	out, err := helper.Command("ss", "-tlnH").Output()
 	if err != nil {
 		return set
 	}
@@ -493,7 +492,7 @@ type persistBlock struct {
 }
 
 func cronRecentChanges() int {
-	out, err := exec.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "sh", "-c",
+	out, err := helper.Command("nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "sh", "-c",
 		`find /etc/crontab /etc/cron.d /etc/cron.daily /etc/cron.hourly /var/spool/cron -newermt '7 days ago' -type f 2>/dev/null | wc -l`).Output()
 	if err != nil {
 		return 0

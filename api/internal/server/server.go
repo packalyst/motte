@@ -565,7 +565,7 @@ var reSSProc = regexp.MustCompile(`users:\(\("([^"]+)"`)
 
 func listeningPorts() portsBlock {
 	out := portsBlock{Listening: []portRow{}}
-	cmd := exec.Command("ss", "-tulnpH")
+	cmd := helper.Command("ss", "-tulnpH")
 	data, err := cmd.Output()
 	if err != nil {
 		return out

@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"sort"
 	"sync"
 	"time"
 
 	"api/internal/database"
+	"api/internal/helper"
 )
 
 const (
@@ -172,14 +172,14 @@ func (s *Service) flushConntrack(ips []string) {
 		if ip == "" {
 			continue
 		}
-		_ = exec.Command("conntrack", "-D", "-s", ip).Run()
-		_ = exec.Command("conntrack", "-D", "-d", ip).Run()
+		_ = helper.Command("conntrack", "-D", "-s", ip).Run()
+		_ = helper.Command("conntrack", "-D", "-d", ip).Run()
 	}
 }
 
 // Exec runs an nft command
 func (s *Service) Exec(args ...string) ([]byte, error) {
-	cmd := exec.Command("nft", args...)
+	cmd := helper.Command("nft", args...)
 	return cmd.CombinedOutput()
 }
 

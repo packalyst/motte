@@ -1,11 +1,12 @@
 package dhcp
 
 import (
+	"api/internal/helper"
+
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"os/exec"
 	"strings"
 	"sync"
 )
@@ -140,7 +141,7 @@ func (s *Service) InterfaceReady(n *Network) error {
 // YAML dep): a non-Motte file with a line whose key is "<iface>:". Best-effort — empty on any
 // read error (the netplan generate during ApplyNetwork is still the hard validity gate).
 func netplanConflict(iface string) string {
-	out, err := exec.Command("nsenter", append(append([]string{}, nsenterHost...), "ls", "-1", netplanDir)...).Output()
+	out, err := helper.Command("nsenter", append(append([]string{}, nsenterHost...), "ls", "-1", netplanDir)...).Output()
 	if err != nil {
 		return ""
 	}
@@ -171,7 +172,7 @@ func netplanConflict(iface string) string {
 // gatewayLive checks the gateway address is assigned to the interface right now (ip runs
 // directly — the container shares the host network namespace).
 func gatewayLive(iface, gatewayIP string) error {
-	out, err := exec.Command("ip", "-o", "-4", "addr", "show", "dev", iface).Output()
+	out, err := helper.Command("ip", "-o", "-4", "addr", "show", "dev", iface).Output()
 	if err != nil {
 		return fmt.Errorf("interface %s not present", iface)
 	}
@@ -194,7 +195,7 @@ func prefixLen(cidr string) (int, error) {
 
 // ipCmd runs `ip ...` directly on the host network stack (net namespace is shared).
 func ipCmd(args ...string) error {
-	out, err := exec.Command("ip", args...).CombinedOutput()
+	out, err := helper.Command("ip", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -202,19 +203,19 @@ func ipCmd(args ...string) error {
 }
 
 func hostNetplan(args ...string) (string, error) {
-	out, err := exec.Command("nsenter", append(append([]string{}, nsenterHost...), append([]string{"netplan"}, args...)...)...).CombinedOutput()
+	out, err := helper.Command("nsenter", append(append([]string{}, nsenterHost...), append([]string{"netplan"}, args...)...)...).CombinedOutput()
 	return string(out), err
 }
 
 func hostWriteFile(path, content string) error {
-	cmd := exec.Command("nsenter", append(append([]string{}, nsenterHost...), "tee", path)...)
+	cmd := helper.Command("nsenter", append(append([]string{}, nsenterHost...), "tee", path)...)
 	cmd.Stdin = strings.NewReader(content)
 	cmd.Stdout = io.Discard
 	return cmd.Run()
 }
 
 func hostReadFile(path string) ([]byte, bool) {
-	out, err := exec.Command("nsenter", append(append([]string{}, nsenterHost...), "cat", path)...).Output()
+	out, err := helper.Command("nsenter", append(append([]string{}, nsenterHost...), "cat", path)...).Output()
 	if err != nil {
 		return nil, false
 	}
@@ -222,9 +223,9 @@ func hostReadFile(path string) ([]byte, bool) {
 }
 
 func hostRemoveFile(path string) error {
-	return exec.Command("nsenter", append(append([]string{}, nsenterHost...), "rm", "-f", path)...).Run()
+	return helper.Command("nsenter", append(append([]string{}, nsenterHost...), "rm", "-f", path)...).Run()
 }
 
 func hostChmod(path, mode string) error {
-	return exec.Command("nsenter", append(append([]string{}, nsenterHost...), "chmod", mode, path)...).Run()
+	return helper.Command("nsenter", append(append([]string{}, nsenterHost...), "chmod", mode, path)...).Run()
 }

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,7 +38,7 @@ func WireGuardUp() bool {
 func GetWgTransfer() ([]PeerTransfer, error) {
 	iface := helper.GetEnvOptional("WG_INTERFACE", "wg0")
 
-	cmd := exec.Command("wg", "show", iface, "transfer")
+	cmd := helper.Command("wg", "show", iface, "transfer")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err

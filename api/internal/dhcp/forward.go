@@ -1,8 +1,9 @@
 package dhcp
 
 import (
+	"api/internal/helper"
+
 	"log"
-	"os/exec"
 )
 
 // Docker sets the host's FORWARD chain to policy DROP (priority 0) and only accepts its own bridge
@@ -33,7 +34,7 @@ import (
 func iptablesForward(op string, args ...string) error {
 	full := append([]string{op, "FORWARD"}, args...)
 	full = append(full, "-j", "ACCEPT")
-	return exec.Command("iptables", full...).Run()
+	return helper.Command("iptables", full...).Run()
 }
 
 // ensureForward adds a FORWARD accept if it isn't already present (idempotent via -C).
