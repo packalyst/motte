@@ -176,7 +176,7 @@ func TestShowScreenPaintsLaterViewer(t *testing.T) {
 	browserSide, browser := wsPair(t)
 	a.addBridge("7_s1", &consoleBridge{browser: browserSide, session: "7_s1"})
 	b := &consoleBridge{browser: browserSide, session: "7_s1"}
-	if first, _ := a.addBridge("7_s1", b); first || !b.held {
+	if attach, _ := a.addBridge("7_s1", b); attach || !b.held {
 		t.Fatal("a later viewer must wait for its screen")
 	}
 	go func() { // the agent answers the snapshot request, after some live output
@@ -353,5 +353,42 @@ func TestConsoleSessionLimits(t *testing.T) {
 	a.removeBridge("7_s1", a.bridges["7_s1"][0])
 	if _, ok := a.addBridge("7_s1", extra); !ok {
 		t.Fatal("no place after a browser left")
+	}
+}
+
+// The shell is attached by the first browser that can type, whoever joined before it, and detached
+// when the last one leaves: a read-only viewer arriving first can't leave the owner on a shell
+// nobody attached, and never attaches or detaches one itself.
+func TestBridgeAttachFollowsTypingBrowser(t *testing.T) {
+	a := newAgentConn()
+	viewer := &consoleBridge{session: "7_s1", readonly: true}
+	owner := &consoleBridge{session: "7_s1"}
+	tab := &consoleBridge{session: "7_s1"}
+	if attach, _ := a.addBridge("7_s1", viewer); attach || !viewer.held {
+		t.Fatal("a read-only viewer attached the shell")
+	}
+	if attach, _ := a.addBridge("7_s1", owner); !attach || owner.held {
+		t.Fatal("the owner joining after a viewer didn't attach the shell")
+	}
+	if attach, _ := a.addBridge("7_s1", tab); attach || !tab.held {
+		t.Fatal("a second typing browser attached the shell again")
+	}
+	if a.removeBridge("7_s1", owner) {
+		t.Fatal("detached while another typing browser is there")
+	}
+	if !a.removeBridge("7_s1", tab) {
+		t.Fatal("the last typing browser left without a detach")
+	}
+	if attach, _ := a.addBridge("7_s1", owner); !attach {
+		t.Fatal("the owner returning to a viewed, detached shell didn't attach it")
+	}
+	if a.removeBridge("7_s1", viewer) {
+		t.Fatal("a read-only viewer leaving detached the shell")
+	}
+	if !a.removeBridge("7_s1", owner) {
+		t.Fatal("the last browser left without a detach")
+	}
+	if _, ok := a.bridges["7_s1"]; ok {
+		t.Fatal("an empty session left in the bridge map")
 	}
 }

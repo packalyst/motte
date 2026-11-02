@@ -278,11 +278,11 @@ func (a *agentConn) requestSnapshot(session string, timeout time.Duration) (stri
 	return <-ch, true
 }
 
-// showScreen paints a session's current screen on one viewer that joined a session another viewer
-// already holds (addBridge marked it held). tmux redraws only for the viewer whose join attached it
-// (the first), so a later one (a second browser, or a reconnect before the old socket is noticed
-// dead) would otherwise start on a blank terminal and see only output from then on. Live output
-// reaches it once the screen is painted, or after the timeout without one.
+// showScreen paints a session's current screen on a viewer whose join didn't attach the shell
+// (addBridge marked it held). tmux redraws only on attach, so such a viewer (a read-only one, a
+// second browser, or a reconnect before the old socket is noticed dead) would otherwise start on a
+// blank terminal and see only output from then on. Live output reaches it once the screen is
+// painted, or after the timeout without one.
 func (a *agentConn) showScreen(b *consoleBridge) {
 	release := func(screen []byte) {
 		b.writeMu.Lock()
@@ -407,35 +407,42 @@ func (a *agentConn) writeToAgent(f consoleFrame) {
 	_ = a.conn.WriteJSON(f)
 }
 
+// The agent's shell is attached exactly while a browser that can type is there: the first such
+// browser attaches it, the last one leaving detaches it. A read-only viewer never attaches a shell,
+// so one that arrives first can't leave the owner, joining after it, on an unattached shell.
+
+// interactive reports whether any browser on the list can type.
+func interactive(list []*consoleBridge) bool {
+	return slices.ContainsFunc(list, func(x *consoleBridge) bool { return !x.readonly })
+}
+
 // addBridge attaches a browser to a session, unless helper.MaxConsoleViewers are already attached
-// (ok false). first reports whether it is the only one.
-func (a *agentConn) addBridge(session string, b *consoleBridge) (first, ok bool) {
+// (ok false). attach reports that it is the first browser that can type: the caller attaches the
+// shell, whose redraw paints every viewer. Any other browser is held until showScreen paints it.
+func (a *agentConn) addBridge(session string, b *consoleBridge) (attach, ok bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if len(a.bridges[session]) >= helper.MaxConsoleViewers {
 		return false, false
 	}
-	first = len(a.bridges[session]) == 0
-	b.held = !first // not shared yet: showScreen releases it
+	attach = !b.readonly && !interactive(a.bridges[session])
+	b.held = !attach
 	a.bridges[session] = append(a.bridges[session], b)
-	return first, true
+	return attach, true
 }
 
-func (a *agentConn) removeBridge(session string, b *consoleBridge) (last bool) {
+// removeBridge detaches a browser; detach reports that it was the last one that can type (the
+// caller detaches the shell, which lives on for resume).
+func (a *agentConn) removeBridge(session string, b *consoleBridge) (detach bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	list := a.bridges[session]
-	for i, x := range list {
-		if x == b {
-			a.bridges[session] = append(list[:i], list[i+1:]...)
-			break
-		}
-	}
-	if len(a.bridges[session]) == 0 {
+	list := slices.DeleteFunc(a.bridges[session], func(x *consoleBridge) bool { return x == b })
+	if len(list) == 0 {
 		delete(a.bridges, session)
-		return true
+	} else {
+		a.bridges[session] = list
 	}
-	return false
+	return !b.readonly && !interactive(list)
 }
 
 // routeToBrowsers forwards one agent frame to every viewer of its session (teeing output + command
@@ -720,7 +727,7 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	b := &consoleBridge{browser: conn, session: effSession, readonly: readonly}
-	first, ok := a.addBridge(effSession, b)
+	attach, ok := a.addBridge(effSession, b)
 	if !ok {
 		conn.WriteJSON(consoleFrame{T: "error", Msg: fmt.Sprintf("%d browsers are already attached to this session", helper.MaxConsoleViewers)})
 		return
@@ -736,11 +743,11 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	events.Audit("fleet", "console_open", events.SeverityWarning, p.Username, helper.GetClientIP(r),
 		fmt.Sprintf("Console opened on %q (session %s%s)", m.Name, effSession, roSuffix(readonly)))
-	// The first viewer opens/attaches the shell; later viewers just watch. A read-only viewer never
-	// causes an agent-side open (it can only ever watch an already-running session).
-	if first && !readonly {
+	// The first browser that can type opens/attaches the shell; every other one gets the current
+	// screen. A read-only viewer never causes an agent-side open (it only watches).
+	if attach {
 		a.writeToAgent(consoleFrame{T: "open", Session: effSession, Cols: cols, Rows: rows})
-	} else if !first {
+	} else {
 		go a.showScreen(b)
 	}
 	// Any viewer joining changes what the session lists show (attached / viewers / recording) — push.
@@ -765,11 +772,11 @@ func (s *Service) HandleBrowserConsole(w http.ResponseWriter, r *http.Request) {
 	})
 
 	defer func() {
-		last := a.removeBridge(effSession, b)
+		detach := a.removeBridge(effSession, b)
 		if recording {
 			a.detachRecorder(effSession)
 		}
-		if last {
+		if detach {
 			a.writeToAgent(consoleFrame{T: "close", Session: effSession}) // detach (tmux keeps it; owner retained)
 		}
 		notifySessionsChanged(machineID) // …and so does one leaving (detached, viewer count, recording off)
