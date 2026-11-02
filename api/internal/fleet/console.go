@@ -23,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -232,6 +233,9 @@ func (a *agentConn) requestSessions(timeout time.Duration) {
 	select {
 	case <-ch:
 	case <-time.After(timeout):
+		a.mu.Lock() // no reply (an agent that never answers must not pile up waiters)
+		a.sessWaiters = slices.DeleteFunc(a.sessWaiters, func(c chan struct{}) bool { return c == ch })
+		a.mu.Unlock()
 	}
 }
 
@@ -256,13 +260,7 @@ func (a *agentConn) awaitSnapshot(session string, timeout time.Duration, fn func
 	case <-time.After(timeout):
 	}
 	a.mu.Lock() // no reply (an agent that never answers must not pile up waiters)
-	ws := a.snapWaiters[session]
-	for i, x := range ws {
-		if x == w {
-			a.snapWaiters[session] = append(ws[:i], ws[i+1:]...)
-			break
-		}
-	}
+	a.snapWaiters[session] = slices.DeleteFunc(a.snapWaiters[session], func(x *snapWaiter) bool { return x == w })
 	if len(a.snapWaiters[session]) == 0 {
 		delete(a.snapWaiters, session)
 	}

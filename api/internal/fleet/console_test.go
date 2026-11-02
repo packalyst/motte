@@ -222,6 +222,40 @@ func TestSnapshotTimeoutCleansUp(t *testing.T) {
 	}
 }
 
+// A live-query the agent never answers leaves no waiter behind; one it answers is woken.
+func TestRequestSessionsCleansUp(t *testing.T) {
+	a := newAgentConn()
+	agentSide, _ := wsPair(t)
+	a.conn = agentSide
+	for range 10 {
+		a.requestSessions(5 * time.Millisecond)
+	}
+	a.mu.Lock()
+	n := len(a.sessWaiters)
+	a.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d waiters left after unanswered requests", n)
+	}
+
+	done := make(chan struct{})
+	go func() { a.requestSessions(5 * time.Second); close(done) }()
+	for {
+		a.mu.Lock()
+		n = len(a.sessWaiters)
+		a.mu.Unlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	a.syncSessions(nil) // the agent's reply
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("an answered request wasn't woken")
+	}
+}
+
 // Past the cap a grant isn't minted ("") rather than another one dropped.
 func TestGrantCap(t *testing.T) {
 	saved := consoleGrants
