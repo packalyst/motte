@@ -81,3 +81,54 @@ func TestChangePasswordStatus(t *testing.T) {
 		t.Fatalf("new password not set: %v", err)
 	}
 }
+
+// A session's last_active is written at most once a minute: a fresh one is left alone, a stale one
+// moves forward. The value Go stores at sign-in is read as well as SQLite's own.
+func TestSessionActivityThrottled(t *testing.T) {
+	svc := newTestService(t)
+	u, err := svc.CreateUser("activity_throttle", "StrongP@ss1", RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := svc.createSession(*u, "192.0.2.13", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := database.GetDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := hashToken(sess.Token)
+	stale := func() bool {
+		var v bool
+		if err := db.QueryRow(`SELECT COALESCE(`+activityStaleSQL+`, 1) FROM sessions s WHERE s.id = ?`, id).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if stale() {
+		t.Fatal("a session just signed in counts as stale; every request would write")
+	}
+	if _, err := db.Exec("UPDATE sessions SET last_active = ? WHERE id = ?", time.Now().Add(-5*time.Minute), id); err != nil {
+		t.Fatal(err)
+	}
+	if !stale() {
+		t.Fatal("a session last active 5 minutes ago doesn't count as stale")
+	}
+	if _, err := svc.ValidateSession(sess.Token); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for stale() {
+		if time.Now().After(deadline) {
+			t.Fatal("last_active never moved forward")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := db.Exec("UPDATE sessions SET last_active = NULL WHERE id = ?", id); err != nil {
+		t.Fatal(err)
+	}
+	if !stale() {
+		t.Fatal("an unset last_active must count as stale")
+	}
+}

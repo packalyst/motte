@@ -305,15 +305,18 @@ func (s *Service) ValidateSession(token string) (*User, error) {
 	var session Session
 	var user User
 	var lastLogin sql.NullTime
+	var activityStale bool
 
 	err := s.db.QueryRow(`
-		SELECT s.id, s.user_id, s.expires_at, u.id, u.username, u.created_at, u.last_login, u.role, u.scope_kind, u.scope_values
+		SELECT s.id, s.user_id, s.expires_at, u.id, u.username, u.created_at, u.last_login, u.role, u.scope_kind, u.scope_values,
+			COALESCE(`+activityStaleSQL+`, 1)
 		FROM sessions s
 		JOIN users u ON s.user_id = u.id
 		WHERE s.id = ? AND s.expires_at > datetime('now')
 	`, hashToken(token)).Scan(
 		&session.ID, &session.UserID, &session.ExpiresAt,
 		&user.ID, &user.Username, &user.CreatedAt, &lastLogin, &user.Role, &user.ScopeKind, &user.ScopeValues,
+		&activityStale,
 	)
 
 	if err == sql.ErrNoRows {
@@ -324,19 +327,28 @@ func (s *Service) ValidateSession(token string) (*User, error) {
 	}
 	user.LastLogin = database.TimeFromNull(lastLogin, time.Time{})
 
-	// Update session activity (only if > 1 minute since last update)
-	go s.updateSessionActivity(token)
+	// Record the activity at most once a minute: most requests start no write at all, so a burst of
+	// them doesn't queue goroutines for SQLite's single write lock.
+	if activityStale {
+		go s.updateSessionActivity(session.ID)
+	}
 
 	return &user, nil
 }
 
-// updateSessionActivity updates last_active timestamp (runs async)
-func (s *Service) updateSessionActivity(token string) {
+// activityStaleSQL is true when a session's last_active (s.last_active) is over a minute old, or
+// NULL when it is unset or unreadable. datetime() reads both the time Go stores at sign-in and
+// SQLite's own, in UTC, so the comparison doesn't depend on how the value was written.
+const activityStaleSQL = `datetime(s.last_active) < datetime('now', '-1 minute')`
+
+// updateSessionActivity sets last_active to now (runs async). It re-checks the age itself, so
+// requests arriving together still change the row once.
+func (s *Service) updateSessionActivity(sessionHash string) {
 	s.db.Exec(`
-		UPDATE sessions
+		UPDATE sessions AS s
 		SET last_active = datetime('now')
-		WHERE id = ? AND (last_active IS NULL OR last_active < datetime('now', '-1 minute'))
-	`, hashToken(token))
+		WHERE s.id = ? AND COALESCE(`+activityStaleSQL+`, 1)
+	`, sessionHash)
 }
 
 // Logout invalidates a session
