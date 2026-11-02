@@ -69,6 +69,9 @@ const (
 	MaxFIMEvents       = 5_000            // events kept from one file-integrity report
 )
 
+// Live updates (package ws).
+const MaxWSClientsPerUser = 20 // live-update sockets one user may hold (each tab is one)
+
 // Fleet: the browser console (package fleet).
 const (
 	MaxConsoleSessionsPerUser    = 10               // shells one user may have open on one machine

@@ -243,14 +243,17 @@ the same contract: a `Service` with `New` + `Handlers()`, handler methods named
   `Broadcast(channel, payload)`, `BroadcastAll`, `BroadcastToUser`,
   `ClientCount`, `ChannelSubscriberCount`. A package-global `serviceInstance`
   backs the package-level functions.
-- **Auth on connect, not on upgrade.** `HandleWebSocket` upgrades first, then
-  requires the first message to be `{"action":"auth","token":"..."}` and
-  validates it via `auth.GetService().ValidateSession`. The token is never
-  accepted in the URL (would leak into logs/history). Origin is checked against
-  the CORS allow-list in `checkOrigin`.
+- **Auth on the upgrade.** `HandleWebSocket` validates the session from the
+  upgrade request itself (the HttpOnly cookie, or Bearer) via
+  `auth.GetService().ValidateSession` before upgrading: no credential, a bad one
+  (401) or an idle-locked one (423) never gets a socket, so nothing is read from
+  an unauthenticated caller. The token is never accepted in the URL (would leak
+  into logs/history). Origin is checked against the CORS allow-list in
+  `checkOrigin`. One user holds at most `helper.MaxWSClientsPerUser` sockets
+  (`Hub.admit`, count and add under one lock).
 - `hub.go` — the `Hub`: maps of `clients`, `subscriptions` (channel → clients),
-  and `userClients` (userID → clients), driven by `register`/`unregister`/
-  `broadcast` channels in a single `Run()` select loop (so hub state needs no
+  and `userClients` (userID → clients), driven by `unregister`/`broadcast`
+  channels (`admit` registers under the lock) in a single `Run()` select loop (so hub state needs no
   lock on the hot path beyond the RWMutex it holds). Clients subscribe to
   named channels; broadcasts fan out only to subscribers, dropping messages
   when a client's send buffer is full (never blocks the hub).

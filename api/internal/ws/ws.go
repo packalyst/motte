@@ -1,12 +1,10 @@
 package ws
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"api/internal/auth"
 	"api/internal/config"
@@ -94,8 +92,9 @@ func checkOrigin(r *http.Request) bool {
 	return false
 }
 
-// HandleWebSocket handles WebSocket upgrade requests
-// Authentication is done via first message after connection (more secure than URL query param)
+// HandleWebSocket handles WebSocket upgrade requests. The session is checked on the upgrade
+// request itself (the HttpOnly cookie, or Bearer), before anything is accepted: no credential, or a
+// bad one, is refused at the HTTP layer and the socket never opens.
 func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	authSvc := auth.GetService()
 	if authSvc == nil {
@@ -103,71 +102,32 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticate the handshake BEFORE upgrading whenever the client presents a credential:
-	// browsers attach the HttpOnly session cookie to the WS upgrade, non-browser clients may
-	// send Bearer (helper.SessionToken reads both). A present-but-invalid credential is
-	// refused at the HTTP layer — we never accept the socket for an unauthenticated principal.
+	// Authenticate the handshake BEFORE upgrading: browsers attach the HttpOnly session cookie to
+	// the WS upgrade, non-browser clients may send Bearer (helper.SessionToken reads both). No
+	// credential, or a bad one, is refused at the HTTP layer, so nothing is read from a stranger.
 	// The token is never read from the URL query (that would leak into proxy/access logs and
 	// browser history).
-	handshakeToken := helper.SessionToken(r)
-	token := handshakeToken
-	var user *auth.User
-	if handshakeToken != "" {
-		u, verr := authSvc.ValidateSession(handshakeToken)
-		if verr != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		// Idle-locked sessions get no live data either: refuse the upgrade, mirroring the
-		// router's 423 on HTTP (see router.authMiddleware / lockAllowedPath).
-		if authSvc.IsSessionLocked(handshakeToken) {
-			http.Error(w, "session locked", http.StatusLocked)
-			return
-		}
-		user = u
+	token := helper.SessionToken(r)
+	if token == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	user, verr := authSvc.ValidateSession(token)
+	if verr != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Idle-locked sessions get no live data either: refuse the upgrade, mirroring the
+	// router's 423 on HTTP (see router.authMiddleware / lockAllowedPath).
+	if authSvc.IsSessionLocked(token) {
+		http.Error(w, "session locked", http.StatusLocked)
+		return
 	}
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
-	}
-
-	if user == nil {
-		// No handshake credential: fall back to first-message auth for clients that cannot
-		// present a cookie/Bearer on the upgrade. Fail-closed — the socket carries no data
-		// until a valid token arrives within the read deadline.
-		// Message shape: {"action":"auth","token":"..."}.
-		conn.SetReadDeadline(time.Now().Add(helper.WebSocketReadTimeout))
-		_, msg, rerr := conn.ReadMessage()
-		if rerr != nil {
-			conn.Close()
-			return
-		}
-		conn.SetReadDeadline(time.Time{}) // Reset deadline
-
-		var authMsg struct {
-			Action string `json:"action"`
-			Token  string `json:"token"`
-		}
-		if jerr := json.Unmarshal(msg, &authMsg); jerr != nil || authMsg.Action != "auth" || authMsg.Token == "" {
-			conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid auth message"}`))
-			conn.Close()
-			return
-		}
-		u, verr := authSvc.ValidateSession(authMsg.Token)
-		if verr != nil {
-			conn.WriteMessage(1, []byte(`{"type":"error","error":"Invalid or expired token"}`))
-			conn.Close()
-			return
-		}
-		if authSvc.IsSessionLocked(authMsg.Token) {
-			conn.WriteMessage(1, []byte(`{"type":"error","error":"session locked"}`))
-			conn.Close()
-			return
-		}
-		user = u
-		token = authMsg.Token
 	}
 
 	// Create client
@@ -178,8 +138,12 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			u.ScopeKind == user.ScopeKind && u.ScopeValues == user.ScopeValues
 	}
 
-	// Register client
-	s.hub.register <- client
+	// Register client: at most MaxWSClientsPerUser live sockets per user.
+	if !s.hub.admit(client) {
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too many live connections"))
+		conn.Close()
+		return
+	}
 
 	// Send initial auth info to client
 	client.sendInitMessage(user)

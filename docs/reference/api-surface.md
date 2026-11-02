@@ -56,8 +56,8 @@ work happens. (`api/internal/router/router.go`.)
   to init), protected paths return `503` rather than serving unauthenticated.
 - Rate limiting is per client IP (`helper.GetClientIP`, which honors
   `CF-Connecting-IP` only for verified Cloudflare ranges); `/health` is exempt.
-- WebSocket (`/api/ws`) is **not** protected by this middleware — it upgrades
-  then authenticates on the first message (see [backend.md §6](backend.md)).
+- WebSocket (`/api/ws`) is **not** protected by this middleware — it checks the
+  session on the upgrade request itself (see [backend.md §6](backend.md)).
 
 The public `/api/restart/` and `/api/hook/` endpoints carry their **own**
 per-key secrets in the path instead of a session (see turbotunnels below).
@@ -189,8 +189,8 @@ Read-only host telemetry for the "Server" page: `GET /security`,
 These are registered directly in `main` on the outer `http.ServeMux`, **outside**
 the config-driven router, so they bypass the session-auth middleware:
 
-- **`GET /api/ws`** — WebSocket upgrade (`wsSvc.HandleWebSocket`). Authenticates
-  via the first message, not the middleware.
+- **`GET /api/ws`** — WebSocket upgrade (`wsSvc.HandleWebSocket`). Checks the session
+  on the upgrade request itself, not via the middleware.
 - **`/internal/blocklist`** and **`/internal/l7block`** — the Traefik **sentinel
   plugin** feed. `/internal/blocklist` serves the firewall's current
   block-list; `/internal/l7block` ingests the sentinel's periodic L7 block

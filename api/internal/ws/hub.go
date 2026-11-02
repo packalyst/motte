@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+
+	"api/internal/helper"
 )
 
 // Hub manages WebSocket connections and message broadcasting
@@ -19,9 +21,6 @@ type Hub struct {
 
 	// Inbound messages from clients
 	broadcast chan *Message
-
-	// Register requests from clients
-	register chan *Client
 
 	// Unregister requests from clients
 	unregister chan *Client
@@ -50,29 +49,34 @@ func newHub(broadcastBufferSize int) *Hub {
 		subscriptions: make(map[string]map[*Client]bool),
 		userClients:   make(map[int64]map[*Client]bool),
 		broadcast:     make(chan *Message, broadcastBufferSize),
-		register:      make(chan *Client),
 		unregister:    make(chan *Client),
 	}
+}
+
+// admit registers a client unless its user already has MaxWSClientsPerUser live sockets; the
+// count and the add happen under one lock, so parallel handshakes can't go past the cap.
+func (h *Hub) admit(client *Client) bool {
+	h.mu.Lock()
+	if len(h.userClients[client.UserID]) >= helper.MaxWSClientsPerUser {
+		h.mu.Unlock()
+		log.Printf("WebSocket refused for %s: %d live connections already", client.Username, helper.MaxWSClientsPerUser)
+		return false
+	}
+	h.clients[client] = true
+	if h.userClients[client.UserID] == nil {
+		h.userClients[client.UserID] = make(map[*Client]bool)
+	}
+	h.userClients[client.UserID][client] = true
+	total := len(h.clients)
+	h.mu.Unlock()
+	log.Printf("WebSocket client connected (user: %s, total: %d)", client.Username, total)
+	return true
 }
 
 // Run starts the hub's main loop
 func (h *Hub) Run() {
 	for {
 		select {
-		case client := <-h.register:
-			h.mu.Lock()
-			h.clients[client] = true
-
-			// Add to user-specific client map
-			if client.UserID > 0 {
-				if h.userClients[client.UserID] == nil {
-					h.userClients[client.UserID] = make(map[*Client]bool)
-				}
-				h.userClients[client.UserID][client] = true
-			}
-			h.mu.Unlock()
-			log.Printf("WebSocket client connected (user: %s, total: %d)", client.Username, len(h.clients))
-
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {

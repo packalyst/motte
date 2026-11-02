@@ -41,7 +41,6 @@ const (
 	DockerRequestTimeout      = 60 * time.Second
 	DockerQuickTimeout        = 5 * time.Second
 	HTTPClientTimeout         = 10 * time.Second
-	WebSocketReadTimeout      = 10 * time.Second
 	PortScanTimeout           = 5 * time.Minute
 	GeoDBDownloadTimeout      = 5 * time.Minute
 )
