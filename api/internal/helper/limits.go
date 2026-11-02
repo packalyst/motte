@@ -67,6 +67,7 @@ const (
 	MaxCVEFindings     = 200_000          // findings kept from one CVE report
 	MaxFIMReportBytes  = 8 << 20          // a file-integrity report, decompressed
 	MaxFIMEvents       = 5_000            // events kept from one file-integrity report
+	MaxFleetCommands   = 100              // finished commands kept per machine (unfinished ones always stay); also the most a listing returns
 )
 
 // Live updates (package ws).

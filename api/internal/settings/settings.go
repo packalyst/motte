@@ -63,7 +63,7 @@ func validTimezone(tz string) bool {
 
 // GetRetentionDays returns the aggregate-retention window in days, falling back to the
 // default when unset or out of range. It drives the central retention sweep, which is
-// the single window for every aggregate table except traffic_usage.
+// the single window for every aggregate table.
 func GetRetentionDays() int {
 	d := getSettingInt(RetentionKey, DefaultRetentionDays)
 	if d < 1 || d > 3650 {

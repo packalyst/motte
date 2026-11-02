@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"api/internal/auth"
+	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -279,5 +280,59 @@ func TestUniqueMachineName(t *testing.T) {
 	svc.db.Exec(`UPDATE fleet_machines SET name = ? WHERE id = 'a'`, long)
 	if got := svc.uniqueMachineName(long); len(got) > 64 || !strings.HasSuffix(got, "-2") {
 		t.Errorf("long name: got %q (%d chars)", got, len(got))
+	}
+}
+
+// A machine's command log keeps the newest helper.MaxFleetCommands finished commands, every
+// unfinished one, and the newest rescan carrying a folder-exclude list however old it is.
+func TestCommandLogPruned(t *testing.T) {
+	svc := newTestService(t)
+	addMachine(t, svc, "m1", true)
+	addMachine(t, svc, "m2", true)
+	base := time.Now().UTC().Add(-48 * time.Hour)
+	add := func(machine, ctype, status, payload string, at time.Time) {
+		t.Helper()
+		if _, err := svc.db.Exec(`INSERT INTO fleet_commands (id, machine_id, type, payload, status, created_at) VALUES (?,?,?,?,?,?)`,
+			newCommandID(), machine, ctype, payload, status, at.Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("m1", "rescan", "done", `{"exclude":["/srv/example"]}`, base.Add(-24*time.Hour))
+	add("m1", "rescan", "done", `{}`, base.Add(-23*time.Hour)) // newer, but carries no list
+	for i := range 150 {
+		add("m1", "check-updates", []string{"done", "error", "expired"}[i%3], `{}`, base.Add(time.Duration(i)*time.Minute))
+	}
+	add("m1", "check-updates", "pending", `{}`, base.Add(-30*time.Hour))
+	add("m1", "check-updates", "delivered", `{}`, base.Add(-30*time.Hour))
+	for i := range 5 {
+		add("m2", "check-updates", "done", `{}`, base.Add(time.Duration(i)*time.Minute))
+	}
+
+	if _, err := svc.Enqueue("m1", "sync-blocks", json.RawMessage(`{"ips":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	count := func(where string, args ...any) int {
+		var n int
+		if err := svc.db.QueryRow(`SELECT COUNT(*) FROM fleet_commands WHERE `+where, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	// The 150 newer commands fill the bound; the old rescan with the list stays on top of it.
+	if n := count(`machine_id = 'm1' AND type = 'check-updates' AND status NOT IN ('pending', 'delivered')`); n != helper.MaxFleetCommands {
+		t.Errorf("finished commands kept: %d, want %d", n, helper.MaxFleetCommands)
+	}
+	if n := count(`machine_id = 'm1' AND type = 'rescan'`); n != 1 {
+		t.Errorf("rescans kept: %d, want only the one carrying the list", n)
+	}
+	if n := count(`machine_id = 'm1' AND status IN ('pending', 'delivered')`); n != 3 {
+		t.Errorf("unfinished commands: %d, want 3 (none may be pruned)", n)
+	}
+	var p string
+	if err := svc.db.QueryRow(`SELECT payload FROM fleet_commands WHERE `+excludeRescanWhere, "m1").Scan(&p); err != nil || !strings.Contains(p, "/srv/example") {
+		t.Errorf("the rescan carrying the exclude list was pruned (payload %q, %v)", p, err)
+	}
+	if n := count(`machine_id = 'm2'`); n != 5 {
+		t.Errorf("another machine's log changed: %d rows, want 5", n)
 	}
 }

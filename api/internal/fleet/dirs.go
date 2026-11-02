@@ -202,6 +202,12 @@ func (s *Service) guardScanExcludes(r *http.Request, machineID string, payload j
 	return &ch, 0, nil
 }
 
+// excludeRescanWhere picks a machine's (?) newest rescan that carries a folder-exclude list: the
+// record of the folders a person chose to skip. The command log's pruning always keeps it.
+const excludeRescanWhere = `machine_id = ? AND type = 'rescan'
+	AND CASE WHEN json_valid(payload) THEN json_type(payload, '$.exclude') END = 'array'
+	ORDER BY created_at DESC, rowid DESC LIMIT 1`
+
 // savedScanExcludes is a machine's folders to skip that both its last report and the last rescan
 // queued for it agree on (see guardScanExcludes). With no rescan queued yet, the report's list.
 func (s *Service) savedScanExcludes(machineID string) []string {
@@ -213,9 +219,7 @@ func (s *Service) savedScanExcludes(machineID string) []string {
 	}
 	// The newest rescan that carries a list (one without leaves the list as it was).
 	var p string
-	err := s.db.QueryRow(`SELECT payload FROM fleet_commands WHERE machine_id = ? AND type = 'rescan'
-		AND CASE WHEN json_valid(payload) THEN json_type(payload, '$.exclude') END = 'array'
-		ORDER BY created_at DESC, rowid DESC LIMIT 1`, machineID).Scan(&p)
+	err := s.db.QueryRow(`SELECT payload FROM fleet_commands WHERE `+excludeRescanWhere, machineID).Scan(&p)
 	if errors.Is(err, sql.ErrNoRows) {
 		return rep.ScanExclude
 	}

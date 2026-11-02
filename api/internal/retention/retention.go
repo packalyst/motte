@@ -14,8 +14,8 @@ import (
 )
 
 // aggregateTables lists the rollup tables the sweep prunes and how each stores its
-// timestamp. traffic_usage is intentionally excluded — it has no time-based retention
-// (cleared manually only).
+// timestamp. traffic_usage (where each VPN client's traffic went, per hour) is kept no
+// longer than the rest: it is per-person data and grows with every destination.
 var aggregateTables = []struct {
 	name string
 	col  string // time column
@@ -25,6 +25,7 @@ var aggregateTables = []struct {
 	{"fw_drop_samples", "ts", false},
 	{"l7_block_samples", "ts", false},
 	{"log_rollups", "bucket_hour", true},
+	{"traffic_usage", "bucket", false},
 }
 
 // Sweep deletes rows older than `days` from every aggregate table. Best-effort per

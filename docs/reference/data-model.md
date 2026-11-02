@@ -337,6 +337,7 @@ answers "peer X sent/received N bytes to destination Y" over time buckets.
 | `bucket` | time bucket |
 
 PK `(peer_ip, dest_ip, dest_port, bucket)`.
+Swept by the central retention job with the other rollups (Settings → metrics retention, 90 days by default).
 
 ---
 
@@ -400,7 +401,7 @@ Enrolled machines.
 | `revoked` | de-enrolled flag |
 
 ### `fleet_commands`
-Command queue delivered to agents on their next check-in.
+Command queue delivered to agents on their next check-in. Bounded per machine as a command is added: the newest `MaxFleetCommands` finished commands stay, as do unfinished ones and the newest rescan carrying a folder-exclude list.
 
 | Column | Meaning |
 |---|---|

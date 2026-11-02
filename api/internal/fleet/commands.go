@@ -210,8 +210,24 @@ func (s *Service) enqueue(machineID, ctype string, payload json.RawMessage, ttl 
 	)
 	if err == nil {
 		ringLink(machineID)
+		s.pruneCommands(machineID)
 	}
 	return id, err
+}
+
+// pruneCommands bounds a machine's command log: the newest helper.MaxFleetCommands finished
+// commands stay, as do every command not yet finished (pending or delivered) and the newest rescan
+// carrying a folder-exclude list (savedScanExcludes reads it). Older ones go; a person's command
+// stays in the audit log. It runs as a command is added, so the log never grows past the bound.
+func (s *Service) pruneCommands(machineID string) {
+	if _, err := s.db.Exec(`DELETE FROM fleet_commands
+		WHERE machine_id = ? AND status NOT IN ('pending', 'delivered')
+		AND id NOT IN (SELECT id FROM fleet_commands WHERE machine_id = ? AND status NOT IN ('pending', 'delivered')
+			ORDER BY created_at DESC, rowid DESC LIMIT ?)
+		AND id IS NOT (SELECT id FROM fleet_commands WHERE `+excludeRescanWhere+`)`,
+		machineID, machineID, helper.MaxFleetCommands, machineID); err != nil {
+		log.Printf("fleet: pruning the command log of %q: %v", machineID, err)
+	}
 }
 
 // cancelPending withdraws the undelivered commands of one type (a newer one replaces them, or the
@@ -261,7 +277,7 @@ type MachineCommand struct {
 
 // ListMachineCommands returns a machine's most recent commands (newest first).
 func (s *Service) ListMachineCommands(machineID string, limit int) ([]MachineCommand, error) {
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 || limit > helper.MaxFleetCommands {
 		limit = 20
 	}
 	s.expirePending(machineID) // an offline machine never polls, so expire here too for the log
