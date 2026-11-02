@@ -77,6 +77,7 @@ const (
 	MaxConsoleSessionsPerUser    = 10               // shells one user may have open on one machine
 	MaxConsoleSessionsPerMachine = 30               // shells open on one machine, all users together
 	MaxConsoleViewers            = 10               // browsers attached to one shell at once (the owner's tabs and read-only shares)
+	ConsoleEventJobs             = 4                // snapshot or refresh requests one console-events socket runs at once; more wait
 	ConsoleRecheck               = 30 * time.Second // an open console re-checks the user's access this often
 	ConsoleIdleTimeout           = 30 * time.Minute // a shell idle this long is ended
 	ConsoleMaxDuration           = 12 * time.Hour   // a shell open this long is ended

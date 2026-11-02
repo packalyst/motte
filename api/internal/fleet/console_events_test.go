@@ -108,3 +108,86 @@ func TestConsoleEventsRecheck(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// A browser that stops reading is closed within browserWriteWait, and the sends after it return
+// at once instead of waiting forever.
+func TestConsoleEventsStalledBrowser(t *testing.T) {
+	t.Parallel() // waits out the real browserWriteWait
+
+	got := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := browserUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		got <- c
+	}))
+	defer srv.Close()
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close() // never reads
+	sub := &consoleEventSub{conn: <-got}
+
+	big := strings.Repeat("x", 1<<20)
+	deadline := time.Now().Add(3 * browserWriteWait)
+	for {
+		sub.send(map[string]string{"t": "sessions", "pad": big})
+		sub.writeMu.Lock()
+		dead := sub.dead
+		sub.writeMu.Unlock()
+		if dead {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a browser that doesn't read was never closed")
+		}
+	}
+	start := time.Now()
+	for range 100 {
+		sub.send(map[string]string{"t": "sessions"})
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Errorf("sends to a closed browser took %v; they must return at once", d)
+	}
+}
+
+// runLimited runs at most cap(jobs) jobs at once; the next waits for a slot.
+func TestConsoleEventsJobLimit(t *testing.T) {
+	jobs := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	running, peak := 0, 0
+	job := func() {
+		mu.Lock()
+		running++
+		peak = max(peak, running)
+		mu.Unlock()
+		<-release
+		mu.Lock()
+		running--
+		mu.Unlock()
+	}
+	runLimited(jobs, job)
+	runLimited(jobs, job)
+	third := make(chan struct{})
+	go func() { runLimited(jobs, job); close(third) }()
+	select {
+	case <-third:
+		t.Fatal("a third job started while two were running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-third:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the third job never got a slot")
+	}
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if peak > 2 {
+		t.Errorf("%d jobs ran at once, want at most 2", peak)
+	}
+}

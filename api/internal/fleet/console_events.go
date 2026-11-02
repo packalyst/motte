@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"api/internal/auth"
-	"api/internal/events"
 	"api/internal/helper"
 	"api/internal/router"
 
@@ -15,7 +14,7 @@ import (
 
 // The console-events WebSocket replaces polling for the global console. A browser subscribes once;
 // the panel pushes the caller's live session list across all accessible machines whenever a session
-// opens or closes (hooked into the reconcile), and serves snapshot captures + kills over the same
+// opens or closes (hooked into the reconcile), and serves snapshot captures over the same
 // socket. All of it is owner-scoped — a subscriber only ever sees or touches its own sessions.
 
 // consoleEventSub is one subscribed browser. The captured Principal carries the role + scope used to
@@ -23,6 +22,7 @@ import (
 type consoleEventSub struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+	dead    bool // a write failed or timed out: the socket is closed, later sends are dropped (under writeMu)
 
 	mu sync.Mutex
 	p  *router.Principal // refreshed every consoleRecheck, so a scope change applies
@@ -40,10 +40,20 @@ func (e *consoleEventSub) setPrincipal(p *router.Principal) {
 	e.mu.Unlock()
 }
 
+// send writes v within browserWriteWait. A browser that doesn't take it in time (asleep, frozen, or
+// not reading on purpose) is closed, which ends its handler; the sends queued behind it return at
+// once, so a stalled browser never holds goroutines.
 func (e *consoleEventSub) send(v any) {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
-	_ = e.conn.WriteJSON(v)
+	if e.dead {
+		return
+	}
+	_ = e.conn.SetWriteDeadline(time.Now().Add(browserWriteWait))
+	if err := e.conn.WriteJSON(v); err != nil {
+		e.dead = true
+		e.conn.Close()
+	}
 }
 
 var (
@@ -141,6 +151,8 @@ func (s *Service) HandleConsoleEvents(w http.ResponseWriter, r *http.Request) {
 	// Initial push: a fresh, live-queried list so the page paints real state immediately.
 	sub.send(map[string]any{"t": "sessions", "sessions": s.globalSessions(p, true)})
 
+	jobs := make(chan struct{}, helper.ConsoleEventJobs)
+	run := func(job func()) { runLimited(jobs, job) }
 	for {
 		var f struct {
 			T         string `json:"t"`
@@ -152,13 +164,22 @@ func (s *Service) HandleConsoleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		switch f.T {
 		case "snapshot":
-			go s.wsSnapshot(sub, f.MachineID, f.Session)
-		case "kill":
-			go s.wsKill(sub, f.MachineID, f.Session)
+			run(func() { s.wsSnapshot(sub, f.MachineID, f.Session) })
 		case "refresh":
-			go func() { sub.send(map[string]any{"t": "sessions", "sessions": s.globalSessions(sub.principal(), true)}) }()
+			run(func() { sub.send(map[string]any{"t": "sessions", "sessions": s.globalSessions(sub.principal(), true)}) })
 		}
 	}
+}
+
+// runLimited runs job in its own goroutine once jobs has a free slot, and frees the slot when it
+// ends. While it waits for a slot the socket's read loop reads nothing more, so a browser sending
+// requests in a loop is slowed, not served: at most cap(jobs) of its requests run at once.
+func runLimited(jobs chan struct{}, job func()) {
+	jobs <- struct{}{}
+	go func() {
+		defer func() { <-jobs }()
+		job()
+	}()
 }
 
 // scopedAgent resolves machineID to its live agent, enforcing scope + console-enabled + that the
@@ -190,17 +211,4 @@ func (s *Service) wsSnapshot(sub *consoleEventSub, machineID, clientSession stri
 	}
 	data, _ := a.requestSnapshot(eff, 2*time.Second)
 	sub.send(map[string]any{"t": "snapshot-result", "machine_id": machineID, "session": clientSession, "data": data})
-}
-
-// wsKill destroys one of the caller's own sessions (the tab/card close button).
-func (s *Service) wsKill(sub *consoleEventSub, machineID, clientSession string) {
-	a, eff, ok := s.scopedAgent(sub.principal(), machineID, clientSession)
-	if !ok {
-		return
-	}
-	a.writeToAgent(consoleFrame{T: "kill", Session: eff})
-	events.Audit("fleet", "console_kill", events.SeverityInfo, sub.principal().Username, "",
-		"Console session killed (session "+eff+")")
-	// session-exit from the agent will push the updated list; nudge now in case the agent is slow.
-	notifySessionsChanged(machineID)
 }
