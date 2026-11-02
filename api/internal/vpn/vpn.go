@@ -897,6 +897,41 @@ type activeScan struct {
 var activeScans = make(map[string]*activeScan)
 var activeScansMu = &sync.Mutex{}
 
+// reserveScan takes the client's scan slot (check-and-set under one lock, so two rapid requests
+// can't both launch); nil when a scan is already running for it.
+func reserveScan(clientID string, cancel context.CancelFunc) *activeScan {
+	activeScansMu.Lock()
+	defer activeScansMu.Unlock()
+	if _, exists := activeScans[clientID]; exists {
+		return nil
+	}
+	mine := &activeScan{cancel: cancel}
+	activeScans[clientID] = mine
+	return mine
+}
+
+// stopScan frees the client's slot at once (a new scan may start) and cancels the scan holding it.
+func stopScan(clientID string) bool {
+	activeScansMu.Lock()
+	scan, exists := activeScans[clientID]
+	delete(activeScans, clientID)
+	activeScansMu.Unlock()
+	if exists {
+		scan.cancel()
+	}
+	return exists
+}
+
+// releaseScan frees the slot when a scan ends, only if it still holds it: a scan stopped and
+// replaced by a newer one must not free the newer one's slot.
+func releaseScan(clientID string, mine *activeScan) {
+	activeScansMu.Lock()
+	defer activeScansMu.Unlock()
+	if activeScans[clientID] == mine {
+		delete(activeScans, clientID)
+	}
+}
+
 // extractScanClientID extracts client ID from scan endpoint paths
 func extractScanClientID(r *http.Request) (string, bool) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/vpn/clients/")
@@ -955,18 +990,13 @@ func (s *Service) handleScanPorts(w http.ResponseWriter, r *http.Request) {
 		TimeoutMs:  settings.GetSettingInt("scanner_timeout_ms", 500),
 	}
 
-	// Atomically reserve the scan slot: check-and-set under one lock so two rapid
-	// requests can't both launch (which would orphan the first scan's cancel).
 	ctx, cancel := context.WithTimeout(context.Background(), helper.PortScanTimeout)
-	activeScansMu.Lock()
-	if _, exists := activeScans[clientID]; exists {
-		activeScansMu.Unlock()
+	mine := reserveScan(clientID, cancel)
+	if mine == nil {
 		cancel()
 		router.JSONError(w, "scan already running for this client", http.StatusConflict)
 		return
 	}
-	activeScans[clientID] = &activeScan{cancel: cancel}
-	activeScansMu.Unlock()
 
 	// Return immediately - scan runs in background
 	router.JSON(w, map[string]interface{}{
@@ -977,7 +1007,7 @@ func (s *Service) handleScanPorts(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Run scan in goroutine with progress via WebSocket
-	go runScanWithProgress(ctx, cancel, clientID, clientIP, req.Mode, config)
+	go runScanWithProgress(ctx, mine, clientID, clientIP, req.Mode, config)
 }
 
 // handleStopScan stops a running scan for a client
@@ -988,21 +1018,11 @@ func (s *Service) handleStopScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activeScansMu.Lock()
-	scan, exists := activeScans[clientID]
-	if exists {
-		// Remove immediately so new scan can start
-		delete(activeScans, clientID)
-	}
-	activeScansMu.Unlock()
-
-	if !exists {
+	// The scan's goroutine sends the final results as it ends.
+	if !stopScan(clientID) {
 		router.JSONError(w, "no active scan for this client", http.StatusNotFound)
 		return
 	}
-
-	// Cancel the scan - goroutine will clean up and send final results
-	scan.cancel()
 
 	router.JSON(w, map[string]interface{}{
 		"status":   "stopped",
@@ -1011,9 +1031,9 @@ func (s *Service) handleStopScan(w http.ResponseWriter, r *http.Request) {
 }
 
 // runScanWithProgress runs a port scan and broadcasts progress via WebSocket.
-// The caller reserves the activeScans slot and passes the ctx/cancel; this
-// function owns cleanup (cancel + delete) on exit.
-func runScanWithProgress(ctx context.Context, cancel context.CancelFunc, clientID, clientIP, mode string, config helper.ScanConfig) {
+// The caller reserves the slot (reserveScan) and passes it with its ctx; this function cancels
+// the ctx and frees the slot, if still its own, on exit.
+func runScanWithProgress(ctx context.Context, mine *activeScan, clientID, clientIP, mode string, config helper.ScanConfig) {
 	// Track results for live updates
 	var results []helper.PortResult
 	var resultsMu sync.Mutex
@@ -1021,10 +1041,8 @@ func runScanWithProgress(ctx context.Context, cancel context.CancelFunc, clientI
 
 	// Cleanup - safe to call multiple times
 	defer func() {
-		cancel()
-		activeScansMu.Lock()
-		delete(activeScans, clientID)
-		activeScansMu.Unlock()
+		mine.cancel()
+		releaseScan(clientID, mine)
 	}()
 
 	// Helper to broadcast scan progress
