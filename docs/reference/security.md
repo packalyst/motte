@@ -313,6 +313,10 @@ again, on top of a valid session:
     switched back on, or created with internet.
   - Firewall: an allow-rule (single, bulk create, bulk enable), opening a port that isn't open,
     a port made public; the SSH port change and the bulk deletes.
+  - Domains: a public route (created, made public, retargeted while public, or switched back
+    on). A route also never takes the panel's own domains (`helper.SystemDomains`) or points at
+    this server's internals (`helper.CheckRouteTarget`: loopback, link-local, the panel's Docker
+    network, or the panel's API, AdGuard or Traefik port on any of the server's addresses).
   - Settings: another Headscale URL, new AdGuard credentials, the AdGuard or Traefik dashboard
     published, a longer sign-in, the idle lock off or longer, Cloudflare-only off, a new
     trusted network.

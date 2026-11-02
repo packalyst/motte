@@ -115,3 +115,48 @@ func TestRouteLinksToLANDevice(t *testing.T) {
 		t.Fatalf("LANDeviceRoutes: %+v %v", routes, err)
 	}
 }
+
+// A route can't take over the panel's own domain or point at its internals, and a public route
+// (created, made public, or switched back on) asks for a step-up first.
+func TestRouteGuards(t *testing.T) {
+	t.Setenv("TRAEFIK_CONFIG", t.TempDir())
+	t.Setenv("SSL_DOMAIN", "panel.example.com")
+	if _, err := database.Init(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	db, _ := database.GetDB()
+	db.Exec(`DELETE FROM domain_routes`)
+	RoutesApplied = func() {}
+	s := New()
+	call := func(h http.HandlerFunc, method, path, body string) int {
+		rr := httptest.NewRecorder()
+		h(rr, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return rr.Code
+	}
+	create := func(body string) int { return call(s.handleCreate, http.MethodPost, "/api/domains", body) }
+	if c := create(`{"domain":"panel.example.com","targetIp":"192.0.2.10","targetPort":80}`); c != http.StatusBadRequest {
+		t.Errorf("the panel's own domain: %d", c)
+	}
+	if c := create(`{"domain":"x.example.com","targetIp":"127.0.0.1","targetPort":80}`); c != http.StatusBadRequest {
+		t.Errorf("loopback target: %d", c)
+	}
+	if c := create(`{"domain":"pub.example.com","targetIp":"192.0.2.10","targetPort":80,"accessMode":"public"}`); c != http.StatusPreconditionRequired {
+		t.Errorf("public route without step-up: %d", c)
+	}
+	if c := create(`{"domain":"vpn.example.com","targetIp":"192.0.2.10","targetPort":80}`); c != http.StatusOK {
+		t.Fatalf("a VPN-only route needs no step-up: %d", c)
+	}
+	var id int64
+	db.QueryRow(`SELECT id FROM domain_routes WHERE domain = 'vpn.example.com'`).Scan(&id)
+	path := fmt.Sprintf("/api/domains/%d", id)
+	if c := call(s.handleUpdate, http.MethodPut, path, `{"accessMode":"public"}`); c != http.StatusPreconditionRequired {
+		t.Errorf("making it public without step-up: %d", c)
+	}
+	if c := call(s.handleUpdate, http.MethodPut, path, `{"targetIp":"169.254.169.254"}`); c != http.StatusBadRequest {
+		t.Errorf("retargeting to metadata: %d", c)
+	}
+	db.Exec(`UPDATE domain_routes SET access_mode = 'public', enabled = 0 WHERE id = ?`, id)
+	if c := call(s.handleToggle, http.MethodPost, path+"/toggle", ``); c != http.StatusPreconditionRequired {
+		t.Errorf("switching a public route back on without step-up: %d", c)
+	}
+}

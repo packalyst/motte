@@ -1,5 +1,5 @@
 <script>
-  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiPut, apiDelete, confirm, setConfirmLoading, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import { generalInfoStore } from '../stores/websocket.js'
   import { useDataLoader } from '$lib/composables/index.js'
   import { withTz } from '$lib/utils/format.js'
@@ -240,23 +240,21 @@
       toast('Domain, IP, and Port are required', 'error')
       return
     }
-    // A public route to a LAN device puts that device on the internet: say so before saving.
+    // A public route puts its target on the internet: the server asks for a password or passkey
+    // first, and the prompt says what opens (a LAN device by name).
     const lan = formData.accessMode === 'public' && lanDevices.find(d => d.vpn_ip === formData.targetIp)
-    if (lan && !(await confirm({
-      title: 'Public route to a LAN device',
-      message: `Expose ${lan.name} to the internet?`,
-      description: `Anyone can reach ${formData.domain} → port ${formData.targetPort} on this device through Traefik. Use VPN access to keep it private.`,
-      confirmText: 'Make it public',
-      variant: 'warning'
-    }))) return
     const payload = buildRoutePayload(formData)
     const isCreate = formModalMode === 'create'
     try {
-      if (isCreate) {
-        await apiPost('/api/domains', payload)
-      } else {
-        await apiPut(`/api/domains/${editingRoute.id}`, payload)
-      }
+      const res = await withStepUp((extra) => isCreate
+        ? apiPost('/api/domains', { ...payload, ...extra })
+        : apiPut(`/api/domains/${editingRoute.id}`, { ...payload, ...extra }), {
+        title: lan ? 'Public route to a LAN device' : 'Public route',
+        message: lan ? `Expose ${lan.name} to the internet?` : `Make ${formData.domain} reachable from the internet?`,
+        description: `Anyone can reach ${formData.domain} → port ${formData.targetPort}${lan ? ' on this device' : ''} through Traefik. Use VPN access to keep it private.`,
+        confirmText: 'Make it public',
+      })
+      if (res === STEPUP_CANCELLED) return
       toast(`Domain route ${isCreate ? 'created' : 'updated'}`, 'success')
       closeFormModal()
       loader.reload()
@@ -267,7 +265,13 @@
 
   async function toggleRoute(route) {
     try {
-      await apiPost(`/api/domains/${route.id}/toggle`)
+      // Switching a public route back on asks for a password or passkey first.
+      const res = await withStepUp((extra) => apiPost(`/api/domains/${route.id}/toggle`, { ...extra }), {
+        title: 'Switch the public route on',
+        message: `${route.domain} will be reachable from the internet again.`,
+        confirmText: 'Switch on',
+      })
+      if (res === STEPUP_CANCELLED) return
       toast(`Route ${route.enabled ? 'disabled' : 'enabled'}`, 'success')
       loader.reload()
     } catch (e) {

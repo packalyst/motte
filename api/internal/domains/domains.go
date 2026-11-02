@@ -1,6 +1,7 @@
 package domains
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -460,7 +462,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	// Validate domain
 	req.Domain = strings.TrimSpace(strings.ToLower(req.Domain))
-	if err := helper.ValidateDomain(req.Domain); err != nil {
+	if err := validateRouteDomain(req.Domain); err != nil {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -477,6 +479,10 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := helper.CheckRouteTarget(req.TargetIP, req.TargetPort); err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Validate access_mode (default to "vpn" if empty)
 	if req.AccessMode == "" {
@@ -484,6 +490,10 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AccessMode != "vpn" && req.AccessMode != "public" {
 		router.JSONError(w, "accessMode must be 'vpn' or 'public'", http.StatusBadRequest)
+		return
+	}
+	// A public route puts the target on the internet: a step-up first.
+	if req.AccessMode == "public" && !router.StepUp(w, r) {
 		return
 	}
 
@@ -615,7 +625,7 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// Validate fields if provided
 	if req.Domain != nil {
 		domain := strings.TrimSpace(strings.ToLower(*req.Domain))
-		if err := helper.ValidateDomain(domain); err != nil {
+		if err := validateRouteDomain(domain); err != nil {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -643,14 +653,40 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get current domain and access_mode for AdGuard cleanup
-	var oldDomain string
+	var oldDomain, oldIP string
+	var oldPort int
 	var oldAccessMode sql.NullString
-	err = db.QueryRow("SELECT domain, access_mode FROM domain_routes WHERE id = ?", id).Scan(&oldDomain, &oldAccessMode)
+	err = db.QueryRow("SELECT domain, access_mode, target_ip, target_port FROM domain_routes WHERE id = ?", id).Scan(&oldDomain, &oldAccessMode, &oldIP, &oldPort)
 	if err != nil {
 		router.JSONError(w, "route not found", http.StatusNotFound)
 		return
 	}
 	oldMode := database.StringFromNullNotEmpty(oldAccessMode, "vpn")
+
+	// The route as it will be: its target must not be internal, and making it public, or pointing
+	// a public route somewhere else, puts that target on the internet: a step-up first.
+	newIP, newPort, newMode := oldIP, oldPort, oldMode
+	if req.TargetIP != nil {
+		newIP = *req.TargetIP
+	}
+	if req.TargetPort != nil {
+		newPort = *req.TargetPort
+	}
+	if req.AccessMode != nil {
+		newMode = *req.AccessMode
+	}
+	if newIP != oldIP || newPort != oldPort {
+		if err := helper.CheckRouteTarget(newIP, newPort); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if newMode == "public" && (oldMode != "public" || newIP != oldIP || newPort != oldPort) {
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes)) // the step-up reads its proof from the body
+		if !router.StepUp(w, r) {
+			return
+		}
+	}
 
 	// Determine if we need to delete old AdGuard entry
 	needsAdGuardCleanup := false
@@ -869,11 +905,31 @@ func (s *Service) handleToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Switching a public route back on puts its target on the internet again: checked like a new
+	// one, and a step-up first. Switching off never asks.
+	var wasOn bool
+	var mode sql.NullString
+	var ip string
+	var port int
+	if err := db.QueryRow(`SELECT enabled, access_mode, target_ip, target_port FROM domain_routes WHERE id = ?`, id).Scan(&wasOn, &mode, &ip, &port); err != nil {
+		router.JSONError(w, "route not found", http.StatusNotFound)
+		return
+	}
+	if !wasOn {
+		if err := helper.CheckRouteTarget(ip, port); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if database.StringFromNullNotEmpty(mode, "vpn") == "public" && !router.StepUp(w, r) {
+			return
+		}
+	}
+
 	result, err := db.Exec(`
 		UPDATE domain_routes
-		SET enabled = NOT enabled, updated_at = CURRENT_TIMESTAMP
+		SET enabled = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, id)
+	`, !wasOn, id)
 	if err != nil {
 		router.DBError(w, err)
 		return
@@ -956,6 +1012,17 @@ func (s *Service) handleGetSystemDomain(w http.ResponseWriter, r *http.Request) 
 		"domain":      sslDomain,
 		"certificate": certInfo,
 	})
+}
+
+// validateRouteDomain checks a route's domain: a valid name, and never one of the panel's own.
+func validateRouteDomain(domain string) error {
+	if err := helper.ValidateDomain(domain); err != nil {
+		return err
+	}
+	if slices.Contains(helper.SystemDomains(), domain) {
+		return fmt.Errorf("%s is one of the panel's own domains; a route can't take it over", domain)
+	}
+	return nil
 }
 
 // handleGetSystemDomains returns the read-only "system" domains (the panel's SSL
