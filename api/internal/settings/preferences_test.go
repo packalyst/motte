@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"api/internal/database"
+	"api/internal/router"
 )
 
 // Only the offered sign-in lengths and idle-lock minutes are saved: 0 or less would end every new sign-in at once (the
@@ -49,6 +50,12 @@ func TestSessionTimeoutOnlyOfferedLengths(t *testing.T) {
 		t.Fatalf("stored 7: want 0, got %d", m)
 	}
 
+	// A longer sign-in loosens security: a step-up first (none registered: refused, 428).
+	if code := put(`{"session_timeout":"168"}`); code != http.StatusPreconditionRequired {
+		t.Fatalf("168 without step-up: got %d, want 428", code)
+	}
+	router.SetStepUpFunc(func(http.ResponseWriter, *http.Request) bool { return true })
+	t.Cleanup(func() { router.SetStepUpFunc(nil) })
 	if code := put(`{"session_timeout":"168"}`); code != http.StatusOK {
 		t.Fatalf("168: got %d, want 200", code)
 	}

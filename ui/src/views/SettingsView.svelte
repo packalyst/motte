@@ -374,13 +374,20 @@
     )
   })
 
+  // saveSettings saves settings; a change that loosens security (another Headscale URL, new AdGuard
+  // credentials, a published dashboard, a longer sign-in, a weaker idle lock, Cloudflare-only off)
+  // asks for a password or passkey first. Resolves to STEPUP_CANCELLED when the prompt is closed.
+  const saveSettings = (body) => withStepUp((extra) => apiPut('/api/settings', { ...body, ...extra }), {
+    title: 'Confirm the change',
+    message: 'This change loosens the panel\'s security. Confirm it is you.',
+    confirmText: 'Save',
+  })
+
   // Save Headscale public URL
   async function saveHeadscale() {
     savingHeadscale = true
     try {
-      await apiPut('/api/settings', {
-        headscale_url: headscaleUrl
-      })
+      if (await saveSettings({ headscale_url: headscaleUrl }) === STEPUP_CANCELLED) return
       originalHeadscaleUrl = headscaleUrl
       headscaleUrlChanged = false
       toast('Headscale URL saved', 'success')
@@ -411,12 +418,13 @@
   async function saveAdguard() {
     savingAdguard = true
     try {
-      const res = await apiPut('/api/settings', {
+      const res = await saveSettings({
         adguard_username: adguardUsername,
         adguard_password: adguardPassword === '••••••••' ? null : adguardPassword,
         adguard_dashboard_enabled: adguardDashboardEnabled,
         adguard_querylog_size: adguardQuerylogSize
       })
+      if (res === STEPUP_CANCELLED) return
       originalAdguard = { username: adguardUsername, password: adguardPassword, dashboardEnabled: adguardDashboardEnabled, querylogSize: adguardQuerylogSize }
       adguardChanged = false
 
@@ -443,12 +451,12 @@
   async function saveSession() {
     savingSession = true
     try {
-      await apiPut('/api/settings', {
+      if (await saveSettings({
         session_timeout: sessionTimeout,
         idle_lock_minutes: parseInt(idleLock, 10),
         metrics_retention_days: parseInt(metricsRetention, 10),
         display_timezone: displayTimezone
-      })
+      }) === STEPUP_CANCELLED) return
       setDisplayTimezone(displayTimezone)
       originalSession = { timeout: sessionTimeout, idleLock, retention: metricsRetention, timezone: displayTimezone }
       sessionChanged = false
@@ -464,7 +472,7 @@
   async function saveScanner() {
     savingScanner = true
     try {
-      await apiPut('/api/settings', {
+      await saveSettings({
         scanner_port_start: parseInt(scannerSettings.portStart),
         scanner_port_end: parseInt(scannerSettings.portEnd),
         scanner_concurrent: parseInt(scannerSettings.concurrent),
@@ -690,7 +698,7 @@
     }
     cfOnlyLoading = true
     try {
-      await apiPut('/api/settings', { web_cloudflare_only: enabled })
+      if (await saveSettings({ web_cloudflare_only: enabled }) === STEPUP_CANCELLED) { webCloudflareOnly = !enabled; return }
       webCloudflareOnly = enabled
       toast(enabled ? 'Web ports now restricted to Cloudflare' : 'Cloudflare-only web access disabled — web ports open to all', 'success')
     } catch (e) {

@@ -12,8 +12,9 @@ import (
 // or an nft rule. A MAC is six colon-separated hex octets; an interface name is the restrictive
 // Linux set (letters, digits, and . _ - @), length-bounded, no path/space/shell metacharacters.
 func validMAC(s string) bool {
-	_, err := net.ParseMAC(strings.TrimSpace(s))
-	return err == nil && strings.Count(s, ":") == 5 // require EUI-48, colon form
+	// No trimming: a value carrying whitespace never reaches a config line. EUI-48, colon form.
+	_, err := net.ParseMAC(s)
+	return err == nil && len(s) == 17 && strings.Count(s, ":") == 5
 }
 
 func validIface(s string) bool {

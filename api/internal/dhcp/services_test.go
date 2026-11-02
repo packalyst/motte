@@ -149,3 +149,37 @@ func TestReachabilityServices(t *testing.T) {
 		t.Fatalf("a removed service must cut the device's connections: %v", lost)
 	}
 }
+
+// Ping is a service like the others: off unless ticked, an echo request out (its reply comes back
+// as established), guarded in "all" mode, never a way in, and turning it on is a widening.
+func TestPingService(t *testing.T) {
+	var b strings.Builder
+	writeInternetOut(&b, `iifname "ens19"`, "eth0", portsOf("web,ping"))
+	if !strings.Contains(b.String(), `iifname "ens19" oifname "eth0" icmp type echo-request accept`) {
+		t.Fatalf("ping ticked: no echo-request accept:\n%s", b.String())
+	}
+	b.Reset()
+	writeInternetOut(&b, `iifname "ens19"`, "eth0", portsOf("web"))
+	if strings.Contains(b.String(), "icmp") {
+		t.Fatalf("ping not ticked must not be opened:\n%s", b.String())
+	}
+	b.Reset()
+	writeInternetOut(&b, `iifname "ens19"`, "eth0", portsOf("all,web"))
+	if !strings.Contains(b.String(), `icmp type echo-request drop`) {
+		t.Fatalf("all mode without ping must guard it:\n%s", b.String())
+	}
+	b.Reset()
+	writeInternetOut(&b, `iifname "ens19"`, "eth0", portsOf("all,ping"))
+	if strings.Contains(b.String(), "icmp") {
+		t.Fatalf("all mode with ping ticked needs no ping rule:\n%s", b.String())
+	}
+	if !widens("web", "web,ping") || !widens("all", "all,ping") || widens("web,ping", "web") {
+		t.Fatal("turning ping on is a widening, off is not")
+	}
+	if !portsOf("ping").any() {
+		t.Fatal("a ping-only list is a way out")
+	}
+	if _, err := normalizeInbound([]inboundEntry{{Entry: "ping", Sources: []string{"any"}}}); err == nil {
+		t.Fatal("ping can't be a way in")
+	}
+}

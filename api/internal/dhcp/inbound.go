@@ -55,7 +55,9 @@ func normalizeInbound(in []inboundEntry) ([]inboundEntry, error) {
 		if id == svcAll {
 			return nil, fmt.Errorf("all other ports is outgoing only")
 		}
-		if _, ok := catalogService(id); !ok {
+		if svc, ok := catalogService(id); ok && len(svc.TCP) == 0 && len(svc.UDP) == 0 {
+			return nil, fmt.Errorf("%s is outgoing only", svc.Name)
+		} else if !ok {
 			proto, port, ok := customPort(id)
 			if !ok {
 				return nil, fmt.Errorf("unknown incoming entry %q (use a listed service, or tcp:PORT / udp:PORT)", e.Entry)

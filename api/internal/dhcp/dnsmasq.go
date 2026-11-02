@@ -2,6 +2,8 @@ package dhcp
 
 import (
 	"fmt"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -64,7 +66,12 @@ func renderDnsmasqConf(n *Network, reservations []Client, blocked []string) stri
 	// per-device reachability gate keys on that IP, so an approved device keeps its access across
 	// reboots. Pending (unapproved) devices just take a pool address; the gate blocks them until
 	// approved. dnsmasq itself never withholds a lease based on approval.
+	_, cnet, _ := net.ParseCIDR(n.CIDR)
 	for _, c := range reservations {
+		ip := net.ParseIP(c.IP).To4()
+		if !validMAC(strings.ToLower(c.MAC)) || ip == nil || cnet == nil || !cnet.Contains(ip) {
+			continue // never a line from a value that doesn't hold up
+		}
 		name := sanitizeDHCPName(c.Name)
 		line := fmt.Sprintf("dhcp-host=%s,%s", strings.ToLower(c.MAC), c.IP)
 		if name != "" {
@@ -73,6 +80,9 @@ func renderDnsmasqConf(n *Network, reservations []Client, blocked []string) stri
 		b.WriteString(line + "\n")
 	}
 	for _, mac := range blocked {
+		if !validMAC(mac) {
+			continue
+		}
 		fmt.Fprintf(&b, "dhcp-host=%s,ignore\n", mac)
 	}
 	return b.String()
@@ -105,6 +115,14 @@ func (s *Service) writeDnsmasqConfig(n *Network) error {
 	if err != nil {
 		return err
 	}
+	// Every value is checked again here, whatever path it came by (a restored backup skips the
+	// form): one that doesn't hold up turns the network's DHCP off rather than reach dnsmasq.
+	if err := checkDnsmasqNetwork(n); err != nil {
+		if derr := s.writeDnsmasqDisabled(n); derr != nil {
+			log.Printf("dhcp: %s: %v", n.Iface, derr)
+		}
+		return fmt.Errorf("network %s not served (fix it in Networks): %w", n.Iface, err)
+	}
 	reservations, blocked, err := s.dnsmasqHosts(n.ID)
 	if err != nil {
 		return err
@@ -120,6 +138,24 @@ func (s *Service) writeDnsmasqConfig(n *Network) error {
 		return fmt.Errorf("write dnsmasq config: %w", err)
 	}
 	return reloadDnsmasq()
+}
+
+// checkDnsmasqNetwork re-runs the form's checks on a network about to be written into dnsmasq's
+// config (on a copy: nothing is normalized in place). Overlap with other networks is the form's
+// business; here only what reaches a config line matters.
+func checkDnsmasqNetwork(n *Network) error {
+	if !validIface(n.Iface) {
+		return fmt.Errorf("invalid interface name")
+	}
+	c := *n
+	if err := validateAddressing(&c, nil); err != nil {
+		return err
+	}
+	if c.CIDR != n.CIDR || c.GatewayIP != n.GatewayIP || c.PoolStart != n.PoolStart || c.PoolEnd != n.PoolEnd ||
+		(n.Domain != "" && c.Domain != n.Domain) {
+		return fmt.Errorf("stored addressing is not in its checked form")
+	}
+	return nil
 }
 
 // writeDnsmasqDisabled removes a network's config and reloads (used when a network is disabled

@@ -4,9 +4,23 @@ import { apiPost, apiPut, withStepUp } from '../stores/app.js'
 
 const base = (id) => `/api/dhcp/clients/${id}`
 
-export const approveDevice = (id) => apiPost(base(id) + '/approve')
+// Approving lets a device past the LAN gate, and unblocking in auto mode approves it: both ask for a
+// password or passkey first (resolving to STEPUP_CANCELLED when the prompt is closed). Blocking
+// never asks.
+const confirmed = (path, title) => (id) => withStepUp(
+  (extra) => apiPost(base(id) + path, { ...extra }),
+  { title, message: 'Confirm to let this device onto the network.', confirmText: 'Confirm' }
+)
+export const approveDevice = confirmed('/approve', 'Approve device')
 export const blockDevice = (id) => apiPost(base(id) + '/block')
-export const unblockDevice = (id) => apiPost(base(id) + '/unblock')
+export const unblockDevice = confirmed('/unblock', 'Unblock device')
+
+// grantDevice lets a VPN client reach a device (two-way: and the device it). A new grant, or making
+// one two-way, asks for a password or passkey first.
+export const grantDevice = (id, clientId, bidirectional) => withStepUp(
+  (extra) => apiPost(base(id) + '/acl', { client_id: clientId, bidirectional, ...extra }),
+  { title: 'VPN access', message: 'Confirm to give this VPN client access to the device.', confirmText: 'Confirm' }
+)
 
 // setDeviceInternet turns a device's internet on or off; change may also set its internet address
 // (egress_ip), what it may reach (services) or what may come in (inbound). Whenever that gives it

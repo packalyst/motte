@@ -306,6 +306,16 @@ again, on top of a valid session:
     lifetime, opening a console): after a confirmation the same **login session** isn't asked
     again for `ConsoleStepUpGrace`, sliding, at most `ConsoleStepUpGraceMax`. Deleting a machine
     or a recording, the CA steps, re-enrolling and turning a console on always ask.
+- **Opening more always asks; closing never does.** Each of these compares the request with what
+  is stored and asks only when access grows:
+  - LAN: internet on, another address, more services, incoming, VPN access, a new or two-way
+    grant, approving a device, unblocking one in auto mode, a network set to auto-approve,
+    switched back on, or created with internet.
+  - Firewall: an allow-rule (single, bulk create, bulk enable), opening a port that isn't open,
+    a port made public; the SSH port change and the bulk deletes.
+  - Settings: another Headscale URL, new AdGuard credentials, the AdGuard or Traefik dashboard
+    published, a longer sign-in, the idle lock off or longer, Cloudflare-only off, a new
+    trusted network.
 - **`ChangePassword`** (`session.go`, `handleChangePassword`): a step-up (`PasswordOnly`), so a
   stolen session that knows the password can't change it. On success it **revokes every
   *other* session** for that user (a password change is often a compromise response — a

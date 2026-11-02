@@ -272,6 +272,10 @@ func (s *Service) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "only admins can create allow-rules or open ports", http.StatusForbidden)
 		return
 	}
+	// Opening the gate also takes a step-up, so a stolen session can't do it alone.
+	if opensFirewall(req.Action, req.Type) && !router.StepUp(w, r) {
+		return
+	}
 	// The insert below overwrites an entry with the same key: an operator's block must not replace
 	// an admin's allow-rule or open port.
 	if !callerIsAdmin(r) {
@@ -450,17 +454,20 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 
 		// Same admin-grade gate as the single-entry path: operators may bulk-manage blocks
 		// only, never allow-rules or port openings (which would widen access).
-		if !callerIsAdmin(r) {
-			for _, e := range req.Entries {
-				act := e.Action
-				if act == "" {
-					act = nftables.ActionBlock
-				}
-				if opensFirewall(act, e.Type) {
-					router.JSONError(w, "only admins can create allow-rules or open ports", http.StatusForbidden)
-					return
-				}
+		opens := false
+		for _, e := range req.Entries {
+			act := e.Action
+			if act == "" {
+				act = nftables.ActionBlock
 			}
+			opens = opens || opensFirewall(act, e.Type)
+		}
+		if opens && !callerIsAdmin(r) {
+			router.JSONError(w, "only admins can create allow-rules or open ports", http.StatusForbidden)
+			return
+		}
+		if opens && !router.StepUp(w, r) {
+			return
 		}
 
 		created := 0
@@ -557,6 +564,10 @@ func (s *Service) handleBulkEntries(w http.ResponseWriter, r *http.Request) {
 	// Allow-rules and port entries are admin-grade, whatever the action (opensFirewall).
 	if !callerIsAdmin(r) && s.anyOpensFirewall(req.IDs) {
 		router.JSONError(w, errAdminRule, http.StatusForbidden)
+		return
+	}
+	// Switching allow-rules or open ports back on opens the gate again: a step-up.
+	if req.Action == "enable" && s.anyOpensFirewall(req.IDs) && !router.StepUp(w, r) {
 		return
 	}
 

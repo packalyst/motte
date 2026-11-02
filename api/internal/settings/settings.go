@@ -174,7 +174,7 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 		if data, err := os.ReadFile(configPath); err == nil {
 			content := string(data)
 			// Dashboard enabled check
-			dashEnabled := strings.Contains(content, "address: 0.0.0.0:")
+			dashEnabled := adguardDashboardPublic(content)
 			result["adguard_dashboard_enabled"] = dashEnabled
 			if dashEnabled {
 				serverIP := os.Getenv("SERVER_IP")
@@ -255,6 +255,11 @@ func (s *Service) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.IdleLockMinutes != nil && !slices.Contains(helper.IdleLockMinutes, *req.IdleLockMinutes) {
 		router.JSONError(w, fmt.Sprintf("idle lock must be one of %v minutes", helper.IdleLockMinutes), http.StatusBadRequest)
+		return
+	}
+
+	// A change that loosens security takes a step-up, so a stolen session can't make it alone.
+	if loosensSecurity(req) && !router.StepUp(w, r) {
 		return
 	}
 
@@ -626,6 +631,48 @@ func SessionTimeoutHours() int {
 // IdleLockMinutes is how many idle minutes lock the screen, 0 for never (helper.IdleLockMinutes).
 func IdleLockMinutes() int {
 	return settingChoice("idle_lock_minutes", helper.IdleLockMinutes, 0)
+}
+
+// adguardDashboardPublic reports whether AdGuard's config publishes its web UI on every interface.
+func adguardDashboardPublic(conf string) bool {
+	return strings.Contains(conf, "address: 0.0.0.0:")
+}
+
+// loosensSecurity reports whether a settings change opens or weakens something, compared with what
+// is stored now: another Headscale URL (every node re-points), new AdGuard credentials, the
+// AdGuard dashboard published, a longer sign-in, the idle lock off or longer, Cloudflare-only off.
+// Tightening, and the display, retention and scanner settings, never ask.
+func loosensSecurity(req UpdateSettingsRequest) bool {
+	if req.HeadscaleURL != nil {
+		if cur, _ := getSetting("headscale_url"); *req.HeadscaleURL != cur {
+			return true
+		}
+	}
+	if req.AdGuardUsername != nil {
+		if cur, _ := getSetting("adguard_username"); *req.AdGuardUsername != cur {
+			return true
+		}
+	}
+	if req.AdGuardPassword != nil && *req.AdGuardPassword != "" {
+		return true
+	}
+	if req.AdGuardDashboardEnabled != nil && *req.AdGuardDashboardEnabled {
+		data, err := os.ReadFile(os.Getenv("ADGUARD_CONFIG"))
+		if err != nil || !adguardDashboardPublic(string(data)) {
+			return true
+		}
+	}
+	if req.SessionTimeout != nil {
+		if h, err := strconv.Atoi(*req.SessionTimeout); err == nil && h > SessionTimeoutHours() {
+			return true
+		}
+	}
+	if req.IdleLockMinutes != nil {
+		if cur := IdleLockMinutes(); cur != 0 && (*req.IdleLockMinutes == 0 || *req.IdleLockMinutes > cur) {
+			return true
+		}
+	}
+	return req.WebCloudflareOnly != nil && !*req.WebCloudflareOnly && GetWebCloudflareOnly()
 }
 
 // DeleteSetting removes a setting from the database

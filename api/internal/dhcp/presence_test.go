@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"api/internal/router"
 )
 
 func TestParseNeighbors(t *testing.T) {
@@ -236,5 +238,38 @@ func TestPresenceStopsCleanly(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if after := runtime.NumGoroutine(); after > before {
 		t.Fatalf("goroutines: %d before, %d after", before, after)
+	}
+}
+
+// Approving lets a device past the LAN gate: a step-up first. Approving again, or blocking,
+// needs none.
+func TestApproveTakesStepUp(t *testing.T) {
+	t.Setenv("PATH", "") // the handler re-applies the network: never run ip/iptables on the test host
+	exp := time.Now().Add(time.Hour).Unix()
+	s, n := presenceTestNet(t, fmt.Sprintf("%d 02:00:00:00:00:01 10.20.20.51 a *", exp))
+	s.syncLeases(n)
+	var id int64
+	s.db.QueryRow(`SELECT id FROM dhcp_clients`).Scan(&id)
+	s.db.Exec(`UPDATE dhcp_clients SET approved = 0 WHERE id = ?`, id) // the test network auto-approves: start pending
+	approve := func() int {
+		rr := httptest.NewRecorder()
+		s.handleApproveClient(rr, httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/dhcp/clients/%d/approve", id), nil))
+		return rr.Code
+	}
+	if c := approve(); c != http.StatusPreconditionRequired {
+		t.Fatalf("approving without a step-up: %d", c)
+	}
+	var approved int
+	s.db.QueryRow(`SELECT approved FROM dhcp_clients WHERE id = ?`, id).Scan(&approved)
+	if approved != 0 {
+		t.Fatal("a refused approve changed the device")
+	}
+	router.SetStepUpFunc(func(http.ResponseWriter, *http.Request) bool { return true })
+	if c := approve(); c != http.StatusOK {
+		t.Fatalf("approving with a step-up: %d", c)
+	}
+	router.SetStepUpFunc(nil)
+	if c := approve(); c != http.StatusOK {
+		t.Fatalf("approving an approved device again needs no step-up: %d", c)
 	}
 }

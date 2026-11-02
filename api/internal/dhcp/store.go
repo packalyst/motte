@@ -228,6 +228,16 @@ func (s *Service) setDeviceACL(deviceID, clientID int64, bidirectional bool) (ok
 	return n > 0, err
 }
 
+// deviceGrant reads one VPN client's grant on a device: whether there is one, and whether two-way.
+func (s *Service) deviceGrant(deviceID, clientID int64) (exists, both bool, err error) {
+	var b int
+	err = s.db.QueryRow(`SELECT bidirectional FROM dhcp_client_acl WHERE device_id=? AND source_client_id=?`, deviceID, clientID).Scan(&b)
+	if err == sql.ErrNoRows {
+		return false, false, nil
+	}
+	return err == nil, b == 1, err
+}
+
 func (s *Service) removeDeviceACL(deviceID, clientID int64) error {
 	_, err := s.db.Exec(`DELETE FROM dhcp_client_acl WHERE device_id=? AND source_client_id=?`, deviceID, clientID)
 	return err

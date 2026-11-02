@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { toast, apiGet, apiPost, apiDelete, confirm, stepUpConfirm, setConfirmLoading } from '../stores/app.js'
+  import { toast, apiGet, apiPost, apiDelete, confirm, stepUpConfirm, setConfirmLoading, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import { createDebouncedSearch, lazyLoad } from '../stores/helpers.js'
   import { usePaginatedState } from '$lib/composables/index.js'
   import { formatRelativeDate, formatTime } from '$lib/utils/format.js'
@@ -168,6 +168,15 @@
   function selectAllAsns() { selectedAsns = selectableAsns }
   function clearAsnSelection() { selectedAsns = [] }
 
+  // sendEntries creates firewall entries in one call. Allow-rules open the gate, so the server asks
+  // for a password or passkey first (one prompt for the whole batch); blocks never ask. Resolves
+  // to STEPUP_CANCELLED when the prompt is closed.
+  const sendEntries = (url, body, what) => withStepUp((extra) => apiPost(url, { ...body, ...extra }), {
+    title: `Allow ${what}?`,
+    message: `${what} will get past your firewall blocks.`,
+    confirmText: 'Allow',
+  })
+
   async function blockSelectedAsns() {
     if (selectedAsns.length === 0) return
     blockingAsns = true
@@ -177,7 +186,7 @@
         const m = asnResults.find(r => String(r.asn) === asn)
         return { type: 'asn', value: asn, action: viewAction, direction: 'inbound', name: m?.name || `AS${asn}` }
       })
-      await apiPost('/api/fw/entries/bulk', { action: 'create', entries })
+      if (await sendEntries('/api/fw/entries/bulk', { action: 'create', entries }, `${selectedAsns.length} ASN${selectedAsns.length > 1 ? 's' : ''}`) === STEPUP_CANCELLED) return
       toast(`${viewAction === 'allow' ? 'Allowing' : 'Blocking'} ${selectedAsns.length} ASN${selectedAsns.length > 1 ? 's' : ''}…`, 'info')
       showAsnModal = false
       selectedAsns = []; asnQuery = ''; asnResults = []
@@ -299,14 +308,15 @@
     }
     try {
       // The server checks the value and says whether it was an IP or a range.
-      const res = await apiPost('/api/fw/entries', {
+      const res = await sendEntries('/api/fw/entries', {
         type: 'ip',
         value: blockForm.ip,
         action: viewAction,
         direction: 'inbound',
         reason: blockForm.reason || (viewAction === 'allow' ? 'Manual allow' : 'Manual block'),
         banTime
-      })
+      }, blockForm.ip)
+      if (res === STEPUP_CANCELLED) return
       const verb = viewAction === 'allow' ? 'allowed' : 'blocked'
       toast(`${res.type === 'range' ? 'Range' : 'IP'} ${res.value} ${verb}`, 'success')
       showBlockModal = false
@@ -588,17 +598,18 @@
     if (selectedCountries.length === 0) return
     blockingCountries = true
     try {
-      // Create country entries via the entries API
+      // Create country entries via the entries API (allowing one asks for a password or passkey)
       for (const code of selectedCountries) {
         const country = availableCountries.find(c => c.code === code)
-        await apiPost('/api/fw/entries', {
+        const res = await sendEntries('/api/fw/entries', {
           type: 'country',
           value: code,
           name: country?.name || code,
           action: viewAction,
           direction: 'inbound',
           reason: viewAction === 'allow' ? 'Country allow' : 'Country block'
-        })
+        }, country?.name || code)
+        if (res === STEPUP_CANCELLED) return
       }
       toast(`${viewAction === 'allow' ? 'Allowing' : 'Blocking'} ${selectedCountries.length} countries...`, 'info')
       showBlockCountriesModal = false

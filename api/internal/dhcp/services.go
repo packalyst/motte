@@ -14,12 +14,14 @@ import (
 // An admin sets it per network (its devices' default) or per device. This catalog is the one
 // place services are named; the UI reads it from the API.
 
-// service is a named set of destination ports a device may use on the internet.
+// service is a named set of destination ports a device may use on the internet; ICMP is ping
+// (an echo request out, its reply back), outgoing only.
 type service struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	TCP  []int  `json:"tcp,omitempty"`
 	UDP  []int  `json:"udp,omitempty"`
+	ICMP bool   `json:"icmp,omitempty"`
 	Note string `json:"note,omitempty"`
 }
 
@@ -31,6 +33,7 @@ var serviceCatalog = []service{
 	{ID: "time", Name: "Time", UDP: []int{123}},
 	{ID: "email", Name: "Email", TCP: []int{587, 465, 993, 995}, Note: "sending through a provider and reading mail"},
 	{ID: "ssh", Name: "SSH", TCP: []int{22}},
+	{ID: "ping", Name: "Ping", ICMP: true, Note: "pinging hosts on the internet"},
 	// Outside DNS: plain (53), over TLS (TCP 853) and over QUIC (UDP 853). Shut, a device's lookups
 	// can only go to the gateway (AdGuard); DNS over HTTPS rides on 443 and no port can tell it apart.
 	{ID: "dns", Name: "Outside DNS", TCP: []int{53, 853}, UDP: []int{53, 853}, Note: "other DNS servers, skipping ad blocking"},
@@ -140,6 +143,7 @@ type outPorts struct {
 	All                bool
 	TCP, UDP           []int
 	BlockTCP, BlockUDP []int
+	ICMP, BlockICMP    bool // ping out allowed; with All, ping guarded (Ping not ticked)
 }
 
 func addPorts(to *[]int, ports ...int) {
@@ -163,6 +167,7 @@ func portsOf(list string) outPorts {
 			picked[tok] = true
 			addPorts(&o.TCP, s.TCP...)
 			addPorts(&o.UDP, s.UDP...)
+			o.ICMP = o.ICMP || s.ICMP
 			continue
 		}
 		if proto, port, ok := customPort(tok); ok && !(proto == "tcp" && port == 25) {
@@ -188,6 +193,7 @@ func portsOf(list string) outPorts {
 					addPorts(&o.BlockUDP, p)
 				}
 			}
+			o.BlockICMP = o.BlockICMP || (s.ICMP && !o.ICMP)
 		}
 	}
 	for _, l := range [][]int{o.TCP, o.UDP, o.BlockTCP, o.BlockUDP} {
@@ -209,13 +215,19 @@ func (o outPorts) opens(proto string, p int) bool {
 }
 
 // any reports whether the list opens anything at all.
-func (o outPorts) any() bool { return o.All || len(o.TCP) > 0 || len(o.UDP) > 0 }
+func (o outPorts) any() bool { return o.All || o.ICMP || len(o.TCP) > 0 || len(o.UDP) > 0 }
+
+// pings reports whether the list lets ping out.
+func (o outPorts) pings() bool { return o.ICMP || (o.All && !o.BlockICMP) }
 
 // paths names each way out, for the connection cut on lost access (accessOf).
 func (o outPorts) paths() []string {
 	var p []string
 	if o.All {
 		p = append(p, "out all")
+	}
+	if o.ICMP {
+		p = append(p, "out ping")
 	}
 	for _, n := range o.TCP {
 		p = append(p, "out tcp "+strconv.Itoa(n))
@@ -229,6 +241,9 @@ func (o outPorts) paths() []string {
 // widens reports whether going from old to new opens anything old didn't (a step-up is due).
 func widens(old, new string) bool {
 	o, n := portsOf(old), portsOf(new)
+	if n.pings() && !o.pings() {
+		return true
+	}
 	if n.All {
 		if !o.All {
 			return true

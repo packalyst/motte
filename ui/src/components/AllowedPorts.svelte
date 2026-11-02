@@ -7,7 +7,7 @@
    * change exposure. Every change is confirmed; the server enforces who may do it.
    */
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, apiDelete, toast, confirm } from '../stores/app.js'
+  import { apiGet, apiPost, apiDelete, toast, confirm, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import Icon from './Icon.svelte'
   import Input from './Input.svelte'
   import Segmented from './Segmented.svelte'
@@ -48,7 +48,13 @@
       return
     }
     try {
-      await apiPost('/api/fw/ports', { port, protocol: 'tcp' })
+      // Opening a port asks for a password or passkey first (the server's step-up).
+      const res = await withStepUp((extra) => apiPost('/api/fw/ports', { port, protocol: 'tcp', ...extra }), {
+        title: `Open port ${port}?`,
+        message: `Port ${port}/TCP will be reachable from the internet.`,
+        confirmText: 'Open port',
+      })
+      if (res === STEPUP_CANCELLED) return
       toast(`Port ${port} added`, 'success')
       newPort = ''
       await load()
@@ -75,20 +81,26 @@
   }
 
   // setScope moves a port between public (reachable from the internet) and private (VPN only),
-  // confirmed both ways: private can cut off outside access, public exposes it.
+  // confirmed both ways: private can cut off outside access; public exposes it, so it asks for a
+  // password or passkey (the server's step-up) instead of a plain confirm.
   async function setScope(p, target) {
-    const makingPrivate = target === 'private'
-    const ok = await confirm({
-      title: makingPrivate ? `Make ${label(p)} private?` : `Make ${label(p)} public?`,
-      message: makingPrivate ? `${label(p)} will stop answering on the internet.` : `${label(p)} will be reachable from the internet again.`,
-      description: makingPrivate
-        ? 'It stays reachable over WireGuard and the local network — use this for admin pages and DNS you don’t want exposed.'
-        : 'Anyone on the internet can reach this port (still subject to your other firewall rules).',
-      confirmText: makingPrivate ? 'Make private' : 'Make public',
-    })
-    if (!ok) return
+    const send = (extra = {}) => apiPost('/api/fw/ports/scope', { port: p.port, protocol: p.protocol, scope: target, ...extra })
+    if (target === 'private') {
+      const ok = await confirm({
+        title: `Make ${label(p)} private?`,
+        message: `${label(p)} will stop answering on the internet.`,
+        description: 'It stays reachable over the VPN and from the server itself — use this for admin pages and DNS you don’t want exposed.',
+        confirmText: 'Make private',
+      })
+      if (!ok) return
+    }
     try {
-      await apiPost('/api/fw/ports/scope', { port: p.port, protocol: p.protocol, scope: target })
+      const res = target === 'private' ? await send() : await withStepUp(send, {
+        title: `Make ${label(p)} public?`,
+        message: `${label(p)} will be reachable from the internet. Anyone can reach it (still subject to your other firewall rules).`,
+        confirmText: 'Make public',
+      })
+      if (res === STEPUP_CANCELLED) return
       toast(`Port ${p.port} is now ${target}`, 'success')
       await load()
     } catch (e) {

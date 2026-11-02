@@ -79,6 +79,7 @@ func TestCreateRefusesLockout(t *testing.T) {
 // allowing private space stays possible, as before.
 func TestAllowWiderThanSlash8Refused(t *testing.T) {
 	s := lockoutService(t)
+	allowStepUp(t)
 	for value, want := range map[string]int{"0.0.0.0/0": http.StatusBadRequest, "0.0.0.0/1": http.StatusBadRequest, "10.0.0.0/8": http.StatusOK} {
 		rr := httptest.NewRecorder()
 		s.handleCreateEntry(rr, adminReq("/api/fw/entries", `{"type":"ip","value":"`+value+`","action":"allow"}`))
@@ -133,5 +134,50 @@ func TestBlockLockoutErrorIgnoresNonAddresses(t *testing.T) {
 		if err := s.blockLockoutError(typ, "anything", "198.51.100.20"); err != nil {
 			t.Errorf("%s: %v", typ, err)
 		}
+	}
+}
+
+// allowStepUp lets every step-up pass, for tests about what happens once it is given.
+func allowStepUp(t *testing.T) {
+	t.Helper()
+	router.SetStepUpFunc(func(http.ResponseWriter, *http.Request) bool { return true })
+	t.Cleanup(func() { router.SetStepUpFunc(nil) })
+}
+
+// Opening the gate takes a step-up: an allow-rule, a new open port, a port made public, allow
+// entries in bulk. Blocks, and re-saving an open port, don't.
+func TestOpeningTakesStepUp(t *testing.T) {
+	s := lockoutService(t)
+	code := func(h http.HandlerFunc, path, body string) int {
+		rr := httptest.NewRecorder()
+		h(rr, adminReq(path, body))
+		return rr.Code
+	}
+	// No step-up registered: StepUp fails closed (428).
+	if c := code(s.handleCreateEntry, "/api/fw/entries", `{"type":"ip","value":"192.0.2.10","action":"allow"}`); c != http.StatusPreconditionRequired {
+		t.Errorf("allow-rule without step-up: %d", c)
+	}
+	if c := code(s.handleCreateEntry, "/api/fw/entries", `{"type":"ip","value":"192.0.2.11","action":"block"}`); c != http.StatusOK {
+		t.Errorf("block needs no step-up: %d", c)
+	}
+	if c := code(s.handleBulkEntries, "/api/fw/entries/bulk", `{"action":"create","entries":[{"type":"ip","value":"192.0.2.12","action":"block"},{"type":"ip","value":"192.0.2.13","action":"allow"}]}`); c != http.StatusPreconditionRequired {
+		t.Errorf("bulk with an allow-rule without step-up: %d", c)
+	}
+	if c := code(s.handleAddPort, "/api/fw/ports", `{"port":18443,"protocol":"tcp"}`); c != http.StatusPreconditionRequired {
+		t.Errorf("new open port without step-up: %d", c)
+	}
+	allowStepUp(t)
+	if c := code(s.handleAddPort, "/api/fw/ports", `{"port":18443,"protocol":"tcp"}`); c != http.StatusOK {
+		t.Fatalf("new open port with step-up: %d", c)
+	}
+	if c := code(s.handleSetPortScope, "/api/fw/ports/scope", `{"port":18443,"protocol":"tcp","scope":"private"}`); c != http.StatusOK {
+		t.Fatalf("making it private: %d", c)
+	}
+	router.SetStepUpFunc(nil)
+	if c := code(s.handleAddPort, "/api/fw/ports", `{"port":18443,"protocol":"tcp"}`); c != http.StatusOK {
+		t.Errorf("re-saving an open port needs no step-up: %d", c)
+	}
+	if c := code(s.handleSetPortScope, "/api/fw/ports/scope", `{"port":18443,"protocol":"tcp","scope":"public"}`); c != http.StatusPreconditionRequired {
+		t.Errorf("private to public without step-up: %d", c)
 	}
 }

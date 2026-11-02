@@ -330,7 +330,7 @@ func TestReachabilityNftSyntax(t *testing.T) {
 		1: {Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", VPNIP: "10.8.128.5",
 			Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}, {IP: "10.8.0.3"}}, Internet: true, Out: portsOf("all,web"), Routes: []int{80, 443}},
 			{IP: "10.20.20.56", MAC: "02:00:00:00:00:56", VPNIP: "10.8.128.6", Routes: []int{8080}},
-			{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: true, Egress: "203.0.113.10", Out: portsOf("web,time,smtp,udp:5000"),
+			{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: true, Egress: "203.0.113.10", Out: portsOf("web,time,smtp,udp:5000,ping"),
 				In: inboundRules([]inboundEntry{{Entry: "ssh", Sources: []string{"198.51.100.0/24", "203.0.113.7/32"}}, {Entry: "web", Sources: []string{"any"}}, {Entry: "udp:5000", Sources: []string{"any"}}})}},
 			Blocked: []string{"02:00:00:00:00:09"}, Dedicated: []string{"203.0.113.10", "203.0.113.11"}},
 		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20"}}},
@@ -464,5 +464,42 @@ func TestRequireLANInterfaceRefuses(t *testing.T) {
 		if got := candidateInterface(name, "eth0"); got != ok {
 			t.Errorf("candidateInterface(%q, wan eth0) = %v, want %v", name, got, ok)
 		}
+	}
+}
+
+// A network that reaches dnsmasq by another path than the form (a restored backup) is checked
+// again: a value that doesn't hold up — a domain smuggling a second directive, a gateway outside
+// the subnet, an unchecked form — keeps the network out of dnsmasq.
+func TestCheckDnsmasqNetwork(t *testing.T) {
+	good := Network{Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", PoolStart: "10.20.20.50",
+		PoolEnd: "10.20.20.200", LeaseSecs: 3600, Mode: "approve", Domain: "lan"}
+	if err := checkDnsmasqNetwork(&good); err != nil {
+		t.Fatalf("a valid network was refused: %v", err)
+	}
+	for name, mut := range map[string]func(n *Network){
+		"domain with a directive": func(n *Network) { n.Domain = "lan\ndhcp-script=/bin/sh" },
+		"gateway outside":         func(n *Network) { n.GatewayIP = "10.99.0.1" },
+		"pool start not an IP":    func(n *Network) { n.PoolStart = "10.20.20.50\nconf-file=/x" },
+		"unmasked subnet":         func(n *Network) { n.CIDR = "10.20.20.7/24" },
+		"bad interface":           func(n *Network) { n.Iface = "ens19\ninterface=eth0" },
+		"public subnet": func(n *Network) {
+			n.CIDR, n.GatewayIP, n.PoolStart, n.PoolEnd = "203.0.113.0/24", "203.0.113.1", "203.0.113.50", "203.0.113.60"
+		},
+	} {
+		n := good
+		mut(&n)
+		if err := checkDnsmasqNetwork(&n); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// Reservations and blocked MACs that don't hold up are never written.
+	out := renderDnsmasqConf(&good, []Client{
+		{MAC: "02:00:00:00:00:01", IP: "10.20.20.60", Name: "ok"},
+		{MAC: "02:00:00:00:00:02\ndhcp-script=/x", IP: "10.20.20.61"},
+		{MAC: "02:00:00:00:00:03", IP: "10.99.0.5"},
+	}, []string{"02:00:00:00:00:09", "02:00:00:00:00:0a\nconf-dir=/x"})
+	if !strings.Contains(out, "dhcp-host=02:00:00:00:00:01,10.20.20.60,ok") || strings.Contains(out, "dhcp-script") ||
+		strings.Contains(out, "conf-dir") || strings.Contains(out, "10.99.0.5") {
+		t.Fatalf("only valid hosts may be written:\n%s", out)
 	}
 }

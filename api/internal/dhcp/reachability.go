@@ -677,8 +677,9 @@ func writeInbound(dedIn, inDnat, fwd *strings.Builder, d devicePolicy, seg, wan 
 	}
 }
 
-// writeInternetOut emits a device's way out to the internet: only its listed ports, or every
-// port except those of the services it wasn't given (dropped first). Anything else falls to the
+// writeInternetOut emits a device's way out to the internet: only its listed ports (and ping, an
+// echo request, when given), or every port except those of the services it wasn't given (dropped
+// first, ping included). Anything else falls to the
 // network's closing drop.
 func writeInternetOut(b *strings.Builder, from, wan string, o outPorts) {
 	out := fmt.Sprintf("%s oifname %q", from, wan)
@@ -689,8 +690,14 @@ func writeInternetOut(b *strings.Builder, from, wan string, o outPorts) {
 		if ports := portSet(o.BlockUDP); ports != "" {
 			fmt.Fprintf(b, "        %s udp dport %s drop\n", out, ports)
 		}
+		if o.BlockICMP {
+			fmt.Fprintf(b, "        %s icmp type echo-request drop\n", out)
+		}
 		fmt.Fprintf(b, "        %s accept\n", out)
 		return
+	}
+	if o.ICMP {
+		fmt.Fprintf(b, "        %s icmp type echo-request accept\n", out)
 	}
 	if ports := portSet(o.TCP); ports != "" {
 		fmt.Fprintf(b, "        %s tcp dport %s accept\n", out, ports)

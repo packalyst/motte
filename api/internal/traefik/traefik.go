@@ -330,9 +330,15 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A new trusted network widens who counts as inside (past VPN-only, Cloudflare-only and the
-	// port-80 gate): step-up re-auth. Removing one, or the other settings here, needs none.
+	// port-80 gate), and switching the dashboard on publishes it on every interface: step-up
+	// re-auth. Removing a network, switching the dashboard off or the rate limits need none.
 	current := helper.TrustedExtras()
-	if slices.ContainsFunc(extras, func(e string) bool { return !slices.Contains(current, e) }) && !router.StepUp(w, r) {
+	opensDashboard := false
+	if config.DashboardEnabled != nil && *config.DashboardEnabled {
+		now := s.GetConfig()
+		opensDashboard = now == nil || !now.DashboardEnabled
+	}
+	if (opensDashboard || slices.ContainsFunc(extras, func(e string) bool { return !slices.Contains(current, e) })) && !router.StepUp(w, r) {
 		return
 	}
 	if PersistTrustedNetworks != nil {

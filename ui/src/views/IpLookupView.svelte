@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { apiGet, apiPost, toast, confirm, openView } from '../stores/app.js'
+  import { apiGet, apiPost, toast, confirm, openView, withStepUp, STEPUP_CANCELLED } from '../stores/app.js'
   import Icon from '../components/Icon.svelte'
   import Button from '../components/Button.svelte'
   import StatStrip from '../components/StatStrip.svelte'
@@ -67,15 +67,17 @@
   async function act(entry, label) {
     const isBlock = entry.action === 'block'
     const target = entry.type === 'country' ? (entry.name || entry.value) : entry.type === 'asn' ? `AS${entry.value}` : entry.value
-    const ok = await confirm({
+    const prompt = {
       title: `${isBlock ? 'Block' : 'Allow'} ${target}`,
       message: `Add a firewall ${isBlock ? 'block' : 'allow'} rule for ${target}?`,
       confirmText: isBlock ? 'Block' : 'Allow',
-      variant: isBlock ? 'destructive' : 'success',
-    })
-    if (!ok) return
+    }
+    // A block is a plain confirm; an allow opens the gate, so the server asks for a password or
+    // passkey instead (one prompt, not two).
+    if (isBlock && !(await confirm({ ...prompt, variant: 'destructive' }))) return
     try {
-      await apiPost('/api/fw/entries', { direction: 'inbound', ...entry })
+      const send = (extra = {}) => apiPost('/api/fw/entries', { direction: 'inbound', ...entry, ...extra })
+      if ((isBlock ? await send() : await withStepUp(send, prompt)) === STEPUP_CANCELLED) return
       toast(label, 'success')
     } catch (e) {
       toast('Failed: ' + e.message, 'error')

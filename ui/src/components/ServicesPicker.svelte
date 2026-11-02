@@ -72,7 +72,9 @@
     else toggleIn(t)
     port = ''
   }
-  const ports = (s) => [s.tcp?.length && `TCP ${s.tcp.join(', ')}`, s.udp?.length && `UDP ${s.udp.join(', ')}`].filter(Boolean)
+  const ports = (s) => [s.tcp?.length && `TCP ${s.tcp.join(', ')}`, s.udp?.length && `UDP ${s.udp.join(', ')}`, s.icmp && 'ICMP echo'].filter(Boolean)
+  // A service with no ports (Ping) only goes out: there is no way in for it.
+  const outOnly = (t) => { const s = services.find((x) => x.id === t); return !!s && !s.tcp?.length && !s.udp?.length }
 </script>
 
 {#snippet directions(t)}
@@ -82,8 +84,10 @@
     <Checkbox variant="chip" label="Out" checked={outOn} color="primary"
               disabled={disabled || !outEditable || (outOn && lastOne(t)) || (allOn && t.includes(':'))}
               onchange={() => toggleOut(t)} />
-    <Checkbox variant="chip" label="In" checked={inOn} color="warning"
-              disabled={disabled || (!inOn && !inboundAllowed)} onchange={() => toggleIn(t)} />
+    {#if !outOnly(t)}
+      <Checkbox variant="chip" label="In" checked={inOn} color="warning"
+                disabled={disabled || (!inOn && !inboundAllowed)} onchange={() => toggleIn(t)} />
+    {/if}
   </div>
 {/snippet}
 

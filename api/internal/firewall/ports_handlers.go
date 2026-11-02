@@ -105,6 +105,17 @@ func (s *Service) handleAddPort(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Opening a port that isn't open yet takes a step-up (re-saving an open one doesn't).
+	var open int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries WHERE entry_type = 'port' AND value = ? AND protocol = ? AND enabled = 1`,
+		strconv.Itoa(req.Port), req.Protocol).Scan(&open); err != nil {
+		router.DBError(w, err)
+		return
+	}
+	if open == 0 && !router.StepUp(w, r) {
+		return
+	}
+
 	_, err := s.db.Exec(`INSERT INTO firewall_entries
 		(entry_type, value, action, direction, protocol, source, name, essential, enabled)
 		VALUES ('port', ?, 'allow', 'inbound', ?, 'manual', ?, ?, 1)
@@ -152,6 +163,18 @@ func (s *Service) handleSetPortScope(w http.ResponseWriter, r *http.Request) {
 	if req.Scope == "public" && helper.AlwaysPrivatePort(req.Port, req.Protocol) {
 		router.JSONError(w, "the panel API port is always private: reach the panel through your domain or the server's IP on 80/443", http.StatusBadRequest)
 		return
+	}
+	// Private → public puts the port on the internet: a step-up. Public → private never asks.
+	if req.Scope == "public" {
+		var private int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM firewall_entries WHERE entry_type = 'port' AND action = 'allow'
+			AND value = ? AND protocol = ? AND COALESCE(scope, 'public') = 'private'`, strconv.Itoa(req.Port), req.Protocol).Scan(&private); err != nil {
+			router.DBError(w, err)
+			return
+		}
+		if private > 0 && !router.StepUp(w, r) {
+			return
+		}
 	}
 	res, err := s.db.Exec(`UPDATE firewall_entries SET scope = ?
 		WHERE entry_type = 'port' AND action = 'allow' AND value = ? AND protocol = ?`,

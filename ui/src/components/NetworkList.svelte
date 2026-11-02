@@ -154,7 +154,7 @@
       const res = await withStepUp((extra) => editing
         ? apiPut(`/api/dhcp/networks/${editing.id}`, { ...body, ...extra })
         : apiPost('/api/dhcp/networks', { ...body, ...extra }),
-        { title: 'Network internet access', message: "Confirm to change this network's internet access.", confirmText: 'Save' })
+        { title: 'Network access', message: 'This change opens more on the network (internet, services, auto-approve or switching it on). Confirm it is you.', confirmText: 'Save' })
       if (res === STEPUP_CANCELLED) return
       toast('Network saved', 'success')
       formOpen = false

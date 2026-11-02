@@ -8,9 +8,9 @@
    * onchanged() lets the parent refresh. Access starts empty: nobody reaches a device until granted.
    */
   import { tick } from 'svelte'
-  import { apiGet, apiPost, apiPut, apiDelete, currentUser, hasRole, toast, confirm, stepUpConfirm, STEPUP_CANCELLED } from '../stores/app.js'
+  import { apiGet, apiPut, apiDelete, currentUser, hasRole, toast, confirm, stepUpConfirm, STEPUP_CANCELLED } from '../stores/app.js'
   import { timeAgo } from '$lib/utils/format.js'
-  import { approveDevice, blockDevice, unblockDevice, setDeviceInternet, egressMissing, egressConflict, servicesLabel } from '$lib/lan.js'
+  import { approveDevice, blockDevice, unblockDevice, grantDevice, setDeviceInternet, egressMissing, egressConflict, servicesLabel } from '$lib/lan.js'
   import { fmtUptime } from '$lib/fleet.js'
   import Icon from './Icon.svelte'
   import Badge from './Badge.svelte'
@@ -184,7 +184,7 @@
     act(() => apiPut(url, { enabled: on, ...su.proof }), on ? 'VPN access on' : 'VPN access off')
   }
   const grantOf = (vpn) => allowed.find((g) => g.id === vpn.id)
-  const grant = (vpn, bidirectional) => act(() => apiPost(base() + '/acl', { client_id: vpn.id, bidirectional }))
+  const grant = (vpn, bidirectional) => act(() => grantDevice(device.id, vpn.id, bidirectional))
   function toggleAccess(vpn) {
     if (grantOf(vpn)) act(() => apiDelete(`${base()}/acl/${vpn.id}`))
     else grant(vpn, false)

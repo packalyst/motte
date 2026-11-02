@@ -64,7 +64,7 @@ func (s *Service) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if (n.NATEnabled || n.Egress != "" || widens(effectiveServices(nil, nil), effectiveServices(&n, nil))) && !router.StepUp(w, r) {
+	if (n.NATEnabled || n.Egress != "" || n.Mode == "auto" || widens(effectiveServices(nil, nil), effectiveServices(&n, nil))) && !router.StepUp(w, r) {
 		return
 	}
 	id, err := s.createNetwork(&n)
@@ -128,7 +128,10 @@ func (s *Service) handleUpdateNetwork(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Opening more needs a step-up: internet, another address, more services, approving every new
+	// device on sight (auto), or switching the network back on (its devices' access returns).
 	grows := (n.NATEnabled && !existing.NATEnabled) || n.Egress != existing.Egress ||
+		(n.Mode == "auto" && existing.Mode != "auto") || (n.Enabled && !existing.Enabled) ||
 		widens(effectiveServices(existing, nil), effectiveServices(&n, nil))
 	if grows && !router.StepUp(w, r) {
 		return
@@ -199,6 +202,10 @@ func (s *Service) handleApproveClient(w http.ResponseWriter, r *http.Request) {
 	}
 	if c.Blocked {
 		router.JSONError(w, "device is blocked — unblock it first", http.StatusConflict)
+		return
+	}
+	// Approving lets the device past the LAN gate (the box's public ports, its grants): a step-up.
+	if !c.Approved && !router.StepUp(w, r) {
 		return
 	}
 	if err := s.setClientApproved(c.ID, true); err != nil {
@@ -307,6 +314,10 @@ func (s *Service) handleUnblockClient(w http.ResponseWriter, r *http.Request) {
 	n, err := s.getNetwork(c.NetworkID)
 	if err != nil {
 		router.JSONError(w, "network not found", http.StatusNotFound)
+		return
+	}
+	// In auto mode unblocking approves it at once: a step-up, as for approving.
+	if c.Blocked && n.Mode == "auto" && !router.StepUp(w, r) {
 		return
 	}
 	if err := s.setClientBlocked(c.ID, false, n.Mode == "auto"); err != nil {
@@ -511,6 +522,19 @@ func (s *Service) handleAddDeviceACL(w http.ResponseWriter, r *http.Request) {
 	vpnIP, err := s.clientIPByID(req.ClientID)
 	if err != nil {
 		router.JSONError(w, "unknown VPN client", http.StatusBadRequest)
+		return
+	}
+	if c.VPNIP == "" { // refused before any prompt; the insert below checks it again
+		router.JSONError(w, "turn on the device's VPN access first", http.StatusConflict)
+		return
+	}
+	// A new grant, or one-way made two-way, opens more: a step-up. Two-way made one-way doesn't.
+	had, both, err := s.deviceGrant(c.ID, req.ClientID)
+	if err != nil {
+		router.JSONError(w, "could not read the device's access", http.StatusInternalServerError)
+		return
+	}
+	if (!had || (req.Bidirectional && !both)) && !router.StepUp(w, r) {
 		return
 	}
 	if ok, err := s.setDeviceACL(c.ID, req.ClientID, req.Bidirectional); err != nil {
