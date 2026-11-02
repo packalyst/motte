@@ -69,7 +69,11 @@ export function connect() {
   const wsUrl = `${protocol}//${window.location.host}/api/ws`
 
   try {
-    ws = new WebSocket(wsUrl)
+    // Every handler below acts only while this socket is still the current one: a socket being
+    // replaced (connect again, lock, logout) closes a moment later, and its late events must not
+    // clear the new socket, mark the page disconnected or reconnect.
+    const sock = new WebSocket(wsUrl)
+    ws = sock
 
     // The browser attaches the HttpOnly session cookie to the handshake, which the server
     // authenticates — no token is sent over the socket. An unauthenticated handshake is
@@ -77,6 +81,7 @@ export function connect() {
     ws.onopen = () => {}
 
     ws.onmessage = (event) => {
+      if (ws !== sock) return
       try {
         // Handle batched messages (newline separated)
         const messages = event.data.split('\n')
@@ -91,6 +96,7 @@ export function connect() {
     }
 
     ws.onclose = (event) => {
+      if (ws !== sock) return
       wsConnected.set(false)
       ws = null
 

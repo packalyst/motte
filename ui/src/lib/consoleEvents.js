@@ -21,9 +21,13 @@ function wsUrl() {
 
 function connect() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
-  ws = new WebSocket(wsUrl())
-  ws.onopen = () => { backoff = 1000 }
+  // The handlers act only while this socket is still the current one: a released socket closes a
+  // moment later, and its late close must not clear or replace the socket opened since.
+  const sock = new WebSocket(wsUrl())
+  ws = sock
+  ws.onopen = () => { if (ws === sock) backoff = 1000 }
   ws.onmessage = (e) => {
+    if (ws !== sock) return
     let m
     try { m = JSON.parse(e.data) } catch { return }
     if (m.t === 'sessions') {
@@ -35,6 +39,7 @@ function connect() {
     }
   }
   ws.onclose = () => {
+    if (ws !== sock) return
     ws = null
     if (refs > 0) {
       clearTimeout(reconnectTimer)
@@ -42,7 +47,7 @@ function connect() {
       backoff = Math.min(backoff * 2, 15000)
     }
   }
-  ws.onerror = () => { try { ws?.close() } catch { /* noop */ } }
+  ws.onerror = () => { try { sock.close() } catch { /* noop */ } }
 }
 
 // open() registers a consumer and ensures the socket is live; the returned function releases it.
