@@ -133,7 +133,7 @@ func (t *ReachabilityTable) Build() (string, error) {
 	t.built = accessOf(nets, pol, wan, origin)
 	t.builtDedicated = dedicatedAddrs(pol)
 	t.mu.Unlock()
-	return renderReachability(nets, pol, wan, privateReachRanges(), origin), nil
+	return renderReachability(nets, pol, wan, privateReachRanges(), origin, helper.WGServerIP()), nil
 }
 
 // keepServerAddressesOpen takes the server's own addresses out of every Dedicated list: the panel
@@ -456,7 +456,7 @@ func (d devicePolicy) inboundVia() (string, bool) {
 
 // renderReachability builds the nft script (pure: no DB, no host calls) so it can be unit-tested
 // and syntax-checked with `nft -c`. Every IP/CIDR/MAC/iface is validated before emission.
-func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, privateRanges []string, traefik routeOrigin) string {
+func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, privateRanges []string, traefik routeOrigin, dns string) string {
 	var blk, fwd, in, dnat, nat, dedIn, inDnat strings.Builder
 	for i := range nets {
 		n := &nets[i]
@@ -471,6 +471,10 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 		// above the established/related accept so an open IPv6 connection is cut as well.
 		fmt.Fprintf(&blk, "        iifname %q meta nfproto ipv6 drop\n", n.Iface)
 		fmt.Fprintf(&blk, "        oifname %q meta nfproto ipv6 drop\n", n.Iface)
+		// Anti-spoofing: what arrives on the segment must come from its own range. Every rule below
+		// keys on that range, so a device writing another source address (pending or not) would
+		// match none of them. Above the established/related accept, like the IPv6 drop.
+		fmt.Fprintf(&blk, "        iifname %q ip saddr != %s drop\n", n.Iface, n.CIDR)
 
 		// Blocked devices: dropped by MAC — routed traffic and traffic to the box itself (DNS, the
 		// panel) — so a static IP can't get around it, and a later device that inherits the old
@@ -538,12 +542,21 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 		// The box itself: every device may get an address (DHCP) and resolve names (DNS); only
 		// approved ones reach anything else on it (SSH, the panel API, ...). Without this a device
 		// still waiting for approval could reach every service open on non-WAN interfaces.
+		// The same to the box itself, except 0.0.0.0: a new device asks for its address from there.
+		fmt.Fprintf(&in, "        iifname %q ip saddr != %s ip saddr != 0.0.0.0 drop\n", n.Iface, n.CIDR)
 		fmt.Fprintf(&in, "        iifname %q udp dport 67 accept\n", n.Iface)
 		fmt.Fprintf(&in, "        iifname %q meta l4proto { tcp, udp } th dport 53 accept\n", n.Iface)
 		for _, d := range devices {
 			fmt.Fprintf(&in, "        %s accept\n", from(d))
 		}
 		fmt.Fprintf(&in, "        iifname %q drop\n", n.Iface)
+		// DNS: devices are told to ask the gateway (DHCP option 6), but AdGuard answers only on the
+		// box's WireGuard address, so lookups to the gateway are handed to it there. Only from this
+		// segment, only to its gateway, only port 53: the input rules above still decide who is
+		// answered, and AdGuard sees each device's own address.
+		if net.ParseIP(dns).To4() != nil && net.ParseIP(n.GatewayIP).To4() != nil {
+			fmt.Fprintf(&dnat, "        iifname %q ip daddr %s meta l4proto { tcp, udp } th dport 53 dnat ip to %s\n", n.Iface, n.GatewayIP, dns)
+		}
 
 		// Internet-out, per device: only devices with it on reach the PUBLIC internet, each leaving
 		// from its internet address (masqueraded to the main one, or SNAT to an extra one).

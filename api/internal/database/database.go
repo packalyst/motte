@@ -180,7 +180,7 @@ func createSchema(db *sql.DB) error {
 		hit_count INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		-- Port reachability scope: 'public' = reachable on all NICs incl. the WAN (default,
-		-- preserves existing behaviour); 'private' = reachable from VPN/LAN only, never the WAN.
+		-- preserves existing behaviour); 'private' = reachable from the VPN and the box only, never the WAN or a LAN.
 		scope TEXT NOT NULL DEFAULT 'public' CHECK(scope IN ('public', 'private'))
 	);
 

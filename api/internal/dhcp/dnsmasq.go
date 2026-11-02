@@ -54,7 +54,7 @@ func renderDnsmasqConf(n *Network, reservations []Client, blocked []string) stri
 	mask := netmaskOf(n.CIDR)
 	fmt.Fprintf(&b, "dhcp-range=%s,%s,%s,%ds\n", n.PoolStart, n.PoolEnd, mask, n.LeaseSecs)
 	fmt.Fprintf(&b, "dhcp-option=3,%s\n", n.GatewayIP) // default gateway = the box
-	fmt.Fprintf(&b, "dhcp-option=6,%s\n", n.GatewayIP) // DNS = the box (AdGuard binds all NICs)
+	fmt.Fprintf(&b, "dhcp-option=6,%s\n", n.GatewayIP) // DNS = the box (handed to AdGuard: reachability.go)
 	if n.Domain != "" {
 		fmt.Fprintf(&b, "domain=%s\n", n.Domain)
 	}

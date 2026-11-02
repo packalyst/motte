@@ -194,7 +194,7 @@ func TestReachabilityEgress(t *testing.T) {
 		{IP: "10.20.20.56", MAC: "02:00:00:00:00:56", Internet: true, Egress: "203.0.113.10", Out: outPorts{All: true}},
 		{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: true, Egress: "203.0.113.10; flush ruleset"},
 	}, Dedicated: []string{"203.0.113.10", "203.0.113.11", "bad"}}}
-	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{}, "")
 	for _, want := range []string{
 		`ip saddr 10.20.20.55 oifname "eth0" masquerade`,
 		`ip saddr 10.20.20.56 oifname "eth0" snat ip to 203.0.113.10`,

@@ -190,7 +190,7 @@ func TestReachabilityPerDevice(t *testing.T) {
 		},
 		Blocked: []string{"02:00:00:00:00:09"},
 	}}
-	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{}, "")
 	for _, want := range []string{
 		`ip saddr 10.8.0.2 ip daddr 10.20.20.55 accept`,                                                                                                     // granted client → that device
 		`iifname "ens19" ether saddr 02:00:00:00:00:55 ip saddr 10.20.20.55 ip daddr 10.8.0.2 accept`,                                                       // and back, from its MAC only
@@ -250,13 +250,13 @@ func TestReachabilityPerDevice(t *testing.T) {
 
 	// No device with internet → no WAN path or NAT at all.
 	pol[1] = netPolicy{Devices: []devicePolicy{{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", Allowed: []vpnGrant{{IP: "10.8.0.2"}}}}}
-	none := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
+	none := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{}, "")
 	if strings.Contains(none, `oifname "eth0"`) {
 		t.Fatalf("no device has internet, so nothing may route out:\n%s", none)
 	}
 
 	// No approved devices → nothing forwardable.
-	empty := renderReachability(nets, map[int64]netPolicy{}, "eth0", testPrivateRanges, routeOrigin{})
+	empty := renderReachability(nets, map[int64]netPolicy{}, "eth0", testPrivateRanges, routeOrigin{}, "")
 	if fwd := empty[strings.Index(empty, "chain forward"):strings.Index(empty, "chain input")]; strings.Count(fwd, " accept\n") != 1 { // only the ct accept
 		t.Fatalf("with no devices, only the established accept may exist in forward:\n%s", empty)
 	}
@@ -267,7 +267,7 @@ func TestReachabilityPerDevice(t *testing.T) {
 		{IP: "10.20.20.77", MAC: "02:00:00:00:00:77; flush ruleset", Internet: true},
 		{IP: "10.20.20.78", MAC: "02:00:00:00:00:78", VPNIP: "10.8.128.9; flush ruleset", Allowed: []vpnGrant{{IP: "10.8.0.2", Both: true}}},
 	}, Blocked: []string{"zz:zz"}}}
-	if out := renderReachability(nets, bad, "eth0", testPrivateRanges, routeOrigin{}); strings.Contains(out, "flush") || strings.Contains(out, "zz:zz") || strings.Contains(out, "not-an-ip") || strings.Contains(out, "10.20.20.77") {
+	if out := renderReachability(nets, bad, "eth0", testPrivateRanges, routeOrigin{}, ""); strings.Contains(out, "flush") || strings.Contains(out, "zz:zz") || strings.Contains(out, "not-an-ip") || strings.Contains(out, "10.20.20.77") {
 		t.Fatalf("invalid values leaked into the ruleset:\n%s", out)
 	}
 }
@@ -344,7 +344,34 @@ func TestReachabilityNftSyntax(t *testing.T) {
 			t.Fatalf("leak guard misses %s: %v", want, ranges)
 		}
 	}
-	script := renderReachability(nets, pol, "eth0", ranges, routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"})
+	script := renderReachability(nets, pol, "eth0", ranges, routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"}, "10.8.0.1")
+
+	// DNS to each enabled network's gateway is handed to AdGuard; a disabled network gets nothing.
+	for _, want := range []string{
+		`iifname "ens19" ip daddr 10.20.20.1 meta l4proto { tcp, udp } th dport 53 dnat ip to 10.8.0.1`,
+		`iifname "ens20" ip daddr 192.168.50.1 meta l4proto { tcp, udp } th dport 53 dnat ip to 10.8.0.1`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("missing DNS hand-over %q:\n%s", want, script)
+		}
+	}
+	// Anti-spoofing: each enabled network drops sources outside its range, routed and to the box
+	// (where only a new device's 0.0.0.0 is let through, for DHCP).
+	for _, want := range []string{
+		`iifname "ens19" ip saddr != 10.20.20.0/24 drop`,
+		`iifname "ens19" ip saddr != 10.20.20.0/24 ip saddr != 0.0.0.0 drop`,
+		`iifname "ens20" ip saddr != 192.168.50.0/24 drop`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("missing anti-spoofing rule %q:\n%s", want, script)
+		}
+	}
+	if fwdAt, spoofAt := strings.Index(script, "ct state established,related accept"), strings.Index(script, `iifname "ens19" ip saddr != 10.20.20.0/24 drop`); spoofAt < 0 || spoofAt > fwdAt {
+		t.Fatalf("anti-spoofing must sit above the established/related accept:\n%s", script)
+	}
+	if strings.Contains(script, "172.16.0.1 meta l4proto") {
+		t.Fatalf("a disabled network got a DNS hand-over:\n%s", script)
+	}
 
 	// Disabled network must not appear; NAT-off network must not get a masquerade. Check the
 	// disabled net's specific /24 (not the bare prefix — 172.16.0.0/12 is in the private_ranges set).
@@ -373,6 +400,21 @@ func TestReachabilityNftSyntax(t *testing.T) {
 	}
 }
 
+// Without a valid AdGuard address (or gateway) no DNS hand-over is written: nothing points anywhere.
+func TestDNSHandOverNeedsValidAddresses(t *testing.T) {
+	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Enabled: true}}
+	pol := map[int64]netPolicy{1: {}}
+	for _, dns := range []string{"", "not-an-ip", "10.8.0.0/24", "fd00::1"} {
+		if out := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{}, dns); strings.Contains(out, "dport 53 dnat") {
+			t.Fatalf("dns %q wrote a hand-over:\n%s", dns, out)
+		}
+	}
+	bad := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "", Enabled: true}}
+	if out := renderReachability(bad, pol, "eth0", testPrivateRanges, routeOrigin{}, "10.8.0.1"); strings.Contains(out, "dport 53 dnat") {
+		t.Fatalf("no gateway, but a hand-over:\n%s", out)
+	}
+}
+
 func TestSanitizeLeaseName(t *testing.T) {
 	cases := map[string]string{
 		"laptop":        "laptop",
@@ -396,7 +438,7 @@ func TestReachabilityDropsIPv6(t *testing.T) {
 		{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Enabled: true},
 		{ID: 2, Iface: "ens21", CIDR: "10.30.30.0/24", GatewayIP: "10.30.30.1", Enabled: false},
 	}
-	got := renderReachability(nets, map[int64]netPolicy{}, "eth0", testPrivateRanges, routeOrigin{})
+	got := renderReachability(nets, map[int64]netPolicy{}, "eth0", testPrivateRanges, routeOrigin{}, "")
 	est := strings.Index(got, "ct state established,related accept")
 	for _, want := range []string{`iifname "ens19" meta nfproto ipv6 drop`, `oifname "ens19" meta nfproto ipv6 drop`} {
 		i := strings.Index(got, want)

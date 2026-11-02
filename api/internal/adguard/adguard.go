@@ -831,6 +831,9 @@ type DomainRoute struct {
 // Returns a list of errors for domains that failed
 func SyncDomainRewrites(domains []DomainRoute, targetIP string) []string {
 	errors := []string{}
+	if targetIP == "" {
+		return append(errors, "no VPN address (WG_SERVER_IP) to point VPN-only domains at")
+	}
 
 	// Get existing rewrites
 	existing, err := GetRewrites()

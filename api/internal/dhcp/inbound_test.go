@@ -103,7 +103,7 @@ func TestReachabilityInbound(t *testing.T) {
 		{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: false, Egress: "203.0.113.11", In: in},   // internet off
 		{IP: "10.20.20.58", MAC: "02:00:00:00:00:58", Internet: true, Egress: "203.0.113.11; x", In: in}, // invalid address
 	}, Dedicated: []string{"203.0.113.10", "203.0.113.11"}}}
-	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{}, "")
 	for _, want := range []string{
 		`iifname "eth0" ip daddr 203.0.113.10 ip saddr { 198.51.100.7/32 } tcp dport 22 accept`,
 		`iifname "eth0" ip daddr 203.0.113.10 tcp dport { 80, 443 } accept`,

@@ -80,3 +80,15 @@ func TestIsVPNIP(t *testing.T) {
 		t.Error("nil is not a VPN address")
 	}
 }
+
+// WGServerIP gives back only a plain IPv4 address: anything else is "", never a guess.
+func TestWGServerIP(t *testing.T) {
+	for in, want := range map[string]string{
+		"10.8.0.1": "10.8.0.1", " 10.8.0.1 ": "10.8.0.1", "": "", "10.8.0.0/24": "", "fd00::1": "", "nope": "",
+	} {
+		t.Setenv("WG_SERVER_IP", in)
+		if got := WGServerIP(); got != want {
+			t.Errorf("WG_SERVER_IP=%q: got %q, want %q", in, got, want)
+		}
+	}
+}

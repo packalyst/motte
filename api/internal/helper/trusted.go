@@ -34,6 +34,15 @@ func vpnPrefixes() []netip.Prefix {
 	return out
 }
 
+// WGServerIP is the box's own WireGuard address (WG_SERVER_IP): where AdGuard answers DNS and
+// VPN-only domains point. "" when it is unset or not a plain IPv4 address.
+func WGServerIP() string {
+	if p, isRange, err := ParseIPv4(GetEnvOptional("WG_SERVER_IP", "")); err == nil && !isRange {
+		return p.Addr().String()
+	}
+	return ""
+}
+
 // VPNRanges returns the VPN ranges as CIDR strings. They are always in the trusted list (locked).
 func VPNRanges() []string {
 	var out []string

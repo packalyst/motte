@@ -102,7 +102,7 @@ func TestReachabilityServices(t *testing.T) {
 		dev("10.20.20.54", "02:00:00:00:00:54", "ssh,smtp,tcp:8883,udp:5000"),
 		dev("10.20.20.55", "02:00:00:00:00:55", "nonsense"),
 	}}}
-	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{}, "")
 	from := func(ip, mac string) string {
 		return `iifname "ens19" ether saddr ` + mac + ` ip saddr ` + ip + ` oifname "eth0"`
 	}

@@ -51,15 +51,28 @@ func TestAPIPortAlwaysPrivate(t *testing.T) {
 	}
 }
 
-// TestPrivatePortsWithoutWAN: with the WAN undetected, private ports still accept the Docker
-// network (Traefik → panel API) besides loopback and the VPN, and the script stays valid.
-func TestPrivatePortsWithoutWAN(t *testing.T) {
+// TestPrivatePortsAllowList: private ports answer only the box itself, the VPN and the panel's
+// Docker network on its own bridge — never a LAN or any other interface — and with the bridge
+// unknown the Docker network still gets in by address (Traefik → panel API), so nothing locks out.
+func TestPrivatePortsAllowList(t *testing.T) {
 	t.Setenv("DOCKER_SUBNET", "172.30.0.0/24")
-	rules := strings.Join(privatePortRules(""), "\n")
-	if !strings.Contains(rules, "ip saddr 172.30.0.0/24 tcp dport @allowed_tcp_ports_private accept") {
-		t.Errorf("Docker network missing from the WAN-undetected fallback:\n%s", rules)
+	rules := strings.Join(privatePortRules("br-0123456789ab"), "\n")
+	for _, want := range []string{
+		`iifname { "lo", "wg0", "tailscale0" } tcp dport @allowed_tcp_ports_private accept`,
+		`iifname { "lo", "wg0", "tailscale0" } udp dport @allowed_udp_ports_private accept`,
+		`iifname "br-0123456789ab" ip saddr 172.30.0.0/24 tcp dport @allowed_tcp_ports_private accept`,
+	} {
+		if !strings.Contains(rules, want) {
+			t.Errorf("missing %q in:\n%s", want, rules)
+		}
 	}
-	script := (&FirewallTable{}).buildScript(scriptParams{tcpPorts: []string{"443"}, tcpPortsPrivate: []string{"8081"}})
+	if strings.Contains(rules, "iifname !=") {
+		t.Errorf("private ports must be an allow-list, not everything-but:\n%s", rules)
+	}
+	if got := strings.Join(privatePortRules(""), "\n"); !strings.Contains(got, "\nip saddr 172.30.0.0/24 tcp dport @allowed_tcp_ports_private accept") {
+		t.Errorf("bridge unknown: Docker network must still reach private ports by address:\n%s", got)
+	}
+	script := (&FirewallTable{}).buildScript(scriptParams{tcpPorts: []string{"443"}, tcpPortsPrivate: []string{"8081"}, dockerIface: "br-0123456789ab"})
 
 	nft, err := exec.LookPath("nft")
 	if err != nil || os.Geteuid() != 0 {

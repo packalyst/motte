@@ -15,7 +15,7 @@ import (
 const lanDeviceByVPNIP = `(SELECT id FROM dhcp_clients WHERE vpn_ip = ? AND vpn_ip <> '')`
 
 // vpnDNSTarget is the address VPN-only domains resolve to: the box's WireGuard address.
-func vpnDNSTarget() string { return helper.GetEnvOptional("WG_SERVER_IP", "10.8.0.1") }
+func vpnDNSTarget() string { return helper.WGServerIP() }
 
 // LANRoute is a domain route to a LAN device, as listed before its VPN access is turned off.
 type LANRoute struct {

@@ -282,6 +282,9 @@
             <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground">
               <span class="inline-flex items-center gap-1.5"><span class="h-2 w-1 rounded-full bg-foreground"></span>gateway <span class="text-foreground">{net.gateway_ip}</span></span>
               <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-sm bg-primary/60"></span>pool <span class="text-foreground">{net.pool_start} – {net.pool_end}</span></span>
+              {#if net.enabled}
+                <span class="inline-flex items-center gap-1.5" title="Devices ask the gateway; the panel hands it to AdGuard (ad blocking). Other DNS servers stay closed unless a device has Outside DNS.">DNS <span class="text-foreground">{net.gateway_ip} → AdGuard</span></span>
+              {/if}
             </div>
           </div>
 

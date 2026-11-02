@@ -795,7 +795,7 @@ func syncPanelDomainRewrite(mode string) {
 		return
 	}
 
-	vpnIP := strings.TrimSpace(helper.GetEnvOptional("WG_SERVER_IP", "10.8.0.1"))
+	vpnIP := helper.WGServerIP()
 
 	// Purge every existing rewrite for this domain — covers both the current
 	// one AND any leftover duplicates from earlier bugged runs (silent→403→…).
@@ -819,6 +819,10 @@ func syncPanelDomainRewrite(mode string) {
 		return
 	}
 
+	if vpnIP == "" {
+		log.Printf("vpn-only: WG_SERVER_IP is not a valid IPv4 address, no AdGuard rewrite for %s", domain)
+		return
+	}
 	// mode is "403" or "silent" — add exactly one rewrite so VPN clients reach
 	// the panel via its real hostname (cert matches, HTTPS features enabled).
 	if err := adguard.AddRewrite(domain, vpnIP); err != nil {

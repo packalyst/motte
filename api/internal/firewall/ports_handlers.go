@@ -24,7 +24,7 @@ type PortEntry struct {
 	Essential bool   `json:"essential"`
 	Service   string `json:"service,omitempty"`
 	Source    string `json:"source,omitempty"`
-	Scope     string `json:"scope"`    // "public" (reachable on the WAN) or "private" (VPN/LAN only)
+	Scope     string `json:"scope"`    // "public" (reachable on the WAN) or "private" (VPN only)
 	Lockable  bool   `json:"lockable"` // false for Docker-published ports — reachability is Docker's, not our set's
 	Pinned    bool   `json:"pinned"`   // always private (the panel API): the scope can't be changed
 }
@@ -126,7 +126,7 @@ func (s *Service) handleAddPort(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSetPortScope flips an allowed port between 'public' (reachable on the WAN) and 'private'
-// (VPN/LAN only). Essential ports are intentionally scopable — hiding admin UIs/DNS from the
+// (VPN only). Essential ports are intentionally scopable — hiding admin UIs/DNS from the
 // internet is the whole point — except the panel API, which is always private. Only affects firewall_entries ports; a Docker-published port isn't
 // in that table, so it matches 0 rows (its reachability is Docker's, not ours).
 func (s *Service) handleSetPortScope(w http.ResponseWriter, r *http.Request) {

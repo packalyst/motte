@@ -211,43 +211,38 @@ func TestBuildScriptAllowBeforeDeny(t *testing.T) {
 }
 
 // TestPortScopeRules verifies the public/private port scoping: public ports accept on every
-// interface (incl. the WAN), private ports accept OFF the WAN only, and when the WAN can't be
-// detected private ports fail safe to VPN/loopback — never exposed, never a bare accept.
+// interface (incl. the WAN); private ports accept only from loopback, the VPN and the panel's
+// Docker bridge — an allow-list that never names the WAN or a LAN, whatever the WAN is.
 func TestPortScopeRules(t *testing.T) {
+	t.Setenv("DOCKER_SUBNET", "172.18.0.0/24")
 	ft := &FirewallTable{}
-
-	// WAN known.
 	s := ft.buildScript(scriptParams{
 		tcpPorts:        []string{"443"},
 		tcpPortsPrivate: []string{"8081"},
 		udpPortsPrivate: []string{"53"},
 		wanIface:        "eth0",
+		dockerIface:     "br-0123456789ab",
 	})
 	for _, want := range []string{
 		"set allowed_tcp_ports_private {",
 		"set allowed_udp_ports_private {",
 		"tcp dport @allowed_tcp_ports accept", // public, unscoped
-		`iifname != "eth0" tcp dport @allowed_tcp_ports_private accept`,
-		`iifname != "eth0" udp dport @allowed_udp_ports_private accept`,
+		`iifname { "lo", "wg0", "tailscale0" } tcp dport @allowed_tcp_ports_private accept`,
+		`iifname { "lo", "wg0", "tailscale0" } udp dport @allowed_udp_ports_private accept`,
+		`iifname "br-0123456789ab" ip saddr 172.18.0.0/24 tcp dport @allowed_tcp_ports_private accept`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("WAN-known: missing %q\n%s", want, s)
+			t.Errorf("missing %q\n%s", want, s)
 		}
 	}
-	// Security invariant: every private-port accept MUST be interface-scoped. A bare
-	// `... _ports_private accept` would reach the WAN and defeat the feature.
+	// Security invariant: every private-port accept is interface-scoped to an allowed interface.
+	// A bare accept would reach the WAN; an `iifname !=` would reach every LAN.
 	for _, line := range strings.Split(s, "\n") {
-		if strings.Contains(line, "_ports_private accept") && !strings.Contains(line, "iifname") {
-			t.Errorf("private-port rule not interface-scoped (would reach the WAN): %q", line)
+		if !strings.Contains(line, "_ports_private accept") {
+			continue
 		}
-	}
-
-	// WAN undetected → fail safe to VPN/loopback, never `iifname !=`.
-	s2 := ft.buildScript(scriptParams{tcpPortsPrivate: []string{"8081"}, wanIface: ""})
-	if !strings.Contains(s2, `iifname { "lo", "wg0", "tailscale0" } tcp dport @allowed_tcp_ports_private accept`) {
-		t.Errorf("WAN-undetected: private ports should fail safe to VPN/loopback:\n%s", s2)
-	}
-	if strings.Contains(s2, "iifname !=") {
-		t.Errorf("WAN-undetected: must not emit `iifname !=` (no WAN to exclude):\n%s", s2)
+		if !strings.Contains(line, "iifname") || strings.Contains(line, "iifname !=") {
+			t.Errorf("private-port rule not scoped to an allowed interface: %q", line)
+		}
 	}
 }

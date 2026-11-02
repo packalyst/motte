@@ -666,10 +666,19 @@ install_service() {
     install_cli_wrapper
 }
 
+# lock_private_dirs keeps AdGuard's folders root-only: work/ holds the query log (every name each
+# device looked up), stats and sessions; conf/ holds the admin password hash. Run from the install
+# directory, before the containers start.
+lock_private_dirs() {
+    mkdir -p adguard/work adguard/conf
+    chmod 700 adguard/work adguard/conf
+}
+
 # service_up / service_down are the non-interactive lifecycle hooks the systemd
 # unit calls. Compose reads COMPOSE_PROJECT_NAME + vars from .env in $INSTALL_DIR.
 service_up() {
     cd "$INSTALL_DIR"
+    lock_private_dirs
     docker compose up -d
 }
 
@@ -1731,6 +1740,7 @@ if [ "${RUN_UNINSTALL:-}" = true ]; then
 fi
 
 if [ "${RUN_START:-}" = true ]; then
+    lock_private_dirs
     docker compose up -d
     exit $?
 fi
@@ -3241,6 +3251,7 @@ detect_distro_paths
 detect_source_repo
 
 echo -e "${YELLOW}Starting docker compose...${NC}"
+lock_private_dirs
 
 if [ "$DEV_MODE" = "true" ]; then
     echo -e "${BLUE}Mode: Development (hot reload enabled)${NC}"

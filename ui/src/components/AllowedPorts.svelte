@@ -1,7 +1,7 @@
 <script>
   /**
    * AllowedPorts — the firewall's allowed incoming ports (Settings → Firewall), by port number; amber
-   * = open to the internet, green = VPN & LAN only. Each port shows its service, whether
+   * = open to the internet, green = VPN only. Each port shows its service, whether
    * it's a system port, one you added or Docker's, and one control: Public / Private plus remove
    * (ports you added) or a lock saying why it stays. The panel API port and Docker's ports can't
    * change exposure. Every change is confirmed; the server enforces who may do it.
@@ -74,7 +74,7 @@
     }
   }
 
-  // setScope moves a port between public (reachable from the internet) and private (VPN/LAN only),
+  // setScope moves a port between public (reachable from the internet) and private (VPN only),
   // confirmed both ways: private can cut off outside access, public exposes it.
   async function setScope(p, target) {
     const makingPrivate = target === 'private'

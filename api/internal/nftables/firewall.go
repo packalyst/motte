@@ -67,7 +67,10 @@ func loadNoInternetPeerIPs(db *database.DB) []string {
 }
 
 // VPNIfaces is the set of the box's VPN interfaces: WireGuard and the Headscale router's.
-const VPNIfaces = `{ "wg0", "tailscale0" }`
+const VPNIfaces = `{ ` + vpnIfaceNames + ` }`
+
+// vpnIfaceNames lists the VPN interfaces, for sets that add others to them.
+const vpnIfaceNames = `"wg0", "tailscale0"`
 
 // FirewallTable builds the inet firewall table
 type FirewallTable struct {
@@ -110,11 +113,10 @@ func (t *FirewallTable) managedSegmentIfaces() []string {
 	return out
 }
 
-// segmentInputRules opens DHCP (udp/67) to the panel's own dnsmasq on each managed LAN interface,
-// scoped by iifname so the port is NEVER reachable from the WAN. DNS to the box is NOT opened here:
-// it already rides the global allowed-ports list (udp/53), the same path VPN clients use, so
-// duplicating it would be pointless. Pure/unit-testable; an unmanaged NIC or the WAN matches none
-// of these and stays shut.
+// segmentInputRules opens DHCP (udp/67, dnsmasq) and DNS (53, handed to AdGuard by the LAN table)
+// on each managed LAN interface, scoped by iifname so neither is ever reachable from the WAN. DNS
+// is opened here, not left to the allowed-ports list, so LAN devices keep resolving whatever scope
+// that list gives port 53. Pure/unit-testable; an unmanaged NIC or the WAN matches none of these.
 func segmentInputRules(ifaces []string) []string {
 	var rules []string
 	for _, iface := range ifaces {
@@ -123,8 +125,9 @@ func segmentInputRules(ifaces []string) []string {
 			continue
 		}
 		rules = append(rules,
-			"# Managed LAN \""+s+"\": accept DHCP in (scoped to this NIC, never the WAN)",
+			"# Managed LAN \""+s+"\": accept DHCP and DNS in (scoped to this NIC, never the WAN)",
 			"iifname \""+s+"\" udp dport 67 accept",
+			"iifname \""+s+"\" meta l4proto { tcp, udp } th dport 53 accept",
 			"",
 		)
 	}
@@ -132,28 +135,26 @@ func segmentInputRules(ifaces []string) []string {
 }
 
 // privatePortRules emits the input accepts for ports scoped "private": the same allow-list sets as
-// the public ports, but reachable OFF the WAN only. With a known WAN NIC that's "every interface
-// except the WAN". When the WAN can't be detected we fail SAFE to loopback, the VPN interfaces and
-// the Docker network (never a physical NIC): a private port is then never exposed on the internet,
-// yet the admin can still reach it over WireGuard and Traefik still reaches the panel API — so a
-// private port can't hard-lock the panel out.
-func privatePortRules(wanIface string) []string {
-	if w := SanitizeElement(wanIface); w != "" {
-		return []string{
-			"# Private ports: every interface EXCEPT the WAN (\"" + w + "\")",
-			"iifname != \"" + w + "\" tcp dport @allowed_tcp_ports_private accept",
-			"iifname != \"" + w + "\" udp dport @allowed_udp_ports_private accept",
-		}
-	}
+// the public ports, but reachable only from the box itself (loopback), the VPN interfaces and the
+// panel's Docker network on its own bridge (Traefik and the panel's containers → panel API). An
+// allow-list, not "everything but the WAN": a managed LAN, an unmanaged NIC or any interface added
+// later gets no private port. With the bridge unknown the Docker network is matched by address
+// alone, so Traefik still reaches the panel API and a private port can't lock the panel out.
+func privatePortRules(dockerIface string) []string {
 	rules := []string{
-		"# Private ports: WAN undetected — fail safe to loopback, VPN and the Docker network only",
-		`iifname { "lo", "wg0", "tailscale0" } tcp dport @allowed_tcp_ports_private accept`,
-		`iifname { "lo", "wg0", "tailscale0" } udp dport @allowed_udp_ports_private accept`,
+		"# Private ports: the box itself and the VPN only",
+		`iifname { "lo", ` + vpnIfaceNames + ` } tcp dport @allowed_tcp_ports_private accept`,
+		`iifname { "lo", ` + vpnIfaceNames + ` } udp dport @allowed_udp_ports_private accept`,
 	}
-	if p, isRange, err := helper.ParseIPv4(helper.DockerSubnet()); err == nil && isRange {
-		rules = append(rules, "ip saddr "+p.String()+" tcp dport @allowed_tcp_ports_private accept") // Traefik → panel API
+	p, isRange, err := helper.ParseIPv4(helper.DockerSubnet())
+	if err != nil || !isRange {
+		return rules
 	}
-	return rules
+	from := "ip saddr " + p.String()
+	if b := SanitizeElement(dockerIface); b != "" {
+		from = "iifname \"" + b + "\" " + from
+	}
+	return append(rules, from+" tcp dport @allowed_tcp_ports_private accept") // Traefik → panel API
 }
 
 // Build generates the nftables script
@@ -218,7 +219,7 @@ func (t *FirewallTable) Build() (string, error) {
 				continue
 			}
 			if e.Action == ActionAllow {
-				// 'private' ports accept on VPN/LAN only (never the WAN); 'public' (default) on all
+				// 'private' ports accept from the VPN and the box only (never the WAN or a LAN); 'public' (default) on all
 				// NICs. Route each port to the matching set — enforcement differs in buildScript.
 				// The panel API is private whatever its stored scope (a restored backup can't
 				// re-expose it).
@@ -295,7 +296,7 @@ func (t *FirewallTable) Build() (string, error) {
 		asnIn: asnRangesIn, asnOut: asnRangesOut,
 		allowedIPs: allowedIPs, allowedRanges: allowedRanges,
 		allowedCountries: allowedCountries, allowedASN: allowedASN,
-		noInternetPeers: noInternetPeers, wanIface: wanIface,
+		noInternetPeers: noInternetPeers, wanIface: wanIface, dockerIface: dockerBridge(),
 	}), nil
 }
 
@@ -429,13 +430,14 @@ type scriptParams struct {
 	blockedIPsIn, blockedIPsOut       []string
 	blockedRangesIn, blockedRangesOut []string
 	tcpPorts, udpPorts                []string
-	tcpPortsPrivate, udpPortsPrivate  []string // reachable from VPN/LAN only, never the WAN
+	tcpPortsPrivate, udpPortsPrivate  []string // reachable from the VPN and the box only
 	countryIn, countryOut             []string
 	asnIn, asnOut                     []string
 	allowedIPs, allowedRanges         []string // source allow-list (saddr accept)
 	allowedCountries, allowedASN      []string
 	noInternetPeers                   []string
 	wanIface                          string
+	dockerIface                       string // the panel's Docker bridge ("" = unknown)
 }
 
 // allowAndSaddrDropRules emits the shared "trusted-source allow + blocked-source drop"
@@ -509,7 +511,7 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("allowed_udp_ports", "inet_service", nil, udpPorts))
 	sb.WriteString("\n")
-	// Sets - ports (private: accepted only off the WAN — see the scoped accepts in the input chain)
+	// Sets - ports (private: VPN, loopback and the Docker bridge only — see privatePortRules)
 	sb.WriteString(BuildSet("allowed_tcp_ports_private", "inet_service", nil, tcpPortsPrivate))
 	sb.WriteString("\n")
 	sb.WriteString(BuildSet("allowed_udp_ports_private", "inet_service", nil, udpPortsPrivate))
@@ -583,10 +585,9 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 		"tcp dport @allowed_tcp_ports accept",
 		"udp dport @allowed_udp_ports accept",
 	)
-	// Private ports: the same allow-list but reachable OFF the WAN only (VPN/LAN/loopback), so an
-	// admin UI or DNS flipped to "private" stops answering on the internet while staying usable
-	// internally. Must sit before the catch-all drop below.
-	inputRules = append(inputRules, privatePortRules(wanIface)...)
+	// Private ports: the same allow-list, reachable only from the box itself, the VPN and the
+	// panel's Docker network (see privatePortRules). Must sit before the catch-all drop below.
+	inputRules = append(inputRules, privatePortRules(p.dockerIface)...)
 	inputRules = append(inputRules,
 		"",
 		"# Log and drop everything else",
@@ -663,4 +664,14 @@ func (t *FirewallTable) buildScript(p scriptParams) string {
 	sb.WriteString(TableFooter())
 
 	return sb.String()
+}
+
+// dockerBridge is the host interface of the panel's Docker network, or "" when it can't be told.
+func dockerBridge() string {
+	iface, _, err := helper.TraefikOrigin()
+	if err != nil {
+		log.Printf("nftables/firewall: Docker bridge unknown (%v); private ports match the Docker network by address only", err)
+		return ""
+	}
+	return iface
 }

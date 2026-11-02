@@ -22,7 +22,7 @@ func TestReachabilityVPNAddress(t *testing.T) {
 		{IP: "10.20.20.53", MAC: "02:00:00:00:00:53", VPNIP: "10.8.128.3"},                                                      // nobody
 		{IP: "10.20.20.54", MAC: "02:00:00:00:00:54", Allowed: []vpnGrant{{IP: "10.8.0.2"}}},                                    // no VPN address
 	}}}
-	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{})
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, routeOrigin{}, "")
 	for _, want := range []string{
 		`ip saddr 10.8.0.2 ip daddr 10.20.20.51 accept`,
 		`iifname { "wg0", "tailscale0" } ip daddr 10.8.128.1 dnat ip to 10.20.20.51`,
@@ -263,7 +263,7 @@ func TestReachabilityDomainRoutes(t *testing.T) {
 		{IP: "10.20.20.53", MAC: "02:00:00:00:00:53", Routes: []int{80}}, // no usable VPN address
 	}}}
 	origin := routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"}
-	got := renderReachability(nets, pol, "eth0", testPrivateRanges, origin)
+	got := renderReachability(nets, pol, "eth0", testPrivateRanges, origin, "")
 	for _, want := range []string{
 		`iifname "br-0123456789ab" ip saddr 172.18.0.2 ip daddr 10.8.128.1 tcp dport { 80, 443 } dnat ip to 10.20.20.51`,
 		`iifname "br-0123456789ab" ip saddr 172.18.0.2 ip daddr 10.20.20.51 tcp dport { 80, 443 } ct status dnat accept`,
@@ -286,7 +286,7 @@ func TestReachabilityDomainRoutes(t *testing.T) {
 		t.Fatalf("the route rule must come before the default drop:\n%s", got)
 	}
 	for _, o := range []routeOrigin{{}, {Iface: "br-0123456789ab"}, {IP: "172.18.0.2"}, {Iface: "bad iface", IP: "172.18.0.2"}, {Iface: "br-0123456789ab", IP: "not-an-ip"}} {
-		if out := renderReachability(nets, pol, "eth0", testPrivateRanges, o); strings.Contains(out, "tcp dport") {
+		if out := renderReachability(nets, pol, "eth0", testPrivateRanges, o, ""); strings.Contains(out, "tcp dport") {
 			t.Fatalf("origin %+v must open nothing:\n%s", o, out)
 		}
 	}
