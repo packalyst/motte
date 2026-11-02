@@ -362,10 +362,9 @@ func (a *agentConn) reapExpired() {
 	}
 }
 
-// claimOwner records the opener of a session. It returns false if the session already has a
-// DIFFERENT owner — ownership persists across a detach (the tmux session lives on for resume), so a
-// second operator can't reattach a shell the first opened. Idempotent for the same user.
-// claimOwner makes userID the owner of a session, or confirms they already are (a reattach). A new
+// claimOwner makes userID the owner of a session, or confirms they already are (a reattach). A
+// session that has another owner is refused: ownership persists across a detach (the tmux session
+// lives on for resume), so a second operator can't reattach a shell the first opened. A new
 // session counts against helper.MaxConsoleSessionsPerUser (the user's shells on this machine) and
 // helper.MaxConsoleSessionsPerMachine (everyone's): each is a real shell on the host, so neither a
 // user nor a stolen session can start them without end. Returns "" when allowed, else why not.
