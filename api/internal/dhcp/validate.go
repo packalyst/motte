@@ -39,7 +39,7 @@ func validateNetwork(n *Network, others []Network) error {
 	if !validIface(n.Iface) {
 		return fmt.Errorf("invalid interface name")
 	}
-	if err := requireNonWANInterface(n.Iface); err != nil {
+	if err := requireLANInterface(n.Iface); err != nil {
 		return err
 	}
 	return validateAddressing(n, others)
@@ -175,10 +175,12 @@ func suggestSubnets(others []Network, max int) []SubnetSuggestion {
 	return out
 }
 
-// requireNonWANInterface refuses the interface that carries the default route. Running DHCP /
-// reassigning the address there would hijack the box's own uplink and could lock the operator
-// out — the single most important guard in this feature.
-func requireNonWANInterface(iface string) error {
+// requireLANInterface accepts only an existing, ordinary NIC for a managed LAN: never the one that
+// carries the default route (running DHCP / reassigning the address there would hijack the box's
+// own uplink and could lock the operator out — the single most important guard in this feature),
+// and never loopback, a VPN, Docker or other virtual plumbing (candidateInterface, the same test
+// that builds the UI's list, so a request that skips the UI gets no further).
+func requireLANInterface(iface string) error {
 	wan, err := defaultRouteInterface()
 	if err != nil {
 		// Fail closed: if we can't determine the WAN, don't risk managing the wrong NIC.
@@ -186,6 +188,12 @@ func requireNonWANInterface(iface string) error {
 	}
 	if iface == wan {
 		return fmt.Errorf("refusing to manage %s — it carries the default route (WAN); pick an isolated internal interface", iface)
+	}
+	if !candidateInterface(iface, wan) {
+		return fmt.Errorf("%s can't be used for a LAN (loopback, VPN, Docker and virtual interfaces are never managed)", iface)
+	}
+	if _, err := net.InterfaceByName(iface); err != nil {
+		return fmt.Errorf("there is no interface %s on this server", iface)
 	}
 	return nil
 }

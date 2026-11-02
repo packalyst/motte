@@ -15,7 +15,10 @@ export const wsUserStore = writable(null)
 // Data stores for each channel
 export const generalInfoStore = writable(null) // General info channel (stats, firewall events, etc.)
 export const dockerStore = writable(null)
-export const dockerLogsStore = writable([]) // Array of log entries for live streaming
+export const dockerLogsStore = writable([]) // Array of log entries for live streaming (newest DOCKER_LOG_LINES)
+// The live log window keeps only this many newest lines, so a busy container can't grow it without
+// end; the full history stays in `docker logs`.
+const DOCKER_LOG_LINES = 500
 export const statsStore = writable(null) // Overview dashboard stats
 export const pwaSubscriptionsStore = writable(null) // User-specific PWA subscriptions updates
 export const fleetStore = writable(null) // { machine_id, report } pushed on each agent check-in
@@ -142,8 +145,8 @@ function handleMessage(msg) {
     if (type === 'clients') {
       store.update(n => n + 1)
     } else if (type === 'docker_logs') {
-      // Append log entry to array
-      store.update(logs => [...logs, payload])
+      // Append the line, dropping the oldest beyond DOCKER_LOG_LINES
+      store.update(logs => [...logs.slice(-(DOCKER_LOG_LINES - 1)), payload])
     } else if (type === 'general_info') {
       // For general_info, process events immediately to avoid missing rapid messages
       const event = payload?.event

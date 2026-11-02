@@ -450,3 +450,19 @@ func TestReachabilityDropsIPv6(t *testing.T) {
 		t.Fatalf("a disabled network must get no rules:\n%s", got)
 	}
 }
+
+// A network can't be put on loopback, a VPN, Docker or virtual plumbing, or a NIC that doesn't
+// exist, even by a request that skips the UI's list (every case errors on any host: an
+// undetectable WAN is refused too).
+func TestRequireLANInterfaceRefuses(t *testing.T) {
+	for _, iface := range []string{"lo", "wg0", "tailscale0", "docker0", "br-0123456789ab", "veth1234", "tun0", "nosuchnic0"} {
+		if err := requireLANInterface(iface); err == nil {
+			t.Errorf("%s was accepted for a LAN", iface)
+		}
+	}
+	for name, ok := range map[string]bool{"ens19": true, "eth1": true, "eth0": false, "lo": false, "wg0": false, "docker0": false, "virbr0": false} {
+		if got := candidateInterface(name, "eth0"); got != ok {
+			t.Errorf("candidateInterface(%q, wan eth0) = %v, want %v", name, got, ok)
+		}
+	}
+}
