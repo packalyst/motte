@@ -63,12 +63,12 @@ export function buildRoutePayload(formData) {
     skipCertVerify: formData.skipCertVerify,
     middlewares: formData.middlewares,
     description: formData.description,
-    accessMode: formData.accessMode,
+    accessMode: formData.reach === 'public' ? 'public' : 'vpn',
     frontendSsl: formData.frontendSsl,
     certResolver: formData.certResolver || '',
     sentinelConfig: formData.sentinelConfig,
-    lanAll: formData.lanAll,
-    lanDevices: formData.lanAll ? [] : formData.lanDevices
+    lanAll: formData.reach === 'lan' && formData.lanPick === 'all',
+    lanDevices: formData.reach === 'lan' && formData.lanPick === 'some' ? formData.lanDevices : []
   }
 }
 
@@ -86,13 +86,13 @@ export function defaultRouteForm() {
     skipCertVerify: false,
     middlewares: [],
     description: '',
-    accessMode: 'vpn',
+    // Who can reach it (REACH_OPTIONS): a new route is private and lets every approved LAN device in.
+    reach: 'lan',
+    lanPick: 'all', // 'all' LAN devices, or 'some': only lanDevices
+    lanDevices: [],
     frontendSsl: false,
     certResolver: '',
-    sentinelConfig: null,
-    // A new private route lets every approved LAN device in; untick to pick devices instead.
-    lanAll: true,
-    lanDevices: []
+    sentinelConfig: null
   }
 }
 
@@ -111,14 +111,42 @@ export function routeToFormData(route) {
     skipCertVerify: route.skipCertVerify || false,
     middlewares: route.middlewares || [],
     description: route.description || '',
-    accessMode: route.accessMode || 'vpn',
+    reach: route.accessMode === 'public' ? 'public' : route.lanAll || route.lanDevices?.length ? 'lan' : 'vpn',
+    lanPick: route.lanDevices?.length ? 'some' : 'all',
+    lanDevices: route.lanDevices || [],
     frontendSsl: route.frontendSsl || false,
     certResolver: route.certResolver || '',
-    sentinelConfig: normalizeSentinelConfig(route.sentinelConfig),
-    lanAll: !!route.lanAll,
-    lanDevices: route.lanDevices || []
+    sentinelConfig: normalizeSentinelConfig(route.sentinelConfig)
   }
 }
+
+/**
+ * The address a route's site opens at: https when the route serves HTTPS, else http. A wildcard
+ * route has no single site to open.
+ * @param {Object} route - Route from API
+ * @returns {string|null}
+ */
+export function routeURL(route) {
+  if (!route?.domain || route.domain.startsWith('*.')) return null
+  return `${route.frontendSsl ? 'https' : 'http'}://${route.domain}`
+}
+
+// Who can open a route: VPN devices only, anyone, or VPN devices and local-network (LAN) devices
+// (last: it is the one that opens a choice of devices under it).
+export const REACH_OPTIONS = [
+  { value: 'vpn', icon: 'lock', color: 'primary', title: 'Only my VPN devices',
+    description: 'Connected to the VPN' },
+  { value: 'public', icon: 'world', color: 'warning', title: 'Anyone on the internet',
+    description: 'No VPN needed' },
+  { value: 'lan', icon: 'router', color: 'info', title: 'My VPN devices and my local network',
+    description: 'Also devices plugged into the networks this panel runs. Over HTTPS only.' }
+]
+
+// Which local-network devices, when the local network may open a route.
+export const LAN_PICK_OPTIONS = [
+  { value: 'all', title: 'Every approved device', description: 'On every network, also ones you approve later.' },
+  { value: 'some', title: 'Only the devices I pick', description: 'Choose them below.' }
+]
 
 // Constants
 export const TIMEZONES = [

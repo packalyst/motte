@@ -7,7 +7,7 @@
   import { toggleInArray } from '$lib/utils/array.js'
   import {
     defaultSentinelConfig, normalizeSentinelConfig, buildRoutePayload,
-    defaultRouteForm, routeToFormData, TIMEZONES, WEEK_DAYS, ERROR_MODES
+    defaultRouteForm, routeToFormData, routeURL, TIMEZONES, WEEK_DAYS, ERROR_MODES, REACH_OPTIONS, LAN_PICK_OPTIONS
   } from '$lib/utils/domains.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
@@ -19,6 +19,8 @@
   import EmptyState from '../components/EmptyState.svelte'
   import InfoCard from '../components/InfoCard.svelte'
   import Checkbox from '../components/Checkbox.svelte'
+  import GroupHeading from '../components/GroupHeading.svelte'
+  import OptionCard from '../components/OptionCard.svelte'
 
   let { loading = $bindable(true) } = $props()
 
@@ -174,14 +176,15 @@
     filterByFields(routes, ['domain', 'targetIp', 'description', 'vpnClientName', 'lanDeviceName'], searchQuery)
   )
 
-  // Device options for select: VPN clients by id, LAN devices by key (their VPN address is the target)
+  // Device options for select: VPN clients by id, LAN devices by key (their VPN address is the target).
+  // Values are strings: the <select> hands back strings, and a number would never match one.
   const clientOptions = $derived([
     { value: '', label: 'Manual IP' },
-    ...vpnClients.map(c => ({ value: c.id, label: `${c.name} (${c.ip})` })),
+    ...vpnClients.map(c => ({ value: String(c.id), label: `${c.name} (${c.ip})` })),
     ...lanDevices.map(d => ({ value: d.key, label: `${d.name} (${d.vpn_ip}) · LAN` }))
   ])
   // The selected device: the linked VPN client, else the LAN device whose VPN address is the target
-  const selectedDevice = $derived(formData.vpnClientId || lanDevices.find(d => d.vpn_ip === formData.targetIp)?.key || '')
+  const selectedDevice = $derived(formData.vpnClientId ? String(formData.vpnClientId) : lanDevices.find(d => d.vpn_ip === formData.targetIp)?.key || '')
 
   function resetForm() {
     formData = defaultRouteForm()
@@ -249,18 +252,22 @@
     }
     // A public route puts its target on the internet, and letting more LAN devices in widens a
     // private one: the server then asks for a password or passkey, and the prompt says what opens.
-    const lan = formData.accessMode === 'public' && lanDevices.find(d => d.vpn_ip === formData.targetIp)
+    if (formData.reach === 'lan' && formData.lanPick === 'some' && !formData.lanDevices.length) {
+      toast('Pick at least one device, or choose "Only my VPN devices"', 'error')
+      return
+    }
+    const lan = formData.reach === 'public' && lanDevices.find(d => d.vpn_ip === formData.targetIp)
     const payload = buildRoutePayload(formData)
     const isCreate = formModalMode === 'create'
-    const prompt = formData.accessMode === 'public' ? {
+    const prompt = formData.reach === 'public' ? {
       title: lan ? 'Public route to a LAN device' : 'Public route',
       message: lan ? `Expose ${lan.name} to the internet?` : `Make ${formData.domain} reachable from the internet?`,
       description: `Anyone can reach ${formData.domain} → port ${formData.targetPort}${lan ? ' on this device' : ''} through Traefik. Use VPN access to keep it private.`,
       confirmText: 'Make it public',
     } : {
-      title: 'Let LAN devices in',
-      message: `Let ${formData.lanAll ? 'every approved LAN device' : 'the picked LAN devices'} reach ${formData.domain}?`,
-      description: 'They reach this domain over HTTPS only. Other private domains stay VPN-only.',
+      title: 'Open it to your local network',
+      message: `Let ${formData.lanPick === 'all' ? 'every approved local-network device' : 'the devices you picked'} open ${formData.domain}?`,
+      description: 'They open this domain over HTTPS only. Your other private domains stay VPN-only.',
       confirmText: 'Let them in',
     }
     try {
@@ -556,7 +563,11 @@
       <div class="space-y-2">
         <!-- a route's actions: one copy for the phone layout and the desktop row -->
         {#snippet routeActions(route)}
+          {@const url = routeURL(route)}
           <div class="kt-btn-group shrink-0">
+            <Button variant="outline" size="xs" icon="external-link" disabled={!url}
+              tooltip={url ? 'Open site' : 'A wildcard route has no single site to open'} aria-label={`Open ${route.domain}`}
+              onclick={() => window.open(url, '_blank', 'noopener,noreferrer')} />
             <Button variant="outline" size="xs" icon={route.enabled ? 'player-pause' : 'player-play'}
               class={route.enabled ? 'text-warning hover:bg-warning/10' : 'text-success hover:bg-success/10'}
               tooltip={route.enabled ? 'Disable' : 'Enable'} aria-label={`${route.enabled ? 'Disable' : 'Enable'} ${route.domain}`} onclick={() => toggleRoute(route)} />
@@ -578,7 +589,7 @@
                   <Icon name="world-www" size={16} />
                 </div>
                 <div class="min-w-0">
-                  <a href="http://{route.domain}" target="_blank" rel="noopener" class="kt-link kt-link-underlined kt-link-dashed">{route.domain}</a>
+                  <button type="button" class="kt-link kt-link-underlined kt-link-dashed text-left break-all" title="Edit route" onclick={() => openEditModal(route)}>{route.domain}</button>
                   {#if route.description}
                     <p class="text-[11px] text-muted-foreground truncate">{route.description}</p>
                   {/if}
@@ -714,6 +725,7 @@
 <!-- Create/Edit Modal -->
 <Modal open={showFormModal} onclose={closeFormModal} title={formModalMode === 'create' ? 'Add Domain Route' : 'Edit Domain Route'} size="md">
   <div class="space-y-4">
+    <GroupHeading title="Domain" />
     <Input
       label="Domain"
       placeholder="wiki.local or *.app.domain.com"
@@ -735,6 +747,7 @@
       </Select>
     {/if}
 
+    <GroupHeading title="Target" color="var(--color-info)" />
     <Select
       label="Device (optional)"
       value={selectedDevice}
@@ -778,69 +791,48 @@
       prefixIcon="file-text"
     />
 
-    <!-- Access Mode -->
-    <div>
-      <span class="text-sm font-medium text-foreground">Access Mode</span>
-      <div class="mt-2 flex gap-2">
-        <Checkbox
-          variant="chip"
-          checked={formData.accessMode === 'vpn'}
-          onchange={() => formData.accessMode = 'vpn'}
-          icon="lock"
-          label="VPN Only"
-        />
-        <Checkbox
-          variant="chip"
-          color="warning"
-          checked={formData.accessMode === 'public'}
-          onchange={() => formData.accessMode = 'public'}
-          icon="world"
-          label="Public"
-        />
-      </div>
-    </div>
+    <GroupHeading title="Who can open it" color="var(--color-warning)" />
+    <!-- VPN only and public side by side on desktop; the local-network choice below, full width -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {#each REACH_OPTIONS as o (o.value)}
+        <OptionCard class="w-full {o.value === 'lan' ? 'sm:col-span-2' : ''}" icon={o.icon} iconBox color={o.color} title={o.title} description={o.description}
+          active={formData.reach === o.value} onclick={() => formData.reach = o.value} />
 
-    {#if formData.accessMode === 'vpn'}
-      <!-- LAN access: besides VPN clients, which LAN devices may use this private domain -->
-      <div>
-        <span class="text-sm font-medium text-foreground">LAN access</span>
-        <div class="mt-2">
-          <Checkbox
-            variant="switch"
-            label="Allow all LAN devices (all networks)"
-            bind:checked={formData.lanAll}
-          />
-        </div>
-        {#if !formData.lanAll}
-          {#if lanPickable.length > 0}
-            <div class="mt-2 flex flex-wrap gap-2">
-              {#each lanPickable as d (d.key)}
-                <Checkbox
-                  variant="chip"
-                  checked={formData.lanDevices.includes(d.open.lan)}
-                  onchange={() => toggleLanDevice(d.open.lan)}
-                  icon="device-desktop"
-                  label={d.pending ? `${d.name} · not approved` : d.name}
-                />
+        {#if o.value === 'lan' && formData.reach === 'lan'}
+          <!-- Which local devices: nested under its own choice -->
+          <div class="sm:col-span-2 ml-6 space-y-2 border-l-2 border-info/40 pl-3">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {#each LAN_PICK_OPTIONS as p (p.value)}
+                <OptionCard size="sm" color="info" title={p.title} description={p.description}
+                  active={formData.lanPick === p.value} onclick={() => formData.lanPick = p.value} />
               {/each}
             </div>
-          {:else}
-            <p class="text-xs text-muted-foreground mt-2">No LAN devices yet.</p>
-          {/if}
+            {#if formData.lanPick === 'some'}
+              {#if lanPickable.length > 0}
+                <div class="flex flex-wrap gap-2">
+                  {#each lanPickable as d (d.key)}
+                    <Checkbox
+                      variant="chip"
+                      checked={formData.lanDevices.includes(d.open.lan)}
+                      onchange={() => toggleLanDevice(d.open.lan)}
+                      icon="device-desktop"
+                      label={d.pending ? `${d.name} · not approved yet` : d.name}
+                    />
+                  {/each}
+                </div>
+              {:else}
+                <p class="text-xs text-muted-foreground">No local-network devices yet.</p>
+              {/if}
+            {/if}
+          </div>
         {/if}
-        <p class="text-xs text-muted-foreground mt-1">
-          {formData.lanAll
-            ? 'Every approved LAN device, on every network, now and later, reaches this domain.'
-            : formData.lanDevices.length ? 'Only the picked devices reach this domain.' : 'No LAN device reaches this domain: VPN clients only.'}
-          Over HTTPS only; a device gets in once it's approved. Other private domains stay VPN-only.
-        </p>
-      </div>
-    {/if}
+      {/each}
+    </div>
 
     {#if availableMiddlewares.length > 0}
+      <GroupHeading title="Middlewares" color="var(--color-muted-foreground)" />
       <div>
-        <span class="text-sm font-medium text-foreground">Middlewares</span>
-        <div class="mt-2 flex flex-wrap gap-2">
+        <div class="flex flex-wrap gap-2">
           {#each availableMiddlewares as mw}
             <Checkbox
               variant="chip"
