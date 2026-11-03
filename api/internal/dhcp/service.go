@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"api/internal/database"
+	"api/internal/domains"
 	"api/internal/nftables"
 	"api/internal/router"
 )
@@ -114,8 +115,8 @@ func (s *Service) ReconcileAll() {
 }
 
 // reapplyReachability asks the firewall to rebuild (the reachability table reads the DB each
-// build) and the Headscale policy to follow. Best-effort — a nil nft service just means
-// reachability isn't enforced yet.
+// build), and the Headscale policy and the private routes LAN devices may use to follow.
+// Best-effort — a nil nft service just means reachability isn't enforced yet.
 func (s *Service) reapplyReachability() {
 	if s.nft != nil {
 		s.nft.RequestApply()
@@ -123,6 +124,7 @@ func (s *Service) reapplyReachability() {
 	if s.headscalePolicy != nil {
 		s.headscalePolicy()
 	}
+	domains.SyncLANAccess()
 }
 
 // candidateInterface reports whether a NIC may be offered as a managed segment: a real ethernet

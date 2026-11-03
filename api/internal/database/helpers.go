@@ -54,3 +54,16 @@ func BoolFromNull(nb sql.NullBool, defaultVal bool) bool {
 	}
 	return defaultVal
 }
+
+// InTx runs fn in a transaction: committed when fn succeeds, rolled back when it fails.
+func (d *DB) InTx(fn func(tx *sql.Tx) error) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

@@ -37,13 +37,15 @@
   const vpnClients = $derived(loader.data.clients || [])
   // LAN devices with VPN access on: a route reaches one through its VPN address
   const lanDevices = $derived((loader.data.allClients || []).filter(c => c.kind === 'lan' && c.vpn_ip && !c.blocked))
+  // Every LAN device that could be let in to a private route (pending ones get in once approved)
+  const lanPickable = $derived((loader.data.allClients || []).filter(c => c.kind === 'lan' && !c.blocked))
   const certificates = $derived(loader.data.certs?.certificates || [])
   const certResolvers = $derived(loader.data.resolvers || [])
   const systemDomains = $derived(loader.data.systemDomains || [])
   const availableMiddlewares = $derived.by(() => {
     const mws = loader.data.traefik?.middlewares || []
     return mws
-      .filter(m => m.provider === 'file' && !m.name.includes('@internal') && !m.name.startsWith('sentinel_domain-'))
+      .filter(m => m.provider === 'file' && !m.name.includes('@internal') && !m.name.startsWith('sentinel_domain-') && !m.name.startsWith('sentinel_lan-'))
       .map(m => ({ name: m.name, type: m.type }))
   })
 
@@ -206,6 +208,11 @@
     formData.middlewares = toggleInArray(formData.middlewares, mwName)
   }
 
+  function toggleLanDevice(id) {
+    formData.lanDevices = toggleInArray(formData.lanDevices, id)
+  }
+
+
   async function confirmDelete(route) {
     const confirmed = await confirm({
       title: 'Delete Domain Route',
@@ -240,20 +247,26 @@
       toast('Domain, IP, and Port are required', 'error')
       return
     }
-    // A public route puts its target on the internet: the server asks for a password or passkey
-    // first, and the prompt says what opens (a LAN device by name).
+    // A public route puts its target on the internet, and letting more LAN devices in widens a
+    // private one: the server then asks for a password or passkey, and the prompt says what opens.
     const lan = formData.accessMode === 'public' && lanDevices.find(d => d.vpn_ip === formData.targetIp)
     const payload = buildRoutePayload(formData)
     const isCreate = formModalMode === 'create'
+    const prompt = formData.accessMode === 'public' ? {
+      title: lan ? 'Public route to a LAN device' : 'Public route',
+      message: lan ? `Expose ${lan.name} to the internet?` : `Make ${formData.domain} reachable from the internet?`,
+      description: `Anyone can reach ${formData.domain} → port ${formData.targetPort}${lan ? ' on this device' : ''} through Traefik. Use VPN access to keep it private.`,
+      confirmText: 'Make it public',
+    } : {
+      title: 'Let LAN devices in',
+      message: `Let ${formData.lanAll ? 'every approved LAN device' : 'the picked LAN devices'} reach ${formData.domain}?`,
+      description: 'They reach this domain over HTTPS only. Other private domains stay VPN-only.',
+      confirmText: 'Let them in',
+    }
     try {
       const res = await withStepUp((extra) => isCreate
         ? apiPost('/api/domains', { ...payload, ...extra })
-        : apiPut(`/api/domains/${editingRoute.id}`, { ...payload, ...extra }), {
-        title: lan ? 'Public route to a LAN device' : 'Public route',
-        message: lan ? `Expose ${lan.name} to the internet?` : `Make ${formData.domain} reachable from the internet?`,
-        description: `Anyone can reach ${formData.domain} → port ${formData.targetPort}${lan ? ' on this device' : ''} through Traefik. Use VPN access to keep it private.`,
-        confirmText: 'Make it public',
-      })
+        : apiPut(`/api/domains/${editingRoute.id}`, { ...payload, ...extra }), prompt)
       if (res === STEPUP_CANCELLED) return
       toast(`Domain route ${isCreate ? 'created' : 'updated'}`, 'success')
       closeFormModal()
@@ -265,10 +278,14 @@
 
   async function toggleRoute(route) {
     try {
-      // Switching a public route back on asks for a password or passkey first.
+      // Switching a public route, or a private one LAN devices may use, back on asks for a password
+      // or passkey first.
+      const isPublic = route.accessMode === 'public'
       const res = await withStepUp((extra) => apiPost(`/api/domains/${route.id}/toggle`, { ...extra }), {
-        title: 'Switch the public route on',
-        message: `${route.domain} will be reachable from the internet again.`,
+        title: isPublic ? 'Switch the public route on' : 'Switch the route on',
+        message: isPublic
+          ? `${route.domain} will be reachable from the internet again.`
+          : `${route.domain} will be reachable from LAN devices again.`,
         confirmText: 'Switch on',
       })
       if (res === STEPUP_CANCELLED) return
@@ -611,6 +628,11 @@
                   <Badge variant={route.accessMode === 'public' ? 'warning' : 'info'} size="sm">
                     {route.accessMode === 'public' ? 'Public' : 'VPN'}
                   </Badge>
+                  {#if route.accessMode === 'vpn' && (route.lanAll || route.lanDevices?.length)}
+                    <Badge variant="info" size="sm" title={route.lanAll ? 'Every approved LAN device' : `${route.lanDevices.length} LAN device(s)`}>
+                      + LAN
+                    </Badge>
+                  {/if}
                   <!-- Frontend SSL Badge with certificate status -->
                   {#if getCertForDomain(route.domain)}
                     {@const cert = getCertForDomain(route.domain)}
@@ -777,6 +799,43 @@
         />
       </div>
     </div>
+
+    {#if formData.accessMode === 'vpn'}
+      <!-- LAN access: besides VPN clients, which LAN devices may use this private domain -->
+      <div>
+        <span class="text-sm font-medium text-foreground">LAN access</span>
+        <div class="mt-2">
+          <Checkbox
+            variant="switch"
+            label="Allow all LAN devices (all networks)"
+            bind:checked={formData.lanAll}
+          />
+        </div>
+        {#if !formData.lanAll}
+          {#if lanPickable.length > 0}
+            <div class="mt-2 flex flex-wrap gap-2">
+              {#each lanPickable as d (d.key)}
+                <Checkbox
+                  variant="chip"
+                  checked={formData.lanDevices.includes(d.open.lan)}
+                  onchange={() => toggleLanDevice(d.open.lan)}
+                  icon="device-desktop"
+                  label={d.pending ? `${d.name} · not approved` : d.name}
+                />
+              {/each}
+            </div>
+          {:else}
+            <p class="text-xs text-muted-foreground mt-2">No LAN devices yet.</p>
+          {/if}
+        {/if}
+        <p class="text-xs text-muted-foreground mt-1">
+          {formData.lanAll
+            ? 'Every approved LAN device, on every network, now and later, reaches this domain.'
+            : formData.lanDevices.length ? 'Only the picked devices reach this domain.' : 'No LAN device reaches this domain: VPN clients only.'}
+          Over HTTPS only; a device gets in once it's approved. Other private domains stay VPN-only.
+        </p>
+      </div>
+    {/if}
 
     {#if availableMiddlewares.length > 0}
       <div>

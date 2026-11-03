@@ -11,10 +11,13 @@ package events
 
 import (
 	"log"
+	"net/http"
 	"strings"
 	"sync/atomic"
 
 	"api/internal/database"
+	"api/internal/helper"
+	"api/internal/router"
 )
 
 // Severity levels.
@@ -64,6 +67,16 @@ func Log(subsystem, eventType, severity, message string) {
 // best-effort and never breaks the caller's operation.
 func Audit(subsystem, eventType, severity, actor, ip, message string) {
 	insert(subsystem, eventType, severity, actor, ip, message)
+}
+
+// AuditRequest records a change made through an API request, attributed to the signed-in user and
+// the address it came from.
+func AuditRequest(r *http.Request, subsystem, eventType, message string) {
+	actor := ""
+	if p := router.CurrentUser(r); p != nil {
+		actor = p.Username
+	}
+	Audit(subsystem, eventType, SeverityInfo, actor, helper.GetClientIP(r), message)
 }
 
 // insert is the shared write path for Log and Audit.

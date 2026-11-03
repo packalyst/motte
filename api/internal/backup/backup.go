@@ -53,8 +53,9 @@ var (
 		"firewall_entries", "jails", "settings",
 		// After the VPN tables: deleting a WireGuard peer cascades into the DHCP access rules.
 		"dhcp_networks", "dhcp_clients", "dhcp_client_acl", "dhcp_inbound",
-		// After the DHCP clients: wiping them cascades into the domain routes to LAN devices.
-		"domain_routes", "backup_offhost_config",
+		// After the DHCP clients: wiping them cascades into the domain routes to LAN devices, and
+		// those into the LAN devices picked for a private route.
+		"domain_routes", "domain_route_lan_devices", "backup_offhost_config",
 	}
 	// Per-user rows; they only make sense with the users they belong to. Passkeys are left out:
 	// their credential IDs are binary, which the backup's JSON can't carry intact.
@@ -88,8 +89,9 @@ var tableLabels = map[string]string{
 	"users": "Admin users", "users_notification_preferences": "Notification prefs",
 	"fleet_ca": "Fleet CA", "fleet_machines": "Fleet machines",
 	"dhcp_networks": "DHCP networks", "dhcp_clients": "DHCP clients", "dhcp_client_acl": "DHCP access rules",
-	"dhcp_inbound":          "LAN incoming rules",
-	"backup_offhost_config": "Off-host backup settings", "alert_rules": "Alert rules",
+	"dhcp_inbound":             "LAN incoming rules",
+	"domain_route_lan_devices": "Private-route LAN devices",
+	"backup_offhost_config":    "Off-host backup settings", "alert_rules": "Alert rules",
 	"notification_channels": "Notification channels",
 }
 

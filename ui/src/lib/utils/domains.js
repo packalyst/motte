@@ -66,7 +66,9 @@ export function buildRoutePayload(formData) {
     accessMode: formData.accessMode,
     frontendSsl: formData.frontendSsl,
     certResolver: formData.certResolver || '',
-    sentinelConfig: formData.sentinelConfig
+    sentinelConfig: formData.sentinelConfig,
+    lanAll: formData.lanAll,
+    lanDevices: formData.lanAll ? [] : formData.lanDevices
   }
 }
 
@@ -87,7 +89,10 @@ export function defaultRouteForm() {
     accessMode: 'vpn',
     frontendSsl: false,
     certResolver: '',
-    sentinelConfig: null
+    sentinelConfig: null,
+    // A new private route lets every approved LAN device in; untick to pick devices instead.
+    lanAll: true,
+    lanDevices: []
   }
 }
 
@@ -109,7 +114,9 @@ export function routeToFormData(route) {
     accessMode: route.accessMode || 'vpn',
     frontendSsl: route.frontendSsl || false,
     certResolver: route.certResolver || '',
-    sentinelConfig: normalizeSentinelConfig(route.sentinelConfig)
+    sentinelConfig: normalizeSentinelConfig(route.sentinelConfig),
+    lanAll: !!route.lanAll,
+    lanDevices: route.lanDevices || []
   }
 }
 

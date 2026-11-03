@@ -168,3 +168,36 @@ func TestCloudflareOnlyLeavesPort80ToTheGate(t *testing.T) {
 		}
 	}
 }
+
+// With Cloudflare-only on, a LAN device let in to a private domain route still reaches HTTPS, on
+// its own LAN interface and address only; a malformed interface name is never written.
+func TestCloudflareOnlyBuild_LANRouteDevices(t *testing.T) {
+	db := cfTestDB(t, "on")
+	if _, err := db.DB.Exec(`
+		CREATE TABLE dhcp_networks (id INTEGER PRIMARY KEY, iface TEXT, cidr TEXT, enabled INTEGER);
+		CREATE TABLE dhcp_clients (id INTEGER PRIMARY KEY, network_id INTEGER, ip TEXT, mac TEXT, approved INTEGER, blocked INTEGER);
+		CREATE TABLE domain_routes (id INTEGER PRIMARY KEY, domain TEXT, enabled INTEGER, access_mode TEXT, lan_all INTEGER);
+		CREATE TABLE domain_route_lan_devices (route_id INTEGER, device_id INTEGER);
+		INSERT INTO dhcp_networks VALUES (1, 'ens19', '10.20.20.0/24', 1), (2, 'ens20" accept', '10.30.30.0/24', 1);
+		INSERT INTO dhcp_clients VALUES (1, 1, '10.20.20.51', '02:00:00:00:00:01', 1, 0), (2, 2, '10.30.30.51', '02:00:00:00:00:02', 1, 0);
+		INSERT INTO domain_routes VALUES (1, 'git.example.com', 1, 'vpn', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := NewCloudflareOnlyTable(db).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each chain (input, then forward) lets the device in above its own drop.
+	for _, c := range []struct{ accept, drop string }{
+		{`iifname "ens19" ip saddr 10.20.20.51 tcp dport 443 accept`, "\n        tcp dport 443 drop"},
+		{`ct status dnat iifname "ens19" ip saddr 10.20.20.51 tcp dport 443 accept`, "ct status dnat tcp dport 443 drop"},
+	} {
+		if at, drop := strings.Index(out, c.accept), strings.Index(out, c.drop); at < 0 || drop < 0 || at > drop {
+			t.Errorf("missing %q above %q:\n%s", c.accept, c.drop, out)
+		}
+	}
+	if strings.Contains(out, "10.30.30.51") {
+		t.Errorf("a malformed interface name was written:\n%s", out)
+	}
+	nftCheck(t, out)
+}

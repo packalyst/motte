@@ -2,6 +2,7 @@ package nftables
 
 import (
 	"database/sql"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -76,8 +77,9 @@ func (t *CloudflareOnlyTable) Build() (string, error) {
 	//     FORWARDED to the container — it never reaches the input hook. Scope the forward
 	//     rules to `ct status dnat` so only externally-published traffic is filtered and
 	//     WireGuard / container-to-container forwarding is untouched.
-	sb.WriteString(BuildChain("input", "filter", "input", -10, "accept", cfRules(v4, v6, trusted, "")))
-	sb.WriteString(BuildChain("forward", "filter", "forward", -10, "accept", cfRules(v4, v6, trusted, "ct status dnat ")))
+	lan := t.lanRouteRules()
+	sb.WriteString(BuildChain("input", "filter", "input", -10, "accept", cfRules(v4, v6, trusted, lan, "")))
+	sb.WriteString(BuildChain("forward", "filter", "forward", -10, "accept", cfRules(v4, v6, trusted, lan, "ct status dnat ")))
 	sb.WriteString("}\n")
 	return sb.String(), nil
 }
@@ -85,25 +87,50 @@ func (t *CloudflareOnlyTable) Build() (string, error) {
 // cfRules builds the accept-Cloudflare-and-trusted / drop-everyone-else rules for HTTPS.
 // prefix is prepended to each rule — "" for the input chain, "ct status dnat " for
 // the forward chain (so it only matches externally-published, DNAT'd traffic).
-func cfRules(v4, v6, trusted []string, prefix string) []string {
+func cfRules(v4, v6, trusted, lan []string, prefix string) []string {
+	const https = "tcp dport " + TraefikHTTPSPort
 	rules := []string{
 		"# Always-allowed local/VPN sources reach HTTPS (never lock the admin out).",
-		prefix + "ip saddr { " + strings.Join(trusted, ", ") + " } tcp dport 443 accept",
-		prefix + "ip6 saddr ::1/128 tcp dport 443 accept",
-		"# Cloudflare edge ranges — the only public source allowed to reach 443.",
+		prefix + "ip saddr { " + strings.Join(trusted, ", ") + " } " + https + " accept",
+		prefix + "ip6 saddr ::1/128 " + https + " accept",
 	}
+	if len(lan) > 0 {
+		rules = append(rules, "# LAN devices let in to private domain routes (the LAN table and Traefik decide the rest).")
+		for _, r := range lan {
+			rules = append(rules, prefix+r+" "+https+" accept")
+		}
+	}
+	rules = append(rules, "# Cloudflare edge ranges — the only public source allowed to reach "+TraefikHTTPSPort+".")
 	if len(v4) > 0 {
-		rules = append(rules, prefix+"ip saddr @cf_v4 tcp dport 443 accept")
+		rules = append(rules, prefix+"ip saddr @cf_v4 "+https+" accept")
 	}
 	if len(v6) > 0 {
-		rules = append(rules, prefix+"ip6 saddr @cf_v6 tcp dport 443 accept")
+		rules = append(rules, prefix+"ip6 saddr @cf_v6 "+https+" accept")
 	}
 	rules = append(rules,
-		"# Log (rate-limited) then drop 443 from every other source. Port 80 is gated in Traefik.",
-		prefix+`tcp dport 443 limit rate 5/minute log prefix "CF_ONLY_DROP: "`,
-		prefix+"tcp dport 443 drop",
+		"# Log (rate-limited) then drop "+TraefikHTTPSPort+" from every other source. Port 80 is gated in Traefik.",
+		prefix+https+` limit rate 5/minute log prefix "CF_ONLY_DROP: "`,
+		prefix+https+" drop",
 	)
 	return rules
+}
+
+// lanRouteRules matches each LAN device let in to a private domain route, on its own LAN interface
+// and address (domains: LANRouteAccess). On a read error none is let in.
+func (t *CloudflareOnlyTable) lanRouteRules() []string {
+	devs, err := t.db.LANRouteDevices()
+	if err != nil {
+		log.Printf("nftables/cf_only: LAN devices on private routes: %v", err)
+		return nil
+	}
+	var out []string
+	for _, d := range devs {
+		if d.Iface == "" || SanitizeElement(d.Iface) != d.Iface || !ValidateIPv4OrCIDR(d.IP) || strings.Contains(d.IP, "/") {
+			continue
+		}
+		out = append(out, `iifname "`+d.Iface+`" ip saddr `+d.IP)
+	}
+	return out
 }
 
 // lastCFOnlyRestrict remembers the last successfully-read value. A genuinely-absent setting

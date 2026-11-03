@@ -384,6 +384,12 @@ func (s *Service) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "Failed to write config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// A private route LAN devices may use carries its own copy of the trusted networks (lanSentinel).
+	if RegenerateDomains != nil {
+		if err := RegenerateDomains(); err != nil {
+			log.Printf("trusted networks: domain route regen: %v", err)
+		}
+	}
 
 	// Update static config for dashboard if provided
 	restartRequired := false
@@ -914,6 +920,12 @@ type SentinelConfig struct {
 	} `json:"userAgents,omitempty"`
 }
 
+// sentinelMW is a per-route sentinel middleware written into the domain routes file.
+type sentinelMW struct {
+	name   string
+	config *SentinelConfig
+}
+
 // DomainRouteConfig represents a domain route for Traefik config generation
 type DomainRouteConfig struct {
 	Domain         string
@@ -926,6 +938,7 @@ type DomainRouteConfig struct {
 	FrontendSSL    bool            // use websecure entrypoint with TLS
 	CertResolver   string          // explicit resolver name; empty = auto (wildcard/public/vpn tree)
 	SentinelConfig *SentinelConfig // per-domain sentinel middleware config
+	LANSources     []string        // addresses of the LAN devices that may use this private route
 }
 
 // GenerateDomainRoutes writes domain routes to Traefik's dynamic config directory
@@ -942,10 +955,7 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockE
 		sb.WriteString("  routers:\n")
 
 		// Track routes that need per-domain middlewares
-		var sentinelMiddlewares []struct {
-			name   string
-			config *SentinelConfig
-		}
+		var sentinelMiddlewares []sentinelMW
 
 		for _, route := range routes {
 			name := helper.SanitizeDomainName(route.Domain)
@@ -969,14 +979,18 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockE
 				}
 			}
 
+			// LAN devices let in: the route's own VPN-only gate replaces the shared one.
+			if cfg, rest, ok := lanSentinel(route, middlewares); ok {
+				mwName := fmt.Sprintf("sentinel_lan-%s", name)
+				middlewares = append([]string{mwName}, rest...)
+				sentinelMiddlewares = append(sentinelMiddlewares, sentinelMW{mwName, cfg})
+			}
+
 			// Add per-domain sentinel config middleware if configured and enabled
 			if route.SentinelConfig != nil && route.SentinelConfig.Enabled {
 				mwName := fmt.Sprintf("sentinel_domain-%s", name)
 				middlewares = append([]string{mwName}, middlewares...) // prepend
-				sentinelMiddlewares = append(sentinelMiddlewares, struct {
-					name   string
-					config *SentinelConfig
-				}{mwName, route.SentinelConfig})
+				sentinelMiddlewares = append(sentinelMiddlewares, sentinelMW{mwName, route.SentinelConfig})
 			}
 
 			// Global firewall-block enforcement: when the Settings toggle is on, every

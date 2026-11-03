@@ -273,6 +273,7 @@ flowchart LR
 | VPN peer → another peer | Nothing, until a rule or an "allow all" policy says so. |
 | VPN peer → a LAN device | Nothing, until the device grants that peer access. |
 | LAN device → the server | DHCP and DNS only; an approved device also reaches the public ports. |
+| LAN device → a private domain | Nothing, until the domain lets LAN devices in (all approved ones, or picked ones; the form ticks "all" for a new private domain), and then over HTTPS only. |
 | LAN device → the internet | Nothing, until internet is switched on for it, and then only its chosen services. |
 | Internet → a LAN device | Nothing, except the ways in you list on its own dedicated address. |
 | The server, or anything it routes → a blocked address | Dropped. |

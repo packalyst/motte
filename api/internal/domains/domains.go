@@ -186,6 +186,8 @@ type DomainRoute struct {
 	LANDeviceID    *int64                  `json:"lanDeviceId,omitempty"`   // set when the target is a LAN device's VPN address
 	LANDeviceName  string                  `json:"lanDeviceName,omitempty"` // its name, or MAC when unnamed
 	TargetUnheld   bool                    `json:"targetUnheld,omitempty"`  // the target is a VPN address nobody holds: the route reaches nothing
+	LANAll         bool                    `json:"lanAll"`                  // every approved LAN device may use this private route
+	LANDevices     []int64                 `json:"lanDevices"`              // else the LAN devices picked for it
 }
 
 // New creates a new domains service
@@ -206,6 +208,12 @@ func ApplyRoutes() error {
 	vpnIP := vpnDNSTarget()
 
 	db, err := database.GetDB()
+	if err != nil {
+		return err
+	}
+
+	// Who on the LANs may use each private route, read before the routes cursor opens.
+	lan, lanSig, err := lanSources(db)
 	if err != nil {
 		return err
 	}
@@ -240,6 +248,7 @@ func ApplyRoutes() error {
 		if certResolver.Valid {
 			rc.CertResolver = certResolver.String
 		}
+		rc.LANSources = lan[rc.Domain]
 
 		// Add VPN domains to AdGuard sync list.
 		// For a wildcard route (`*.example.com`), also rewrite the apex (`example.com`)
@@ -262,6 +271,9 @@ func ApplyRoutes() error {
 	if err := traefik.GenerateDomainRoutes(traefikConfigDir, routes, FWBlockEnabled()); err != nil {
 		return fmt.Errorf("failed to generate Traefik config: %v", err)
 	}
+	lanMu.Lock()
+	appliedLAN = lanSig
+	lanMu.Unlock()
 
 	// Sync AdGuard DNS only for VPN mode domains (rewrite to VPN IP, not public IP!)
 	dnsErrors := adguard.SyncDomainRewrites(vpnDomains, vpnIP)
@@ -404,7 +416,11 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		}
 		routes = append(routes, route)
 	}
+	rows.Close()
 	markUnheld(db, routes)
+	if !withLANAccess(w, db, 0, routes) {
+		return
+	}
 
 	router.JSON(w, map[string]interface{}{
 		"routes": routes,
@@ -434,8 +450,12 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		router.DBError(w, err)
 		return
 	}
+	one := []DomainRoute{route}
+	if !withLANAccess(w, db, route.ID, one) {
+		return
+	}
 
-	router.JSON(w, route)
+	router.JSON(w, one[0])
 }
 
 // CreateRequest for creating a domain route
@@ -452,6 +472,8 @@ type CreateRequest struct {
 	FrontendSSL    bool                    `json:"frontendSsl"`            // use websecure entrypoint
 	CertResolver   string                  `json:"certResolver,omitempty"` // explicit resolver name; empty = auto
 	SentinelConfig *traefik.SentinelConfig `json:"sentinelConfig,omitempty"`
+	LANAll         bool                    `json:"lanAll"`     // every approved LAN device may use the private route
+	LANDevices     []int64                 `json:"lanDevices"` // else these LAN devices
 }
 
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -492,8 +514,20 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		router.JSONError(w, "accessMode must be 'vpn' or 'public'", http.StatusBadRequest)
 		return
 	}
-	// A public route puts the target on the internet: a step-up first.
-	if req.AccessMode == "public" && !router.StepUp(w, r) {
+	db, err := database.GetDB()
+	if err != nil {
+		router.DBError(w, err)
+		return
+	}
+	devices, err := checkLANDevices(db, req.LANDevices)
+	if err != nil {
+		router.JSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	lan := lanAccess{All: req.LANAll, Devices: devices}.forMode(req.AccessMode)
+	// A public route puts the target on the internet, and LAN access lets LAN devices in: a
+	// step-up first.
+	if (req.AccessMode == "public" || lan.isOpen()) && !router.StepUp(w, r) {
 		return
 	}
 
@@ -507,12 +541,6 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	// For VPN mode, ensure a VPN middleware is present
 	if req.AccessMode == "vpn" {
 		req.Middlewares = ensureVPNMiddleware(req.Middlewares)
-	}
-
-	db, err := database.GetDB()
-	if err != nil {
-		router.DBError(w, err)
-		return
 	}
 
 	// Validate sentinel config if provided
@@ -536,10 +564,20 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		sentinelConfigJSON = string(b)
 	}
 
-	result, err := db.Exec(`
+	var id int64
+	err = db.InTx(func(tx *sql.Tx) error {
+		result, err := tx.Exec(`
 		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, lan_device_id, https_backend, skip_cert_verify, middlewares, description, access_mode, frontend_ssl, sentinel_config, cert_resolver)
 		VALUES (?, ?, ?, ?, `+lanDeviceByVPNIP+`, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.TargetIP, req.HTTPSBackend, req.SkipCertVerify, string(middlewaresJSON), req.Description, req.AccessMode, req.FrontendSSL, sentinelConfigJSON, req.CertResolver)
+		if err != nil {
+			return err
+		}
+		if id, err = result.LastInsertId(); err != nil {
+			return err
+		}
+		return saveLANAccess(tx, id, lan)
+	})
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			router.JSONError(w, "domain already exists", http.StatusConflict)
@@ -548,8 +586,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		router.DBError(w, err)
 		return
 	}
-
-	id, _ := result.LastInsertId()
+	auditLANAccess(r, req.Domain, lanAccess{}, lan)
 
 	// Auto-apply after create
 	if err := s.applyRoutes(); err != nil {
@@ -576,6 +613,8 @@ type UpdateRequest struct {
 	FrontendSSL    *bool                   `json:"frontendSsl,omitempty"`
 	CertResolver   *string                 `json:"certResolver,omitempty"` // explicit resolver override; empty string = clear back to auto
 	SentinelConfig *traefik.SentinelConfig `json:"sentinelConfig"`         // No omitempty - null means clear
+	LANAll         *bool                   `json:"lanAll,omitempty"`
+	LANDevices     *[]int64                `json:"lanDevices,omitempty"`
 }
 
 func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -681,7 +720,29 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if newMode == "public" && (oldMode != "public" || newIP != oldIP || newPort != oldPort) {
+	// LAN access as it is and as it will be (a public route keeps none).
+	oldAccess, err := loadLANAccess(db, id)
+	if err != nil {
+		router.DBError(w, err)
+		return
+	}
+	oldLAN, newLAN := oldAccess[id], oldAccess[id]
+	if req.LANAll != nil {
+		newLAN.All = *req.LANAll
+	}
+	if req.LANDevices != nil {
+		if newLAN.Devices, err = checkLANDevices(db, *req.LANDevices); err != nil {
+			router.JSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	newLAN = newLAN.forMode(newMode)
+	lanChanged := newLAN.All != oldLAN.All || !slices.Equal(newLAN.Devices, oldLAN.Devices)
+
+	// Making a route public (or pointing a public one elsewhere) puts its target on the internet,
+	// and letting more LAN devices in widens it: a step-up first.
+	public := newMode == "public" && (oldMode != "public" || newIP != oldIP || newPort != oldPort)
+	if public || newLAN.widens(oldLAN) {
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes)) // the step-up reads its proof from the body
 		if !router.StepUp(w, r) {
 			return
@@ -806,7 +867,7 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(updates) == 0 {
+	if len(updates) == 0 && !lanChanged {
 		router.JSONError(w, "no fields to update", http.StatusBadRequest)
 		return
 	}
@@ -815,7 +876,23 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	args = append(args, id)
 
 	query := fmt.Sprintf("UPDATE domain_routes SET %s WHERE id = ?", strings.Join(updates, ", "))
-	result, err := db.Exec(query, args...)
+	err = db.InTx(func(tx *sql.Tx) error {
+		result, err := tx.Exec(query, args...)
+		if err != nil {
+			return err
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return sql.ErrNoRows
+		}
+		if !lanChanged {
+			return nil
+		}
+		return saveLANAccess(tx, int64(id), newLAN)
+	})
+	if err == sql.ErrNoRows {
+		router.JSONError(w, "route not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			router.JSONError(w, "domain already exists", http.StatusConflict)
@@ -824,12 +901,11 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		router.DBError(w, err)
 		return
 	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		router.JSONError(w, "route not found", http.StatusNotFound)
-		return
+	domain := oldDomain
+	if req.Domain != nil {
+		domain = *req.Domain
 	}
+	auditLANAccess(r, domain, oldLAN, newLAN)
 
 	// Auto-apply after update
 	if err := s.applyRoutes(); err != nil {
@@ -920,7 +996,15 @@ func (s *Service) handleToggle(w http.ResponseWriter, r *http.Request) {
 			router.JSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if database.StringFromNullNotEmpty(mode, "vpn") == "public" && !router.StepUp(w, r) {
+		// Back on, a public route is on the internet again and a private one LAN devices may use
+		// lets them in again: a step-up first.
+		access, err := loadLANAccess(db, id)
+		if err != nil {
+			router.DBError(w, err)
+			return
+		}
+		m := database.StringFromNullNotEmpty(mode, "vpn")
+		if (m == "public" || access[id].forMode(m).isOpen()) && !router.StepUp(w, r) {
 			return
 		}
 	}

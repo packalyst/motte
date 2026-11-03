@@ -1,9 +1,6 @@
 package nftables
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -74,18 +71,5 @@ func TestPrivatePortsAllowList(t *testing.T) {
 	}
 	script := (&FirewallTable{}).buildScript(scriptParams{tcpPorts: []string{"443"}, tcpPortsPrivate: []string{"8081"}, dockerIface: "br-0123456789ab"})
 
-	nft, err := exec.LookPath("nft")
-	if err != nil || os.Geteuid() != 0 {
-		t.Skip("nft -c needs nft and root")
-	}
-	f := filepath.Join(t.TempDir(), "firewall.nft")
-	if err := os.WriteFile(f, []byte(script), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command(nft, "-c", "-f", f).CombinedOutput(); err != nil {
-		if strings.Contains(string(out), "Operation not permitted") {
-			t.Skip("nft -c not permitted here (container without CAP_NET_ADMIN)")
-		}
-		t.Fatalf("nft -c rejected the script: %v\n%s", err, out)
-	}
+	nftCheck(t, script)
 }

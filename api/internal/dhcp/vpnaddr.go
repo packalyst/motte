@@ -98,14 +98,13 @@ func (s *Service) clearVPNAccess(deviceID int64) (domains.Removed, error) {
 
 // inTx runs fn in a transaction and commits it, returning the routes fn removed.
 func (s *Service) inTx(fn func(tx *sql.Tx) (domains.Removed, error)) (domains.Removed, error) {
-	tx, err := s.db.Begin()
+	var removed domains.Removed
+	err := s.db.InTx(func(tx *sql.Tx) (err error) {
+		removed, err = fn(tx)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
-	removed, err := fn(tx)
-	if err != nil {
-		return nil, err
-	}
-	return removed, tx.Commit()
+	return removed, nil
 }

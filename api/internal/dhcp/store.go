@@ -276,6 +276,19 @@ func (s *Service) networkGrants(networkID int64) (map[int64][]vpnGrant, error) {
 	return out, rows.Err()
 }
 
+// privateRouteDevices is the set of LAN devices let in to at least one private domain route.
+func (s *Service) privateRouteDevices() (map[int64]bool, error) {
+	devs, err := s.db.LANRouteDevices()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]bool, len(devs))
+	for _, d := range devs {
+		out[d.ID] = true
+	}
+	return out, nil
+}
+
 // networkRoutePorts maps each device of a network to the TCP ports of the enabled domain routes to
 // its current VPN address (a route left on an old address opens nothing).
 func (s *Service) networkRoutePorts(networkID int64) (map[int64][]int, error) {

@@ -9,7 +9,6 @@ import (
 
 	"api/internal/domains"
 	"api/internal/events"
-	"api/internal/helper"
 	"api/internal/router"
 )
 
@@ -710,10 +709,4 @@ func (c *Client) label() string {
 }
 
 // audit records a LAN device change with who made it and from where.
-func audit(r *http.Request, event, msg string) {
-	actor := ""
-	if p := router.CurrentUser(r); p != nil {
-		actor = p.Username
-	}
-	events.Audit("dhcp", event, events.SeverityInfo, actor, helper.GetClientIP(r), msg)
-}
+func audit(r *http.Request, event, msg string) { events.AuditRequest(r, "dhcp", event, msg) }

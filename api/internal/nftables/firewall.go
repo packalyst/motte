@@ -66,6 +66,10 @@ func loadNoInternetPeerIPs(db *database.DB) []string {
 	return ips
 }
 
+// TraefikHTTPSPort is Traefik's HTTPS entry point inside its container (docker-compose publishes
+// HTTPS_PORT to it): what forwarded HTTPS traffic carries once Docker has handed it over.
+const TraefikHTTPSPort = "443"
+
 // VPNIfaces is the set of the box's VPN interfaces: WireGuard and the Headscale router's.
 const VPNIfaces = `{ ` + vpnIfaceNames + ` }`
 

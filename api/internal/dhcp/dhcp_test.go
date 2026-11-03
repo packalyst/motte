@@ -333,7 +333,7 @@ func TestReachabilityNftSyntax(t *testing.T) {
 			{IP: "10.20.20.57", MAC: "02:00:00:00:00:57", Internet: true, Egress: "203.0.113.10", Out: portsOf("web,time,smtp,udp:5000,ping"),
 				In: inboundRules([]inboundEntry{{Entry: "ssh", Sources: []string{"198.51.100.0/24", "203.0.113.7/32"}}, {Entry: "web", Sources: []string{"any"}}, {Entry: "udp:5000", Sources: []string{"any"}}})}},
 			Blocked: []string{"02:00:00:00:00:09"}, Dedicated: []string{"203.0.113.10", "203.0.113.11"}},
-		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20"}}},
+		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20", PrivateRoutes: true}}},
 	}
 	t.Setenv("WG_IP_RANGE", "10.8.0.0/16")
 	t.Setenv("HEADSCALE_IP_RANGE", "100.64.0.0/10")
@@ -355,6 +355,15 @@ func TestReachabilityNftSyntax(t *testing.T) {
 			t.Fatalf("missing DNS hand-over %q:\n%s", want, script)
 		}
 	}
+	// A device let in to private routes reaches Traefik's HTTPS, only through the server's VPN address.
+	private := `iifname "ens20" ether saddr 02:00:00:00:00:20 ip saddr 192.168.50.20 ip daddr 172.18.0.2 oifname "br-0123456789ab" tcp dport 443 ct status dnat ct original ip daddr 10.8.0.1 accept`
+	if at, drop := strings.Index(script, private), strings.Index(script, "ip saddr 192.168.50.0/24 drop"); at < 0 || at > drop {
+		t.Fatalf("missing private-route rule above the network's closing drop %q:\n%s", private, script)
+	}
+	if strings.Count(script, "ct original ip daddr 10.8.0.1") != 1 {
+		t.Fatalf("only the device let in to private routes may reach Traefik:\n%s", script)
+	}
+
 	// Anti-spoofing: each enabled network drops sources outside its range, routed and to the box
 	// (where only a new device's 0.0.0.0 is let through, for DHCP).
 	for _, want := range []string{
@@ -501,5 +510,37 @@ func TestCheckDnsmasqNetwork(t *testing.T) {
 	if !strings.Contains(out, "dhcp-host=02:00:00:00:00:01,10.20.20.60,ok") || strings.Contains(out, "dhcp-script") ||
 		strings.Contains(out, "conf-dir") || strings.Contains(out, "10.99.0.5") {
 		t.Fatalf("only valid hosts may be written:\n%s", out)
+	}
+}
+
+// A Traefik address a container could forge closes the routes to LAN devices (Traefik as a source)
+// but not the way LAN devices reach Traefik for private routes; an unknown address closes both.
+func TestTraefikOriginTrust(t *testing.T) {
+	nets := []Network{{ID: 1, Iface: "ens19", CIDR: "10.20.20.0/24", GatewayIP: "10.20.20.1", Enabled: true}}
+	pol := map[int64]netPolicy{1: {Devices: []devicePolicy{
+		{IP: "10.20.20.55", MAC: "02:00:00:00:00:55", VPNIP: "10.8.128.5", Allowed: []vpnGrant{{IP: "10.8.0.2"}}, Routes: []int{8080}},
+		{IP: "10.20.20.56", MAC: "02:00:00:00:00:56", PrivateRoutes: true},
+	}}}
+	const route, private = "tcp dport 8080 dnat ip to 10.20.20.55", "ct original ip daddr 10.8.0.1 accept"
+	for _, c := range []struct {
+		name                  string
+		origin                routeOrigin
+		wantRoute, wantPrivat bool
+	}{
+		{"trusted", routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2"}, true, true},
+		{"forgeable", routeOrigin{Iface: "br-0123456789ab", IP: "172.18.0.2", Forgeable: true}, false, true},
+		{"unknown", routeOrigin{}, false, false},
+	} {
+		script := renderReachability(nets, pol, "eth0", nil, c.origin, "10.8.0.1")
+		if got := strings.Contains(script, route); got != c.wantRoute {
+			t.Errorf("%s: route to the LAN device emitted = %v, want %v", c.name, got, c.wantRoute)
+		}
+		if got := strings.Contains(script, private); got != c.wantPrivat {
+			t.Errorf("%s: private-route rule emitted = %v, want %v", c.name, got, c.wantPrivat)
+		}
+		paths := accessOf(nets, pol, "eth0", c.origin)
+		if paths["02:00:00:00:00:55"].Paths["route 8080"] != c.wantRoute || paths["02:00:00:00:00:56"].Paths["private routes"] != c.wantPrivat {
+			t.Errorf("%s: access paths disagree with the rules: %+v", c.name, paths)
+		}
 	}
 }
