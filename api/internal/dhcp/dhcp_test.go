@@ -335,6 +335,8 @@ func TestReachabilityNftSyntax(t *testing.T) {
 			Blocked: []string{"02:00:00:00:00:09"}, Dedicated: []string{"203.0.113.10", "203.0.113.11"}},
 		2: {Devices: []devicePolicy{{IP: "192.168.50.20", MAC: "02:00:00:00:00:20", PrivateRoutes: true}}},
 	}
+	// A device allowed outside DNS: its lookups to other servers skip the AdGuard redirect.
+	pol[1].Devices[2].Out = portsOf("web,time,smtp,udp:5000,ping,dns")
 	t.Setenv("WG_IP_RANGE", "10.8.0.0/16")
 	t.Setenv("HEADSCALE_IP_RANGE", "100.64.0.0/10")
 	ranges := privateReachRanges() // the real list, so nft checks the set as it ships

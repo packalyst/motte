@@ -62,7 +62,7 @@ Every device starts closed: it gets an address and DNS, and nothing else until y
 | **Approve and block** | New devices wait for approval (or are approved automatically, per network); a blocked MAC gets no address and no traffic. |
 | **Really online** | A device shows online only while it answers on the LAN (checked every minute), not just while it holds a lease; a gone machine can be forgotten right away. |
 | **VPN access** | Switch a device's VPN address on and choose which VPN clients may reach it, one way or both ways. Domain routes reach it only through Traefik. |
-| **Internet, per device** | Off by default. When on, only the services you tick go out (web and time by default), or every port except the ones you leave unticked. Outside DNS stays closed, so lookups go through AdGuard. |
+| **Internet, per device** | Off by default. When on, only the services you tick go out (web and time by default), or every port except the ones you leave unticked. Outside DNS stays closed: every lookup is answered by AdGuard, even one aimed at another DNS server. |
 | **Its own public address** | Extra public IPs on the server can be shared by a network or dedicated to one device. A dedicated address takes nothing in unless you open it; if it leaves the server, the device has no internet instead of falling back. |
 | **Incoming** | Open a service or port to a device on its dedicated address, only from the sources you list (or anyone, on purpose). Off with its internet, gone when the address changes. |
 | **Ad blocking** | Per-device DNS filtering through AdGuard. |

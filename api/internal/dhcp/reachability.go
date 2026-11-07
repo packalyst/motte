@@ -97,6 +97,17 @@ func (d devicePolicy) internetVia() (string, bool) {
 	return ip, ip != ""
 }
 
+// dnsPort is where devices' DNS lookups go; the ones the box doesn't let out are answered by AdGuard.
+const dnsPort = 53
+
+// outsideDNS reports whether the device may ask DNS servers on the internet itself over proto
+// ("tcp" or "udp"): the Outside DNS service, or port 53 opened by hand. Every other lookup it
+// sends is answered by AdGuard.
+func (d devicePolicy) outsideDNS(proto string) bool {
+	_, ok := d.internetVia()
+	return ok && d.Out.opens(proto, dnsPort)
+}
+
 // routeOrigin is where Traefik sits on the host (helper.TraefikOrigin): domain routes to LAN
 // devices are let in from exactly this interface and address, and LAN devices let in to private
 // routes reach Traefik there. Zero when it can't be resolved, and then neither is let through.
@@ -577,7 +588,7 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 		// The same to the box itself, except 0.0.0.0: a new device asks for its address from there.
 		fmt.Fprintf(&in, "        iifname %q ip saddr != %s ip saddr != 0.0.0.0 drop\n", n.Iface, n.CIDR)
 		fmt.Fprintf(&in, "        iifname %q udp dport 67 accept\n", n.Iface)
-		fmt.Fprintf(&in, "        iifname %q meta l4proto { tcp, udp } th dport 53 accept\n", n.Iface)
+		fmt.Fprintf(&in, "        iifname %q meta l4proto { tcp, udp } th dport %d accept\n", n.Iface, dnsPort)
 		for _, d := range devices {
 			fmt.Fprintf(&in, "        %s accept\n", from(d))
 		}
@@ -587,7 +598,21 @@ func renderReachability(nets []Network, pol map[int64]netPolicy, wan string, pri
 		// segment, only to its gateway, only port 53: the input rules above still decide who is
 		// answered, and AdGuard sees each device's own address.
 		if net.ParseIP(serverVPN).To4() != nil && net.ParseIP(n.GatewayIP).To4() != nil {
-			fmt.Fprintf(&dnat, "        iifname %q ip daddr %s meta l4proto { tcp, udp } th dport 53 dnat ip to %s\n", n.Iface, n.GatewayIP, serverVPN)
+			fmt.Fprintf(&dnat, "        iifname %q ip daddr %s meta l4proto { tcp, udp } th dport %d dnat ip to %s\n", n.Iface, n.GatewayIP, dnsPort, serverVPN)
+			// A lookup aimed at a DNS server on the internet is answered by AdGuard too, as if that
+			// server had: a device with its own DNS set, or an app with one built in, gets ad
+			// blocking instead of a timeout. Only a device allowed outside DNS keeps going out, per
+			// protocol, matched by IP + MAC so another device taking its address doesn't. Private and
+			// VPN addresses keep their own rules (a granted VPN client's DNS server stays reachable).
+			// DNS over TLS (853) can't be answered in its place: it stays shut unless allowed.
+			for _, d := range devices {
+				for _, proto := range []string{"udp", "tcp"} {
+					if d.outsideDNS(proto) {
+						fmt.Fprintf(&dnat, "        %s %s dport %d accept\n", from(d), proto, dnsPort)
+					}
+				}
+			}
+			fmt.Fprintf(&dnat, "        iifname %q ip daddr != @private_ranges meta l4proto { tcp, udp } th dport %d dnat ip to %s\n", n.Iface, dnsPort, serverVPN)
 		}
 
 		// Internet-out, per device: only devices with it on reach the PUBLIC internet, each leaving

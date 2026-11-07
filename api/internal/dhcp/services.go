@@ -34,8 +34,9 @@ var serviceCatalog = []service{
 	{ID: "email", Name: "Email", TCP: []int{587, 465, 993, 995}, Note: "sending through a provider and reading mail"},
 	{ID: "ssh", Name: "SSH", TCP: []int{22}},
 	{ID: "ping", Name: "Ping", ICMP: true, Note: "pinging hosts on the internet"},
-	// Outside DNS: plain (53), over TLS (TCP 853) and over QUIC (UDP 853). Shut, a device's lookups
-	// can only go to the gateway (AdGuard); DNS over HTTPS rides on 443 and no port can tell it apart.
+	// Outside DNS: plain (53), over TLS (TCP 853) and over QUIC (UDP 853). Shut, a device's plain
+	// lookups are answered by AdGuard wherever they were aimed, and the encrypted ones can't go out;
+	// DNS over HTTPS rides on 443 and no port can tell it apart.
 	{ID: "dns", Name: "Outside DNS", TCP: []int{53, 853}, UDP: []int{53, 853}, Note: "other DNS servers, skipping ad blocking"},
 	{ID: "smtp", Name: "Direct mail", TCP: []int{25}, Note: "only for a mail server"},
 	{ID: svcAll, Name: "All other ports", Note: "every port except the services not ticked"},
