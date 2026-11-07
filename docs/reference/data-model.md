@@ -205,6 +205,7 @@ Traefik reverse-proxy routes managed by the panel.
 | `cert_resolver` | optional TLS cert-resolver override (added by migration) |
 | `sentinel_config` | JSON config for per-domain sentinel middleware (added by migration) |
 | `skip_cert_verify` | skip backend TLS verification for HTTPS backends (added by migration) |
+| `backend_sni` | name the route's domain to an HTTPS backend in the TLS handshake (SNI), for a backend that picks its certificate by name; never for a wildcard |
 
 See [networking-firewall.md](./networking-firewall.md) / deployment for the
 Traefik integration.

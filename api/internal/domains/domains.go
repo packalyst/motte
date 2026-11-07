@@ -174,6 +174,7 @@ type DomainRoute struct {
 	Enabled        bool                    `json:"enabled"`
 	HTTPSBackend   bool                    `json:"httpsBackend"`
 	SkipCertVerify bool                    `json:"skipCertVerify"`
+	BackendSNI     bool                    `json:"backendSni"` // name the domain to the HTTPS backend
 	Middlewares    []string                `json:"middlewares"`
 	Description    string                  `json:"description"`
 	AccessMode     string                  `json:"accessMode"`             // "vpn" or "public"
@@ -220,7 +221,7 @@ func ApplyRoutes() error {
 
 	// Get all enabled routes with new columns
 	rows, err := db.Query(`
-		SELECT domain, target_ip, target_port, https_backend, skip_cert_verify, middlewares, access_mode, frontend_ssl, COALESCE(sentinel_config, ''), COALESCE(cert_resolver, '')
+		SELECT domain, target_ip, target_port, https_backend, skip_cert_verify, backend_sni, middlewares, access_mode, frontend_ssl, COALESCE(sentinel_config, ''), COALESCE(cert_resolver, '')
 		FROM domain_routes
 		WHERE enabled = 1
 		ORDER BY domain
@@ -241,7 +242,7 @@ func ApplyRoutes() error {
 		var sentinelConfigJSON string
 
 		var certResolver sql.NullString
-		if err := rows.Scan(&rc.Domain, &rc.TargetIP, &rc.TargetPort, &rc.HTTPSBackend, &rc.SkipCertVerify, &middlewaresJSON, &accessMode, &frontendSSL, &sentinelConfigJSON, &certResolver); err != nil {
+		if err := rows.Scan(&rc.Domain, &rc.TargetIP, &rc.TargetPort, &rc.HTTPSBackend, &rc.SkipCertVerify, &rc.BackendSNI, &middlewaresJSON, &accessMode, &frontendSSL, &sentinelConfigJSON, &certResolver); err != nil {
 			continue
 		}
 		rc.Middlewares, rc.AccessMode, rc.FrontendSSL, rc.SentinelConfig = parseRouteFields(middlewaresJSON, accessMode, frontendSSL, sentinelConfigJSON)
@@ -335,7 +336,7 @@ func (s *Service) Handlers() router.ServiceHandlers {
 // scans one row of it. Shared by the list and the single-route read.
 const routeSelect = `
 	SELECT d.id, d.domain, d.target_ip, d.target_port, d.vpn_client_id,
-	       d.enabled, d.https_backend, d.skip_cert_verify, d.middlewares, d.description,
+	       d.enabled, d.https_backend, d.skip_cert_verify, d.backend_sni, d.middlewares, d.description,
 	       d.access_mode, d.frontend_ssl, COALESCE(d.sentinel_config, ''),
 	       COALESCE(d.cert_resolver, ''),
 	       d.created_at, d.updated_at, COALESCE(v.name, ''),
@@ -352,7 +353,7 @@ func scanRoute(row interface{ Scan(...any) error }) (DomainRoute, error) {
 	var frontendSSL sql.NullBool
 	if err := row.Scan(
 		&route.ID, &route.Domain, &route.TargetIP, &route.TargetPort,
-		&vpnClientID, &route.Enabled, &route.HTTPSBackend, &route.SkipCertVerify, &middlewaresJSON,
+		&vpnClientID, &route.Enabled, &route.HTTPSBackend, &route.SkipCertVerify, &route.BackendSNI, &middlewaresJSON,
 		&route.Description, &accessMode, &frontendSSL, &sentinelConfigJSON,
 		&certResolver,
 		&route.CreatedAt, &route.UpdatedAt, &route.VPNClientName,
@@ -466,6 +467,7 @@ type CreateRequest struct {
 	VPNClientID    *int                    `json:"vpnClientId,omitempty"`
 	HTTPSBackend   bool                    `json:"httpsBackend"`
 	SkipCertVerify bool                    `json:"skipCertVerify"`
+	BackendSNI     bool                    `json:"backendSni"`
 	Middlewares    []string                `json:"middlewares"`
 	Description    string                  `json:"description"`
 	AccessMode     string                  `json:"accessMode"`             // "vpn" or "public", defaults to "vpn"
@@ -567,9 +569,9 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var id int64
 	err = db.InTx(func(tx *sql.Tx) error {
 		result, err := tx.Exec(`
-		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, lan_device_id, https_backend, skip_cert_verify, middlewares, description, access_mode, frontend_ssl, sentinel_config, cert_resolver)
-		VALUES (?, ?, ?, ?, `+lanDeviceByVPNIP+`, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.TargetIP, req.HTTPSBackend, req.SkipCertVerify, string(middlewaresJSON), req.Description, req.AccessMode, req.FrontendSSL, sentinelConfigJSON, req.CertResolver)
+		INSERT INTO domain_routes (domain, target_ip, target_port, vpn_client_id, lan_device_id, https_backend, skip_cert_verify, backend_sni, middlewares, description, access_mode, frontend_ssl, sentinel_config, cert_resolver)
+		VALUES (?, ?, ?, ?, `+lanDeviceByVPNIP+`, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, req.Domain, req.TargetIP, req.TargetPort, req.VPNClientID, req.TargetIP, req.HTTPSBackend, req.SkipCertVerify, req.BackendSNI, string(middlewaresJSON), req.Description, req.AccessMode, req.FrontendSSL, sentinelConfigJSON, req.CertResolver)
 		if err != nil {
 			return err
 		}
@@ -607,6 +609,7 @@ type UpdateRequest struct {
 	VPNClientID    *int                    `json:"vpnClientId,omitempty"`
 	HTTPSBackend   *bool                   `json:"httpsBackend,omitempty"`
 	SkipCertVerify *bool                   `json:"skipCertVerify,omitempty"`
+	BackendSNI     *bool                   `json:"backendSni,omitempty"`
 	Middlewares    *[]string               `json:"middlewares,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
 	AccessMode     *string                 `json:"accessMode,omitempty"`
@@ -795,6 +798,10 @@ func (s *Service) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.SkipCertVerify != nil {
 		updates = append(updates, "skip_cert_verify = ?")
 		args = append(args, *req.SkipCertVerify)
+	}
+	if req.BackendSNI != nil {
+		updates = append(updates, "backend_sni = ?")
+		args = append(args, *req.BackendSNI)
 	}
 	if req.AccessMode != nil {
 		if *req.AccessMode != "vpn" && *req.AccessMode != "public" {

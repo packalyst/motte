@@ -7,7 +7,7 @@
   import { toggleInArray } from '$lib/utils/array.js'
   import {
     defaultSentinelConfig, normalizeSentinelConfig, buildRoutePayload,
-    defaultRouteForm, routeToFormData, routeURL, TIMEZONES, WEEK_DAYS, ERROR_MODES, REACH_OPTIONS, LAN_PICK_OPTIONS
+    defaultRouteForm, routeToFormData, routeURL, isWildcardDomain, TIMEZONES, WEEK_DAYS, ERROR_MODES, REACH_OPTIONS, LAN_PICK_OPTIONS
   } from '$lib/utils/domains.js'
   import Icon from '../components/Icon.svelte'
   import Badge from '../components/Badge.svelte'
@@ -782,6 +782,14 @@
         label="Trust backend certificate (skip TLS verification)"
         bind:checked={formData.skipCertVerify}
       />
+      {#if !isWildcardDomain(formData.domain)}
+        <Checkbox
+          variant="switch"
+          label="Send the domain name to the backend"
+          hint="For a backend that picks its certificate by name and refuses a connection without one (Bad Gateway)."
+          bind:checked={formData.backendSni}
+        />
+      {/if}
     {/if}
 
     <Input

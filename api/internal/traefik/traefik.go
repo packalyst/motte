@@ -933,6 +933,7 @@ type DomainRouteConfig struct {
 	TargetPort     int
 	HTTPSBackend   bool
 	SkipCertVerify bool // skip TLS verification for HTTPS backends
+	BackendSNI     bool // name the route's domain to an HTTPS backend in the TLS handshake
 	Middlewares    []string
 	AccessMode     string          // "vpn" or "public"
 	FrontendSSL    bool            // use websecure entrypoint with TLS
@@ -1082,7 +1083,7 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockE
 		}
 
 		sb.WriteString("  services:\n")
-		hasSkipCertVerify := false
+		var transports []serversTransport
 		for _, route := range routes {
 			name := helper.SanitizeDomainName(route.Domain)
 			protocol := "http"
@@ -1091,19 +1092,28 @@ func GenerateDomainRoutes(configDir string, routes []DomainRouteConfig, fwBlockE
 			}
 			sb.WriteString(fmt.Sprintf("    domain-%s-svc:\n", name))
 			sb.WriteString("      loadBalancer:\n")
-			if route.HTTPSBackend && route.SkipCertVerify {
-				sb.WriteString("        serversTransport: insecure-skip-verify\n")
-				hasSkipCertVerify = true
+			if t, ok := backendTransport(route); ok {
+				sb.WriteString(fmt.Sprintf("        serversTransport: %s\n", t.name))
+				if !slices.Contains(transports, t) {
+					transports = append(transports, t)
+				}
 			}
 			sb.WriteString("        servers:\n")
 			sb.WriteString(fmt.Sprintf("          - url: \"%s://%s:%d\"\n", protocol, route.TargetIP, route.TargetPort))
 			sb.WriteString("\n")
 		}
 
-		if hasSkipCertVerify {
+		if len(transports) > 0 {
 			sb.WriteString("  serversTransports:\n")
-			sb.WriteString("    insecure-skip-verify:\n")
-			sb.WriteString("      insecureSkipVerify: true\n")
+			for _, t := range transports {
+				sb.WriteString(fmt.Sprintf("    %s:\n", t.name))
+				if t.serverName != "" {
+					sb.WriteString(fmt.Sprintf("      serverName: \"%s\"\n", t.serverName))
+				}
+				if t.skipVerify {
+					sb.WriteString("      insecureSkipVerify: true\n")
+				}
+			}
 			sb.WriteString("\n")
 		}
 

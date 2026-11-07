@@ -61,6 +61,7 @@ export function buildRoutePayload(formData) {
     vpnClientId: formData.vpnClientId ? parseInt(formData.vpnClientId) : null,
     httpsBackend: formData.httpsBackend,
     skipCertVerify: formData.skipCertVerify,
+    backendSni: formData.backendSni,
     middlewares: formData.middlewares,
     description: formData.description,
     accessMode: formData.reach === 'public' ? 'public' : 'vpn',
@@ -84,6 +85,7 @@ export function defaultRouteForm() {
     vpnClientId: null,
     httpsBackend: false,
     skipCertVerify: false,
+    backendSni: false,
     middlewares: [],
     description: '',
     // Who can reach it (REACH_OPTIONS): a new route is private and lets every approved LAN device in.
@@ -109,6 +111,7 @@ export function routeToFormData(route) {
     vpnClientId: route.vpnClientId || '',
     httpsBackend: route.httpsBackend,
     skipCertVerify: route.skipCertVerify || false,
+    backendSni: route.backendSni || false,
     middlewares: route.middlewares || [],
     description: route.description || '',
     reach: route.accessMode === 'public' ? 'public' : route.lanAll || route.lanDevices?.length ? 'lan' : 'vpn',
@@ -120,6 +123,9 @@ export function routeToFormData(route) {
   }
 }
 
+/** A wildcard domain (`*.example.com`) covers many hostnames, so it has no single one. */
+export const isWildcardDomain = (domain) => !!domain?.startsWith('*.')
+
 /**
  * The address a route's site opens at: https when the route serves HTTPS, else http. A wildcard
  * route has no single site to open.
@@ -127,7 +133,7 @@ export function routeToFormData(route) {
  * @returns {string|null}
  */
 export function routeURL(route) {
-  if (!route?.domain || route.domain.startsWith('*.')) return null
+  if (!route?.domain || isWildcardDomain(route.domain)) return null
   return `${route.frontendSsl ? 'https' : 'http'}://${route.domain}`
 }
 
