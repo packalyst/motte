@@ -117,14 +117,22 @@ func SessionToken(r *http.Request) string {
 	return ""
 }
 
-// APIPort returns the panel API's port (API_PORT), if valid.
-func APIPort() (int, bool) {
-	p, err := strconv.Atoi(strings.TrimSpace(os.Getenv("API_PORT")))
+// envPort returns the port in the environment variable key, if valid.
+func envPort(key string) (int, bool) {
+	p, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
 	if err != nil || p < 1 || p > 65535 {
 		return 0, false
 	}
 	return p, true
 }
+
+// APIPort returns the panel API's port (API_PORT), if valid.
+func APIPort() (int, bool) { return envPort("API_PORT") }
+
+// TraefikDirectPort returns the port of Traefik's narrow "direct" entrance (TRAEFIK_DIRECT_PORT),
+// if valid: while Cloudflare-only is on, the firewall hands it the HTTPS that does not come from
+// Cloudflare. It is published on loopback only, so nobody reaches it directly.
+func TraefikDirectPort() (int, bool) { return envPort("TRAEFIK_DIRECT_PORT") }
 
 // AlwaysPrivatePort reports whether a port must never be reachable from the internet, whatever
 // its stored scope: the panel API (API_PORT, plain HTTP). Browsers reach it through Traefik on

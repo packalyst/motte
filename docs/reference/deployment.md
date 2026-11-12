@@ -54,7 +54,7 @@ run from the project root, so relative bind mounts resolve against the checkout.
 | Service | Image / build | Network mode | Notes |
 |---|---|---|---|
 | `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | **`network_mode: none`** | Filters the Docker API; listens only on a root-only socket file (`/run/motte-docker/docker.sock` on the host), mounted into `api` alone. |
-| `traefik` | `traefik:v3.7.16` | `vpn-network` (static IP `${TRAEFIK_CONTAINER_IP}`) | Reverse proxy; ports `${HTTP_PORT}:80`, `${HTTPS_PORT}:443`, `127.0.0.1:${TRAEFIK_PORT}:8080` (dashboard, server only). |
+| `traefik` | `traefik:v3.7.16` | `vpn-network` (static IP `${TRAEFIK_CONTAINER_IP}`) | Reverse proxy; ports `${HTTP_PORT}:80`, `${HTTPS_PORT}:443`, `127.0.0.1:${TRAEFIK_PORT}:8080` (dashboard, server only), `127.0.0.1:${TRAEFIK_DIRECT_PORT}` (the narrow entrance, see networking-firewall.md §5.1). |
 | `headscale` | `headscale/headscale:0.25` | `vpn-network` (`${HEADSCALE_CONTAINER_IP}`) | Tailscale control plane + embedded DERP. `command: serve`, `cap_drop: NET_RAW`. |
 | `api` | built from `./api` (arg `VERSION`) | **`network_mode: host`, `pid: host`, `privileged: true`** | The unified backend. Reaches Docker via `DOCKER_HOST=unix:///run/docker-proxy/docker.sock` (the proxy's socket). |
 | `adguard` | `adguard/adguardhome:v0.107.79` | **`network_mode: host`** | DNS + query logging. |
@@ -135,7 +135,7 @@ Notable groups in `.env.example` (see the file for the full annotated list):
 
 - **Deployment**: `COMPOSE_PROJECT_NAME=motte` (do not change — see gotcha above).
 - **Server**: `SERVER_IP` (public IP; used by Headscale/WG/DERP/routing rules).
-- **Ports**: `HTTP_PORT` 80, `HTTPS_PORT` 443, `TRAEFIK_PORT` 8080, `API_PORT` 8081, `ADGUARD_PORT` 8083, `HEADSCALE_INTERNAL_PORT` 8085, `STUN_PORT` 3478, `WG_PORT` 51820, `DNS_PORT` 53.
+- **Ports**: `HTTP_PORT` 80, `HTTPS_PORT` 443, `TRAEFIK_PORT` 8080, `TRAEFIK_DIRECT_PORT` 8444 (loopback only), `API_PORT` 8081, `ADGUARD_PORT` 8083, `HEADSCALE_INTERNAL_PORT` 8085, `STUN_PORT` 3478, `WG_PORT` 51820, `DNS_PORT` 53.
 - **WireGuard**: `WG_INTERFACE=wg0`, `WG_IP_RANGE=10.8.0.0/16`, `WG_SERVER_IP=10.8.0.1`, `WG_DNS`.
 - **Headscale**: `HEADSCALE_IP_RANGE=100.64.0.0/16`, `HEADSCALE_BASE_DOMAIN=vpn.local`, metrics/grpc ports, DERP region settings.
 - **AdGuard**: `ADGUARD_USER`, `ADGUARD_PASS_HASH` (bcrypt; auto-generated on first install — see §6), query/stats retention.

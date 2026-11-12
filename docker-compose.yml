@@ -67,6 +67,9 @@ services:
       # client could otherwise read the full routing config at :8080/api/rawdata. Reach it with an
       # SSH tunnel. Matches the 127.0.0.1 binding used for docker-socket-proxy + headscale-internal.
       - "127.0.0.1:${TRAEFIK_PORT}:8080"
+      # The narrow "direct" entrance (DERP relay + proxy-domain triggers only). Loopback only:
+      # while Cloudflare-only is on, the firewall hands it the HTTPS that is not from Cloudflare.
+      - "127.0.0.1:${TRAEFIK_DIRECT_PORT}:${TRAEFIK_DIRECT_PORT}"
     environment:
       - SENTINEL_DEBUG=${SENTINEL_DEBUG:-false}
       - CF_API_EMAIL=${CF_API_EMAIL:-}
@@ -161,6 +164,7 @@ services:
       - TRAEFIK_API=${TRAEFIK_API}
       - TRAEFIK_PORT=${TRAEFIK_PORT}
       - TRAEFIK_CONTAINER_IP=${TRAEFIK_CONTAINER_IP}
+      - TRAEFIK_DIRECT_PORT=${TRAEFIK_DIRECT_PORT}
       # AdGuard settings
       - ADGUARD_PORT=${ADGUARD_PORT}
       - ADGUARD_CONFIG=/adguard/AdGuardHome.yaml

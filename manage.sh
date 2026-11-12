@@ -2886,6 +2886,7 @@ REQUIRED_VARS=(
     "HTTP_PORT"
     "HTTPS_PORT"
     "TRAEFIK_PORT"
+    "TRAEFIK_DIRECT_PORT"
     "API_PORT"
     "ADGUARD_PORT"
     "HEADSCALE_INTERNAL_PORT"
@@ -2919,6 +2920,17 @@ REQUIRED_VARS=(
     "RATE_LIMIT_STRICT_AVERAGE"
     "RATE_LIMIT_STRICT_BURST"
 )
+
+# Variables added after install take their default from .env.example (the one place it is set).
+for var in TRAEFIK_DIRECT_PORT; do
+    if [ -z "${!var:-}" ]; then
+        default=$(grep -m1 "^${var}=" .env.example 2>/dev/null | cut -d'=' -f2 | awk '{print $1}')
+        if [ -n "$default" ]; then
+            update_env_value "$var" "$default"
+            export "$var=$default"
+        fi
+    fi
+done
 
 # Check all required variables are set
 echo -e "${YELLOW}Validating environment variables...${NC}"
@@ -3022,8 +3034,11 @@ experimental:
       moduleName: local/sentinel
 
 entryPoints:
+  # web and websecure are the default entrances: a router that names none lands only there,
+  # never on "direct".
   web:
     address: ":${HTTP_PORT}"
+    asDefault: true
     http:
       # Port-80 gate: while Cloudflare-only is on, only Cloudflare, the panel's own networks
       # and Let's Encrypt's HTTP challenge get through; anyone else is dropped silently.
@@ -3031,6 +3046,12 @@ entryPoints:
         - sentinel_web_gate@file
   websecure:
     address: ":${HTTPS_PORT}"
+    asDefault: true
+  # Narrow entrance (published on loopback only): while Cloudflare-only is on, the firewall hands
+  # it the HTTPS that is not from Cloudflare. Only the DERP relay and the proxy-domain triggers
+  # are served there; everything else is dropped.
+  direct:
+    address: ":${TRAEFIK_DIRECT_PORT}"
   traefik:
     address: ":${TRAEFIK_PORT}"
 
@@ -3114,9 +3135,10 @@ if [ -f "traefik/dynamic.yml.template" ]; then
         # Read SSL routers template and substitute variables
         SSL_ROUTERS=$(envsubst < traefik/dynamic-ssl-routers.yml.template)
 
-        # When a proxy domain is configured, expose ONLY the rotation trigger
-        # (/api/restart) on it over HTTPS, with its own Let's Encrypt cert. The
-        # proxy ports (1080/3128) are reached directly, not through Traefik; the
+        # When a proxy domain is configured, expose ONLY its triggers (/api/restart,
+        # /api/hook) on it over HTTPS, with its own Let's Encrypt cert, also on the
+        # direct entrance (callers reach the proxy domain directly, never through
+        # Cloudflare). The proxy ports are reached directly, not through Traefik; the
         # rest of the panel API stays on SSL_DOMAIN. Skipped entirely when
         # PROXY_DOMAIN is empty, so the generated config is unchanged.
         if [ -n "${PROXY_DOMAIN:-}" ]; then
@@ -3131,6 +3153,7 @@ if [ -f "traefik/dynamic.yml.template" ]; then
         - security-headers
       entryPoints:
         - websecure
+        - direct
       tls:
         certResolver: letsencrypt
         domains:

@@ -45,7 +45,7 @@
 
     # Headscale control plane - HTTPS
     headscale-control-secure:
-      rule: "Host(`${SSL_DOMAIN}`) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/derp`) || PathPrefix(`/register`) || PathPrefix(`/apple`) || PathPrefix(`/windows`))"
+      rule: "Host(`${SSL_DOMAIN}`) && (PathPrefix(`/ts2021`) || PathPrefix(`/machine`) || PathPrefix(`/key`) || PathPrefix(`/noise`) || PathPrefix(`/register`) || PathPrefix(`/apple`) || PathPrefix(`/windows`))"
       service: headscale
       priority: 100
       entryPoints:
@@ -54,6 +54,32 @@
         certResolver: letsencrypt
         domains:
           - main: "${SSL_DOMAIN}"
+
+    # DERP relay - HTTPS, also on the direct entrance: Tailscale devices dial it at the server's
+    # own address, never through Cloudflare.
+    derp-secure:
+      rule: "Host(`${SSL_DOMAIN}`) && PathPrefix(`/derp`)"
+      service: headscale
+      priority: 100
+      entryPoints:
+        - websecure
+        - direct
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "${SSL_DOMAIN}"
+
+    # Direct entrance - drop everything not routed above (only the DERP relay and the
+    # proxy-domain triggers are served there). sentinel_drop silently closes the connection.
+    direct-drop:
+      rule: "PathPrefix(`/`)"
+      service: unified-api
+      priority: 1
+      middlewares:
+        - sentinel_drop
+      entryPoints:
+        - direct
+      tls: {}
 
     # Headscale API - BLOCKED for HTTPS
     headscale-api-blocked-secure:

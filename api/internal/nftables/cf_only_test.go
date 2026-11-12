@@ -201,3 +201,45 @@ func TestCloudflareOnlyBuild_LANRouteDevices(t *testing.T) {
 	}
 	nftCheck(t, out)
 }
+
+// With Cloudflare-only on, IPv4 HTTPS to the box from any other source goes to Traefik's narrow
+// "direct" entrance instead of the sites; the allowed sources keep reaching them as they are.
+// Without a valid entrance (or one on 443 itself) nothing is handed over and 443 stays dropped.
+func TestCloudflareOnlyDirectEntrance(t *testing.T) {
+	t.Setenv("DOCKER_SUBNET", "172.18.0.0/24")
+	t.Setenv("TRAEFIK_CONTAINER_IP", "172.18.0.2")
+	t.Setenv("TRAEFIK_DIRECT_PORT", "8444")
+	out, err := NewCloudflareOnlyTable(cfTestDB(t, "on")).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const dnat = "meta nfproto ipv4 fib daddr type local tcp dport 443 dnat ip to 172.18.0.2:8444"
+	if !strings.Contains(out, "type nat hook prerouting priority -110") {
+		t.Fatalf("the hand-over must run before Docker's nat:\n%s", out)
+	}
+	at := strings.Index(out, dnat)
+	if at < 0 {
+		t.Fatalf("no hand-over to the direct entrance:\n%s", out)
+	}
+	for _, keep := range []string{"ip saddr @cf_v4 tcp dport 443 return", "127.0.0.0/8"} {
+		if i := strings.Index(out, keep); i < 0 || i > at {
+			t.Errorf("%q must be kept off the direct entrance (above the hand-over):\n%s", keep, out)
+		}
+	}
+	if !strings.Contains(out, "ct status dnat tcp dport 443 drop") {
+		t.Errorf("443 must still be dropped for anything not handed over:\n%s", out)
+	}
+	nftCheck(t, out)
+
+	for _, port := range []string{"", "443", "0", "not-a-port"} {
+		t.Setenv("TRAEFIK_DIRECT_PORT", port)
+		if out, _ := NewCloudflareOnlyTable(cfTestDB(t, "on")).Build(); strings.Contains(out, "dnat ip to") {
+			t.Errorf("port %q: nothing may be handed over:\n%s", port, out)
+		}
+	}
+	t.Setenv("TRAEFIK_DIRECT_PORT", "8444")
+	t.Setenv("TRAEFIK_CONTAINER_IP", "198.51.100.2")
+	if out, _ := NewCloudflareOnlyTable(cfTestDB(t, "on")).Build(); strings.Contains(out, "dnat ip to") {
+		t.Errorf("a Traefik address outside the Docker subnet must hand nothing over:\n%s", out)
+	}
+}

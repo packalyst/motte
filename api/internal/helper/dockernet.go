@@ -29,15 +29,23 @@ func DockerSubnet() string {
 	return defaultDockerSubnet
 }
 
+// TraefikIP is Traefik's own address (TRAEFIK_CONTAINER_IP), which must be inside DOCKER_SUBNET.
+func TraefikIP() (netip.Addr, error) {
+	ip, err := netip.ParseAddr(strings.TrimSpace(os.Getenv("TRAEFIK_CONTAINER_IP")))
+	if err != nil || !ip.Is4() || !netip.MustParsePrefix(DockerSubnet()).Contains(ip) {
+		return netip.Addr{}, errors.New("TRAEFIK_CONTAINER_IP is not an address inside DOCKER_SUBNET")
+	}
+	return ip, nil
+}
+
 // TraefikOrigin returns where Traefik's traffic enters the host: the Docker bridge interface that
 // carries DOCKER_SUBNET, and Traefik's own address on it (TRAEFIK_CONTAINER_IP). Both must check
 // out — the address inside the subnet, and exactly one host interface on it — or an error is
 // returned, so a rule keyed on them is never written against a guessed interface or address.
 func TraefikOrigin() (iface string, ip netip.Addr, err error) {
 	subnet := netip.MustParsePrefix(DockerSubnet())
-	ip, err = netip.ParseAddr(strings.TrimSpace(os.Getenv("TRAEFIK_CONTAINER_IP")))
-	if err != nil || !ip.Is4() || !subnet.Contains(ip) {
-		return "", netip.Addr{}, errors.New("TRAEFIK_CONTAINER_IP is not an address inside DOCKER_SUBNET")
+	if ip, err = TraefikIP(); err != nil {
+		return "", netip.Addr{}, err
 	}
 	ifaces, err := net.Interfaces()
 	if err != nil {
