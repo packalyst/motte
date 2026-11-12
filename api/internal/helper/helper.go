@@ -135,11 +135,13 @@ func AlwaysPrivatePort(port int, protocol string) bool {
 	return ok && port == api && (protocol == "tcp" || protocol == "both")
 }
 
-// EssentialPort represents a port with its service name
+// EssentialPort represents a port with its service name. Private ports are first stored as
+// private (box, VPN, trusted networks only); the admin may make them public later.
 type EssentialPort struct {
 	Port     int
 	Protocol string
 	Service  string
+	Private  bool
 }
 
 // essentialPortJSON is the on-disk shape of a port entry in essential-ports.json.
@@ -147,6 +149,7 @@ type essentialPortJSON struct {
 	Port    int    `json:"port"`
 	Proto   string `json:"proto"`
 	Service string `json:"service"`
+	Scope   string `json:"scope"` // "private", or empty/"public"
 }
 
 // BuildEssentialPorts builds the list of essential ports at boot time.
@@ -196,6 +199,11 @@ func BuildEssentialPorts() []EssentialPort {
 			log.Printf("essential-ports: skipping port %d — invalid proto %q in %s", e.Port, e.Proto, path)
 			continue
 		}
+		scope := strings.ToLower(strings.TrimSpace(e.Scope))
+		if scope != "" && scope != "public" && scope != "private" {
+			log.Printf("essential-ports: skipping port %d — invalid scope %q in %s", e.Port, e.Scope, path)
+			continue
+		}
 		// Skip duplicates (SSH auto-detect already added, or JSON lists same port twice).
 		dup := false
 		for _, p := range ports {
@@ -207,7 +215,7 @@ func BuildEssentialPorts() []EssentialPort {
 		if dup {
 			continue
 		}
-		ports = append(ports, EssentialPort{Port: e.Port, Protocol: proto, Service: strings.TrimSpace(e.Service)})
+		ports = append(ports, EssentialPort{Port: e.Port, Protocol: proto, Service: strings.TrimSpace(e.Service), Private: scope == "private"})
 	}
 
 	log.Printf("essential-ports: loaded %d entries from %s", len(entries), path)

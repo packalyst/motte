@@ -138,20 +138,25 @@ func New(dataDir string, nftSvc *nftables.Service) (*Service, error) {
 }
 
 // ensureEssentialPorts adds the essential ports to firewall_entries (or marks an existing row
-// essential again), and keeps an always-private port (the panel API) stored as private so the
-// Ports list shows it truthfully. A port the panel added that is no longer essential — an old SSH
-// port from a migrated database, a port dropped from the list — becomes a normal port: still
-// open, but the admin can remove it. It is never deleted here: if SSH detection failed for a
-// moment, deleting could close the real SSH port.
+// essential again; one listed as private starts private), and keeps an always-private port (the
+// panel API) stored as private so the Ports list shows it truthfully. A port the panel added that
+// is no longer essential — an old SSH port from a migrated database, a port dropped from the
+// list — becomes a normal port: still open, but the admin can remove it. It is never deleted
+// here: if SSH detection failed for a moment, deleting could close the real SSH port.
 func (s *Service) ensureEssentialPorts() error {
 	current := map[string]bool{}
 	for _, ep := range s.config.EssentialPorts {
 		current[strconv.Itoa(ep.Port)+"/"+ep.Protocol] = true
+		scope := "public"
+		if ep.Private {
+			scope = "private"
+		}
+		// The scope is set only when the row is created: an admin's later choice is kept.
 		_, err := s.db.Exec(`INSERT INTO firewall_entries
-			(entry_type, value, action, direction, protocol, source, name, essential, enabled)
-			VALUES ('port', ?, 'allow', 'inbound', ?, 'system', ?, 1, 1)
+			(entry_type, value, action, direction, protocol, source, name, essential, enabled, scope)
+			VALUES ('port', ?, 'allow', 'inbound', ?, 'system', ?, 1, 1, ?)
 			ON CONFLICT(entry_type, value, protocol) DO UPDATE SET essential = 1`,
-			strconv.Itoa(ep.Port), ep.Protocol, ep.Service)
+			strconv.Itoa(ep.Port), ep.Protocol, ep.Service, scope)
 		if err != nil {
 			return fmt.Errorf("failed to add essential port %d: %v", ep.Port, err)
 		}

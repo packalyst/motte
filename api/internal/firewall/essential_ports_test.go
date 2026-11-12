@@ -38,3 +38,39 @@ func TestStaleEssentialPortsDemoted(t *testing.T) {
 		}
 	}
 }
+
+// TestPrivateEssentialPortStartsPrivate: an essential port listed as private is created private,
+// and an admin's later choice (made public) is kept on the next start.
+func TestPrivateEssentialPortStartsPrivate(t *testing.T) {
+	s := lockoutService(t)
+	s.config.EssentialPorts = []helper.EssentialPort{
+		{Port: 18083, Protocol: "tcp", Service: "Dashboard", Private: true},
+		{Port: 18443, Protocol: "tcp", Service: "Web"},
+	}
+	scope := func(port string) string {
+		t.Helper()
+		var sc string
+		if err := s.db.QueryRow(`SELECT scope FROM firewall_entries WHERE entry_type = 'port' AND value = ?`, port).Scan(&sc); err != nil {
+			t.Fatalf("port %s: %v", port, err)
+		}
+		return sc
+	}
+	if err := s.ensureEssentialPorts(); err != nil {
+		t.Fatal(err)
+	}
+	if got := scope("18083"); got != "private" {
+		t.Fatalf("private essential port created %s", got)
+	}
+	if got := scope("18443"); got != "public" {
+		t.Fatalf("public essential port created %s", got)
+	}
+	if _, err := s.db.Exec(`UPDATE firewall_entries SET scope = 'public' WHERE value = '18083'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ensureEssentialPorts(); err != nil {
+		t.Fatal(err)
+	}
+	if got := scope("18083"); got != "public" {
+		t.Fatalf("the admin's choice was overwritten: %s", got)
+	}
+}

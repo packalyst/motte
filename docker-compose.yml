@@ -98,8 +98,6 @@ services:
     ports:
       - "${STUN_PORT}:3478/udp"
       - "127.0.0.1:${HEADSCALE_INTERNAL_PORT}:8080"
-      # DERP direct port - bypasses Traefik to avoid TLS cert issues with IP-only setup
-      - "${DERP_HTTP_PORT:-8443}:8080"
     # Only Traefik may send from Traefik's address on vpn-network: the firewall lets domain routes
     # to LAN devices in from it. NET_RAW (raw packets) and NET_ADMIN (changing its own address)
     # would let a container forge it; headscale needs neither (plain TCP/UDP sockets).

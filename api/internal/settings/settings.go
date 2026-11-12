@@ -176,11 +176,12 @@ func (s *Service) buildSettingsMap() map[string]interface{} {
 			// Dashboard enabled check
 			dashEnabled := adguardDashboardPublic(content)
 			result["adguard_dashboard_enabled"] = dashEnabled
+			// Linked at the VPN address: the AdGuard UI port is private unless the admin opens it.
 			if dashEnabled {
-				serverIP := os.Getenv("SERVER_IP")
+				vpnIP := helper.WGServerIP()
 				adguardPort := os.Getenv("ADGUARD_PORT")
-				if serverIP != "" && adguardPort != "" {
-					result["adguard_dashboard_url"] = "http://" + serverIP + ":" + adguardPort
+				if vpnIP != "" && adguardPort != "" {
+					result["adguard_dashboard_url"] = "http://" + vpnIP + ":" + adguardPort
 				}
 			}
 			// Querylog size_memory

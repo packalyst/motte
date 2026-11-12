@@ -283,18 +283,16 @@ Built by `buildScript` (`firewall.go:391`). All are `ipv4_addr` except the two p
 
 Three sources feed `allowed_tcp_ports` / `allowed_udp_ports`, all landing as rows in `firewall_entries` (type=port, action=allow):
 
-1. **Essential ports** — `api/configs/essential-ports.json`, loaded by `helper.BuildEssentialPorts` and inserted `INSERT OR IGNORE` with `source='system'`, `essential=1` at service init (`ensureEssentialPorts`, `service.go:130`). These cannot be removed via the API (`handleRemovePort` refuses `essential=1`).
+1. **Essential ports** — `api/configs/essential-ports.json`, loaded by `helper.BuildEssentialPorts` and inserted `INSERT OR IGNORE` with `source='system'`, `essential=1` at service init (`ensureEssentialPorts`, `service.go:130`). These cannot be removed via the API (`handleRemovePort` refuses `essential=1`). An entry may say `"scope": "private"`: it is then created private (box, VPN, trusted networks) and stays whatever the admin sets later. The panel API port is always private. The Traefik dashboard is published on `127.0.0.1` only (SSH tunnel), so it has no entry.
 
-   | Port | Proto | Service |
-   |---|---|---|
-   | 80 / 443 | tcp | Traefik HTTP / HTTPS |
-   | 8080 | tcp | Traefik Dashboard |
-   | 8081 | tcp | API |
-   | 8083 | tcp | AdGuard UI |
-   | 8443 | tcp | DERP HTTP |
-   | 51820 | udp | WireGuard |
-   | 3478 | udp | STUN/DERP |
-   | 53 | udp | DNS |
+   | Port | Proto | Service | Scope |
+   |---|---|---|---|
+   | 80 / 443 | tcp | Traefik HTTP / HTTPS | public |
+   | 8081 | tcp | API | always private |
+   | 8083 | tcp | AdGuard UI | private |
+   | 51820 | udp | WireGuard | public |
+   | 3478 | udp | STUN/DERP | public |
+   | 53 | udp | DNS | public |
 
 2. **Docker-published ports** — `SyncDockerPortsToDB` (`ports_handlers.go:313`) queries the Docker API for containers publishing to `0.0.0.0`/`::`, then **deletes all `source='docker'` rows and re-inserts** the currently-published set. So a stopped container drops its allow rule; `source='manual'`/`'system'` rows are never touched. Disabled if `AUTO_DISCOVER_DOCKER_PORTS=false`. Other packages call `Service.SyncAndReapply()` (`service.go:36`) after publishing/removing container ports (e.g. turbotunnels).
 3. **Manual ports** — `handleAddPort` (`source='manual'`), and the SSH-port change flow (`handleChangeSSHPort`, `ports_handlers.go:146`) which adds the new port as essential, applies, edits `sshd_config` via `nsenter … systemctl restart sshd`, then removes the old port — with rollback at each step.

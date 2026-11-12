@@ -1425,7 +1425,7 @@
           <div>
             <ContentBlock variant="header" title="Access Control" />
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-              <ContentBlock title="Dashboard" description="Port 8080 (restart required)">
+              <ContentBlock title="Dashboard" description="Only on the server itself, through an SSH tunnel (restart required)">
                 <Checkbox variant="switch" bind:checked={traefikForm.dashboardEnabled} />
               </ContentBlock>
               <ContentBlock title="VPN-Only Mode" description="Restrict access to VPN clients">
@@ -1871,7 +1871,7 @@
           <div class="flex items-center justify-between">
             <div>
               <span class="text-xs font-medium text-foreground">Dashboard Access</span>
-              <p class="text-[10px] text-muted-foreground">External access to AdGuard UI</p>
+              <p class="text-[10px] text-muted-foreground">AdGuard UI over the VPN (its port is private in Allowed ports)</p>
             </div>
             <Checkbox variant="switch" bind:checked={adguardDashboardEnabled} />
           </div>

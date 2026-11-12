@@ -30,10 +30,10 @@ Source of truth: [`docker-compose.yml`](../../docker-compose.yml). Every contain
 
 | Component | Image / build | Network mode | Role |
 |-----------|---------------|--------------|------|
-| **traefik** | `traefik:v3.7.16` | `vpn-network` (static IP `TRAEFIK_CONTAINER_IP`) | Edge reverse proxy. Terminates 80/443 (+ 8080 dashboard). Routes admin UI, the unified API, the Headscale control plane, and user domain routes. Hosts the custom **sentinel** local plugin. |
+| **traefik** | `traefik:v3.7.16` | `vpn-network` (static IP `TRAEFIK_CONTAINER_IP`) | Edge reverse proxy. Terminates 80/443 (dashboard on `127.0.0.1` only). Routes admin UI, the unified API, the Headscale control plane, and user domain routes. Hosts the custom **sentinel** local plugin. |
 | **api** | built from `./api` (Go) | `network_mode: host`, `pid: host`, `privileged`, `NET_ADMIN` | The brain. One Go binary exposing every `/api/*` service, driving nftables/WireGuard on the host, and orchestrating the other containers via the Docker socket proxy. Host-networked so it can manage the kernel firewall and WireGuard directly. |
 | **ui** | built from `./ui` (Svelte 5 → nginx) | `vpn-network` (static `UI_CONTAINER_IP`) | Static SPA served by nginx on port 80; Traefik proxies `/`. Talks only to the API. |
-| **headscale** | `headscale/headscale:0.25` | `vpn-network` (static `HEADSCALE_CONTAINER_IP`) | Tailscale-compatible coordination server. Exposes STUN/DERP (`3478/udp`, direct `8443`) and an internal API bound to `127.0.0.1:8085`. |
+| **headscale** | `headscale/headscale:0.25` | `vpn-network` (static `HEADSCALE_CONTAINER_IP`) | Tailscale-compatible coordination server. Exposes STUN (`3478/udp`); DERP runs through Traefik (`/derp`); its internal API is bound to `127.0.0.1:8085`. |
 | **adguard** | `adguard/adguardhome:v0.107.79` | `network_mode: host` | DNS server (`:53`) + filtering + query log. Host-networked to serve DNS on the host and to VPN clients. |
 | **docker-socket-proxy** | `tecnativa/docker-socket-proxy` | `network_mode: none` | Filtered Docker API on a root-only socket file (`/run/motte-docker/docker.sock`) that only the api mounts. The api reaches Docker through this proxy, never the raw socket. Allows containers/logs/start/stop/restart/exec/images; denies build, volumes, networks, secrets, swarm. |
 | **vpn-router** | `tailscale/tailscale:v1.104.1` | `network_mode: host`, `NET_ADMIN`/`NET_RAW` | Optional (`profiles: [vpn-router]`). Advertises the WireGuard subnet into the Headscale/Tailnet so the two VPNs can route to each other (subnet router). |
@@ -113,7 +113,7 @@ One Docker network is declared, plus the containers on host networking:
 ### Non-admin data planes
 
 - **WireGuard**: peers connect on `WG_PORT/udp` (default `51820`) straight to the host kernel; the api programs peers via `wgctrl`.
-- **Headscale/Tailnet**: clients use the control-plane routes through Traefik and DERP/STUN (`3478/udp`, direct `8443`).
+- **Headscale/Tailnet**: clients use the control-plane routes through Traefik and DERP (`/derp` through Traefik) and STUN (`3478/udp`).
 - **DNS**: AdGuard answers on `:53`; its query log is tailed by the api's log watchers and folded into analytics.
 - **turbotunnels**: user-facing forward proxies listen on dynamically published ports on the panel-created container.
 - **Fleet**: remote agents connect inbound over mTLS to the api's managed fleet listener (port from Settings, auto-opened in the firewall); the self-extracting installer is served at `GET /agent/{token}` through Traefik/443 (`main.go:657`).
