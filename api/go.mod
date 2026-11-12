@@ -4,7 +4,7 @@ go 1.26.0
 
 // Patched Go for every build (local, tests, CI); matches the Dockerfile. The standard library
 // is compiled in, so an unpatched toolchain ships its CVEs.
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
@@ -32,7 +32,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/klauspost/compress v1.19.2 // indirect
+	github.com/klauspost/compress v1.20.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
