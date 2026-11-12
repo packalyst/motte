@@ -11,7 +11,7 @@ require (
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/ip2location/ip2location-go/v9 v9.8.0
-	github.com/mattn/go-sqlite3 v1.14.52
+	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/pkg/sftp v1.13.12
