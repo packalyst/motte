@@ -660,15 +660,12 @@ class Socks5TunnelServer(server.TCPTunnelServer):
                 password_request.username != username
                 or password_request.password != password
             ):
+                # Never log what was typed: a user's mistyped password would land on disk.
                 utils.logger.warn(
-                    "[%s] Password verify failed: %s:%s"
-                    % (
-                        self.__class__.__name__,
-                        password_request.username,
-                        password_request.password,
-                    )
+                    "[%s] Password verify failed" % self.__class__.__name__
                 )
-                # Panel marker: feeds the firewall jail (brute-force bans).
+                # Panel marker: feeds the firewall jail (brute-force bans). USER is the
+                # tunnel's own username, not the one the client sent.
                 utils.logger.info(
                     "TURBOTUNNELS_AUTH_FAIL SRC=%s USER=%s" % (address[0], username)
                 )
@@ -694,7 +691,8 @@ class Socks5TunnelServer(server.TCPTunnelServer):
                 auth_response = Socks5AuthResponsePacket(
                     EnumSocks5AuthMethod.NOT_SUPPORTED
                 )
-            # Panel marker: feeds the firewall jail (brute-force bans).
+            # Panel marker: feeds the firewall jail (brute-force bans). USER is the
+            # tunnel's own username, not the one the client sent.
             utils.logger.info(
                 "TURBOTUNNELS_AUTH_FAIL SRC=%s USER=%s"
                 % (address[0], auth.split(":", 1)[0])

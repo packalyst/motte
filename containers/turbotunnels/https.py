@@ -54,9 +54,18 @@ class HTTPSTunnel(tunnel.TCPTunnel):
         reason = (b" ".join(items[2:])).decode()
         if code == 200:
             return True
+        # The upstream as host:port only: its URL can carry the upstream proxy's login.
         utils.logger.warn(
-            "[%s] Connect %s:%d over %s failed: [%d] %s"
-            % (self.__class__.__name__, self._addr, self._port, self._url, code, reason)
+            "[%s] Connect %s:%d over %s:%d failed: [%d] %s"
+            % (
+                self.__class__.__name__,
+                self._addr,
+                self._port,
+                self._url.host,
+                self._url.port,
+                code,
+                reason,
+            )
         )
         return False
 
@@ -133,7 +142,8 @@ class HTTPSTunnelServer(server.TunnelServer):
 
         def listen_user():
             """The tunnel's configured username (the identity that authenticated,
-            since a tunnel has exactly one credential). '-' if unauthenticated."""
+            since a tunnel has exactly one credential). '-' if unauthenticated.
+            On an auth failure it is still the tunnel's own, never what was sent."""
             auth_data = this._listen_url.auth
             return auth_data.split(":", 1)[0] if auth_data else "-"
 
