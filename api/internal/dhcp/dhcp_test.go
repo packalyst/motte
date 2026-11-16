@@ -3,6 +3,7 @@ package dhcp
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -544,5 +545,31 @@ func TestTraefikOriginTrust(t *testing.T) {
 		if paths["02:00:00:00:00:55"].Paths["route 8080"] != c.wantRoute || paths["02:00:00:00:00:56"].Paths["private routes"] != c.wantPrivat {
 			t.Errorf("%s: access paths disagree with the rules: %+v", c.name, paths)
 		}
+	}
+}
+
+// The Go copy of the base conf's globals (used to validate per-network files) must equal the
+// file the container loads, and dnsmasq must identify clients by MAC like the rest of the panel.
+func TestDnsmasqBaseGlobalsInSync(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "containers", "dnsmasq", "dnsmasq.base.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var globals strings.Builder
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "conf-dir=") {
+			continue
+		}
+		globals.WriteString(line + "\n")
+	}
+	if globals.String() != dnsmasqBaseGlobals {
+		t.Fatalf("dnsmasqBaseGlobals %q differs from the base conf's globals %q", dnsmasqBaseGlobals, globals.String())
+	}
+	if !strings.Contains(dnsmasqBaseGlobals, "dhcp-ignore-clid\n") {
+		t.Fatal("dnsmasq must identify clients by MAC (dhcp-ignore-clid)")
+	}
+	if got := renderDnsmasqConf(baseNet(), nil, nil); strings.Contains(got, "dhcp-ignore-clid") {
+		t.Fatalf("a global must not be repeated in a per-network conf:\n%s", got)
 	}
 }

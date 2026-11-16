@@ -172,10 +172,10 @@ func (s *Service) writeDnsmasqDisabled(n *Network) error {
 	return reloadDnsmasq()
 }
 
-// dnsmasqBaseGlobals mirrors the GLOBAL directives in containers/dnsmasq/dnsmasq.base.conf. Keep
-// it in sync with that file. dnsmasqTest prepends these so a candidate is validated the way
-// dnsmasq actually loads it (base globals + conf-dir), not in isolation.
-const dnsmasqBaseGlobals = "port=0\n"
+// dnsmasqBaseGlobals mirrors the GLOBAL directives in containers/dnsmasq/dnsmasq.base.conf
+// (TestDnsmasqBaseGlobalsInSync keeps the two equal). dnsmasqTest prepends these so a candidate is
+// validated the way dnsmasq actually loads it (base globals + conf-dir), not in isolation.
+const dnsmasqBaseGlobals = "port=0\ndhcp-ignore-clid\n"
 
 // dnsmasqTest validates the candidate the SAME way the container loads it: a base conf carrying
 // the globals + a conf-dir that pulls the candidate in. Testing the file alone (as this used to)
